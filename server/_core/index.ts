@@ -21,6 +21,7 @@ import ghlWebhookRouter from "../ghlWebhookRouter";
 import ghlInboxRouter from "../routes/ghlInboxRouter";
 import vapiWebhookRouter from "../vapiWebhookRouter";
 import { sitemapRouter } from "../sitemapRouter";
+import { healthRouter } from "./healthRouter";
 import { startCancellationStaleJob } from "../cancellationStaleJob";
 import { startEmailAutomationJob } from "../emailAutomationJob";
 import { startTaxReminderJob } from "../taxReminderJob";
@@ -124,6 +125,12 @@ async function startServer() {
   const server = createServer(app);
   // Confiar en el proxy de Railway (necesario para que express-rate-limit identifique IPs correctamente)
   app.set("trust proxy", 1);
+
+  // Healthcheck — montado antes que nada más (sin rate limit, sin auth, sin
+  // body parser) para responder lo más rápido posible. Es lo que usa
+  // railway.toml como healthcheckPath.
+  app.use(healthRouter);
+
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
