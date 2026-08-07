@@ -9,6 +9,10 @@
  *  2. seedRbacIfNeeded() — catálogo RBAC mínimo + permisos students.view/
  *     students.manage + sincronización de roles de usuarios existentes
  *     (server/_core/rbacSeed.ts).
+ *  3. applySegolifeFeatureFlagBaseline() — apaga (enabled=0) los feature
+ *     flags de módulos/jobs legacy de Náyade que `pnpm db:migrate` deja
+ *     activados por venir así en migraciones históricas
+ *     (server/_core/segolifeFeatureFlagBaseline.ts).
  *
  * STARTUP != SEED: este script NUNCA se invoca desde server/_core/index.ts.
  * Requiere que el schema ya exista — ejecuta `pnpm db:migrate` antes si es
@@ -21,6 +25,7 @@
 import "dotenv/config";
 import { seedSegolifeCommunitiesIfEmpty } from "../server/db/communitiesDb";
 import { seedRbacIfNeeded } from "../server/_core/rbacSeed";
+import { applySegolifeFeatureFlagBaseline } from "../server/_core/segolifeFeatureFlagBaseline";
 
 async function main() {
   if (!process.env.DATABASE_URL) {
@@ -33,6 +38,9 @@ async function main() {
 
   console.log("[db:seed] Sembrando catálogo RBAC (students.view/students.manage + sync de roles)...");
   await seedRbacIfNeeded();
+
+  console.log("[db:seed] Aplicando baseline operativo Segolife (apagando módulos/jobs legacy de Náyade)...");
+  await applySegolifeFeatureFlagBaseline();
 
   console.log("[db:seed] Completado.");
   process.exit(0);

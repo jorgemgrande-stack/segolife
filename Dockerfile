@@ -47,6 +47,17 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/drizzle ./drizzle
 COPY package.json ./
 
+# scripts/ + server/ (fuente TS, no bundleada) — necesarios para poder ejecutar
+# `pnpm db:migrate` / `pnpm db:seed` explícitamente dentro de este contenedor
+# (vía tsx, ya presente en node_modules). Antes no se copiaban y esos comandos
+# no eran ejecutables en producción — ver fase de saneamiento de startup.
+COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/server ./server
+
+# pnpm no estaba disponible en esta etapa (solo en el builder) — necesario
+# para poder invocar `pnpm db:migrate`/`pnpm db:seed` dentro del contenedor.
+RUN npm install -g pnpm@10.32.1
+
 # Directorio para almacenamiento local de fallback
 RUN mkdir -p /tmp/local-storage
 

@@ -41,6 +41,7 @@ async function main() {
   await runLegacySchemaMaintenance();
 
   console.log("[db:migrate] Completado.");
+  process.exit(0);
 }
 
 main().catch((err) => {
