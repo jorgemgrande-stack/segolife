@@ -164,7 +164,14 @@ export default function StudentProfile() {
               <p className="text-xs uppercase tracking-widest text-muted-foreground">{t("studentProfile.tokensHistory", { defaultValue: "Historial reciente" })}</p>
               {ledger.map(l => (
                 <div key={l.id} className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">{l.reason}</span>
+                  <span className="text-muted-foreground">
+                    {l.reason}
+                    {l.sourceType === "consumption" && (
+                      <span className="ml-2 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                        {t("scan.sourceLabel", { defaultValue: "Source: Consumption" })}
+                      </span>
+                    )}
+                  </span>
                   <Badge variant={l.direction === "credit" ? "default" : "outline"}>{l.direction === "credit" ? "+" : "-"}{l.amount}</Badge>
                 </div>
               ))}

@@ -17,6 +17,7 @@ import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { eq, and } from "drizzle-orm";
 import { venueTokenSchedules, type VenueTokenSchedule } from "../../../drizzle/schema";
+import type { AnyDbHandle } from "./tokenLedgerService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -81,7 +82,7 @@ export async function isWithinSchedule(
   venueId: number,
   operationType: OperationType,
   at: Date = new Date(),
-  db?: DbHandle
+  db?: AnyDbHandle
 ): Promise<boolean> {
   const conn = db ?? (await getDb());
   const rows = await conn.select().from(venueTokenSchedules).where(and(

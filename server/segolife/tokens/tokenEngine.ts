@@ -30,6 +30,7 @@ import {
   postLedgerMovement,
   sumAmountByRuleInWindow,
   TokenEngineError,
+  type AnyDbHandle,
 } from "./tokenLedgerService";
 import { isWithinSchedule } from "./tokenScheduleService";
 import {
@@ -94,7 +95,7 @@ export interface EarnTokensInput {
   at?: Date;
 }
 
-export async function earnTokens(input: EarnTokensInput, db?: DbHandle): Promise<EngineResult> {
+export async function earnTokens(input: EarnTokensInput, db?: AnyDbHandle): Promise<EngineResult> {
   const conn = db ?? (await getDb());
   const at = input.at ?? new Date();
 
@@ -187,7 +188,7 @@ export interface SpendTokensInput {
  * wallet — dos gastos simultáneos del mismo usuario quedan serializados por
  * MySQL, no por esta función.
  */
-export async function spendTokens(input: SpendTokensInput, db?: DbHandle): Promise<EngineResult> {
+export async function spendTokens(input: SpendTokensInput, db?: AnyDbHandle): Promise<EngineResult> {
   const conn = db ?? (await getDb());
   const at = input.at ?? new Date();
 

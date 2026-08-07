@@ -4171,3 +4171,126 @@ export const venueTokenSchedules = mysqlTable("venue_token_schedules", {
 });
 export type VenueTokenSchedule = typeof venueTokenSchedules.$inferSelect;
 export type InsertVenueTokenSchedule = typeof venueTokenSchedules.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEGOLIFE FASE 3 — QR DE CONSUMICIONES
+// ═══════════════════════════════════════════════════════════════════════════
+// Auditoría previa (ver informe de fase): sin infraestructura reutilizable.
+// `coupon_redemptions`/`ticketing_products` son el flujo de cupones externos
+// Groupon/Smartbox (foto+OCR+conciliación financiera, sin token seguro ni
+// single-use real). `compensation_vouchers` es más cercano en FORMA (code
+// único, issued/expires/redeemed, estados canjeado/caducado/anulado) pero es
+// un vale de atención al cliente ligado a `request_id` (incidencias), sin
+// concepto de venue/producto/importe ni requisito de seguridad criptográfica
+// — solo sirve como referencia de patrón, no se reutiliza. No existe ninguna
+// tabla `qr`/`ticket`/`checkin`/`barcode`/`access_code` previa.
+//
+// DECISIÓN DE SEGURIDAD DEL TOKEN: a diferencia de `password_reset_tokens`
+// (que guarda el token en claro — aceptable ahí: 1 destinatario, canal
+// privado por email, de un solo uso inmediato), un QR de consumición puede
+// imprimirse en papel o mostrarse en pantalla, ser fotografiado por
+// cualquiera, y cada canje acredita tokens con valor económico real. Por eso
+// aquí SÍ se aplica hash: se genera un token aleatorio de 256 bits (32 bytes,
+// crypto.randomBytes, codificado base64url), se muestra en claro UNA sola vez
+// (al emitirlo, para el QR/impresión) y solo se guarda su SHA-256 en
+// `code_hash` — una fuga de esta tabla no expone ningún QR válido reutilizable.
+
+// ─── SEGOLIFE: QR_BATCHES (Fase 3) ──────────────────────────────────────────────
+// Agrupa una tanda de QR generados de una vez para imprimir/organizar — no es
+// una entidad operativa por sí sola, cada `consumption_qr_codes.batch_id` es
+// la referencia real. amount_cents/product_id nullable porque un batch puede
+// generarse "en blanco" (solo venue) si el importe se decide por regla.
+
+export const qrBatches = mysqlTable("qr_batches", {
+  id:               int("id").autoincrement().primaryKey(),
+  venueId:          int("venue_id").notNull(),
+  productId:        int("product_id"),
+  amountCents:      int("amount_cents"),
+  quantity:         int("quantity").notNull(),
+  expiresAt:        timestamp("expires_at"),
+  createdByUserId:  int("created_by_user_id"),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+});
+export type QrBatch = typeof qrBatches.$inferSelect;
+export type InsertQrBatch = typeof qrBatches.$inferInsert;
+
+// ─── SEGOLIFE: CONSUMPTION_QR_CODES (Fase 3) ────────────────────────────────────
+// Un QR de consumición individual. `code_hash` (SHA-256 hex, 64 caracteres)
+// es lo único que se persiste del token — el token en claro nunca se guarda
+// (ver nota de seguridad arriba). `amount_cents` en enteros (nunca float) —
+// 18,50€ se guarda como 1850; tokenEngine.calculateBaseTokens ya sabe
+// convertir a euros para reglas per_euro/percentage.
+//
+// SINGLE-USE real: el canje se resuelve con un UPDATE condicional
+// (`WHERE status='issued'`, comprobando affectedRows=1) dentro de la misma
+// transacción que crea el movimiento de ledger — ver
+// server/segolife/qr/consumptionQrService.ts. Dos peticiones simultáneas
+// para el mismo QR nunca pueden ganar ambas: MySQL serializa el UPDATE a
+// nivel de fila, no hace falta un lock explícito adicional.
+//
+// `ledger_id` se rellena tras el canje con el movimiento creado por
+// tokenEngine.earnTokens() — permite navegar QR→ledger para auditoría y para
+// que una reversión administrativa (reverseTransaction, Fase 2) sepa qué
+// movimiento corregir. El QR NO vuelve a `issued` tras una reversión (ver
+// comentario de cancelled_at más abajo) — sigue marcando fielmente que fue
+// canjeado; es el ledger quien refleja la corrección.
+//
+// cancelled_at/cancelled_by_user_id/cancel_reason viven aquí (no en una tabla
+// aparte) porque cancelar es un estado terminal simple de UN QR concreto, no
+// una entidad con vida propia. Un QR `redeemed` nunca pasa a `cancelled`
+// directamente (ver PASO 20 del roadmap) — ese caso usa reverseTransaction.
+
+export const consumptionQrCodes = mysqlTable("consumption_qr_codes", {
+  id:                 int("id").autoincrement().primaryKey(),
+  codeHash:           varchar("code_hash", { length: 64 }).notNull(),
+  venueId:            int("venue_id").notNull(),
+  productId:          int("product_id"),
+  amountCents:        int("amount_cents"),
+  quantity:           int("quantity").notNull().default(1),
+  batchId:            int("batch_id"),
+  issuedAt:           timestamp("issued_at").defaultNow().notNull(),
+  expiresAt:          timestamp("expires_at"),
+  status:             mysqlEnum("status", ["issued", "redeemed", "expired", "cancelled"]).notNull().default("issued"),
+  redeemedAt:         timestamp("redeemed_at"),
+  redeemedByUserId:   int("redeemed_by_user_id"),
+  ledgerId:           int("ledger_id"),
+  sourceType:         varchar("source_type", { length: 64 }).notNull().default("manual"),
+  sourceReference:    varchar("source_reference", { length: 128 }),
+  issuedByUserId:     int("issued_by_user_id"),
+  terminalId:         varchar("terminal_id", { length: 64 }),
+  cancelledAt:        timestamp("cancelled_at"),
+  cancelledByUserId:  int("cancelled_by_user_id"),
+  cancelReason:       varchar("cancel_reason", { length: 256 }),
+  metadata:           json("metadata").$type<Record<string, unknown>>(),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+  updatedAt:          timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  codeHashUnique: unique("consumption_qr_codes_code_hash_unique").on(table.codeHash),
+}));
+export type ConsumptionQrCode = typeof consumptionQrCodes.$inferSelect;
+export type InsertConsumptionQrCode = typeof consumptionQrCodes.$inferInsert;
+
+// ─── SEGOLIFE: QR_REDEMPTION_ATTEMPTS (Fase 3) ──────────────────────────────────
+// Log de auditoría/antifraude — INSERT-only, nunca se actualiza ni se borra.
+// Registra TODO intento de canje, incluido uno con un token que no resuelve
+// a ningún QR real (`qr_id` null, `token_fingerprint` = SHA-256 del token
+// recibido — el mismo hash que ya se calcula para la búsqueda, nunca el
+// token en claro). Permite detectar patrones de fuerza bruta (muchos
+// `invalid_token`/`not_found` desde la misma IP) sin guardar nada sensible.
+
+export const qrRedemptionAttempts = mysqlTable("qr_redemption_attempts", {
+  id:                 int("id").autoincrement().primaryKey(),
+  qrId:               int("qr_id"),
+  tokenFingerprint:   varchar("token_fingerprint", { length: 64 }),
+  userId:             int("user_id"),
+  result:             mysqlEnum("result", [
+    "success", "already_redeemed", "expired", "cancelled",
+    "invalid_token", "not_found", "venue_inactive", "product_inactive",
+    "community_not_authorized", "outside_schedule", "no_rule", "rate_limited", "error",
+  ]).notNull(),
+  ipAddress:          varchar("ip_address", { length: 64 }),
+  userAgent:          varchar("user_agent", { length: 256 }),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+});
+export type QrRedemptionAttempt = typeof qrRedemptionAttempts.$inferSelect;
+export type InsertQrRedemptionAttempt = typeof qrRedemptionAttempts.$inferInsert;

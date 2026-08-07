@@ -47,5 +47,26 @@
     "tokensBalance": "Saldo",
     "tokensHistory": "Historial reciente",
     "tokensNoMovements": "Todavía no tienes movimientos."
+  },
+  "scan": {
+    "title": "Escanear QR",
+    "subtitle": "Escanea el QR del local para acreditar tus SegoTokens.",
+    "scanButton": "Escanear con cámara",
+    "manualButton": "Introducir código manualmente",
+    "manualPlaceholder": "Pega o escribe el código",
+    "manualSubmit": "Canjear",
+    "cancel": "Cancelar",
+    "scanning": "Apunta la cámara al código QR…",
+    "cameraError": "No se pudo acceder a la cámara. Introduce el código manualmente.",
+    "submitting": "Validando código…",
+    "resultTitle": "SegoTokens acreditados",
+    "newBalance": "Tu nuevo saldo",
+    "base": "Base",
+    "recurrenceBonus": "Bonus de recurrencia",
+    "campaignApplied": "Campaña aplicada",
+    "total": "Total",
+    "scanAnother": "Escanear otro código",
+    "errorTitle": "No se pudo canjear este código",
+    "sourceLabel": "Origen: Consumición"
   }
 }

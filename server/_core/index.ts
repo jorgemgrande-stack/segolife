@@ -98,6 +98,24 @@ const uploadRateLimit = rateLimit({
   },
 });
 
+/**
+ * Canje de QR de consumición (Fase 3): 20 req/min por IP. El token en sí ya
+ * tiene 256 bits de entropía real (fuerza bruta computacionalmente
+ * inviable) — este límite protege contra spam/DoS del endpoint y ralentiza
+ * cualquier intento automatizado, sin bloquear el uso normal de un
+ * estudiante escaneando varios QR reales en una noche.
+ */
+const qrRedeemRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Demasiados intentos de canje. Espera 1 minuto.",
+    code: "RATE_LIMIT_EXCEEDED",
+  },
+});
+
 // Modo de autenticación: LOCAL_AUTH=true usa email+password local en lugar de Manus OAuth
 const USE_LOCAL_AUTH = process.env.LOCAL_AUTH === "true";
 
@@ -171,6 +189,9 @@ async function startServer() {
   // Rate limiting en endpoint de subida de archivos (20 req/min por IP)
   app.use("/api/upload", uploadRateLimit);
   app.use("/api/upload-media", uploadRateLimit);
+
+  // Rate limiting en canje de QR de consumición (Fase 3, 20 req/min por IP)
+  app.use("/api/trpc/consumptionQr.redeem", qrRedeemRateLimit);
 
   // Middleware de protección: bloquea rutas /api/trpc de procedimientos protegidos
   // si no hay sesión válida. Funciona en ambos modos (local y Manus OAuth).

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, useLocation } from "wouter";
+import { useParams, useLocation, Link } from "wouter";
 import AdminLayout from "@/components/AdminLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { ArrowLeft, Loader2, Store, Sparkles, Clock, Package, Trash2 } from "lucide-react";
+import { ArrowLeft, Loader2, Store, Sparkles, Clock, Package, Trash2, QrCode } from "lucide-react";
 
 const NONE = "__none__";
 const WEEKDAYS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
@@ -154,6 +154,83 @@ function VenueSegoTokensTab({ venueId }: { venueId: number }) {
   );
 }
 
+/** Pestaña QR de la ficha de venue — batches, últimos canjes y tasa de canje real (Fase 3). */
+function VenueQrTab({ venueId }: { venueId: number }) {
+  const { data, isLoading } = trpc.consumptionQr.list.useQuery({ communityId: "all", venueId, limit: 200, offset: 0 });
+  const { data: batches } = trpc.consumptionQr.listBatches.useQuery({ communityId: "all", venueId });
+
+  const items = data?.items ?? [];
+  const issuedTotal = items.length;
+  const redeemedTotal = items.filter(q => q.status === "redeemed").length;
+  const redemptionRate = issuedTotal > 0 ? Math.round((redeemedTotal / issuedTotal) * 100) : null;
+  const recentRedemptions = items.filter(q => q.status === "redeemed").slice(0, 10);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between bg-card border border-border rounded-lg p-5">
+        <div className="flex items-center gap-2">
+          <QrCode className="w-5 h-5 text-primary" />
+          <p className="text-sm text-muted-foreground">Generación y auditoría de QR de consumición para este venue.</p>
+        </div>
+        <Link href="/admin/qr"><Button size="sm"><QrCode className="w-4 h-4 mr-2" />Generar QR</Button></Link>
+      </div>
+
+      {isLoading ? (
+        <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="bg-card border border-border rounded-lg p-4">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground">QR emitidos</p>
+              <p className="text-2xl font-semibold text-foreground">{issuedTotal}</p>
+            </div>
+            <div className="bg-card border border-border rounded-lg p-4">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Canjeados</p>
+              <p className="text-2xl font-semibold text-emerald-600">{redeemedTotal}</p>
+            </div>
+            <div className="bg-card border border-border rounded-lg p-4">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Tasa de canje</p>
+              <p className="text-2xl font-semibold text-foreground">{redemptionRate != null ? `${redemptionRate}%` : "—"}</p>
+            </div>
+          </div>
+
+          <div className="bg-card border border-border rounded-lg p-4">
+            <p className="text-sm font-semibold text-foreground mb-3">Lotes de este venue</p>
+            {!batches || batches.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Sin lotes todavía.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {batches.map(b => (
+                  <div key={b.id} className="flex items-center justify-between text-sm bg-accent/40 rounded-md px-2.5 py-1.5">
+                    <span className="text-foreground">Lote #{b.id} · {b.quantity} códigos</span>
+                    <span className="text-xs text-muted-foreground">{new Date(b.createdAt).toLocaleDateString("es-ES")}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-card border border-border rounded-lg p-4">
+            <p className="text-sm font-semibold text-foreground mb-3">Últimos canjes</p>
+            {recentRedemptions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Sin canjes todavía.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {recentRedemptions.map(q => (
+                  <div key={q.id} className="flex items-center justify-between text-sm bg-accent/40 rounded-md px-2.5 py-1.5">
+                    <span className="text-foreground">{q.redeemedByName ?? `Usuario #${q.redeemedByUserId}`}{q.productName ? ` · ${q.productName}` : ""}</span>
+                    <span className="text-xs text-muted-foreground">{q.redeemedAt ? new Date(q.redeemedAt).toLocaleString("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function VenueDetail() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
@@ -275,6 +352,7 @@ export default function VenueDetail() {
             <TabsTrigger value="comunidades">Comunidades</TabsTrigger>
             <TabsTrigger value="eventos">Eventos</TabsTrigger>
             <TabsTrigger value="segotokens">SegoTokens</TabsTrigger>
+            <TabsTrigger value="qr">QR / Consumiciones</TabsTrigger>
             <TabsTrigger value="futuro">Próximamente</TabsTrigger>
           </TabsList>
 
@@ -367,6 +445,10 @@ export default function VenueDetail() {
 
           <TabsContent value="segotokens">
             <VenueSegoTokensTab venueId={venueId} />
+          </TabsContent>
+
+          <TabsContent value="qr">
+            <VenueQrTab venueId={venueId} />
           </TabsContent>
 
           <TabsContent value="futuro" className="space-y-3">

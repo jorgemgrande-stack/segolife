@@ -14,9 +14,10 @@
  *     server/routers/students.ts pero nunca sembrados en ninguna migración
  *     histórica (el módulo de estudiantes es posterior a 0070) — y, con el
  *     mismo criterio, `venues.view` / `venues.manage` / `events.view` /
- *     `events.manage` (Fase 1D, server/routers/venues.ts y events.ts) y
+ *     `events.manage` (Fase 1D, server/routers/venues.ts y events.ts),
  *     `tokens.view` / `tokens.manage` / `tokens.adjust` / `tokens.rules.manage`
- *     (Fase 2, server/routers/tokens.ts).
+ *     (Fase 2, server/routers/tokens.ts) y `qr.view` / `qr.issue` /
+ *     `qr.manage` / `qr.cancel` (Fase 3, server/routers/consumptionQr.ts).
  *  3. Concede esos permisos al rol `admin`.
  *  4. Confirma que `settings.manage` existe (ya sembrado en 0070 — solo
  *     verificación, no inserta nada nuevo).
@@ -54,6 +55,13 @@ const TOKENS_PERMISSIONS: Array<[string, string, string, string]> = [
   ["tokens.rules.manage", "tokens", "rules.manage",  "Crear/editar/activar reglas del motor de SegoTokens"],
 ];
 
+const QR_PERMISSIONS: Array<[string, string, string, string]> = [
+  ["qr.view",   "qr", "view",   "Ver QR de consumición, batches, canjes e intentos"],
+  ["qr.issue",  "qr", "issue",  "Emitir QR de consumición individuales o en lote"],
+  ["qr.manage", "qr", "manage", "Gestión operativa de QR (batches, listados, impresión)"],
+  ["qr.cancel", "qr", "cancel", "Cancelar QR emitidos no canjeados"],
+];
+
 export async function seedRbacIfNeeded(): Promise<{
   rolesEnsured: string[];
   permissionsAdded: string[];
@@ -77,8 +85,8 @@ export async function seedRbacIfNeeded(): Promise<{
     }
 
     // 2. Permisos students.view / students.manage / venues.* / events.* /
-    //    tokens.* — no sembrados en ninguna migración histórica.
-    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS]) {
+    //    tokens.* / qr.* — no sembrados en ninguna migración histórica.
+    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_permissions (\`key\`, module, action, description) VALUES (?, ?, ?, ?)`,
         [key, module, action, description]
@@ -86,10 +94,10 @@ export async function seedRbacIfNeeded(): Promise<{
       if ((result as any).affectedRows > 0) permissionsAdded.push(key);
     }
 
-    // 3. Conceder students.* / venues.* / events.* / tokens.* al rol admin
-    //    (idempotente, no asume que el CROSS JOIN histórico de 0070/0077 se
-    //    haya vuelto a ejecutar para estos permisos nuevos).
-    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS]) {
+    // 3. Conceder students.* / venues.* / events.* / tokens.* / qr.* al rol
+    //    admin (idempotente, no asume que el CROSS JOIN histórico de
+    //    0070/0077 se haya vuelto a ejecutar para estos permisos nuevos).
+    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
          SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p

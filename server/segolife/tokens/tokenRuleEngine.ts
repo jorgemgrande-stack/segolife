@@ -30,7 +30,7 @@ import {
   type TokenRule,
   type TokenCampaign,
 } from "../../../drizzle/schema";
-import { countRecentEarnEvents, countDistinctVenuesVisited } from "./tokenLedgerService";
+import { countRecentEarnEvents, countDistinctVenuesVisited, type AnyDbHandle } from "./tokenLedgerService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -70,7 +70,7 @@ function ruleMatchesScope(rule: TokenRule, scope: RuleMatchScope): boolean {
 export async function findApplicableRule(
   scope: RuleMatchScope,
   at: Date = new Date(),
-  db?: DbHandle
+  db?: AnyDbHandle
 ): Promise<TokenRule | null> {
   const conn = db ?? (await getDb());
   const rows = await conn.select().from(tokenRules).where(and(
@@ -144,7 +144,7 @@ export interface RecurrenceResult {
  * movimiento (p.ej. threshold=2 → dispara justo en la 2ª visita, no en la 3ª
  * ni siguientes, salvo que exista otra regla con threshold distinto).
  */
-export async function applyRecurrenceBonus(ctx: RecurrenceContext, db?: DbHandle): Promise<RecurrenceResult> {
+export async function applyRecurrenceBonus(ctx: RecurrenceContext, db?: AnyDbHandle): Promise<RecurrenceResult> {
   const conn = db ?? (await getDb());
   const at = ctx.at ?? new Date();
   const rows = await conn.select().from(tokenRules).where(and(
@@ -182,7 +182,7 @@ export interface CampaignMatchScope {
   at?: Date;
 }
 
-export async function findApplicableCampaign(scope: CampaignMatchScope, db?: DbHandle): Promise<TokenCampaign | null> {
+export async function findApplicableCampaign(scope: CampaignMatchScope, db?: AnyDbHandle): Promise<TokenCampaign | null> {
   const conn = db ?? (await getDb());
   const at = scope.at ?? new Date();
   const campaigns = await conn.select().from(tokenCampaigns).where(eq(tokenCampaigns.active, true));

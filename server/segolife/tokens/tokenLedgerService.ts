@@ -41,13 +41,15 @@ import {
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 5 });
 const _db = drizzle(_pool);
 
-type DbHandle = typeof _db;
+export type DbHandle = typeof _db;
 // El callback de `.transaction()` recibe un tipo distinto (MySqlTransaction),
 // incompatible en TypeScript con MySql2Database aunque comparten la misma
-// API de query builder en tiempo de ejecución — este alias cubre ambos para
-// las funciones internas que pueden recibir cualquiera de los dos.
-type TxHandle = Parameters<Parameters<DbHandle["transaction"]>[0]>[0];
-type AnyDbHandle = DbHandle | TxHandle;
+// API de query builder en tiempo de ejecución — este alias cubre ambos.
+// Exportado para que tokenScheduleService/tokenRuleEngine/tokenEngine (y
+// consumptionQrService, Fase 3) puedan aceptar una transacción ya abierta
+// (p.ej. la que abre el canje de QR) sin duplicar este workaround.
+export type TxHandle = Parameters<Parameters<DbHandle["transaction"]>[0]>[0];
+export type AnyDbHandle = DbHandle | TxHandle;
 
 async function getDb(): Promise<DbHandle> {
   return _db;
@@ -180,7 +182,7 @@ async function postLedgerMovementInTx(
 
 export async function postLedgerMovement(
   input: PostLedgerMovementInput,
-  db?: DbHandle
+  db?: AnyDbHandle
 ): Promise<{ wallet: TokenWallet; ledger: TokenLedgerEntry }> {
   const conn = db ?? (await getDb());
   return conn.transaction(tx => postLedgerMovementInTx(tx, input));
@@ -199,7 +201,7 @@ export interface ReverseTransactionInput {
  */
 export async function reverseTransaction(
   input: ReverseTransactionInput,
-  db?: DbHandle
+  db?: AnyDbHandle
 ): Promise<{ wallet: TokenWallet; ledger: TokenLedgerEntry }> {
   if (!input.reason || !input.reason.trim()) {
     throw new TokenEngineError("REASON_REQUIRED", "La reversión requiere un motivo");
@@ -242,7 +244,7 @@ export interface AdjustManualTokensInput {
 /** Ajuste manual de admin (+/-) — motivo obligatorio, pasa por el mismo núcleo atómico. Nunca edita balance directamente. */
 export async function adjustManualTokens(
   input: AdjustManualTokensInput,
-  db?: DbHandle
+  db?: AnyDbHandle
 ): Promise<{ wallet: TokenWallet; ledger: TokenLedgerEntry }> {
   if (!input.reason || !input.reason.trim()) {
     throw new TokenEngineError("REASON_REQUIRED", "El ajuste manual requiere un motivo");
@@ -257,7 +259,7 @@ export async function adjustManualTokens(
   }, db);
 }
 
-export async function ensureWallet(userId: number, db?: DbHandle): Promise<TokenWallet> {
+export async function ensureWallet(userId: number, db?: AnyDbHandle): Promise<TokenWallet> {
   const conn = db ?? (await getDb());
   const [existing] = await conn.select().from(tokenWallets).where(eq(tokenWallets.userId, userId)).limit(1);
   if (existing) return existing;
@@ -270,7 +272,7 @@ export async function ensureWallet(userId: number, db?: DbHandle): Promise<Token
   return created;
 }
 
-export async function getWalletByUserId(userId: number, db?: DbHandle): Promise<TokenWallet | null> {
+export async function getWalletByUserId(userId: number, db?: AnyDbHandle): Promise<TokenWallet | null> {
   const conn = db ?? (await getDb());
   const [wallet] = await conn.select().from(tokenWallets).where(eq(tokenWallets.userId, userId)).limit(1);
   return wallet ?? null;
@@ -284,7 +286,7 @@ export interface LedgerListFilters {
 export async function listLedgerByUserId(
   userId: number,
   filters: LedgerListFilters = {},
-  db?: DbHandle
+  db?: AnyDbHandle
 ): Promise<TokenLedgerEntry[]> {
   const conn = db ?? (await getDb());
   return conn.select().from(tokenLedger).where(eq(tokenLedger.userId, userId))
@@ -293,7 +295,7 @@ export async function listLedgerByUserId(
     .offset(filters.offset ?? 0);
 }
 
-export async function getLedgerById(id: number, db?: DbHandle): Promise<TokenLedgerEntry | null> {
+export async function getLedgerById(id: number, db?: AnyDbHandle): Promise<TokenLedgerEntry | null> {
   const conn = db ?? (await getDb());
   const [row] = await conn.select().from(tokenLedger).where(eq(tokenLedger.id, id)).limit(1);
   return row ?? null;
@@ -308,7 +310,7 @@ export async function countRecentEarnEvents(
   userId: number,
   sinceDate: Date,
   venueId?: number,
-  db?: DbHandle
+  db?: AnyDbHandle
 ): Promise<number> {
   const conn = db ?? (await getDb());
   const conditions: SQL[] = [
@@ -324,7 +326,7 @@ export async function countRecentEarnEvents(
 export async function countDistinctVenuesVisited(
   userId: number,
   sinceDate: Date,
-  db?: DbHandle
+  db?: AnyDbHandle
 ): Promise<number> {
   const conn = db ?? (await getDb());
   const rows = await conn.select({ venueId: tokenLedger.venueId }).from(tokenLedger)
@@ -345,7 +347,7 @@ export async function sumAmountByRuleInWindow(
   ruleId: number,
   direction: "credit" | "debit",
   sinceDate: Date,
-  db?: DbHandle
+  db?: AnyDbHandle
 ): Promise<number> {
   const conn = db ?? (await getDb());
   const rows = await conn.select({ amount: tokenLedger.amount }).from(tokenLedger)
@@ -367,7 +369,7 @@ export interface GlobalTokenStats {
 }
 
 /** Suma agregada real (no cacheada) — solo la consulta el dashboard admin, tráfico bajo. */
-export async function getGlobalTokenStats(db?: DbHandle): Promise<GlobalTokenStats> {
+export async function getGlobalTokenStats(db?: AnyDbHandle): Promise<GlobalTokenStats> {
   const conn = db ?? (await getDb());
   const [[issuedRow], [spentRow], [balanceRow]] = await Promise.all([
     conn.select({ total: drizzleSql<string>`COALESCE(SUM(${tokenLedger.amount}), 0)` }).from(tokenLedger).where(eq(tokenLedger.direction, "credit")),
@@ -385,7 +387,7 @@ export interface RecentLedgerEntry extends TokenLedgerEntry {
   userName: string | null;
 }
 
-export async function listRecentLedgerGlobal(limit = 20, db?: DbHandle): Promise<RecentLedgerEntry[]> {
+export async function listRecentLedgerGlobal(limit = 20, db?: AnyDbHandle): Promise<RecentLedgerEntry[]> {
   const conn = db ?? (await getDb());
   const rows = await conn.select({ ledger: tokenLedger, userName: users.name }).from(tokenLedger)
     .leftJoin(users, eq(tokenLedger.userId, users.id))

@@ -6,7 +6,7 @@ import {
   Bell, Search, User, BedDouble, Sparkles, UtensilsCrossed, AlertCircle,
   UserPlus, FileCheck, ChevronRight, Receipt, Truck, Monitor, Tag, Ticket,
   Sun, Moon, ExternalLink, Target, MessageCircle, Bot, Mail, Building2,
-  Briefcase, GraduationCap, Store, CalendarDays, Coins,
+  Briefcase, GraduationCap, Store, CalendarDays, Coins, QrCode,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -85,6 +85,12 @@ const navItems = [
       { label: "Reglas", href: "/admin/tokens/rules" },
       { label: "Campañas", href: "/admin/tokens/campaigns" },
     ],
+  },
+  {
+    label: "QR consumición",
+    href: "/admin/qr",
+    icon: QrCode,
+    roles: ["admin"],
   },
   {
     label: "CRM",

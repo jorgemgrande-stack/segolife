@@ -897,6 +897,13 @@
       "when": 1779224814206,
       "tag": "0128_segolife_segotokens_engine",
       "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "5",
+      "when": 1779224815206,
+      "tag": "0129_segolife_consumption_qr",
+      "breakpoints": true
     }
   ]
 }

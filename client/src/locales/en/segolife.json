@@ -47,5 +47,26 @@
     "tokensBalance": "Balance",
     "tokensHistory": "Recent history",
     "tokensNoMovements": "No movements yet."
+  },
+  "scan": {
+    "title": "Scan QR",
+    "subtitle": "Scan the venue's QR code to earn your SegoTokens.",
+    "scanButton": "Scan with camera",
+    "manualButton": "Enter code manually",
+    "manualPlaceholder": "Paste or type the code",
+    "manualSubmit": "Redeem",
+    "cancel": "Cancel",
+    "scanning": "Point the camera at the QR code…",
+    "cameraError": "Could not access the camera. Enter the code manually.",
+    "submitting": "Validating code…",
+    "resultTitle": "SegoTokens earned",
+    "newBalance": "Your new balance",
+    "base": "Base",
+    "recurrenceBonus": "Recurrence bonus",
+    "campaignApplied": "Campaign applied",
+    "total": "Total",
+    "scanAnother": "Scan another code",
+    "errorTitle": "This code could not be redeemed",
+    "sourceLabel": "Source: Consumption"
   }
 }
