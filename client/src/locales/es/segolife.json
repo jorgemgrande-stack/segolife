@@ -17,5 +17,26 @@
       "label": "Comunidad",
       "all": "Todas"
     }
+  },
+  "studentProfile": {
+    "saved": "Perfil actualizado",
+    "incomplete": "Completa tu perfil para continuar",
+    "personalData": "Datos personales",
+    "firstName": "Nombre",
+    "lastName": "Apellidos",
+    "dateOfBirth": "Fecha de nacimiento",
+    "nationality": "Nacionalidad (ISO-2)",
+    "countryOfOrigin": "País de origen (ISO-2)",
+    "academicData": "Datos académicos",
+    "university": "Universidad",
+    "degreeProgram": "Programa / grado",
+    "academicYear": "Curso académico",
+    "stay": "Estancia en Segovia",
+    "arrivalDate": "Fecha de llegada",
+    "departureDate": "Fecha prevista de salida",
+    "address": "Dirección",
+    "city": "Ciudad",
+    "postalCode": "Código postal",
+    "save": "Guardar"
   }
 }

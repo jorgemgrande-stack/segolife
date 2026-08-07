@@ -13,8 +13,9 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { CommunityProvider } from "./contexts/CommunityContext";
 import "./lib/i18n";
 
-// ── SEGOLIFE (lazy — página nueva, independiente de la app heredada) ────────
+// ── SEGOLIFE (lazy — páginas nuevas, independientes de la app heredada) ─────
 const CommunityHome = lazy(() => import("./pages/segolife/CommunityHome"));
+const StudentProfile = lazy(() => import("./pages/segolife/StudentProfile"));
 
 // ── PUBLIC PAGES (carga inmediata — visibles sin autenticación) ──────────────
 import Home from "./pages/Home";
@@ -138,6 +139,10 @@ const ReviewsManager = lazy(() => import("./pages/admin/ReviewsManager"));
 const RestaurantsManager = lazy(() => import("./pages/admin/restaurants/RestaurantsManager"));
 const GlobalCalendar = lazy(() => import("./pages/admin/restaurants/GlobalCalendar"));
 
+// Segolife: CRM de estudiantes (Fase 1C)
+const StudentsManager = lazy(() => import("./pages/admin/students/StudentsManager"));
+const StudentDetail = lazy(() => import("./pages/admin/students/StudentDetail"));
+
 // Users & Settings
 const UsersManager = lazy(() => import("./pages/admin/users/UsersManager"));
 const Settings = lazy(() => import("./pages/admin/settings/Settings"));
@@ -212,6 +217,10 @@ function Router() {
       {/* ── SEGOLIFE: comunidades (Fase 1B) — un único componente, sin duplicar frontend ── */}
       <Route path="/ie">{() => <Suspense fallback={null}><CommunityHome /></Suspense>}</Route>
       <Route path="/uva">{() => <Suspense fallback={null}><CommunityHome /></Suspense>}</Route>
+
+      {/* ── SEGOLIFE: perfil autoservicio del estudiante (Fase 1C) ── */}
+      <Route path="/ie/profile">{() => <Suspense fallback={null}><StudentProfile /></Suspense>}</Route>
+      <Route path="/uva/profile">{() => <Suspense fallback={null}><StudentProfile /></Suspense>}</Route>
 
       <Route path="/experiencias" component={Experiences} />
       <Route path="/experiencias/:slug" component={ExperienceDetail} />
@@ -419,6 +428,8 @@ function Router() {
 
       {/* Users & Settings */}
       <Route path="/admin/usuarios">{() => <Suspense fallback={<AdminLoadingFallback />}><UsersManager /></Suspense>}</Route>
+      <Route path="/admin/students">{() => <Suspense fallback={<AdminLoadingFallback />}><StudentsManager /></Suspense>}</Route>
+      <Route path="/admin/students/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><StudentDetail /></Suspense>}</Route>
       <Route path="/admin/configuracion">{() => <Suspense fallback={<AdminLoadingFallback />}><ConfigPanel /></Suspense>}</Route>
       <Route path="/admin/configuracion/sitio">{() => <Suspense fallback={<AdminLoadingFallback />}><Settings /></Suspense>}</Route>
       <Route path="/admin/configuracion/estado">{() => <Suspense fallback={<AdminLoadingFallback />}><ConfigStatus /></Suspense>}</Route>

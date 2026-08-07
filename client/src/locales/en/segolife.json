@@ -17,5 +17,26 @@
       "label": "Community",
       "all": "All"
     }
+  },
+  "studentProfile": {
+    "saved": "Profile updated",
+    "incomplete": "Complete your profile to continue",
+    "personalData": "Personal data",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "dateOfBirth": "Date of birth",
+    "nationality": "Nationality (ISO-2)",
+    "countryOfOrigin": "Country of origin (ISO-2)",
+    "academicData": "Academic data",
+    "university": "University",
+    "degreeProgram": "Degree / program",
+    "academicYear": "Academic year",
+    "stay": "Stay in Segovia",
+    "arrivalDate": "Arrival date",
+    "departureDate": "Expected departure date",
+    "address": "Address",
+    "city": "City",
+    "postalCode": "Postal code",
+    "save": "Save"
   }
 }

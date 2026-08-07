@@ -3705,3 +3705,100 @@ export const userCommunities = mysqlTable("user_communities", {
 }));
 export type UserCommunity = typeof userCommunities.$inferSelect;
 export type InsertUserCommunity = typeof userCommunities.$inferInsert;
+
+// ─── SEGOLIFE: STUDENT_PROFILES (Fase 1C) ──────────────────────────────────────
+// Datos específicos de estudiante, separados de `users` (identidad/auth).
+//
+// AUDITORÍA — qué vive dónde (ver docs/SEGOLIFE_ROADMAP.md para el detalle):
+//   En `users` (reutilizado, NO duplicado aquí): name, email, phone, avatarUrl,
+//   isActive, passwordHash/inviteToken/lastSignedIn (auth). `users.role` sigue
+//   siendo el enum legacy de Náyade — un estudiante normal usa role="user".
+//   En `student_profiles` (nuevo, porque `users.name` es un único campo de
+//   texto sin separar nombre/apellidos, y el resto no tiene ningún equivalente
+//   heredado): first_name/last_name, y todos los campos académicos/de estancia.
+//
+// NO tiene community_id — la comunidad del estudiante vive en `user_communities`
+// (Fase 1B), nunca duplicada aquí (ver CLAUDE.md, regla arquitectónica).
+//
+// university_id SÍ es una columna directa aquí (no M2M) — decisión deliberada,
+// distinta de `community_universities`: ese M2M modela qué universidades sirve
+// una COMUNIDAD (organizativo); esto modela en qué universidad está
+// matriculado UN ESTUDIANTE (atributo personal, igual de singular que
+// degree_program o academic_year). Para el MVP un estudiante tiene una única
+// universidad principal — no se ha bloqueado ningún cambio futuro a M2M
+// (`student_universities`) si apareciera un caso real de doble titulación;
+// no se ha construido de más sin necesidad.
+
+export const studentProfiles = mysqlTable("student_profiles", {
+  id:                     int("id").autoincrement().primaryKey(),
+  userId:                 int("user_id").notNull(),
+  firstName:              varchar("first_name", { length: 128 }),
+  lastName:               varchar("last_name", { length: 128 }),
+  dateOfBirth:            varchar("date_of_birth", { length: 10 }), // YYYY-MM-DD
+  nationality:            varchar("nationality", { length: 2 }),    // ISO-3166-1 alpha-2
+  countryOfOrigin:        varchar("country_of_origin", { length: 2 }),
+  preferredLocale:        varchar("preferred_locale", { length: 8 }), // null = usa el default_locale de su comunidad
+  universityId:           int("university_id"),
+  degreeProgram:          varchar("degree_program", { length: 256 }),
+  academicYear:           varchar("academic_year", { length: 32 }), // string libre: "1", "2", "Máster", "PhD"...
+  arrivalDate:            varchar("arrival_date", { length: 10 }),
+  expectedDepartureDate:  varchar("expected_departure_date", { length: 10 }),
+  addressLine:            varchar("address_line", { length: 256 }), // privado — nunca expuesto en endpoints públicos
+  postalCode:             varchar("postal_code", { length: 16 }),
+  city:                   varchar("city", { length: 128 }),
+  profileCompleted:       boolean("profile_completed").notNull().default(false),
+  status:                 mysqlEnum("status", ["active", "inactive"]).notNull().default("active"),
+  createdAt:              timestamp("created_at").defaultNow().notNull(),
+  updatedAt:              timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  userIdUnique: unique("student_profiles_user_id_unique").on(table.userId),
+}));
+export type StudentProfile = typeof studentProfiles.$inferSelect;
+export type InsertStudentProfile = typeof studentProfiles.$inferInsert;
+
+// ─── SEGOLIFE: STUDENT_TAGS / STUDENT_TAG_ASSIGNMENTS ──────────────────────────
+// El CRM heredado tiene `clients.tags` (json string[] sin catálogo) — insuficiente
+// porque el requisito pide etiquetas CONFIGURABLES (gestionables por un admin,
+// sin typos/duplicados, sin tocar código para añadir una nueva). Por eso catálogo
+// + tabla puente en vez de una columna JSON: nunca se hardcodean nombres de
+// etiqueta en el schema ni en el código — "VIP"/"Ambassador"/etc. son filas,
+// no un enum.
+
+export const studentTags = mysqlTable("student_tags", {
+  id:         int("id").autoincrement().primaryKey(),
+  name:       varchar("name", { length: 64 }).notNull().unique(),
+  color:      varchar("color", { length: 16 }), // hex opcional, para el badge en UI
+  createdAt:  timestamp("created_at").defaultNow().notNull(),
+});
+export type StudentTag = typeof studentTags.$inferSelect;
+export type InsertStudentTag = typeof studentTags.$inferInsert;
+
+export const studentTagAssignments = mysqlTable("student_tag_assignments", {
+  id:                 int("id").autoincrement().primaryKey(),
+  studentProfileId:   int("student_profile_id").notNull(),
+  tagId:              int("tag_id").notNull(),
+  assignedByUserId:   int("assigned_by_user_id"),
+  assignedAt:         timestamp("assigned_at").defaultNow().notNull(),
+}, (table) => ({
+  studentTagUnique: unique("student_tag_assignments_unique").on(table.studentProfileId, table.tagId),
+}));
+export type StudentTagAssignment = typeof studentTagAssignments.$inferSelect;
+export type InsertStudentTagAssignment = typeof studentTagAssignments.$inferInsert;
+
+// ─── SEGOLIFE: STUDENT_NOTES ────────────────────────────────────────────────────
+// Notas internas de administración sobre un estudiante — privadas, nunca
+// expuestas al propio estudiante (ver server/routers/students.ts, procedures
+// separadas para "mi perfil" vs. "ficha admin"). Tabla dedicada en vez de un
+// blob JSON embebido, mismo patrón que `quote_internal_notes` (precedente
+// heredado): permite listar/paginar/ordenar notas reales.
+
+export const studentNotes = mysqlTable("student_notes", {
+  id:                 int("id").autoincrement().primaryKey(),
+  studentProfileId:   int("student_profile_id").notNull(),
+  authorUserId:       int("author_user_id"),
+  note:               text("note").notNull(),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+  updatedAt:          timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type StudentNote = typeof studentNotes.$inferSelect;
+export type InsertStudentNote = typeof studentNotes.$inferInsert;
