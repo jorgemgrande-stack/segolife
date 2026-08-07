@@ -10,6 +10,9 @@
 > - **No realizar despliegues (Railway o cualquier otro) ni migraciones destructivas de base de datos sin instrucción explícita del usuario en la conversación actual.**
 > - Náyade tiene su propia infraestructura de producción real (Railway, dominio, base de datos, facturación fiscal) completamente ajena a este repositorio. Ninguna acción de este proyecto debe tocarla, consultarla como si fuera propia, ni asumir sus credenciales, dominios o proyectos de Railway como válidos aquí.
 
+> **REGLA ARQUITECTÓNICA FUNDAMENTAL — MULTICOMUNIDAD.**
+> SEGOLIFE es una única plataforma. IE y UVA (y cualquier campus/comunidad futura) NO son aplicaciones, backends ni forks distintos — son comunidades configurables dentro de un único backend, una única base de datos, un único admin, un único CRM y un único motor de eventos (y, a futuro, un único motor de SegoTokens y de beneficios). **Prohibido escribir `if (community === "ie")` / `if (community === "uva")` o equivalentes en código de lógica de negocio** (routers, helpers de BD, componentes de frontend) — la única excepción es contenido de seed o fixtures de test. Toda diferencia por comunidad se resuelve consultando la tabla `communities` y sus relaciones (M2M con venues/events/usuarios), nunca comparando un literal de comunidad en el código. Detalle completo en `docs/SEGOLIFE_MULTICOMMUNITY_ARCHITECTURE.md`.
+
 Este archivo proporciona a Claude (en VS Code o cualquier entorno de desarrollo) contexto técnico para trabajar de forma efectiva en el proyecto **Segolife**. Léelo al inicio de cada sesión de trabajo. El detalle funcional de lo que Segolife será como producto se documentará en una fase posterior; este archivo cubre por ahora únicamente el estado técnico heredado.
 
 ---
@@ -89,6 +92,8 @@ El proyecto usa un stack moderno y tipado de extremo a extremo. En el servidor c
 **El schema de base de datos es la fuente de verdad.** Cualquier cambio en `drizzle/schema.ts` debe ir seguido de `pnpm drizzle-kit push` (desarrollo) o `pnpm drizzle-kit generate` + aplicar la migración SQL (producción).
 
 **Los procedimientos protegidos usan `protectedProcedure`.** Los públicos usan `publicProcedure`. Nunca expongas datos sensibles en procedimientos públicos. Para operaciones exclusivas de admin, añade la comprobación `if (ctx.user.role !== 'admin') throw new TRPCError({ code: 'FORBIDDEN' })`.
+
+**Nunca hardcodees el nombre de una comunidad (`"ie"`, `"uva"`) en lógica de negocio.** Ni `if`/`switch` sobre el nombre o slug de comunidad, ni nombres de función/variable con "IE"/"UVA" en código de `server/routers/*`, `server/*Db.ts` ni componentes de frontend. La única excepción es contenido de seed o fixtures de test. Toda diferencia de comportamiento por comunidad se resuelve consultando `communities` y sus relaciones — ver "Regla arquitectónica fundamental" al principio de este archivo y `docs/SEGOLIFE_MULTICOMMUNITY_ARCHITECTURE.md`.
 
 **Los assets estáticos (imágenes, vídeos) no van en `client/public/` ni en `client/src/assets/`.** Deben subirse a S3/MinIO y referenciarse por URL CDN. En local, el adaptador de storage guarda en `/tmp/local-storage` durante desarrollo.
 

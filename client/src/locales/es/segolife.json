@@ -1,0 +1,21 @@
+{
+  "brand": "Segolife",
+  "communityHome": {
+    "poweredBy": "Con la tecnología de Segolife",
+    "communityLabel": "Comunidad",
+    "languageLabel": "Idioma",
+    "loading": "Cargando comunidad...",
+    "notFound": "Comunidad no encontrada",
+    "tagline": "Comunidad, eventos y recompensas para estudiantes en Segovia."
+  },
+  "languageSwitcher": {
+    "en": "English",
+    "es": "Español"
+  },
+  "admin": {
+    "communitySelector": {
+      "label": "Comunidad",
+      "all": "Todas"
+    }
+  }
+}

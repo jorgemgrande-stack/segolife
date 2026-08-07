@@ -10,6 +10,11 @@ import MaintenanceGate from "./components/MaintenanceGate";
 import { MetaPixelLoader } from "./components/MetaPixelLoader";
 import { GA4Loader } from "./components/GA4Loader";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { CommunityProvider } from "./contexts/CommunityContext";
+import "./lib/i18n";
+
+// ── SEGOLIFE (lazy — página nueva, independiente de la app heredada) ────────
+const CommunityHome = lazy(() => import("./pages/segolife/CommunityHome"));
 
 // ── PUBLIC PAGES (carga inmediata — visibles sin autenticación) ──────────────
 import Home from "./pages/Home";
@@ -203,6 +208,11 @@ function Router() {
     <Switch>
       {/* ── PUBLIC ROUTES ── */}
       <Route path="/" component={Home} />
+
+      {/* ── SEGOLIFE: comunidades (Fase 1B) — un único componente, sin duplicar frontend ── */}
+      <Route path="/ie">{() => <Suspense fallback={null}><CommunityHome /></Suspense>}</Route>
+      <Route path="/uva">{() => <Suspense fallback={null}><CommunityHome /></Suspense>}</Route>
+
       <Route path="/experiencias" component={Experiences} />
       <Route path="/experiencias/:slug" component={ExperienceDetail} />
       <Route path="/galeria" component={Gallery} />
@@ -428,16 +438,23 @@ function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider>
-        <TooltipProvider>
-          <Toaster richColors position="top-right" />
-          <ScrollToTop />
-          <MaintenanceGate>
-            <Router />
-          </MaintenanceGate>
-          <CookieBanner />
-          <MetaPixelLoader />
-          <GA4Loader />
-        </TooltipProvider>
+        {/* CommunityProvider sí envuelve toda la app (barato: solo consulta
+            si la URL es potencialmente de comunidad, ver
+            shared/segolife/routing.ts). AdminCommunityProvider NO va aquí —
+            vive dentro de AdminLayout para no disparar su query en páginas
+            públicas; ver client/src/components/AdminLayout.tsx. */}
+        <CommunityProvider>
+          <TooltipProvider>
+            <Toaster richColors position="top-right" />
+            <ScrollToTop />
+            <MaintenanceGate>
+              <Router />
+            </MaintenanceGate>
+            <CookieBanner />
+            <MetaPixelLoader />
+            <GA4Loader />
+          </TooltipProvider>
+        </CommunityProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );

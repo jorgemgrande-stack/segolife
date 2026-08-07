@@ -161,6 +161,7 @@ import { eq, and, desc, inArray, sql as sqlDrizzle } from "drizzle-orm";
 import { hotelRouter } from "./routers/hotel";
 import { spaRouter } from "./routers/spa";
 import { reviewsRouter } from "./routers/reviews";
+import { communitiesRouter } from "./routers/communities";
 import { restaurantsRouter } from "./routers/restaurants";
 import { crmRouter } from "./routers/crm";
 import { suppliersRouter, settlementsRouter } from "./routers/suppliers";
@@ -2146,6 +2147,7 @@ export const appRouter = router({
   hotel: hotelRouter,
   spa: spaRouter,
   reviews: reviewsRouter,
+  communities: communitiesRouter,
   restaurants: restaurantsRouter,
   crm: crmRouter,
   commercialFollowup: commercialFollowupRouter,

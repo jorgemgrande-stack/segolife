@@ -18,6 +18,8 @@ import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { useTheme } from "@/contexts/ThemeContext";
 import MaintenanceModeControl from "./admin/MaintenanceModeControl";
+import AdminCommunitySelector from "./admin/AdminCommunitySelector";
+import { AdminCommunityProvider } from "@/contexts/AdminCommunityContext";
 
 // flagKey: if set, item is hidden when that feature_flag is disabled.
 // Missing flag or flags not yet loaded → item shown (safe default).
@@ -278,7 +280,7 @@ interface AdminLayoutProps {
   title?: string;
 }
 
-export default function AdminLayout({ children, title }: AdminLayoutProps) {
+function AdminLayoutInner({ children, title }: AdminLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
@@ -630,6 +632,7 @@ export default function AdminLayout({ children, title }: AdminLayoutProps) {
             <h1 className="font-display font-semibold text-base sm:text-lg text-foreground truncate min-w-0">{title}</h1>
           )}
           <div className="ml-auto flex items-center gap-2 sm:gap-3 shrink-0">
+            {userRole === "admin" && <AdminCommunitySelector />}
             {userRole === "admin" && <MaintenanceModeControl />}
             <Button variant="ghost" size="icon" className="w-9 h-9">
               <Search className="w-4 h-4" />
@@ -790,5 +793,21 @@ export default function AdminLayout({ children, title }: AdminLayoutProps) {
       </div>
       <WhatsAppNotification />
     </div>
+  );
+}
+
+/**
+ * AdminCommunityProvider se monta aquí (solo dentro del admin), no en
+ * client/src/App.tsx envolviendo toda la aplicación — así la query
+ * `communities.list` que alimenta al selector nunca se dispara en ninguna
+ * página pública. Cada página admin ya envuelve su contenido en
+ * `<AdminLayout>`, así que esto cubre el 100% del admin sin tocar cada
+ * página una a una.
+ */
+export default function AdminLayout(props: AdminLayoutProps) {
+  return (
+    <AdminCommunityProvider>
+      <AdminLayoutInner {...props} />
+    </AdminCommunityProvider>
   );
 }

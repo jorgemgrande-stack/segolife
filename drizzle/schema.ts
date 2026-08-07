@@ -10,6 +10,7 @@ import {
   mysqlTable,
   text,
   timestamp,
+  unique,
   varchar,
 } from "drizzle-orm/mysql-core";
 
@@ -3605,3 +3606,102 @@ export const adminNotificationDismissals = mysqlTable("admin_notification_dismis
   dismissedAt:  bigint("dismissed_at", { mode: "number" }).notNull(),
 });
 export type AdminNotificationDismissal = typeof adminNotificationDismissals.$inferSelect;
+
+// ─── SEGOLIFE: UNIVERSITIES ───────────────────────────────────────────────────
+// Institución académica real (IE University, Universidad de Valladolid...).
+// Uso principal: referencia/verificación (dominio de email), nombre oficial.
+// No confundir con `communities` — una universidad puede no tener ninguna
+// comunidad Segolife todavía, o (a futuro) tener más de una.
+// Ver docs/SEGOLIFE_DOMAIN_MODEL.md.
+
+export const universities = mysqlTable("universities", {
+  id:           int("id").autoincrement().primaryKey(),
+  name:         varchar("name", { length: 256 }).notNull(),
+  slug:         varchar("slug", { length: 128 }).notNull().unique(),
+  emailDomain:  varchar("email_domain", { length: 128 }),
+  country:      varchar("country", { length: 2 }).notNull().default("ES"),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type University = typeof universities.$inferSelect;
+export type InsertUniversity = typeof universities.$inferInsert;
+
+// ─── SEGOLIFE: COMMUNITIES ─────────────────────────────────────────────────────
+// La unidad real de tenant de Segolife (SEGOLIFE IE, SEGOLIFE UVA, futuros
+// campus). Todo el contenido, eventos y promociones se ancla a esto — nunca
+// a un literal "ie"/"uva" en código de negocio (ver CLAUDE.md, regla
+// arquitectónica fundamental). `defaultLocale`/`availableLocales` son DATOS,
+// no lógica: la app nunca decide el idioma comparando el slug de comunidad,
+// siempre lee estas columnas.
+//
+// Reutiliza la forma de la tabla `organizations` (multi-tenant heredada de
+// Náyade, existente pero desconectada de todo el resto del sistema — ver
+// docs/SEGOLIFE_DOMAIN_MODEL.md §4) como tabla independiente y propia de
+// Segolife, en vez de reutilizar `organizations` directamente: `organizations`
+// sigue existiendo intacta (no se toca, no se borra) por si en el futuro se
+// necesita para otro propósito multi-tenant heredado.
+//
+// NO tiene columna university_id — ver `communityUniversities` justo debajo.
+// Una comunidad puede tener 0, 1 o (a futuro) varias universidades.
+
+export const communities = mysqlTable("communities", {
+  id:               int("id").autoincrement().primaryKey(),
+  name:             varchar("name", { length: 256 }).notNull(),
+  slug:             varchar("slug", { length: 128 }).notNull().unique(),
+  defaultLocale:    varchar("default_locale", { length: 8 }).notNull().default("es"),
+  availableLocales: json("available_locales").$type<string[]>().notNull().default(["es"]),
+  status:           mysqlEnum("status", ["active", "inactive", "onboarding"]).notNull().default("onboarding"),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+  updatedAt:        timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type Community = typeof communities.$inferSelect;
+export type InsertCommunity = typeof communities.$inferInsert;
+
+// ─── SEGOLIFE: COMMUNITY_UNIVERSITIES ──────────────────────────────────────────
+// Tabla puente M2M entre `communities` y `universities`. Reemplaza a un
+// `communities.university_id` directo (1:N) que se implementó inicialmente
+// y contradecía docs/SEGOLIFE_MULTICOMMUNITY_ARCHITECTURE.md: una comunidad
+// debe poder abarcar 0, 1 o varias universidades (y una universidad puede
+// tener varias comunidades). Corregido antes del primer commit del schema.
+// unique(community_id, university_id) evita duplicar el mismo enlace.
+
+export const communityUniversities = mysqlTable("community_universities", {
+  id:             int("id").autoincrement().primaryKey(),
+  communityId:    int("community_id").notNull(),
+  universityId:   int("university_id").notNull(),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  communityUniversityUnique: unique("community_universities_unique").on(table.communityId, table.universityId),
+}));
+export type CommunityUniversity = typeof communityUniversities.$inferSelect;
+export type InsertCommunityUniversity = typeof communityUniversities.$inferInsert;
+
+// ─── SEGOLIFE: USER_COMMUNITIES ────────────────────────────────────────────────
+// Tabla puente M2M: a qué comunidad(es) pertenece un usuario. Modelada como
+// M2M (no una columna community_id directa en `users`) a propósito: el caso
+// normal es 1 usuario = 1 comunidad, pero esto evita tener que migrar `users`
+// el día que aparezca un admin global sin comunidad fija o un caso de doble
+// afiliación. unique(user_id, community_id) impide duplicar la misma
+// membresía a nivel de motor — la capa de aplicación (addUserToCommunity en
+// communitiesDb.ts) sigue comprobando primero para devolver un no-op
+// silencioso en vez de depender del error de MySQL.
+//
+// Sin FK real a `users`/`communities` — el schema heredado de Náyade no usa
+// FKs reales en ninguna de sus 152 tablas (ver docs/SEGOLIFE_DOMAIN_MODEL.md,
+// "Advertencia estructural"); seguimos esa convención aquí para no introducir
+// un patrón inconsistente con el resto del proyecto. Consecuencia: borrar un
+// usuario o una comunidad NO borra en cascada sus filas de user_communities
+// (quedarían huérfanas), igual que en el resto del schema — no se ha
+// inventado ninguna cascada destructiva nueva.
+
+export const userCommunities = mysqlTable("user_communities", {
+  id:               int("id").autoincrement().primaryKey(),
+  userId:           int("user_id").notNull(),
+  communityId:      int("community_id").notNull(),
+  roleInCommunity:  varchar("role_in_community", { length: 64 }),
+  joinedAt:         timestamp("joined_at").defaultNow().notNull(),
+}, (table) => ({
+  userCommunityUnique: unique("user_communities_user_community_unique").on(table.userId, table.communityId),
+}));
+export type UserCommunity = typeof userCommunities.$inferSelect;
+export type InsertUserCommunity = typeof userCommunities.$inferInsert;

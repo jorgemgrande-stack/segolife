@@ -85,6 +85,11 @@ const PUBLIC_TRPC_ROUTES = new Set([
   "reviews.getPublicReviews",
   "reviews.submitReview",
 
+  // ── Segolife: comunidades (Fase 1B) — /ie, /uva y selector admin ──────────
+  "communities.list",
+  "communities.getBySlug",
+  "communities.listUniversities",
+
   // ── Restaurantes — router nuevo (sin 'e') ─────────────────────────────────
   "restaurants.getAll",
   "restaurants.getBySlug",

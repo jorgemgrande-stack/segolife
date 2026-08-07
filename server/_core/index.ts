@@ -31,6 +31,7 @@ import { startMatchingJob } from "../services/cardTerminalMatchingService";
 import { startRelinkJob } from "../services/cardTerminalRelinkService";
 import { serveStatic, setupVite } from "./vite";
 import { getFeatureFlag } from "../config";
+import { seedSegolifeCommunitiesIfEmpty } from "../db/communitiesDb";
 
 // --- RATE LIMITERS ------------------------------------------------------------
 
@@ -1895,6 +1896,7 @@ runMigrations()
   .then(() => fixBrokenInvoicePdfUrls())
   .then(() => wipeTestDataIfRequested())
   .then(() => seedExperiencesIfEmpty())
+  .then(() => seedSegolifeCommunitiesIfEmpty())
   .then(() => startServer())
   // quoteReminderJob y commercialFollowupJob borrados en Fase 5.
   // Toda la lógica de recordatorios la gestiona ahora emailAutomationJob

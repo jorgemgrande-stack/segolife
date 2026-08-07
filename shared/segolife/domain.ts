@@ -29,9 +29,18 @@ export interface Community {
   id: number;
   name: string;
   slug: string;
-  universityId: number | null;
   defaultLocale: SupportedLocale;
   status: "active" | "inactive" | "onboarding";
+}
+
+/**
+ * Fila puente: universidad(es) asociadas a una comunidad — M2M, no una FK
+ * directa en Community. Una comunidad puede tener 0, 1 o varias
+ * universidades (y viceversa).
+ */
+export interface CommunityUniversityLink {
+  communityId: number;
+  universityId: number;
 }
 
 export type SupportedLocale = "en" | "es";

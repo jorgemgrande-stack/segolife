@@ -1,0 +1,67 @@
+import React, { createContext, useContext, useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
+import { trpc } from "@/lib/trpc";
+import { resolveCommunitySlug } from "@shared/segolife/routing";
+import type { Community } from "../../../drizzle/schema";
+
+interface CommunityContextType {
+  /** Fila completa de la comunidad resuelta, o null si no hay comunidad activa. */
+  community: Community | null;
+  /** Slug candidato resuelto de la URL (puede no corresponder a ninguna comunidad real). */
+  slug: string | null;
+  /** Idioma por defecto de la comunidad — dato de BD, nunca hardcodeado por slug. */
+  defaultLocale: string | null;
+  /** Idiomas disponibles para la comunidad activa — dato de BD. */
+  availableLocales: string[];
+  loading: boolean;
+  error: string | null;
+}
+
+const CommunityContext = createContext<CommunityContextType | undefined>(undefined);
+
+export function CommunityProvider({ children }: { children: React.ReactNode }) {
+  const { i18n } = useTranslation();
+
+  const slug = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return resolveCommunitySlug({
+      pathname: window.location.pathname,
+      hostname: window.location.hostname,
+    });
+  }, []);
+
+  const { data, isLoading, error } = trpc.communities.getBySlug.useQuery(
+    { slug: slug ?? "" },
+    { enabled: !!slug, staleTime: 5 * 60 * 1000, retry: false }
+  );
+
+  const community = data ?? null;
+
+  // El idioma inicial de la comunidad lo aplica CommunityContext al resolverla
+  // — un componente de página puede luego cambiarlo con el selector EN/ES,
+  // eso no lo controla este Provider.
+  useEffect(() => {
+    if (community?.defaultLocale) {
+      i18n.changeLanguage(community.defaultLocale);
+    }
+  }, [community?.defaultLocale, i18n]);
+
+  const value: CommunityContextType = {
+    community,
+    slug,
+    defaultLocale: community?.defaultLocale ?? null,
+    availableLocales: community?.availableLocales ?? [],
+    loading: !!slug && isLoading,
+    error: error ? error.message : null,
+  };
+
+  return <CommunityContext.Provider value={value}>{children}</CommunityContext.Provider>;
+}
+
+export function useCommunity() {
+  const context = useContext(CommunityContext);
+  if (!context) {
+    throw new Error("useCommunity must be used within CommunityProvider");
+  }
+  return context;
+}

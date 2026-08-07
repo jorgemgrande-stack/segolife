@@ -4,6 +4,18 @@
 
 ---
 
+## Regla arquitectónica fundamental (aplica a TODO el documento y a todo desarrollo futuro)
+
+**SEGOLIFE es una única plataforma. IE y UVA no son dos aplicaciones, dos backends ni dos forks — son comunidades configurables dentro de SEGOLIFE.** Un único backend, una única base de datos, un único admin, un único CRM, un único motor de eventos, y a futuro un único motor de SegoTokens y un único motor de beneficios. Lo que varía por comunidad es configuración y relaciones de datos, nunca la infraestructura.
+
+Toda funcionalidad nueva debe asumir desde el diseño que en el futuro pueden existir: nuevas universidades, nuevas comunidades, nuevos campus, comunidades con uno o varios idiomas, negocios compartidos entre comunidades, y eventos compartidos o exclusivos.
+
+**Prohibido** escribir lógica de negocio del tipo `if (community === "ie")` / `if (community === "uva")` (o equivalentes: `switch` sobre el nombre, comparaciones de slug hardcodeadas, nombres de función con "IE"/"UVA" en el propio nombre). La única excepción admitida es **datos de seed o fixtures de test** (por ejemplo, un script de seed que inserta la fila inicial `communities` para IE y UVA, o un test que arma un escenario concreto) — nunca código de lógica de negocio en `server/routers/*`, `server/*Db.ts`, ni en componentes de frontend que decidan comportamiento por el nombre literal de una comunidad.
+
+La lógica siempre consulta configuración y relaciones: `communities` (locale por defecto, branding, flags), las tablas puente M2M (`venue_communities`, `event_communities`, `user_communities`), o el `community_id`/scope resuelto en tiempo de request (ver Paso 7) — nunca un literal de comunidad embebido en el código.
+
+---
+
 ## Paso 3 — Estrategia multicomunidad
 
 Dos mecanismos distintos según el tipo de dato (ver `docs/SEGOLIFE_DOMAIN_MODEL.md` para las tablas):
@@ -14,7 +26,7 @@ Dos mecanismos distintos según el tipo de dato (ver `docs/SEGOLIFE_DOMAIN_MODEL
 
 3. **Contenido intrínsecamente propio de una comunidad (ej. una campaña diseñada solo para IE) puede llevar `community_id` directo** si conceptualmente nunca tendría sentido compartirlo — pero se recomienda **empezar siempre por el patrón M2M** y solo simplificar a columna directa si con el tiempo se confirma que ese tipo de contenido nunca se comparte. Es más fácil quitar una tabla puente subutilizada que añadir M2M retroactivamente sobre una columna ya en producción.
 
-**Regla dura:** ningún nombre de comunidad ("IE", "UVA") aparece en código de lógica de negocio (`if`, `switch`, nombres de función). Todo lo que varía por comunidad se resuelve consultando la fila de `communities` correspondiente (locale por defecto, branding, flags de módulos activos). Añadir un tercer campus debe ser, en el caso ideal, una operación de **datos** (INSERT en `communities`), no de código.
+Ver "Regla arquitectónica fundamental" al inicio de este documento — aplica íntegramente aquí. Añadir un tercer campus debe ser, en el caso ideal, una operación de **datos** (INSERT en `communities`), no de código.
 
 ---
 
