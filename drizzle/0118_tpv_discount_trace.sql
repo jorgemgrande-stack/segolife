@@ -14,6 +14,7 @@
 ALTER TABLE `reservations`
   ADD COLUMN `discount_amount` DECIMAL(10,2) NOT NULL DEFAULT '0.00',
   ADD COLUMN `discount_reason` VARCHAR(255) NULL;
+--> statement-breakpoint
 
 ALTER TABLE `invoices`
   ADD COLUMN `discount` DECIMAL(10,2) NOT NULL DEFAULT '0.00',

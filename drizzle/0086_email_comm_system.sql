@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS `email_template_configs` (
   `createdAt`       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt`       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
+--> statement-breakpoint
 
 -- ─── 2. Reglas de automatización / reenvíos programados ─────────────────────
 CREATE TABLE IF NOT EXISTS `email_automation_rules` (
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS `email_automation_rules` (
   INDEX idx_ear_template_key (`templateKey`),
   INDEX idx_ear_active (`isActive`)
 );
+--> statement-breakpoint
 
 -- ─── 3. Log global de comunicaciones ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS `email_comm_log` (
@@ -69,6 +71,7 @@ CREATE TABLE IF NOT EXISTS `email_comm_log` (
   INDEX idx_ecl_created    (`createdAt`),
   INDEX idx_ecl_status     (`status`)
 );
+--> statement-breakpoint
 
 -- ─── 4. Cola de jobs programados ────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS `email_scheduled_jobs` (
@@ -92,6 +95,7 @@ CREATE TABLE IF NOT EXISTS `email_scheduled_jobs` (
   INDEX idx_esj_entity       (`relatedEntityType`, `relatedEntityId`),
   INDEX idx_esj_template     (`templateKey`)
 );
+--> statement-breakpoint
 
 -- ─── 5. Preferencias por cliente ────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS `customer_email_prefs` (
@@ -105,10 +109,12 @@ CREATE TABLE IF NOT EXISTS `customer_email_prefs` (
   `updatedAt`           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_cep_email (`email`)
 );
+--> statement-breakpoint
 
 -- ─── 6. Feature flag para el cron centralizado ─────────────────────────────
 INSERT IGNORE INTO `feature_flags` (`key`, `name`, `description`, `module`, `enabled`, `default_enabled`, `risk_level`)
 VALUES ('email_automation_job_enabled', 'Cron automatizaciones email', 'Procesa la cola email_scheduled_jobs cada 10 min', 'email', 0, 0, 'medium');
+--> statement-breakpoint
 
 -- ─── 7. Seed: configuración inicial de las plantillas existentes ─────────────
 INSERT IGNORE INTO `email_template_configs` (`key`, `category`, `friendlyName`, `sendToCustomer`, `sendToAdmin`) VALUES

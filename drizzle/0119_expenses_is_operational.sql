@@ -26,6 +26,7 @@
 
 ALTER TABLE `expenses`
   ADD COLUMN `isOperational` BOOLEAN NOT NULL DEFAULT TRUE;
+--> statement-breakpoint
 
 ALTER TABLE `recurring_expenses`
   ADD COLUMN `isOperational` BOOLEAN NOT NULL DEFAULT TRUE;

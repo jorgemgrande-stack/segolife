@@ -28,11 +28,11 @@ CREATE TABLE IF NOT EXISTS `hr_leave_requests` (
 );
 --> statement-breakpoint
 
-CREATE INDEX IF NOT EXISTS `idx_hr_leave_requests_employee` ON `hr_leave_requests` (`employee_id`);
+CREATE INDEX `idx_hr_leave_requests_employee` ON `hr_leave_requests` (`employee_id`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `idx_hr_leave_requests_status` ON `hr_leave_requests` (`status`);
+CREATE INDEX `idx_hr_leave_requests_status` ON `hr_leave_requests` (`status`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `idx_hr_leave_requests_dates` ON `hr_leave_requests` (`from_date`, `to_date`);
+CREATE INDEX `idx_hr_leave_requests_dates` ON `hr_leave_requests` (`from_date`, `to_date`);
 --> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `hr_leave_balance` (

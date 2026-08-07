@@ -1,4 +1,4 @@
-CREATE TABLE `card_terminal_batch_audit_logs` (
+CREATE TABLE IF NOT EXISTS `card_terminal_batch_audit_logs` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`batch_id` int NOT NULL,
 	`action` enum('match_suggested','match_auto_ready','match_no_candidate','match_review_required','suggestion_accepted','suggestion_rejected','auto_reconciled','manual_reconciled','unreconciled','review_flagged') NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE `card_terminal_batch_audit_logs` (
 	CONSTRAINT `card_terminal_batch_audit_logs_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `config_change_logs` (
+CREATE TABLE IF NOT EXISTS `config_change_logs` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`entity_type` enum('feature_flag','system_setting') NOT NULL,
 	`key` varchar(128) NOT NULL,
@@ -23,7 +23,7 @@ CREATE TABLE `config_change_logs` (
 	CONSTRAINT `config_change_logs_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `expense_email_ingestion_logs` (
+CREATE TABLE IF NOT EXISTS `expense_email_ingestion_logs` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`message_id` varchar(512) NOT NULL,
 	`subject` varchar(512),
@@ -38,7 +38,7 @@ CREATE TABLE `expense_email_ingestion_logs` (
 	CONSTRAINT `expense_email_ingestion_logs_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `feature_flags` (
+CREATE TABLE IF NOT EXISTS `feature_flags` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`key` varchar(128) NOT NULL,
 	`name` varchar(256) NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE `feature_flags` (
 	CONSTRAINT `feature_flags_key_unique` UNIQUE(`key`)
 );
 --> statement-breakpoint
-CREATE TABLE `fin_cash_accounts` (
+CREATE TABLE IF NOT EXISTS `fin_cash_accounts` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`name` varchar(128) NOT NULL,
 	`description` text,
@@ -67,7 +67,7 @@ CREATE TABLE `fin_cash_accounts` (
 	CONSTRAINT `fin_cash_accounts_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `fin_cash_alerts` (
+CREATE TABLE IF NOT EXISTS `fin_cash_alerts` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`type` varchar(64) NOT NULL DEFAULT 'cash_difference',
 	`severity_fca` enum('info','warning','critical') NOT NULL DEFAULT 'warning',
@@ -85,7 +85,7 @@ CREATE TABLE `fin_cash_alerts` (
 	CONSTRAINT `fin_cash_alerts_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `fin_cash_closure_actions` (
+CREATE TABLE IF NOT EXISTS `fin_cash_closure_actions` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`closure_id` int NOT NULL,
 	`action_type_fcca` enum('review','adjustment_created','accepted_difference','note_added','alert_resolved') NOT NULL,
@@ -97,7 +97,7 @@ CREATE TABLE `fin_cash_closure_actions` (
 	CONSTRAINT `fin_cash_closure_actions_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `fin_cash_closures` (
+CREATE TABLE IF NOT EXISTS `fin_cash_closures` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`account_id` int NOT NULL,
 	`date` varchar(10) NOT NULL,
@@ -117,7 +117,7 @@ CREATE TABLE `fin_cash_closures` (
 	CONSTRAINT `fin_cash_closures_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `fin_cash_movements` (
+CREATE TABLE IF NOT EXISTS `fin_cash_movements` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`account_id` int NOT NULL,
 	`date` varchar(10) NOT NULL,
@@ -135,7 +135,7 @@ CREATE TABLE `fin_cash_movements` (
 	CONSTRAINT `fin_cash_movements_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `onboarding_status` (
+CREATE TABLE IF NOT EXISTS `onboarding_status` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`organization_id` int NOT NULL,
 	`business_info_completed` boolean NOT NULL DEFAULT false,
@@ -151,7 +151,7 @@ CREATE TABLE `onboarding_status` (
 	CONSTRAINT `onboarding_status_organization_id_unique` UNIQUE(`organization_id`)
 );
 --> statement-breakpoint
-CREATE TABLE `organizations` (
+CREATE TABLE IF NOT EXISTS `organizations` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`name` varchar(256) NOT NULL,
 	`slug` varchar(128) NOT NULL,
@@ -163,7 +163,7 @@ CREATE TABLE `organizations` (
 	CONSTRAINT `organizations_slug_unique` UNIQUE(`slug`)
 );
 --> statement-breakpoint
-CREATE TABLE `proposal_options` (
+CREATE TABLE IF NOT EXISTS `proposal_options` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`proposalId` int NOT NULL,
 	`title` varchar(256) NOT NULL,
@@ -180,7 +180,7 @@ CREATE TABLE `proposal_options` (
 	CONSTRAINT `proposal_options_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `proposals` (
+CREATE TABLE IF NOT EXISTS `proposals` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`proposalNumber` varchar(32) NOT NULL,
 	`leadId` int NOT NULL,
@@ -213,7 +213,7 @@ CREATE TABLE `proposals` (
 	CONSTRAINT `proposals_token_unique` UNIQUE(`token`)
 );
 --> statement-breakpoint
-CREATE TABLE `rbac_permissions` (
+CREATE TABLE IF NOT EXISTS `rbac_permissions` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`key` varchar(128) NOT NULL,
 	`module` varchar(64) NOT NULL,
@@ -224,13 +224,13 @@ CREATE TABLE `rbac_permissions` (
 	CONSTRAINT `rbac_permissions_key_unique` UNIQUE(`key`)
 );
 --> statement-breakpoint
-CREATE TABLE `rbac_role_permissions` (
+CREATE TABLE IF NOT EXISTS `rbac_role_permissions` (
 	`role_id` int NOT NULL,
 	`permission_id` int NOT NULL,
 	`created_at` timestamp NOT NULL DEFAULT (now())
 );
 --> statement-breakpoint
-CREATE TABLE `rbac_roles` (
+CREATE TABLE IF NOT EXISTS `rbac_roles` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`key` varchar(64) NOT NULL,
 	`name` varchar(128) NOT NULL,
@@ -243,13 +243,13 @@ CREATE TABLE `rbac_roles` (
 	CONSTRAINT `rbac_roles_key_unique` UNIQUE(`key`)
 );
 --> statement-breakpoint
-CREATE TABLE `rbac_user_roles` (
+CREATE TABLE IF NOT EXISTS `rbac_user_roles` (
 	`user_id` int NOT NULL,
 	`role_id` int NOT NULL,
 	`created_at` timestamp NOT NULL DEFAULT (now())
 );
 --> statement-breakpoint
-CREATE TABLE `system_settings` (
+CREATE TABLE IF NOT EXISTS `system_settings` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`key` varchar(128) NOT NULL,
 	`value` text,
@@ -276,18 +276,152 @@ ALTER TABLE `spa_treatments` MODIFY COLUMN `fiscalRegime` enum('reav','general',
 ALTER TABLE `tpv_sale_items` MODIFY COLUMN `fiscalRegime_tsi` enum('reav','general','mixed') DEFAULT 'general';--> statement-breakpoint
 ALTER TABLE `transactions` MODIFY COLUMN `fiscalRegime_tx` enum('reav','general','mixed') DEFAULT 'general';--> statement-breakpoint
 ALTER TABLE `users` MODIFY COLUMN `role` enum('user','admin','monitor','agente','adminrest','controler') NOT NULL DEFAULT 'user';--> statement-breakpoint
-ALTER TABLE `card_terminal_batches` ADD `suggested_bank_movement_id` int;--> statement-breakpoint
-ALTER TABLE `card_terminal_batches` ADD `suggested_score` int;--> statement-breakpoint
-ALTER TABLE `card_terminal_batches` ADD `matching_run_at` timestamp;--> statement-breakpoint
-ALTER TABLE `card_terminal_batches` ADD `suggestion_rejected` boolean DEFAULT false NOT NULL;--> statement-breakpoint
-ALTER TABLE `expenses` ADD `source` varchar(32) DEFAULT 'manual';--> statement-breakpoint
-ALTER TABLE `expenses` ADD `emailMessageId` varchar(512);--> statement-breakpoint
-ALTER TABLE `expenses` ADD `emailFrom` varchar(256);--> statement-breakpoint
-ALTER TABLE `expenses` ADD `missingAttachment` boolean DEFAULT false;--> statement-breakpoint
-ALTER TABLE `experiences` ADD `taxRate` decimal(5,2) DEFAULT '21';--> statement-breakpoint
-ALTER TABLE `invoices` ADD `taxBreakdown` json;--> statement-breakpoint
-ALTER TABLE `packs` ADD `taxRate` decimal(5,2) DEFAULT '21';--> statement-breakpoint
-ALTER TABLE `room_types` ADD `taxRate` decimal(5,2) DEFAULT '21';--> statement-breakpoint
-ALTER TABLE `spa_treatments` ADD `taxRate` decimal(5,2) DEFAULT '21';--> statement-breakpoint
-ALTER TABLE `transactions` ADD `taxRate_tx` decimal(5,2) DEFAULT '21';--> statement-breakpoint
-ALTER TABLE `card_terminal_operations` ADD CONSTRAINT `card_terminal_operations_duplicate_key_unique` UNIQUE(`duplicate_key`);
+SET @col_exists_1 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'card_terminal_batches' AND COLUMN_NAME = 'suggested_bank_movement_id');
+--> statement-breakpoint
+SET @add_col_sql_1 = IF(@col_exists_1 = 0, 'ALTER TABLE `card_terminal_batches` ADD COLUMN `suggested_bank_movement_id` int', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_1 FROM @add_col_sql_1;
+--> statement-breakpoint
+EXECUTE _add_col_1;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_1;
+--> statement-breakpoint
+SET @col_exists_2 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'card_terminal_batches' AND COLUMN_NAME = 'suggested_score');
+--> statement-breakpoint
+SET @add_col_sql_2 = IF(@col_exists_2 = 0, 'ALTER TABLE `card_terminal_batches` ADD COLUMN `suggested_score` int', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_2 FROM @add_col_sql_2;
+--> statement-breakpoint
+EXECUTE _add_col_2;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_2;
+--> statement-breakpoint
+SET @col_exists_3 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'card_terminal_batches' AND COLUMN_NAME = 'matching_run_at');
+--> statement-breakpoint
+SET @add_col_sql_3 = IF(@col_exists_3 = 0, 'ALTER TABLE `card_terminal_batches` ADD COLUMN `matching_run_at` timestamp', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_3 FROM @add_col_sql_3;
+--> statement-breakpoint
+EXECUTE _add_col_3;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_3;
+--> statement-breakpoint
+SET @col_exists_4 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'card_terminal_batches' AND COLUMN_NAME = 'suggestion_rejected');
+--> statement-breakpoint
+SET @add_col_sql_4 = IF(@col_exists_4 = 0, 'ALTER TABLE `card_terminal_batches` ADD COLUMN `suggestion_rejected` boolean DEFAULT false NOT NULL', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_4 FROM @add_col_sql_4;
+--> statement-breakpoint
+EXECUTE _add_col_4;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_4;
+--> statement-breakpoint
+SET @col_exists_5 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'expenses' AND COLUMN_NAME = 'source');
+--> statement-breakpoint
+SET @add_col_sql_5 = IF(@col_exists_5 = 0, 'ALTER TABLE `expenses` ADD COLUMN `source` varchar(32) DEFAULT \'manual\'', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_5 FROM @add_col_sql_5;
+--> statement-breakpoint
+EXECUTE _add_col_5;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_5;
+--> statement-breakpoint
+SET @col_exists_6 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'expenses' AND COLUMN_NAME = 'emailMessageId');
+--> statement-breakpoint
+SET @add_col_sql_6 = IF(@col_exists_6 = 0, 'ALTER TABLE `expenses` ADD COLUMN `emailMessageId` varchar(512)', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_6 FROM @add_col_sql_6;
+--> statement-breakpoint
+EXECUTE _add_col_6;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_6;
+--> statement-breakpoint
+SET @col_exists_7 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'expenses' AND COLUMN_NAME = 'emailFrom');
+--> statement-breakpoint
+SET @add_col_sql_7 = IF(@col_exists_7 = 0, 'ALTER TABLE `expenses` ADD COLUMN `emailFrom` varchar(256)', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_7 FROM @add_col_sql_7;
+--> statement-breakpoint
+EXECUTE _add_col_7;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_7;
+--> statement-breakpoint
+SET @col_exists_8 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'expenses' AND COLUMN_NAME = 'missingAttachment');
+--> statement-breakpoint
+SET @add_col_sql_8 = IF(@col_exists_8 = 0, 'ALTER TABLE `expenses` ADD COLUMN `missingAttachment` boolean DEFAULT false', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_8 FROM @add_col_sql_8;
+--> statement-breakpoint
+EXECUTE _add_col_8;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_8;
+--> statement-breakpoint
+SET @col_exists_9 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'experiences' AND COLUMN_NAME = 'taxRate');
+--> statement-breakpoint
+SET @add_col_sql_9 = IF(@col_exists_9 = 0, 'ALTER TABLE `experiences` ADD COLUMN `taxRate` decimal(5,2) DEFAULT \'21\'', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_9 FROM @add_col_sql_9;
+--> statement-breakpoint
+EXECUTE _add_col_9;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_9;
+--> statement-breakpoint
+SET @col_exists_10 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'invoices' AND COLUMN_NAME = 'taxBreakdown');
+--> statement-breakpoint
+SET @add_col_sql_10 = IF(@col_exists_10 = 0, 'ALTER TABLE `invoices` ADD COLUMN `taxBreakdown` json', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_10 FROM @add_col_sql_10;
+--> statement-breakpoint
+EXECUTE _add_col_10;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_10;
+--> statement-breakpoint
+SET @col_exists_11 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'packs' AND COLUMN_NAME = 'taxRate');
+--> statement-breakpoint
+SET @add_col_sql_11 = IF(@col_exists_11 = 0, 'ALTER TABLE `packs` ADD COLUMN `taxRate` decimal(5,2) DEFAULT \'21\'', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_11 FROM @add_col_sql_11;
+--> statement-breakpoint
+EXECUTE _add_col_11;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_11;
+--> statement-breakpoint
+SET @col_exists_12 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'room_types' AND COLUMN_NAME = 'taxRate');
+--> statement-breakpoint
+SET @add_col_sql_12 = IF(@col_exists_12 = 0, 'ALTER TABLE `room_types` ADD COLUMN `taxRate` decimal(5,2) DEFAULT \'21\'', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_12 FROM @add_col_sql_12;
+--> statement-breakpoint
+EXECUTE _add_col_12;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_12;
+--> statement-breakpoint
+SET @col_exists_13 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'spa_treatments' AND COLUMN_NAME = 'taxRate');
+--> statement-breakpoint
+SET @add_col_sql_13 = IF(@col_exists_13 = 0, 'ALTER TABLE `spa_treatments` ADD COLUMN `taxRate` decimal(5,2) DEFAULT \'21\'', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_13 FROM @add_col_sql_13;
+--> statement-breakpoint
+EXECUTE _add_col_13;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_13;
+--> statement-breakpoint
+SET @col_exists_14 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'transactions' AND COLUMN_NAME = 'taxRate_tx');
+--> statement-breakpoint
+SET @add_col_sql_14 = IF(@col_exists_14 = 0, 'ALTER TABLE `transactions` ADD COLUMN `taxRate_tx` decimal(5,2) DEFAULT \'21\'', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_col_14 FROM @add_col_sql_14;
+--> statement-breakpoint
+EXECUTE _add_col_14;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_col_14;
+--> statement-breakpoint
+SET @constraint_exists = (SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'card_terminal_operations' AND CONSTRAINT_NAME = 'card_terminal_operations_duplicate_key_unique');
+--> statement-breakpoint
+SET @add_constraint_sql = IF(@constraint_exists = 0, 'ALTER TABLE `card_terminal_operations` ADD CONSTRAINT `card_terminal_operations_duplicate_key_unique` UNIQUE(`duplicate_key`)', 'SELECT 1 AS skipped');
+--> statement-breakpoint
+PREPARE _add_constraint FROM @add_constraint_sql;
+--> statement-breakpoint
+EXECUTE _add_constraint;
+--> statement-breakpoint
+DEALLOCATE PREPARE _add_constraint;

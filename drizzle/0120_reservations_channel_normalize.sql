@@ -22,18 +22,25 @@
 -- ── FASE 1: preservar info en channel_detail ─────────────────────────
 UPDATE `reservations` SET `channel_detail` = 'telefono'
  WHERE `channel` = 'telefono' AND (`channel_detail` IS NULL OR `channel_detail` = '');
+--> statement-breakpoint
 UPDATE `reservations` SET `channel_detail` = 'email'
  WHERE `channel` = 'email'    AND (`channel_detail` IS NULL OR `channel_detail` = '');
+--> statement-breakpoint
 
 -- ── FASE 2: UPDATE legacy → moderno (al enum actual) ─────────────────
 UPDATE `reservations` SET `channel` = 'ONLINE_DIRECTO'  WHERE `channel` = 'web';
+--> statement-breakpoint
 UPDATE `reservations` SET `channel` = 'VENTA_DELEGADA'  WHERE `channel` IN ('crm','telefono','email');
+--> statement-breakpoint
 UPDATE `reservations` SET `channel` = 'MANUAL'          WHERE `channel` = 'otro';
+--> statement-breakpoint
 UPDATE `reservations` SET `channel` = 'TPV_FISICO'      WHERE `channel` = 'tpv';
+--> statement-breakpoint
 UPDATE `reservations`
    SET `channel` = 'PARTNER',
        `platform_name` = COALESCE(`platform_name`, 'Groupon')
  WHERE `channel` = 'groupon';
+--> statement-breakpoint
 
 -- ── FASE 3: ALTER enum a la taxonomía limpia (10 valores) ────────────
 -- Como los legacy ya no están en uso, podemos eliminarlos y añadir

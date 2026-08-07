@@ -105,8 +105,13 @@ async function initGhlTables(): Promise<void> {
   }
 }
 
-// Ejecutar al cargar el módulo (asíncrono, no bloquea arranque)
-initGhlTables();
+// Solo crea las tablas si la integración GHL Inbox está explícitamente activada.
+// Antes se ejecutaba incondicionalmente al importar este módulo (import-time
+// side effect) — un servidor sin GHL configurado no debe tocar el schema.
+// Ver CLAUDE.md, fase de saneamiento de startup.
+if (process.env.GHL_INTEGRATION_ENABLED === "true") {
+  initGhlTables();
+}
 
 function log(level: "info" | "warn" | "error", msg: string, ctx?: object) {
   const entry = { ts: new Date().toISOString(), context: "GHLInbox", msg, ...ctx };

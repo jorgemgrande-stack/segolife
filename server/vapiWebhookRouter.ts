@@ -126,7 +126,13 @@ async function initVapiTables(): Promise<void> {
   }
 }
 
-initVapiTables();
+// Solo crea las tablas si la integración VAPI está explícitamente activada.
+// Antes se ejecutaba incondicionalmente al importar este módulo (import-time
+// side effect) — un servidor sin VAPI configurado no debe tocar el schema.
+// Ver CLAUDE.md, fase de saneamiento de startup.
+if (process.env.VAPI_INTEGRATION_ENABLED === "true") {
+  initVapiTables();
+}
 
 const vapiWebhookRouter = express.Router();
 

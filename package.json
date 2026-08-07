@@ -1,5 +1,5 @@
 {
-  "name": "skicenter_platform",
+  "name": "segolife",
   "version": "1.0.0",
   "type": "module",
   "license": "MIT",
@@ -13,7 +13,9 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
-    "seed": "node scripts/import-seed.mjs",
+    "db:migrate": "tsx scripts/db-migrate.ts",
+    "db:seed": "tsx scripts/db-seed.ts",
+    "seed:legacy-nayade-do-not-run": "node scripts/import-seed.mjs",
     "seed:export": "node scripts/export-seed.mjs"
   },
   "dependencies": {

@@ -32,8 +32,8 @@ CREATE TABLE IF NOT EXISTS `hr_time_clock` (
 --> statement-breakpoint
 
 -- Índice principal: listar fichajes de un empleado en un rango.
-CREATE INDEX IF NOT EXISTS `idx_hr_time_clock_employee_in` ON `hr_time_clock` (`employee_id`, `clock_in_at`);
+CREATE INDEX `idx_hr_time_clock_employee_in` ON `hr_time_clock` (`employee_id`, `clock_in_at`);
 --> statement-breakpoint
 
 -- Índice por estado: para localizar rápidamente los abiertos / incompletos.
-CREATE INDEX IF NOT EXISTS `idx_hr_time_clock_status` ON `hr_time_clock` (`status`);
+CREATE INDEX `idx_hr_time_clock_status` ON `hr_time_clock` (`status`);

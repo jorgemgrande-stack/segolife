@@ -5,6 +5,15 @@
  *
  * ⚠️  WARNING: This script TRUNCATES the target tables before inserting.
  *     Only run on a fresh/empty database.
+ *
+ * ⚠️⚠️  data/seed.json is the REAL catalog of Náyade Experiences (a real,
+ *     unrelated business) — categories, experiences, room types, spa
+ *     treatments, restaurants, static_pages, and email_templates whose
+ *     body_html contains the real contact address
+ *     reservas@nayadeexperiences.es. Running this against a Segolife
+ *     database inserts that real third-party content and contact address.
+ *     This is NOT the Segolife seed — for Segolife data use `pnpm db:seed`
+ *     instead. Requires explicit CONFIRM_LEGACY_NAYADE_SEED=yes to run.
  */
 import mysql from "mysql2/promise";
 import fs from "fs";
@@ -12,6 +21,16 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { config } from "dotenv";
 config();
+
+if (process.env.CONFIRM_LEGACY_NAYADE_SEED !== "yes") {
+  console.error(
+    "❌ Este script siembra el catálogo REAL de Náyade Experiences (un negocio real ajeno a Segolife), " +
+    "incluyendo su email de contacto real en plantillas de email. No es el seed de Segolife " +
+    "— usa 'pnpm db:seed' para eso. Si de verdad quieres ejecutar este script heredado, " +
+    "vuelve a lanzarlo con CONFIRM_LEGACY_NAYADE_SEED=yes."
+  );
+  process.exit(1);
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const seedPath = path.join(__dirname, "../data/seed.json");

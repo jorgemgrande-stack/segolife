@@ -544,267 +544,344 @@
     {
       "idx": 77,
       "version": "5",
+      "when": 1777731203027,
+      "tag": "0079_flowery_cerise",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "5",
       "when": 1777415011834,
       "tag": "0079_tax_refactor",
       "breakpoints": true
     },
     {
-      "idx": 78,
+      "idx": 79,
       "version": "5",
       "when": 1745913600000,
       "tag": "0080_proposals",
       "breakpoints": true
     },
     {
-      "idx": 79,
-      "version": "5",
-      "when": 1777731203027,
-      "tag": "0079_flowery_cerise",
-      "breakpoints": true
-    },
-    {
       "idx": 80,
       "version": "5",
-      "when": 1746700800000,
-      "tag": "0085_ghl_contact_id_coupons_cancellations",
+      "when": 1779224802206,
+      "tag": "0081_reviews_restaurant_type",
       "breakpoints": true
     },
     {
       "idx": 81,
-      "version": "5",
-      "when": 1746787200000,
-      "tag": "0086_email_comm_system",
-      "breakpoints": true
-    },
-    {
-      "idx": 82,
-      "version": "5",
-      "when": 1746873600000,
-      "tag": "0089_lead_sources",
-      "breakpoints": true
-    },
-    {
-      "idx": 83,
-      "version": "5",
-      "when": 1778624703215,
-      "tag": "0083_add_meta_capi_fields_to_reservations",
-      "breakpoints": true
-    },
-    {
-      "idx": 84,
-      "version": "5",
-      "when": 1747180800000,
-      "tag": "0090_cms_home_init",
-      "breakpoints": true
-    },
-    {
-      "idx": 85,
-      "version": "5",
-      "when": 1747353600000,
-      "tag": "0091_invoice_exempt_flag",
-      "breakpoints": true
-    },
-    {
-      "idx": 86,
-      "version": "5",
-      "when": 1747440000000,
-      "tag": "0092_tpv_manual_items",
-      "breakpoints": true
-    },
-    {
-      "idx": 87,
-      "version": "5",
-      "when": 1747443600000,
-      "tag": "0093_tpv_concept_text_fix",
-      "breakpoints": true
-    },
-    {
-      "idx": 88,
-      "version": "5",
-      "when": 1747526400000,
-      "tag": "0094_reservation_public_token",
-      "breakpoints": true
-    },
-    {
-      "idx": 89,
       "version": "5",
       "when": 1779224776206,
       "tag": "0082_commercial_followup",
       "breakpoints": true
     },
     {
-      "idx": 90,
+      "idx": 82,
+      "version": "5",
+      "when": 1778624703215,
+      "tag": "0083_add_meta_capi_fields_to_reservations",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
       "version": "5",
       "when": 1779224777206,
       "tag": "0083_ghl_inbox",
       "breakpoints": true
     },
     {
-      "idx": 91,
+      "idx": 84,
       "version": "5",
       "when": 1779224778206,
       "tag": "0084_vapi_calls",
       "breakpoints": true
     },
     {
-      "idx": 92,
+      "idx": 85,
+      "version": "5",
+      "when": 1746700800000,
+      "tag": "0085_ghl_contact_id_coupons_cancellations",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "5",
+      "when": 1746787200000,
+      "tag": "0086_email_comm_system",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
       "version": "5",
       "when": 1779224779206,
       "tag": "0087_commercial_emails_attachments_meta",
       "breakpoints": true
     },
     {
-      "idx": 93,
+      "idx": 88,
       "version": "5",
       "when": 1779224780206,
       "tag": "0088_partners_module",
       "breakpoints": true
     },
     {
+      "idx": 89,
+      "version": "5",
+      "when": 1746873600000,
+      "tag": "0089_lead_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "5",
+      "when": 1747180800000,
+      "tag": "0090_cms_home_init",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "5",
+      "when": 1747353600000,
+      "tag": "0091_invoice_exempt_flag",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "5",
+      "when": 1747440000000,
+      "tag": "0092_tpv_manual_items",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "5",
+      "when": 1747443600000,
+      "tag": "0093_tpv_concept_text_fix",
+      "breakpoints": true
+    },
+    {
       "idx": 94,
+      "version": "5",
+      "when": 1747526400000,
+      "tag": "0094_reservation_public_token",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
       "version": "5",
       "when": 1779224781206,
       "tag": "0095_phase1_consolidation_fixes",
       "breakpoints": true
     },
     {
-      "idx": 95,
+      "idx": 96,
       "version": "5",
       "when": 1779224782206,
       "tag": "0096_phase2_email_automation_commercial",
       "breakpoints": true
     },
     {
-      "idx": 96,
+      "idx": 97,
       "version": "5",
       "when": 1779224783206,
       "tag": "0097_phase3_switchover",
       "breakpoints": true
     },
     {
-      "idx": 97,
+      "idx": 98,
+      "version": "5",
+      "when": 1779224803206,
+      "tag": "0098_phase5_drop_legacy_commercial",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
       "version": "5",
       "when": 1779224784206,
       "tag": "0099_fix_tpv_operations_duplicates",
       "breakpoints": true
     },
     {
-      "idx": 98,
+      "idx": 100,
       "version": "5",
       "when": 1779224785206,
       "tag": "0100_hr_employees_columns",
       "breakpoints": true
     },
     {
-      "idx": 99,
+      "idx": 101,
       "version": "5",
       "when": 1779224786206,
       "tag": "0101_hr_documents_enum_extend",
       "breakpoints": true
     },
     {
-      "idx": 100,
+      "idx": 102,
       "version": "5",
       "when": 1779224787206,
       "tag": "0102_users_role_employee",
       "breakpoints": true
     },
     {
-      "idx": 101,
+      "idx": 103,
       "version": "5",
       "when": 1779224788206,
       "tag": "0103_hr_time_clock",
       "breakpoints": true
     },
     {
-      "idx": 102,
+      "idx": 104,
       "version": "5",
       "when": 1779224789206,
       "tag": "0104_hr_schedule_templates",
       "breakpoints": true
     },
     {
-      "idx": 103,
+      "idx": 105,
       "version": "5",
       "when": 1779224790206,
       "tag": "0105_hr_payslips",
       "breakpoints": true
     },
     {
-      "idx": 104,
+      "idx": 106,
       "version": "5",
       "when": 1779224791206,
       "tag": "0106_hr_payroll_batches",
       "breakpoints": true
     },
     {
-      "idx": 105,
+      "idx": 107,
       "version": "5",
       "when": 1779224792206,
       "tag": "0107_hr_fiscal_ledgers",
       "breakpoints": true
     },
     {
-      "idx": 106,
+      "idx": 108,
       "version": "5",
       "when": 1779224793206,
       "tag": "0108_hr_settings",
       "breakpoints": true
     },
     {
-      "idx": 107,
+      "idx": 109,
       "version": "5",
       "when": 1779224794206,
       "tag": "0109_hr_bonus",
       "breakpoints": true
     },
     {
-      "idx": 108,
+      "idx": 110,
       "version": "5",
       "when": 1779224795206,
       "tag": "0110_hr_leaves",
       "breakpoints": true
     },
     {
-      "idx": 109,
+      "idx": 111,
       "version": "5",
       "when": 1779224796206,
       "tag": "0111_expenses_fiscal_fields",
       "breakpoints": true
     },
     {
-      "idx": 110,
+      "idx": 112,
       "version": "5",
       "when": 1779224797206,
       "tag": "0112_tax_core",
       "breakpoints": true
     },
     {
-      "idx": 111,
+      "idx": 113,
       "version": "5",
       "when": 1779224798206,
       "tag": "0114_tax_dossiers_gestoria_role",
       "breakpoints": true
     },
     {
-      "idx": 112,
+      "idx": 114,
       "version": "5",
       "when": 1779224799206,
       "tag": "0115_tax_deferrals",
       "breakpoints": true
     },
     {
-      "idx": 113,
+      "idx": 115,
       "version": "5",
       "when": 1779224800206,
       "tag": "0116_tax_obligation_reminder",
       "breakpoints": true
     },
     {
-      "idx": 114,
+      "idx": 116,
       "version": "5",
       "when": 1779224801206,
       "tag": "0117_reservation_delegation_proof",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "5",
+      "when": 1779224804206,
+      "tag": "0118_tpv_discount_trace",
+      "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "5",
+      "when": 1779224805206,
+      "tag": "0119_expenses_is_operational",
+      "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "5",
+      "when": 1779224806206,
+      "tag": "0120_reservations_channel_normalize",
+      "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "5",
+      "when": 1779224807206,
+      "tag": "0121_admin_notification_dismissals",
+      "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "5",
+      "when": 1779224808206,
+      "tag": "0122_tpv_sale_items_legopack_enum",
+      "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "5",
+      "when": 1779224809206,
+      "tag": "0123_reservations_confirmation_email_sent_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "5",
+      "when": 1779224810206,
+      "tag": "0124_site_maintenance_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "5",
+      "when": 1779224811206,
+      "tag": "0125_segolife_communities_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "5",
+      "when": 1779224812206,
+      "tag": "0126_segolife_student_profiles",
       "breakpoints": true
     }
   ]

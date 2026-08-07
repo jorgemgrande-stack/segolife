@@ -9,15 +9,15 @@
 -- existentes ni datos previos. Idempotente con IF NOT EXISTS.
 
 ALTER TABLE `monitors`
-  ADD COLUMN IF NOT EXISTS `position`         varchar(64)   DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS `department`       varchar(64)   DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS `weekly_hours`     decimal(5,2)  DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS `holiday_days_year` int          DEFAULT 22,
-  ADD COLUMN IF NOT EXISTS `nss`              varchar(20)   DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS `irpf_percent`     decimal(5,2)  DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS `cost_center_id`   int           DEFAULT NULL;
+  ADD COLUMN `position`         varchar(64)   DEFAULT NULL,
+  ADD COLUMN `department`       varchar(64)   DEFAULT NULL,
+  ADD COLUMN `weekly_hours`     decimal(5,2)  DEFAULT NULL,
+  ADD COLUMN `holiday_days_year` int          DEFAULT 22,
+  ADD COLUMN `nss`              varchar(20)   DEFAULT NULL,
+  ADD COLUMN `irpf_percent`     decimal(5,2)  DEFAULT NULL,
+  ADD COLUMN `cost_center_id`   int           DEFAULT NULL;
 --> statement-breakpoint
 
 -- Índice opcional para futuras consultas por centro de coste (no es FK formal,
 -- siguiendo la convención del sistema actual con FKs débiles).
-CREATE INDEX IF NOT EXISTS `idx_monitors_cost_center_id` ON `monitors` (`cost_center_id`);
+CREATE INDEX `idx_monitors_cost_center_id` ON `monitors` (`cost_center_id`);

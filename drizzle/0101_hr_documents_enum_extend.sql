@@ -24,9 +24,9 @@ ALTER TABLE `monitor_documents`
 --> statement-breakpoint
 
 ALTER TABLE `monitor_documents`
-  ADD COLUMN IF NOT EXISTS `expires_at`            date       DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS `signed_by_employee_at` timestamp  NULL DEFAULT NULL;
+  ADD COLUMN `expires_at`            date       DEFAULT NULL,
+  ADD COLUMN `signed_by_employee_at` timestamp  NULL DEFAULT NULL;
 --> statement-breakpoint
 
 -- Índice para localizar documentos próximos a vencer (dashboard RRHH futuro).
-CREATE INDEX IF NOT EXISTS `idx_monitor_documents_expires_at` ON `monitor_documents` (`expires_at`);
+CREATE INDEX `idx_monitor_documents_expires_at` ON `monitor_documents` (`expires_at`);

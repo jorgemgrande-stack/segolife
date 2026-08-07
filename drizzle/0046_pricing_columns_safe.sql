@@ -1,10 +1,8 @@
--- Safe idempotent add of pricing columns (guards against 0045 partial failure)
-ALTER TABLE `experiences`
-  ADD COLUMN IF NOT EXISTS `pricing_type` ENUM('per_person','per_unit') NOT NULL DEFAULT 'per_person',
-  ADD COLUMN IF NOT EXISTS `unit_capacity` INT NULL,
-  ADD COLUMN IF NOT EXISTS `max_units` INT NULL;
---> statement-breakpoint
-ALTER TABLE `reservations`
-  ADD COLUMN IF NOT EXISTS `pricing_type` VARCHAR(16) NULL,
-  ADD COLUMN IF NOT EXISTS `unit_capacity` INT NULL,
-  ADD COLUMN IF NOT EXISTS `units_booked` INT NULL;
+-- NEUTRALIZADA — Fase de saneamiento de startup SEGOLIFE (ver CLAUDE.md).
+-- Esta migración pretendía ser un "redo idempotente" de 0045 usando
+-- ADD COLUMN IF NOT EXISTS, que no es sintaxis válida en MySQL 8 estándar
+-- (es una extensión de MariaDB) — nunca pudo ejecutarse contra MySQL real.
+-- Ahora que 0045 tiene su statement-breakpoint corregido y se aplica
+-- correctamente por sí sola, esta migración es redundante (mismas columnas,
+-- mismas tablas) y se deja como no-op para no duplicar columnas.
+SELECT 1;

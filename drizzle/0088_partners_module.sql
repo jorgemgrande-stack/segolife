@@ -40,10 +40,12 @@ CREATE TABLE IF NOT EXISTS `partners` (
   `updatedAt`                   timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY `uq_partner_slug` (`slug`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+--> statement-breakpoint
 
 -- 2. Extender users: añadir partnerId para vincular recepcionistas
 ALTER TABLE `users`
-  ADD COLUMN IF NOT EXISTS `partnerId` int NULL AFTER `role`;
+  ADD COLUMN `partnerId` int NULL AFTER `role`;
+--> statement-breakpoint
 
 -- 3. Extender users: nuevos roles partner_admin y partner_user
 -- (MySQL no permite IF NOT EXISTS en ALTER COLUMN MODIFY para enums,
@@ -53,20 +55,24 @@ ALTER TABLE `users`
     'user','admin','monitor','agente','adminrest','controler',
     'partner_admin','partner_user'
   ) NOT NULL DEFAULT 'user';
+--> statement-breakpoint
 
 -- 4. Extender leads: vincular al partner y al recepcionista que lo creó
 ALTER TABLE `leads`
-  ADD COLUMN IF NOT EXISTS `partnerId`     int NULL AFTER `source`,
-  ADD COLUMN IF NOT EXISTS `partnerUserId` int NULL AFTER `partnerId`;
+  ADD COLUMN `partnerId`     int NULL AFTER `source`,
+  ADD COLUMN `partnerUserId` int NULL AFTER `partnerId`;
+--> statement-breakpoint
 
 -- 5. Extender reservations: vincular al partner y al recepcionista
 ALTER TABLE `reservations`
-  ADD COLUMN IF NOT EXISTS `partnerId`     int NULL AFTER `channelDetail`,
-  ADD COLUMN IF NOT EXISTS `partnerUserId` int NULL AFTER `partnerId`;
+  ADD COLUMN `partnerId`     int NULL AFTER `channel_detail`,
+  ADD COLUMN `partnerUserId` int NULL AFTER `partnerId`;
+--> statement-breakpoint
 
 -- 6. Extender invoices: vincular al partner (para facturación agrupada)
 ALTER TABLE `invoices`
-  ADD COLUMN IF NOT EXISTS `partnerId` int NULL AFTER `creditNoteReason`;
+  ADD COLUMN `partnerId` int NULL AFTER `creditNoteReason`;
+--> statement-breakpoint
 
 -- 7. Tablas de facturación agrupada (preparadas para Fase 4, sin romper nada)
 CREATE TABLE IF NOT EXISTS `partner_billing_batches` (
@@ -87,6 +93,7 @@ CREATE TABLE IF NOT EXISTS `partner_billing_batches` (
   INDEX `idx_batch_partner` (`partnerId`),
   INDEX `idx_batch_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `partner_billing_batch_items` (
   `id`            int NOT NULL AUTO_INCREMENT PRIMARY KEY,

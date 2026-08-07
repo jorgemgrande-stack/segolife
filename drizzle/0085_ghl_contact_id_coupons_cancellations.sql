@@ -3,7 +3,8 @@
 -- tags en cada cambio de estado del pipeline.
 
 ALTER TABLE `coupon_redemptions`
-  ADD COLUMN IF NOT EXISTS `ghlContactId` varchar(128);
+  ADD COLUMN `ghlContactId` varchar(128);
+--> statement-breakpoint
 
 ALTER TABLE `cancellation_requests`
-  ADD COLUMN IF NOT EXISTS `ghl_contact_id` varchar(128);
+  ADD COLUMN `ghl_contact_id` varchar(128);

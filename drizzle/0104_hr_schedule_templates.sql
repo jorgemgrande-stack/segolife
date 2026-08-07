@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS `hr_schedule_templates` (
 );
 --> statement-breakpoint
 
-CREATE INDEX IF NOT EXISTS `idx_hr_schedule_templates_employee` ON `hr_schedule_templates` (`employee_id`, `weekday`);
+CREATE INDEX `idx_hr_schedule_templates_employee` ON `hr_schedule_templates` (`employee_id`, `weekday`);
 --> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `hr_schedule_exceptions` (
@@ -46,6 +46,6 @@ CREATE TABLE IF NOT EXISTS `hr_schedule_exceptions` (
 );
 --> statement-breakpoint
 
-CREATE INDEX IF NOT EXISTS `idx_hr_schedule_exceptions_date` ON `hr_schedule_exceptions` (`date`);
+CREATE INDEX `idx_hr_schedule_exceptions_date` ON `hr_schedule_exceptions` (`date`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `idx_hr_schedule_exceptions_employee` ON `hr_schedule_exceptions` (`employee_id`, `date`);
+CREATE INDEX `idx_hr_schedule_exceptions_employee` ON `hr_schedule_exceptions` (`employee_id`, `date`);

@@ -1,47 +1,20 @@
--- Administrador principal: Jorge Grande <reservas@nayadeexperiences.es>
--- Contraseña temporal: Nayade2026!  (cambiar tras primer login)
-
--- 1a. Si el usuario YA existe → corregir nombre, activar cuenta y fijar contraseña temporal
-UPDATE `users` SET
-  `name`              = 'Jorge Grande',
-  `passwordHash`      = '$2b$12$0H7mYbnfPI..jB1OnjVU.et6OmS.PDCajdlmkQzKmQwoCfXKP68L6',
-  `role`              = 'admin',
-  `isActive`          = 1,
-  `inviteAccepted`    = 1,
-  `loginMethod`       = 'local',
-  `inviteToken`       = NULL,
-  `inviteTokenExpiry` = NULL,
-  `updatedAt`         = NOW()
-WHERE `email` = 'reservas@nayadeexperiences.es';
---> statement-breakpoint
-
--- 1b. Si NO existe → crearlo
-INSERT INTO `users`
-  (`openId`, `name`, `email`, `passwordHash`, `role`, `isActive`,
-   `inviteAccepted`, `loginMethod`, `createdAt`, `updatedAt`, `lastSignedIn`)
-SELECT
-  'local_admin_nayade',
-  'Jorge Grande',
-  'reservas@nayadeexperiences.es',
-  '$2b$12$0H7mYbnfPI..jB1OnjVU.et6OmS.PDCajdlmkQzKmQwoCfXKP68L6',
-  'admin', 1, 1, 'local', NOW(), NOW(), NOW()
-FROM DUAL
-WHERE NOT EXISTS (
-  SELECT 1 FROM `users` WHERE `email` = 'reservas@nayadeexperiences.es'
-);
---> statement-breakpoint
-
--- 2. Asignar rol RBAC admin
-INSERT IGNORE INTO `rbac_user_roles` (`user_id`, `role_id`)
-SELECT u.id, r.id
-FROM `users` u
-JOIN `rbac_roles` r ON r.`key` = 'admin' AND r.is_active = 1
-WHERE u.`email` = 'reservas@nayadeexperiences.es';
---> statement-breakpoint
-
--- 3. Garantizar que el rol admin tiene TODOS los permisos (CROSS JOIN idempotente)
-INSERT IGNORE INTO `rbac_role_permissions` (`role_id`, `permission_id`)
-SELECT r.id, p.id
-FROM `rbac_roles` r
-CROSS JOIN `rbac_permissions` p
-WHERE r.`key` = 'admin';
+-- NEUTRALIZADA — Fase de saneamiento de startup SEGOLIFE (ver CLAUDE.md).
+--
+-- Esta migración creaba/actualizaba en cualquier base de datos donde se
+-- aplicara un usuario admin real con el email de un tercero ajeno a este
+-- proyecto (reservas@nayadeexperiences.es), una contraseña temporal
+-- documentada en texto plano en este mismo archivo, y le concedía TODOS
+-- los permisos RBAC vía CROSS JOIN. Esto es exactamente el patrón de
+-- "garantizar privilegios de administrador para reservas@nayadeexperiences.es"
+-- que esta fase de saneamiento debía eliminar: nunca debe ejecutarse contra
+-- una base de datos de Segolife.
+--
+-- No se ha borrado el archivo (rompería la numeración secuencial de
+-- migraciones) ni se ha aplicado nunca contra ningún entorno real — las
+-- tablas RBAC estaban vacías en todos los entornos conocidos antes de esta
+-- fase, así que no hay ningún checksum de migración que preservar.
+--
+-- El mecanismo correcto y ya existente para dar de alta un administrador de
+-- Segolife es `node scripts/create-admin.mjs` (explícito, con credenciales
+-- propias de quien lo ejecuta), documentado en CLAUDE.md.
+SELECT 1;

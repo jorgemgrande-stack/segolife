@@ -10,7 +10,7 @@ INSERT IGNORE INTO `rbac_permissions` (`key`, `module`, `action`, `description`)
 --> statement-breakpoint
 
 -- ─── Nuevo rol: controler ─────────────────────────────────────────────────────
-INSERT IGNORE INTO `rbac_roles` (`key`, `name`, `description`, `isLegacy`, `isActive`, `sortOrder`) VALUES
+INSERT IGNORE INTO `rbac_roles` (`key`, `name`, `description`, `is_legacy`, `is_active`, `sort_order`) VALUES
   ('controler', 'Controler', 'Acceso exclusivo al Centro de Control Diario de contabilidad', true, true, 20);
 --> statement-breakpoint
 

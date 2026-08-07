@@ -22,11 +22,11 @@ CREATE TABLE IF NOT EXISTS `hr_irpf_ledger` (
 );
 --> statement-breakpoint
 
-CREATE INDEX IF NOT EXISTS `idx_hr_irpf_ledger_period` ON `hr_irpf_ledger` (`period`);
+CREATE INDEX `idx_hr_irpf_ledger_period` ON `hr_irpf_ledger` (`period`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `idx_hr_irpf_ledger_employee` ON `hr_irpf_ledger` (`employee_id`, `period`);
+CREATE INDEX `idx_hr_irpf_ledger_employee` ON `hr_irpf_ledger` (`employee_id`, `period`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `idx_hr_irpf_ledger_fiscal_status` ON `hr_irpf_ledger` (`fiscal_status`);
+CREATE INDEX `idx_hr_irpf_ledger_fiscal_status` ON `hr_irpf_ledger` (`fiscal_status`);
 --> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `hr_ss_ledger` (
@@ -46,4 +46,4 @@ CREATE TABLE IF NOT EXISTS `hr_ss_ledger` (
 );
 --> statement-breakpoint
 
-CREATE INDEX IF NOT EXISTS `idx_hr_ss_ledger_fiscal_status` ON `hr_ss_ledger` (`fiscal_status`);
+CREATE INDEX `idx_hr_ss_ledger_fiscal_status` ON `hr_ss_ledger` (`fiscal_status`);

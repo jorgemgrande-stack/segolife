@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS `tax_deferrals` (
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `tax_deferrals_id` PRIMARY KEY(`id`)
 );
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `tax_deferral_installments` (
   `id` int AUTO_INCREMENT NOT NULL,

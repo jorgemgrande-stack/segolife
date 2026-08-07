@@ -1,0 +1,1143 @@
+/**
+ * legacyMaintenance.ts — reparaciones de schema heredadas de Náyade Experiences.
+ *
+ * Todo lo que vive aquí ANTES se ejecutaba automáticamente en cada arranque del
+ * servidor (server/_core/index.ts). Se ha movido tal cual (sin reescribir la
+ * lógica) para que solo se ejecute vía `pnpm db:migrate` (scripts/db-migrate.ts),
+ * nunca al hacer `pnpm dev` / `pnpm start`. STARTUP != MIGRATION.
+ *
+ * Deliberadamente NO incluye:
+ *  - El forzado de system_settings.brand_phone/brand_support_phone al número
+ *    real de Náyade Experiences.
+ *  - El REPLACE de contacto@tuempresa.com / teléfonos antiguos por
+ *    reservas@nayadeexperiences.es dentro de email_templates.body_html.
+ *  - El seed de la home CMS con contenido de marca Náyade (ver
+ *    legacyNayadeContentSeeds.ts, deliberadamente desconectado de todo script).
+ * Esas tres piezas inyectaban datos operativos reales de Náyade en cualquier
+ * base de datos donde corriera el arranque — se han eliminado, no movido.
+ */
+import mysql from "mysql2/promise";
+
+// ─── Fiscal refactor + rol ENUM + tablas proposals (antes: ensureCriticalSeeds) ─
+
+export async function applyLegacyFiscalAndRoleSchemaFixes() {
+  try {
+    const conn = await mysql.createConnection(process.env.DATABASE_URL!);
+
+    // Catálogo del feature flag del job de conciliación de datáfono.
+    // enabled=0 / default_enabled=0: registrar la ficha del flag no debe activar el job.
+    await conn.execute(
+      `INSERT IGNORE INTO feature_flags (\`key\`, \`name\`, description, module, enabled, default_enabled, risk_level)
+       VALUES (?, ?, ?, ?, 0, 0, 'medium')`,
+      [
+        "card_terminal_matching_enabled",
+        "Job conciliación datáfono",
+        "Ejecuta el job periódico que concilia batches de datáfono con movimientos bancarios",
+        "card_terminal",
+      ]
+    );
+
+    // Cupones creados manualmente por admin que quedaron con statusOperational="recibido" en lugar de "pendiente"
+    await conn.execute(
+      `UPDATE coupon_redemptions
+       SET statusOperational = 'pendiente'
+       WHERE originSource = 'admin_manual_entry' AND statusOperational = 'recibido'`
+    );
+
+    // Refactor fiscal: migrar general_21 -> general en todas las tablas afectadas.
+    await conn.execute(`SET SESSION sql_mode = REPLACE(REPLACE(@@SESSION.sql_mode, 'STRICT_TRANS_TABLES', ''), 'STRICT_ALL_TABLES', '')`);
+    for (const tbl of ["experiences", "packs", "room_types", "spa_treatments"]) {
+      const col = "fiscalRegime";
+      const [colRows] = await conn.execute(
+        `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+        [tbl, col]
+      ) as any[];
+      const colType: string = (colRows as any[])[0]?.COLUMN_TYPE ?? "";
+      await conn.execute(`UPDATE \`${tbl}\` SET \`${col}\` = 'general' WHERE CAST(\`${col}\` AS CHAR) = 'general_21' OR \`${col}\` + 0 = 0`);
+      if (colType.includes("general_21")) {
+        await conn.execute(`ALTER TABLE \`${tbl}\` MODIFY COLUMN \`${col}\` ENUM('reav','general','mixed') NOT NULL DEFAULT 'general'`);
+        console.log(`[Migrate] Fiscal refactor aplicado en ${tbl}`);
+      }
+      const hasRate = await conn.execute(`SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME='taxRate'`, [tbl]) as any[];
+      if (!((hasRate as any[][])[0] as any[]).length) {
+        await conn.execute(`ALTER TABLE \`${tbl}\` ADD COLUMN \`taxRate\` DECIMAL(5,2) NOT NULL DEFAULT 21.00`);
+      }
+    }
+    {
+      const [cr] = await conn.execute(
+        `SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tpv_sale_items' AND COLUMN_NAME='fiscalRegime_tsi'`
+      ) as any[];
+      await conn.execute(`UPDATE \`tpv_sale_items\` SET \`fiscalRegime_tsi\` = 'general' WHERE CAST(\`fiscalRegime_tsi\` AS CHAR) = 'general_21' OR \`fiscalRegime_tsi\` + 0 = 0`);
+      if ((String((cr as any[])[0]?.COLUMN_TYPE ?? "")).includes("general_21")) {
+        await conn.execute(`ALTER TABLE \`tpv_sale_items\` MODIFY COLUMN \`fiscalRegime_tsi\` ENUM('reav','general','mixed') DEFAULT 'general'`);
+        console.log("[Migrate] Fiscal refactor aplicado en tpv_sale_items");
+      }
+    }
+    {
+      const [cr] = await conn.execute(
+        `SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transactions' AND COLUMN_NAME='fiscalRegime_tx'`
+      ) as any[];
+      await conn.execute(`UPDATE \`transactions\` SET \`fiscalRegime_tx\` = 'general' WHERE CAST(\`fiscalRegime_tx\` AS CHAR) = 'general_21' OR \`fiscalRegime_tx\` + 0 = 0`);
+      if ((String((cr as any[])[0]?.COLUMN_TYPE ?? "")).includes("general_21")) {
+        await conn.execute(`ALTER TABLE \`transactions\` MODIFY COLUMN \`fiscalRegime_tx\` ENUM('reav','general','mixed') DEFAULT 'general'`);
+        console.log("[Migrate] Fiscal refactor aplicado en transactions");
+      }
+      const hasTxRate = await conn.execute(`SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transactions' AND COLUMN_NAME='taxRate_tx'`) as any[];
+      if (!((hasTxRate as any[][])[0] as any[]).length) {
+        await conn.execute(`ALTER TABLE \`transactions\` ADD COLUMN \`taxRate_tx\` DECIMAL(5,2) DEFAULT 21.00`);
+      }
+    }
+    {
+      const hasBreakdown = await conn.execute(`SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='invoices' AND COLUMN_NAME='taxBreakdown'`) as any[];
+      if (!((hasBreakdown as any[][])[0] as any[]).length) {
+        await conn.execute(`ALTER TABLE \`invoices\` ADD COLUMN \`taxBreakdown\` JSON NULL`);
+        console.log("[Migrate] Columna taxBreakdown añadida a invoices");
+      }
+    }
+
+    // Garantizar que 'controler'/'employee'/'gestoria'/'supplier' existen en el ENUM role de users
+    const [enumRows] = await conn.execute(
+      `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'role'`
+    ) as any[];
+    const columnType: string = (enumRows as any[])[0]?.COLUMN_TYPE ?? "";
+    if (!columnType.includes("controler") || !columnType.includes("employee") || !columnType.includes("gestoria") || !columnType.includes("supplier")) {
+      await conn.execute(
+        `ALTER TABLE \`users\` MODIFY COLUMN \`role\`
+         enum('user','admin','monitor','agente','adminrest','controler','partner_admin','partner_user','supplier','employee','gestoria')
+         NOT NULL DEFAULT 'user'`
+      );
+      console.log("[Migrate] ENUM role actualizado (controler + employee + gestoria + supplier)");
+    }
+
+    // --- Propuestas Comerciales: crear tablas si no existen -----------------
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`proposals\` (
+        \`id\`                 INT AUTO_INCREMENT PRIMARY KEY,
+        \`proposalNumber\`     VARCHAR(32)  NOT NULL,
+        \`leadId\`             INT          NOT NULL,
+        \`agentId\`            INT          NOT NULL,
+        \`title\`              VARCHAR(256) NOT NULL,
+        \`description\`        TEXT,
+        \`mode\`               ENUM('configurable','multi_option') NOT NULL DEFAULT 'configurable',
+        \`items\`              JSON,
+        \`subtotal\`           DECIMAL(10,2) NOT NULL DEFAULT 0,
+        \`discount\`           DECIMAL(10,2) DEFAULT 0,
+        \`tax\`                DECIMAL(10,2) DEFAULT 0,
+        \`total\`              DECIMAL(10,2) NOT NULL DEFAULT 0,
+        \`currency\`           VARCHAR(8)   NOT NULL DEFAULT 'EUR',
+        \`status\`             ENUM('borrador','enviado','visualizado','aceptado','rechazado','expirado') NOT NULL DEFAULT 'borrador',
+        \`token\`              VARCHAR(128) UNIQUE,
+        \`publicUrl\`          TEXT,
+        \`validUntil\`         TIMESTAMP NULL,
+        \`conditions\`         TEXT,
+        \`notes\`              TEXT,
+        \`sentAt\`             TIMESTAMP NULL,
+        \`viewedAt\`           TIMESTAMP NULL,
+        \`acceptedAt\`         TIMESTAMP NULL,
+        \`selectedOptionId\`   INT NULL,
+        \`convertedToQuoteId\` INT NULL,
+        \`ghlOpportunityId\`   VARCHAR(128) NULL,
+        \`createdAt\`          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updatedAt\`          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY \`proposals_proposalNumber_unique\` (\`proposalNumber\`),
+        INDEX \`idx_proposals_leadId\`  (\`leadId\`),
+        INDEX \`idx_proposals_status\`  (\`status\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`proposal_options\` (
+        \`id\`            INT AUTO_INCREMENT PRIMARY KEY,
+        \`proposalId\`    INT          NOT NULL,
+        \`title\`         VARCHAR(256) NOT NULL,
+        \`description\`   TEXT,
+        \`items\`         JSON,
+        \`subtotal\`      DECIMAL(10,2) NOT NULL DEFAULT 0,
+        \`discount\`      DECIMAL(10,2) DEFAULT 0,
+        \`tax\`           DECIMAL(10,2) DEFAULT 0,
+        \`total\`         DECIMAL(10,2) NOT NULL DEFAULT 0,
+        \`isRecommended\` BOOLEAN NOT NULL DEFAULT FALSE,
+        \`sortOrder\`     INT NOT NULL DEFAULT 0,
+        \`createdAt\`     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updatedAt\`     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_proposal_options_proposalId\` (\`proposalId\`),
+        CONSTRAINT \`fk_proposal_options_proposal\`
+          FOREIGN KEY (\`proposalId\`) REFERENCES \`proposals\` (\`id\`) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    console.log("[Migrate] Tablas proposals/proposal_options verificadas");
+
+    await conn.end();
+    console.log("[Migrate] Fixes de fiscalidad/roles/proposals verificados");
+  } catch (err) {
+    console.error("[Migrate] Error en applyLegacyFiscalAndRoleSchemaFixes:", err);
+  }
+}
+
+// --- MIGRATE: site_settings -> system_settings (fuente de verdad única) -------
+export async function migrateSiteSettingsToSystemSettings() {
+  try {
+    const conn = await mysql.createConnection(process.env.DATABASE_URL!);
+
+    const seeds: [string, string, string, string, string, number, number][] = [
+      ["site_business_email",           "string", "negocio",       "Email de contacto",                        "Email público de contacto del negocio",                      0, 0],
+      ["site_business_description",     "string", "negocio",       "Descripción breve del negocio",            "Usada en SEO y cabeceras de email",                          0, 1],
+      ["site_schedule_high_open",       "string", "horarios",      "Temporada alta — apertura",                "Hora de apertura en temporada alta (HH:MM)",                 0, 1],
+      ["site_schedule_high_close",      "string", "horarios",      "Temporada alta — cierre",                  "Hora de cierre en temporada alta (HH:MM)",                   0, 1],
+      ["site_schedule_low_open",        "string", "horarios",      "Temporada baja — apertura",                "Hora de apertura en temporada baja (HH:MM)",                 0, 1],
+      ["site_schedule_low_close",       "string", "horarios",      "Temporada baja — cierre",                  "Hora de cierre en temporada baja (HH:MM)",                   0, 1],
+      ["site_schedule_days",            "string", "horarios",      "Días de apertura",                         "Texto libre de días operativos (ej: Lunes a Domingo)",       0, 1],
+      ["site_payment_currency",         "string", "pagos",         "Moneda",                                   "Código ISO de la moneda principal (EUR, USD…)",              0, 0],
+      ["site_payment_deposit_restaurant","number","pagos",         "Depósito por comensal en restaurante (€)", "Importe del depósito en reservas de restaurante",            0, 0],
+      ["site_legal_name",               "string", "fiscal",        "Razón social",                             "Nombre legal de la empresa facturadora",                     0, 0],
+      ["site_legal_phone",              "string", "fiscal",        "Teléfono fiscal",                          "Teléfono registrado ante la Agencia Tributaria",             0, 0],
+      ["site_legal_zip",                "string", "fiscal",        "Código postal",                            "CP del domicilio fiscal",                                    0, 0],
+      ["site_legal_city",               "string", "fiscal",        "Municipio",                                "Ciudad del domicilio fiscal",                                0, 0],
+      ["site_legal_province",           "string", "fiscal",        "Provincia",                                "Provincia del domicilio fiscal",                             0, 0],
+      ["site_legal_email",              "string", "fiscal",        "Email fiscal",                             "Email registrado en la Agencia Tributaria",                  0, 0],
+      ["site_legal_iban",               "string", "fiscal",        "IBAN (para liquidaciones)",                "Número de cuenta que aparece en documentos de liquidación",  0, 0],
+      ["site_notif_email_restaurant",   "string", "emails",        "Email de alertas de restaurante",          "Recibe notificaciones de nuevas reservas de restaurante",    0, 0],
+      ["site_ghl_api_key",              "string", "integraciones", "GoHighLevel API Key",                      "Credencial de API de GoHighLevel",                           1, 0],
+      ["site_ghl_location_id",          "string", "integraciones", "GoHighLevel Location ID",                  "Location ID del workspace de GoHighLevel",                   0, 0],
+    ];
+
+    for (const [key, valueType, category, label, description, isSensitive, isPublic] of seeds) {
+      await conn.execute(
+        `INSERT IGNORE INTO system_settings (\`key\`, value_type, category, label, description, is_sensitive, is_public)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [key, valueType, category, label, description, isSensitive, isPublic],
+      );
+    }
+
+    const KEY_MAP: Record<string, string> = {
+      businessName:             "brand_name",
+      businessPhone:            "brand_phone",
+      businessEmail:            "site_business_email",
+      businessAddress:          "brand_location",
+      businessWebsite:          "brand_website_url",
+      businessDescription:      "site_business_description",
+      scheduleHighOpen:         "site_schedule_high_open",
+      scheduleHighClose:        "site_schedule_high_close",
+      scheduleLowOpen:          "site_schedule_low_open",
+      scheduleLowClose:         "site_schedule_low_close",
+      scheduleDays:             "site_schedule_days",
+      paymentVat:               "tax_rate_general",
+      paymentCurrency:          "site_payment_currency",
+      paymentQuoteValidity:     "quote_validity_days",
+      paymentDepositRestaurant: "site_payment_deposit_restaurant",
+      legalCompanyName:         "site_legal_name",
+      legalCompanyCif:          "brand_nif",
+      legalCompanyPhone:        "site_legal_phone",
+      legalCompanyAddress:      "brand_address",
+      legalCompanyZip:          "site_legal_zip",
+      legalCompanyCity:         "site_legal_city",
+      legalCompanyProvince:     "site_legal_province",
+      legalCompanyEmail:        "site_legal_email",
+      legalCompanyIban:         "site_legal_iban",
+      notifEmailBooking:        "email_reservations",
+      notifEmailRestaurant:     "site_notif_email_restaurant",
+      ghlApiKey:                "site_ghl_api_key",
+      ghlLocationId:            "site_ghl_location_id",
+    };
+
+    const [tableCheck] = await conn.execute(
+      `SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'site_settings'`,
+    ) as any[];
+
+    if ((tableCheck as any[]).length > 0) {
+      const [siteRows] = await conn.execute("SELECT `key`, `value` FROM site_settings") as any[];
+      for (const row of siteRows as any[]) {
+        const sysKey = KEY_MAP[row.key];
+        if (!sysKey || !row.value) continue;
+        await conn.execute(
+          `UPDATE system_settings SET value = ? WHERE \`key\` = ? AND (value IS NULL OR value = '')`,
+          [row.value, sysKey],
+        );
+      }
+      console.log("[Migrate] Migración site_settings -> system_settings completada");
+    }
+
+    await conn.end();
+  } catch (err) {
+    console.error("[Migrate] Error en migración site_settings:", err);
+  }
+}
+
+// --- Columnas de pricing/reservations/leads/quotes/cancellation_requests -----
+export async function ensurePricingColumns() {
+  try {
+    const conn = await mysql.createConnection(process.env.DATABASE_URL!);
+
+    const [cols] = await conn.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'experiences'
+       AND COLUMN_NAME IN ('pricing_type','unit_capacity','max_units','has_time_slots')`
+    ) as any[];
+    const found = new Set(cols.map((c: any) => c.COLUMN_NAME));
+
+    if (!found.has("pricing_type")) {
+      await conn.execute("ALTER TABLE `experiences` ADD COLUMN `pricing_type` ENUM('per_person','per_unit') NOT NULL DEFAULT 'per_person'");
+      console.log("[Migrate] Columna pricing_type añadida");
+    }
+    if (!found.has("unit_capacity")) {
+      await conn.execute("ALTER TABLE `experiences` ADD COLUMN `unit_capacity` INT NULL");
+      console.log("[Migrate] Columna unit_capacity añadida");
+    }
+    if (!found.has("max_units")) {
+      await conn.execute("ALTER TABLE `experiences` ADD COLUMN `max_units` INT NULL");
+      console.log("[Migrate] Columna max_units añadida");
+    }
+    if (!found.has("has_time_slots")) {
+      await conn.execute("ALTER TABLE `experiences` ADD COLUMN `has_time_slots` BOOLEAN NOT NULL DEFAULT false");
+      console.log("[Migrate] Columna has_time_slots añadida");
+    }
+
+    const [resCols] = await conn.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reservations'
+       AND COLUMN_NAME IN ('pricing_type','unit_capacity','units_booked')`
+    ) as any[];
+    const foundRes = new Set(resCols.map((c: any) => c.COLUMN_NAME));
+    if (!foundRes.has("pricing_type")) {
+      await conn.execute("ALTER TABLE `reservations` ADD COLUMN `pricing_type` VARCHAR(16) NULL");
+      console.log("[Migrate] reservations.pricing_type añadida");
+    }
+    if (!foundRes.has("unit_capacity")) {
+      await conn.execute("ALTER TABLE `reservations` ADD COLUMN `unit_capacity` INT NULL");
+      console.log("[Migrate] reservations.unit_capacity añadida");
+    }
+    if (!foundRes.has("units_booked")) {
+      await conn.execute("ALTER TABLE `reservations` ADD COLUMN `units_booked` INT NULL");
+      console.log("[Migrate] reservations.units_booked añadida");
+    }
+
+    const [leadsCols] = await conn.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'leads'
+       AND COLUMN_NAME = 'cart_metadata'`
+    ) as any[];
+    if (leadsCols.length === 0) {
+      await conn.execute("ALTER TABLE `leads` ADD COLUMN `cart_metadata` JSON NULL");
+      console.log("[Migrate] leads.cart_metadata añadida");
+    }
+
+    const [enumInfo] = await conn.execute(
+      `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'quotes' AND COLUMN_NAME = 'status'`
+    ) as any[];
+    const currentEnum: string = enumInfo[0]?.COLUMN_TYPE ?? "";
+    if (!currentEnum.includes("pago_fallido")) {
+      await conn.execute(`ALTER TABLE \`quotes\` MODIFY COLUMN \`status\` ENUM(
+        'borrador','enviado','visualizado','aceptado','convertido_carrito','pago_fallido',
+        'pagado','convertido_reserva','facturado','rechazado','expirado','perdido'
+      ) NOT NULL DEFAULT 'borrador'`);
+      console.log("[Migrate] quotes.status enum actualizado con 'pago_fallido'");
+    }
+
+    const [quotePlanCol] = await conn.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'quotes'
+       AND COLUMN_NAME = 'payment_plan_id'`
+    ) as any[];
+    if ((quotePlanCol as any[]).length === 0) {
+      await conn.execute("ALTER TABLE `quotes` ADD COLUMN `payment_plan_id` INT NULL");
+      console.log("[Migrate] quotes.payment_plan_id añadida");
+    }
+
+    const [ppTables] = await conn.execute(
+      `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'payment_plans'`
+    ) as any[];
+    if ((ppTables as any[]).length === 0) {
+      await conn.execute(`
+        CREATE TABLE \`payment_plans\` (
+          \`id\`                INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+          \`quote_id\`          INT NOT NULL,
+          \`plan_type\`         ENUM('full','installment') NOT NULL DEFAULT 'installment',
+          \`total_amount_cents\` INT NOT NULL,
+          \`created_by\`        INT NOT NULL,
+          \`createdAt\`         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          \`updatedAt\`         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_pp_quote (\`quote_id\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      `);
+      console.log("[Migrate] Tabla payment_plans creada");
+    }
+
+    const [piTables] = await conn.execute(
+      `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'payment_installments'`
+    ) as any[];
+    if ((piTables as any[]).length === 0) {
+      await conn.execute(`
+        CREATE TABLE \`payment_installments\` (
+          \`id\`                          INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+          \`plan_id\`                     INT NOT NULL,
+          \`quote_id\`                    INT NOT NULL,
+          \`installment_number\`          INT NOT NULL,
+          \`amount_cents\`                INT NOT NULL,
+          \`due_date\`                    VARCHAR(20) NOT NULL,
+          \`status\`                      ENUM('pending','paid','overdue','cancelled') NOT NULL DEFAULT 'pending',
+          \`is_required_for_confirmation\` BOOLEAN NOT NULL DEFAULT FALSE,
+          \`merchant_order\`              VARCHAR(30) NULL,
+          \`reservation_id\`              INT NULL,
+          \`payment_method\`              VARCHAR(32) NULL,
+          \`paidAt\`                      TIMESTAMP NULL,
+          \`paid_by\`                     VARCHAR(128) NULL,
+          \`reminders_sent\`              INT NOT NULL DEFAULT 0,
+          \`lastReminderAt\`              TIMESTAMP NULL,
+          \`notes\`                       TEXT NULL,
+          \`createdAt\`                   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          \`updatedAt\`                   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_pi_plan (\`plan_id\`),
+          INDEX idx_pi_quote (\`quote_id\`),
+          INDEX idx_pi_merchant (\`merchant_order\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      `);
+      console.log("[Migrate] Tabla payment_installments creada");
+    }
+
+    const [cancelCols] = await conn.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cancellation_requests'
+       AND COLUMN_NAME IN ('cancellation_scope','cancelled_items_json')`
+    ) as any[];
+    const foundCancel = new Set((cancelCols as any[]).map((c: any) => c.COLUMN_NAME));
+
+    if (!foundCancel.has("cancellation_scope")) {
+      await conn.execute(
+        "ALTER TABLE `cancellation_requests` ADD COLUMN `cancellation_scope` VARCHAR(10) NOT NULL DEFAULT 'total' AFTER `cancellation_number`"
+      );
+      console.log("[Migrate] cancellation_requests.cancellation_scope añadida");
+    }
+    if (!foundCancel.has("cancelled_items_json")) {
+      await conn.execute(
+        "ALTER TABLE `cancellation_requests` ADD COLUMN `cancelled_items_json` TEXT NULL AFTER `cancellation_scope`"
+      );
+      console.log("[Migrate] cancellation_requests.cancelled_items_json añadida");
+    }
+
+    await conn.end();
+    console.log("[Migrate] Columnas de pricing verificadas");
+  } catch (err: any) {
+    console.error("[Migrate] Error en ensurePricingColumns:", err.message);
+  }
+}
+
+export async function ensureLeadSourceColumn() {
+  try {
+    const conn = await mysql.createConnection(process.env.DATABASE_URL!);
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`crm_lead_sources\` (
+        \`id\`          INT AUTO_INCREMENT PRIMARY KEY,
+        \`code\`        VARCHAR(50) NOT NULL,
+        \`name\`        VARCHAR(100) NOT NULL,
+        \`description\` TEXT,
+        \`color\`       VARCHAR(20),
+        \`icon\`        VARCHAR(50),
+        \`sort_order\`  INT DEFAULT 0,
+        \`is_active\`   BOOLEAN DEFAULT TRUE NOT NULL,
+        \`is_system\`   BOOLEAN DEFAULT FALSE NOT NULL,
+        \`created_at\`  TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        \`updated_at\`  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE KEY \`crm_lead_sources_code_unique\` (\`code\`)
+      )
+    `);
+
+    await conn.execute(`
+      INSERT IGNORE INTO \`crm_lead_sources\` (\`code\`, \`name\`, \`description\`, \`color\`, \`icon\`, \`sort_order\`, \`is_active\`, \`is_system\`) VALUES
+        ('LANDING_FORM',       'Formulario web',         'Lead enviado desde el formulario de presupuesto de la landing page', '#3B82F6', 'Globe',        10, 1, 1),
+        ('HOME_FORM',          'Formulario experiencia', 'Lead enviado desde la ficha de experiencia del sitio web',           '#8B5CF6', 'LayoutList',   20, 1, 1),
+        ('GHL_WHATSAPP',       'WhatsApp / GHL',         'Lead captado mediante WhatsApp gestionado por GoHighLevel',          '#22C55E', 'MessageCircle',30, 1, 1),
+        ('VAPI_CALL',          'Llamada IA (Vapi)',       'Lead generado automáticamente por el agente de voz Vapi',            '#F59E0B', 'Phone',        40, 1, 1),
+        ('CRM_MANUAL',         'Alta manual CRM',         'Lead creado directamente por un agente comercial desde el CRM',      '#6B7280', 'UserPlus',     50, 1, 1),
+        ('CHECKOUT_ABANDONED', 'Pago abandonado',         'Lead generado al detectar un carrito con pago fallido o abandonado', '#EF4444', 'ShoppingCart', 60, 1, 1),
+        ('PARTNERS',           'Portal de partners',      'Lead enviado desde el portal de partners o agencias',                '#14B8A6', 'Building2',    70, 1, 1),
+        ('PRESUPUESTO_DIRECTO','Presupuesto directo',     'Lead creado a partir de un presupuesto generado internamente',        '#A855F7', 'FileText',     80, 1, 1),
+        ('REFERIDO',           'Referido / boca a boca', 'Lead referido por un cliente o contacto existente',                  '#EC4899', 'Heart',        90, 1, 0),
+        ('REDES_SOCIALES',     'Redes sociales',          'Lead proveniente de Instagram, Facebook, LinkedIn u otras RRSS',     '#F97316', 'Share2',      100, 1, 0),
+        ('EMAIL_MARKETING',    'Email marketing',         'Lead captado a través de campañas de email marketing',               '#0EA5E9', 'Mail',        110, 1, 0),
+        ('EVENTO_PRESENCIAL',  'Evento presencial',       'Lead conocido en feria, evento o presentación presencial',           '#84CC16', 'Calendar',    120, 1, 0),
+        ('PUBLICIDAD',         'Publicidad (Ads)',         'Lead procedente de campañas de Google Ads, Meta Ads, etc.',          '#F43F5E', 'TrendingUp',  130, 1, 0),
+        ('OTRO',               'Otro',                    'Origen no clasificado en las categorías anteriores',                 '#9CA3AF', 'HelpCircle',  999, 1, 0)
+    `);
+
+    const [leadCols] = await conn.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'leads' AND COLUMN_NAME = 'lead_source_id'`
+    ) as any[];
+    if (!(leadCols as any[]).length) {
+      await conn.execute("ALTER TABLE `leads` ADD COLUMN `lead_source_id` INT NULL");
+      console.log("[Migrate] leads.lead_source_id añadida");
+
+      await conn.execute("CREATE INDEX `idx_leads_lead_source_id` ON `leads` (`lead_source_id`)");
+      console.log("[Migrate] Índice idx_leads_lead_source_id creado");
+
+      await conn.execute(`UPDATE \`leads\` SET \`lead_source_id\` = (SELECT \`id\` FROM \`crm_lead_sources\` WHERE \`code\` = 'LANDING_FORM')       WHERE \`source\` IN ('landing_presupuesto','web')    AND \`lead_source_id\` IS NULL`);
+      await conn.execute(`UPDATE \`leads\` SET \`lead_source_id\` = (SELECT \`id\` FROM \`crm_lead_sources\` WHERE \`code\` = 'HOME_FORM')          WHERE \`source\` = 'web_experiencia'                 AND \`lead_source_id\` IS NULL`);
+      await conn.execute(`UPDATE \`leads\` SET \`lead_source_id\` = (SELECT \`id\` FROM \`crm_lead_sources\` WHERE \`code\` = 'GHL_WHATSAPP')       WHERE \`source\` = 'ghl_webhook'                     AND \`lead_source_id\` IS NULL`);
+      await conn.execute(`UPDATE \`leads\` SET \`lead_source_id\` = (SELECT \`id\` FROM \`crm_lead_sources\` WHERE \`code\` = 'VAPI_CALL')          WHERE \`source\` = 'vapi_llamada'                    AND \`lead_source_id\` IS NULL`);
+      await conn.execute(`UPDATE \`leads\` SET \`lead_source_id\` = (SELECT \`id\` FROM \`crm_lead_sources\` WHERE \`code\` = 'PARTNERS')           WHERE \`source\` = 'PARTNER'                         AND \`lead_source_id\` IS NULL`);
+      await conn.execute(`UPDATE \`leads\` SET \`lead_source_id\` = (SELECT \`id\` FROM \`crm_lead_sources\` WHERE \`code\` = 'PRESUPUESTO_DIRECTO')WHERE \`source\` = 'presupuesto_directo'              AND \`lead_source_id\` IS NULL`);
+      await conn.execute(`UPDATE \`leads\` SET \`lead_source_id\` = (SELECT \`id\` FROM \`crm_lead_sources\` WHERE \`code\` = 'CHECKOUT_ABANDONED') WHERE \`source\` = 'venta_perdida'                   AND \`lead_source_id\` IS NULL`);
+      await conn.execute(`UPDATE \`leads\` SET \`lead_source_id\` = (SELECT \`id\` FROM \`crm_lead_sources\` WHERE \`code\` = 'CRM_MANUAL')         WHERE \`lead_source_id\` IS NULL`);
+      console.log("[Migrate] Backfill lead_source_id completado");
+    } else {
+      console.log("[Migrate] leads.lead_source_id ya existe — nada que hacer");
+    }
+
+    const [timeCols] = await conn.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'leads' AND COLUMN_NAME = 'preferred_time'`
+    ) as any[];
+    if (!(timeCols as any[]).length) {
+      await conn.execute("ALTER TABLE `leads` ADD COLUMN `preferred_time` VARCHAR(10) NULL");
+      console.log("[Migrate] leads.preferred_time añadida");
+    }
+
+    await conn.end();
+  } catch (err: any) {
+    console.error("[Migrate] Error en ensureLeadSourceColumn:", err.message);
+  }
+}
+
+export async function ensureTicketingChannel() {
+  try {
+    const conn = await mysql.createConnection(process.env.DATABASE_URL!);
+    const [rows] = await conn.execute(
+      `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reservations' AND COLUMN_NAME = 'channel'`
+    ) as any;
+    const colType: string = rows[0]?.COLUMN_TYPE ?? "";
+    if (!colType.includes("'TICKETING'")) {
+      await conn.execute(`
+        ALTER TABLE reservations MODIFY COLUMN channel ENUM(
+          'ONLINE_DIRECTO','ONLINE_ASISTIDO','VENTA_DELEGADA','TPV_FISICO',
+          'PARTNER','TICKETING','MANUAL','API',
+          'web','crm','telefono','email','otro','tpv','groupon'
+        ) DEFAULT 'ONLINE_DIRECTO'
+      `);
+      console.log("[Migrate] ENUM reservations.channel: valor TICKETING añadido");
+    }
+    await conn.end();
+  } catch (err: any) {
+    console.error("[Migrate] Error en ensureTicketingChannel:", err.message);
+  }
+}
+
+export async function ensureReservationPublicToken() {
+  try {
+    const conn = await mysql.createConnection(process.env.DATABASE_URL!);
+
+    const [cols] = await conn.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reservations'
+       AND COLUMN_NAME = 'public_token'`
+    ) as any[];
+
+    if (cols.length === 0) {
+      await conn.execute(
+        `ALTER TABLE \`reservations\` ADD COLUMN \`public_token\` VARCHAR(128) DEFAULT NULL`
+      );
+      console.log("[Migrate] reservations.public_token añadida");
+    }
+
+    for (const [col, ddl] of [
+      ["delegation_proof_url", "TEXT NULL"],
+      ["delegation_proof_key", "VARCHAR(512) NULL"],
+      ["delegation_note", "TEXT NULL"],
+    ] as const) {
+      await conn.execute(`ALTER TABLE \`reservations\` ADD COLUMN IF NOT EXISTS \`${col}\` ${ddl}`)
+        .catch(() => { /* columna ya existe */ });
+    }
+
+    const [missingRes] = await conn.execute(
+      `SELECT COUNT(*) AS cnt FROM \`reservations\` WHERE \`public_token\` IS NULL`
+    ) as any[];
+    const missing = missingRes[0]?.cnt ?? 0;
+    if (missing > 0) {
+      await conn.execute(
+        `UPDATE \`reservations\`
+         SET \`public_token\` = SHA2(CONCAT(UUID(), UUID(), RAND(), id), 256)
+         WHERE \`public_token\` IS NULL`
+      );
+      console.log(`[Migrate] reservations.public_token backfilled (${missing} filas)`);
+    }
+
+    const [trgs] = await conn.execute(
+      `SELECT TRIGGER_NAME FROM INFORMATION_SCHEMA.TRIGGERS
+       WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME = 'reservations_set_public_token'`
+    ) as any[];
+
+    if (trgs.length === 0) {
+      await conn.query(
+        `CREATE TRIGGER \`reservations_set_public_token\`
+         BEFORE INSERT ON \`reservations\`
+         FOR EACH ROW
+         SET NEW.public_token = COALESCE(NEW.public_token, SHA2(CONCAT(UUID(), UUID(), RAND()), 256))`
+      );
+      console.log("[Migrate] trigger reservations_set_public_token creado");
+    }
+
+    await conn.end();
+  } catch (err: any) {
+    console.error("[Migrate] Error en ensureReservationPublicToken:", err.message);
+  }
+}
+
+export async function ensureRefundColumns() {
+  try {
+    const conn = await mysql.createConnection(process.env.DATABASE_URL!);
+
+    const colsToEnsure: Array<{ name: string; ddl: string }> = [
+      { name: "refund_executed_at",   ddl: "TIMESTAMP NULL" },
+      { name: "refund_proof_url",     ddl: "VARCHAR(512) NULL" },
+      { name: "cancellation_scope",   ddl: "VARCHAR(10) NOT NULL DEFAULT 'total'" },
+      { name: "cancelled_items_json", ddl: "TEXT NULL" },
+      { name: "cancellation_number",  ddl: "VARCHAR(32) NULL" },
+      { name: "ghl_contact_id",       ddl: "VARCHAR(128) NULL" },
+    ];
+
+    const [cols] = await conn.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cancellation_requests'
+       AND COLUMN_NAME IN (${colsToEnsure.map(() => "?").join(",")})`,
+      colsToEnsure.map(c => c.name)
+    ) as any[];
+    const found = new Set(cols.map((c: any) => c.COLUMN_NAME));
+
+    for (const col of colsToEnsure) {
+      if (!found.has(col.name)) {
+        await conn.execute(`ALTER TABLE \`cancellation_requests\` ADD COLUMN \`${col.name}\` ${col.ddl}`);
+        console.log(`[Migrate] cancellation_requests.${col.name} añadida`);
+      }
+    }
+
+    await conn.end();
+  } catch (err: any) {
+    console.error("[Migrate] Error en ensureRefundColumns:", err.message);
+  }
+}
+
+export async function ensureDiscountColumns() {
+  try {
+    const conn = await mysql.createConnection(process.env.DATABASE_URL!);
+
+    const [cols] = await conn.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'discount_codes'
+       AND COLUMN_NAME IN ('discount_type', 'discount_amount', 'origin', 'compensation_voucher_id', 'client_email', 'client_name')`
+    ) as any[];
+    const found = new Set(cols.map((c: any) => c.COLUMN_NAME));
+
+    if (!found.has("discount_type")) {
+      await conn.execute("ALTER TABLE `discount_codes` ADD COLUMN `discount_type` enum('percent','fixed') NOT NULL DEFAULT 'percent'");
+      console.log("[Migrate] discount_codes.discount_type añadida");
+    }
+    if (!found.has("discount_amount")) {
+      await conn.execute("ALTER TABLE `discount_codes` ADD COLUMN `discount_amount` decimal(10,2) NULL");
+      console.log("[Migrate] discount_codes.discount_amount añadida");
+    }
+    if (!found.has("origin")) {
+      await conn.execute("ALTER TABLE `discount_codes` ADD COLUMN `origin` enum('manual','voucher') NOT NULL DEFAULT 'manual'");
+      console.log("[Migrate] discount_codes.origin añadida");
+    }
+    if (!found.has("compensation_voucher_id")) {
+      await conn.execute("ALTER TABLE `discount_codes` ADD COLUMN `compensation_voucher_id` int NULL");
+      console.log("[Migrate] discount_codes.compensation_voucher_id añadida");
+    }
+    if (!found.has("client_email")) {
+      await conn.execute("ALTER TABLE `discount_codes` ADD COLUMN `client_email` varchar(256) NULL");
+      console.log("[Migrate] discount_codes.client_email añadida");
+    }
+    if (!found.has("client_name")) {
+      await conn.execute("ALTER TABLE `discount_codes` ADD COLUMN `client_name` varchar(256) NULL");
+      console.log("[Migrate] discount_codes.client_name añadida");
+    }
+
+    const [fixed] = await conn.execute(
+      `UPDATE \`discount_codes\` SET \`discount_type\` = 'fixed'
+       WHERE \`origin\` = 'voucher' AND \`discount_amount\` > 0 AND \`discount_type\` = 'percent'`
+    ) as any[];
+    if ((fixed as any).affectedRows > 0) {
+      console.log(`[Migrate] ${(fixed as any).affectedRows} código(s) bono corregidos a discount_type='fixed'`);
+    }
+
+    await conn.end();
+  } catch (err: any) {
+    console.error("[Migrate] Error en ensureDiscountColumns:", err.message);
+  }
+}
+
+export async function ensureExpenseEmailIngestionSchema() {
+  try {
+    const conn = await mysql.createConnection(process.env.DATABASE_URL!);
+
+    const [expCols] = await conn.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'expenses'
+       AND COLUMN_NAME IN ('source','emailMessageId','emailFrom','missingAttachment')`
+    ) as any[];
+    const foundExpCols = new Set((expCols as any[]).map((c: any) => c.COLUMN_NAME));
+
+    if (!foundExpCols.has("source")) {
+      await conn.execute("ALTER TABLE `expenses` ADD COLUMN `source` VARCHAR(32) NOT NULL DEFAULT 'manual'");
+      console.log("[Migrate] expenses.source añadida");
+    }
+    if (!foundExpCols.has("emailMessageId")) {
+      await conn.execute("ALTER TABLE `expenses` ADD COLUMN `emailMessageId` VARCHAR(512) NULL");
+      console.log("[Migrate] expenses.emailMessageId añadida");
+    }
+    if (!foundExpCols.has("emailFrom")) {
+      await conn.execute("ALTER TABLE `expenses` ADD COLUMN `emailFrom` VARCHAR(256) NULL");
+      console.log("[Migrate] expenses.emailFrom añadida");
+    }
+    if (!foundExpCols.has("missingAttachment")) {
+      await conn.execute("ALTER TABLE `expenses` ADD COLUMN `missingAttachment` BOOLEAN NOT NULL DEFAULT FALSE");
+      console.log("[Migrate] expenses.missingAttachment añadida");
+    }
+
+    // -- Gestoría e Impuestos — desglose fiscal del IVA soportado (migración 0111) --
+    const [expFiscalCols] = await conn.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'expenses'
+       AND COLUMN_NAME IN ('taxBase','taxRate','taxAmount','deductiblePercent',
+         'supplierNif','supplierName','retentionPercent','retentionAmount',
+         'invoiceType','accrualDate','fiscalReviewStatus')`
+    ) as any[];
+    const foundExpFiscal = new Set((expFiscalCols as any[]).map((c: any) => c.COLUMN_NAME));
+    const expFiscalDdl: Record<string, string> = {
+      taxBase:            "DECIMAL(12,2) NULL",
+      taxRate:            "DECIMAL(5,2) NOT NULL DEFAULT 21.00",
+      taxAmount:          "DECIMAL(12,2) NULL",
+      deductiblePercent:  "DECIMAL(5,2) NOT NULL DEFAULT 100.00",
+      supplierNif:        "VARCHAR(32) NULL",
+      supplierName:       "VARCHAR(256) NULL",
+      retentionPercent:   "DECIMAL(5,2) NULL",
+      retentionAmount:    "DECIMAL(12,2) NULL",
+      invoiceType:        "ENUM('ordinaria','simplificada','intracomunitaria','importacion','exenta','sin_factura') NOT NULL DEFAULT 'ordinaria'",
+      accrualDate:        "VARCHAR(10) NULL",
+      fiscalReviewStatus: "ENUM('pendiente','revisado') NOT NULL DEFAULT 'pendiente'",
+    };
+    for (const [col, ddl] of Object.entries(expFiscalDdl)) {
+      if (!foundExpFiscal.has(col)) {
+        await conn.execute(`ALTER TABLE \`expenses\` ADD COLUMN \`${col}\` ${ddl}`);
+        console.log(`[Migrate] expenses.${col} añadida (fiscal)`);
+      }
+    }
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`expense_email_ingestion_logs\` (
+        \`id\`               INT AUTO_INCREMENT PRIMARY KEY,
+        \`message_id\`       VARCHAR(512) NOT NULL,
+        \`subject\`          VARCHAR(512) NULL,
+        \`sender\`           VARCHAR(256) NULL,
+        \`received_at\`      TIMESTAMP NULL,
+        \`status\`           ENUM('processed','duplicated','invalid_subject','missing_amount','error') NOT NULL,
+        \`expense_id\`       INT NULL,
+        \`amount_detected\`  DECIMAL(12,2) NULL,
+        \`attachments_count\` INT NOT NULL DEFAULT 0,
+        \`error_message\`    TEXT NULL,
+        \`processed_at\`     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_eeil_message_id (\`message_id\`),
+        INDEX idx_eeil_status     (\`status\`),
+        INDEX idx_eeil_processed  (\`processed_at\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    // Catálogo de feature flags — todos registrados en estado desactivado.
+    // Activarlos es una decisión operativa explícita (panel admin), nunca del arranque.
+    const flagCatalog: Array<[string, string, string, string, string]> = [
+      ["expense_email_ingestion_enabled", "Ingesta gastos por email", "Activa el job periódico que lee emails con asunto #gasto y crea gastos automáticamente", "expenses", "low"],
+      ["commercial_email_enabled", "Email Comercial", "Activa la bandeja de email comercial con sincronización IMAP multi-cuenta y el módulo de configuración de cuentas.", "commercial_email", "low"],
+      ["email_automation_job_enabled", "Cron automatizaciones email", "Procesa la cola email_scheduled_jobs cada 10 min — envía recordatorios programados por reglas de automatización.", "email", "medium"],
+      ["card_terminal_relink_enabled", "Job revinculación datáfono", "Reintenta periódicamente vincular batches de datáfono sin conciliar.", "card_terminal", "low"],
+      ["partners_module_enabled", "Módulo Partners", "Activa el módulo de Partners/Colaboradores en el admin.", "partners", "low"],
+      ["partners_direct_reservations", "Partners: Reservas directas", "Permite a partners crear reservas directas confirmadas (Fase 3).", "partners", "medium"],
+      ["partners_billing_enabled", "Partners: Facturación agrupada", "Activa la facturación agrupada por periodos para partners (Fase 4).", "partners", "medium"],
+      ["partners_commissions_enabled", "Partners: Comisiones", "Activa el cálculo y liquidación de comisiones para partners (Fase 5).", "partners", "high"],
+    ];
+    for (const [key, name, description, module, riskLevel] of flagCatalog) {
+      await conn.execute(
+        `INSERT IGNORE INTO feature_flags (\`key\`, \`name\`, description, module, enabled, default_enabled, risk_level)
+         VALUES (?, ?, ?, ?, 0, 0, ?)`,
+        [key, name, description, module, riskLevel]
+      );
+    }
+
+    // Módulo Partners — asegurar tabla con schema correcto.
+    // Si la tabla tiene un schema antiguo incompatible (detectado por columna 'access_key',
+    // que solo puede existir si alguien aplicó a mano un schema previo), la eliminamos y
+    // recreamos — la tabla está vacía en ese caso (todos los inserts fallaron contra ese schema).
+    {
+      const [oldCols] = await conn.execute(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'partners' AND COLUMN_NAME = 'access_key'`
+      ) as any[];
+      if (oldCols && oldCols.length > 0) {
+        console.log("[Migrate] Partners: schema antiguo detectado (access_key), recreando tabla...");
+        await conn.execute("SET FOREIGN_KEY_CHECKS=0");
+        await conn.execute("DROP TABLE IF EXISTS `partners`");
+        await conn.execute("SET FOREIGN_KEY_CHECKS=1");
+      }
+    }
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`partners\` (
+        \`id\` int NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        \`name\` varchar(256) NOT NULL,
+        \`slug\` varchar(128) NOT NULL,
+        \`fiscalName\` varchar(256),
+        \`nif\` varchar(32),
+        \`address\` text,
+        \`city\` varchar(128),
+        \`postalCode\` varchar(16),
+        \`country\` varchar(4) NOT NULL DEFAULT 'ES',
+        \`contactName\` varchar(256),
+        \`contactEmail\` varchar(320),
+        \`contactPhone\` varchar(32),
+        \`billingEmail\` varchar(320),
+        \`canCreateReservations\` boolean NOT NULL DEFAULT false,
+        \`canCreateLeads\` boolean NOT NULL DEFAULT true,
+        \`allowedReservationProductIds\` json,
+        \`allowedLeadProductIds\` json,
+        \`commissionType\` enum('none','fixed_lead','fixed_reservation','percent','per_product','manual') NOT NULL DEFAULT 'none',
+        \`commissionValue\` decimal(10,4),
+        \`billingEnabled\` boolean NOT NULL DEFAULT false,
+        \`billingPeriod\` enum('weekly','biweekly','monthly','manual') NOT NULL DEFAULT 'monthly',
+        \`monthlyQuota\` int NULL,
+        \`isActive\` boolean NOT NULL DEFAULT true,
+        \`notes\` text,
+        \`createdAt\` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updatedAt\` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY \`uq_partner_slug\` (\`slug\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`partner_billing_batches\` (
+        \`id\` int NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        \`batchNumber\` varchar(32) NOT NULL,
+        \`partnerId\` int NOT NULL,
+        \`periodType\` enum('weekly','biweekly','monthly','manual') NOT NULL DEFAULT 'monthly',
+        \`periodStart\` varchar(10) NOT NULL,
+        \`periodEnd\` varchar(10) NOT NULL,
+        \`totalAmount\` decimal(12,2) NOT NULL DEFAULT 0,
+        \`status\` enum('borrador','emitida','cobrada','anulada') NOT NULL DEFAULT 'borrador',
+        \`invoiceId\` int NULL,
+        \`notes\` text,
+        \`createdBy\` int NULL,
+        \`createdAt\` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updatedAt\` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY \`uq_batch_number\` (\`batchNumber\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`partner_billing_batch_items\` (
+        \`id\` int NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        \`batchId\` int NOT NULL,
+        \`reservationId\` int NOT NULL,
+        \`amount\` decimal(10,2) NOT NULL DEFAULT 0,
+        \`description\` varchar(512),
+        \`createdAt\` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    const partnerColsToAdd: Array<{ table: string; column: string; ddl: string }> = [
+      { table: "users",        column: "partnerId",              ddl: "int NULL" },
+      { table: "leads",        column: "partnerId",              ddl: "int NULL" },
+      { table: "leads",        column: "partnerUserId",          ddl: "int NULL" },
+      { table: "reservations", column: "partner_id",           ddl: "int NULL" },
+      { table: "reservations", column: "partner_user_id",      ddl: "int NULL" },
+      { table: "reservations", column: "fbp",                  ddl: "varchar(255) NULL" },
+      { table: "reservations", column: "fbc",                  ddl: "varchar(255) NULL" },
+      { table: "reservations", column: "client_ip_address",    ddl: "varchar(45) NULL" },
+      { table: "reservations", column: "client_user_agent",    ddl: "varchar(500) NULL" },
+      { table: "invoices",     column: "partnerId",            ddl: "int NULL" },
+      { table: "invoices",     column: "partnerBillingBatchId", ddl: "int NULL" },
+      { table: "tpv_sale_items", column: "is_manual",          ddl: "boolean NOT NULL DEFAULT false" },
+      { table: "tpv_sale_items", column: "concept_text",       ddl: "varchar(500) NULL" },
+      { table: "coupon_redemptions", column: "ghlContactId",   ddl: "varchar(128) NULL" },
+      { table: "partners", column: "fiscalName",                   ddl: "varchar(256) NULL" },
+      { table: "partners", column: "nif",                          ddl: "varchar(32) NULL" },
+      { table: "partners", column: "address",                      ddl: "text NULL" },
+      { table: "partners", column: "city",                         ddl: "varchar(128) NULL" },
+      { table: "partners", column: "postalCode",                   ddl: "varchar(16) NULL" },
+      { table: "partners", column: "country",                      ddl: "varchar(4) NOT NULL DEFAULT 'ES'" },
+      { table: "partners", column: "contactName",                  ddl: "varchar(256) NULL" },
+      { table: "partners", column: "contactEmail",                 ddl: "varchar(320) NULL" },
+      { table: "partners", column: "contactPhone",                 ddl: "varchar(32) NULL" },
+      { table: "partners", column: "billingEmail",                 ddl: "varchar(320) NULL" },
+      { table: "partners", column: "canCreateReservations",        ddl: "boolean NOT NULL DEFAULT false" },
+      { table: "partners", column: "canCreateLeads",               ddl: "boolean NOT NULL DEFAULT true" },
+      { table: "partners", column: "allowedReservationProductIds", ddl: "json NULL" },
+      { table: "partners", column: "allowedLeadProductIds",        ddl: "json NULL" },
+      { table: "partners", column: "commissionType",               ddl: "enum('none','fixed_lead','fixed_reservation','percent','per_product','manual') NOT NULL DEFAULT 'none'" },
+      { table: "partners", column: "commissionValue",              ddl: "decimal(10,4) NULL" },
+      { table: "partners", column: "billingEnabled",               ddl: "boolean NOT NULL DEFAULT false" },
+      { table: "partners", column: "billingPeriod",                ddl: "enum('weekly','biweekly','monthly','manual') NOT NULL DEFAULT 'monthly'" },
+      { table: "partners", column: "monthlyQuota",                 ddl: "int NULL" },
+      { table: "partners", column: "isActive",                     ddl: "boolean NOT NULL DEFAULT true" },
+      { table: "partners", column: "notes",                        ddl: "text NULL" },
+      { table: "partners", column: "createdAt",                    ddl: "timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP" },
+      { table: "partners", column: "updatedAt",                    ddl: "timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP" },
+      { table: "partners", column: "announcements",                ddl: "json NULL" },
+    ];
+    for (const { table, column, ddl } of partnerColsToAdd) {
+      const [existing] = await conn.execute(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+        [table, column]
+      ) as any[];
+      if (!existing || existing.length === 0) {
+        await conn.execute(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${ddl}`)
+          .catch((e: any) => console.warn(`[Migrate] Partners column ${table}.${column}:`, e.message));
+      }
+    }
+    await conn.execute(
+      `ALTER TABLE \`users\` MODIFY COLUMN \`role\`
+       enum('user','admin','monitor','agente','adminrest','controler','partner_admin','partner_user','supplier','employee','gestoria')
+       NOT NULL DEFAULT 'user'`
+    ).catch(() => {});
+    console.log("[Migrate] Módulo Partners: tablas y columnas verificadas");
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`email_template_configs\` (
+        \`id\`             INT AUTO_INCREMENT PRIMARY KEY,
+        \`key\`            VARCHAR(128) NOT NULL UNIQUE,
+        \`category\`       VARCHAR(64),
+        \`friendlyName\`   VARCHAR(256),
+        \`isActive\`       BOOLEAN NOT NULL DEFAULT TRUE,
+        \`sendToCustomer\` BOOLEAN NOT NULL DEFAULT TRUE,
+        \`sendToAdmin\`    BOOLEAN NOT NULL DEFAULT FALSE,
+        \`adminCopyEmail\` VARCHAR(320),
+        \`customSubject\`  VARCHAR(512),
+        \`notes\`          TEXT,
+        \`createdAt\`      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updatedAt\`      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`email_automation_rules\` (
+        \`id\`                INT AUTO_INCREMENT PRIMARY KEY,
+        \`templateKey\`       VARCHAR(128) NOT NULL,
+        \`name\`              VARCHAR(256) NOT NULL,
+        \`isActive\`          BOOLEAN NOT NULL DEFAULT TRUE,
+        \`sortOrder\`         INT NOT NULL DEFAULT 0,
+        \`delayHours\`        INT NOT NULL DEFAULT 24,
+        \`calculateFrom\`     ENUM('trigger_time','last_reminder','created_at','viewed_at','expires_at') NOT NULL DEFAULT 'trigger_time',
+        \`conditionsJson\`    JSON,
+        \`maxSendsPerEntity\` INT NOT NULL DEFAULT 1,
+        \`allowedSendStart\`  VARCHAR(5) NOT NULL DEFAULT '09:00',
+        \`allowedSendEnd\`    VARCHAR(5) NOT NULL DEFAULT '21:00',
+        \`stopIfConverted\`   BOOLEAN NOT NULL DEFAULT TRUE,
+        \`stopIfPaid\`        BOOLEAN NOT NULL DEFAULT TRUE,
+        \`emailSubject\`      VARCHAR(512),
+        \`emailBody\`         TEXT,
+        \`createdAt\`         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updatedAt\`         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_ear_template_key (\`templateKey\`),
+        INDEX idx_ear_active (\`isActive\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`email_comm_log\` (
+        \`id\`                INT AUTO_INCREMENT PRIMARY KEY,
+        \`leadId\`            INT,
+        \`quoteId\`           INT,
+        \`reservationId\`     INT,
+        \`relatedEntityType\` VARCHAR(64),
+        \`relatedEntityId\`   INT,
+        \`templateKey\`       VARCHAR(128),
+        \`ruleId\`            INT,
+        \`triggerEvent\`      VARCHAR(128),
+        \`channel\`           VARCHAR(32) NOT NULL DEFAULT 'email',
+        \`recipientEmail\`    VARCHAR(320),
+        \`ccEmail\`           VARCHAR(320),
+        \`subject\`           VARCHAR(512),
+        \`status\`            ENUM('sent','failed','skipped') NOT NULL DEFAULT 'sent',
+        \`provider\`          VARCHAR(32),
+        \`errorMessage\`      TEXT,
+        \`sentByUserId\`      INT,
+        \`isAutomatic\`       BOOLEAN NOT NULL DEFAULT FALSE,
+        \`skipReason\`        VARCHAR(256),
+        \`createdAt\`         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_ecl_template  (\`templateKey\`),
+        INDEX idx_ecl_entity    (\`relatedEntityType\`, \`relatedEntityId\`),
+        INDEX idx_ecl_recipient (\`recipientEmail\`(32)),
+        INDEX idx_ecl_created   (\`createdAt\`),
+        INDEX idx_ecl_status    (\`status\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`email_scheduled_jobs\` (
+        \`id\`                INT AUTO_INCREMENT PRIMARY KEY,
+        \`relatedEntityType\` VARCHAR(64) NOT NULL,
+        \`relatedEntityId\`   INT NOT NULL,
+        \`templateKey\`       VARCHAR(128) NOT NULL,
+        \`ruleId\`            INT NOT NULL,
+        \`recipientEmail\`    VARCHAR(320),
+        \`scheduledFor\`      TIMESTAMP NOT NULL,
+        \`status\`            ENUM('pending','sent','skipped','failed','cancelled') NOT NULL DEFAULT 'pending',
+        \`attempts\`          INT NOT NULL DEFAULT 0,
+        \`lastAttemptAt\`     TIMESTAMP NULL,
+        \`errorMessage\`      TEXT,
+        \`skipReason\`        VARCHAR(256),
+        \`lockedAt\`          TIMESTAMP NULL,
+        \`metadataJson\`      JSON,
+        \`createdAt\`         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updatedAt\`         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_esj_status_sched (\`status\`, \`scheduledFor\`),
+        INDEX idx_esj_entity       (\`relatedEntityType\`, \`relatedEntityId\`),
+        INDEX idx_esj_template     (\`templateKey\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`customer_email_prefs\` (
+        \`id\`                INT AUTO_INCREMENT PRIMARY KEY,
+        \`email\`             VARCHAR(320) NOT NULL UNIQUE,
+        \`automationsPaused\` BOOLEAN NOT NULL DEFAULT FALSE,
+        \`pauseReason\`       TEXT,
+        \`pausedAt\`          TIMESTAMP NULL,
+        \`pausedByUserId\`    INT,
+        \`createdAt\`         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updatedAt\`         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_cep_email (\`email\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    await conn.execute(
+      `DELETE FROM email_automation_rules
+       WHERE templateKey = 'budget_request_user'
+         AND name IN (
+           'Recordatorio 24h — solicitud sin respuesta',
+           'Recordatorio 72h — seguimiento comercial',
+           'Última oportunidad 120h'
+         )`
+    );
+
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`email_accounts\` (
+        \`id\`                  INT AUTO_INCREMENT PRIMARY KEY,
+        \`name\`                VARCHAR(100) NOT NULL,
+        \`email\`               VARCHAR(320) NOT NULL,
+        \`imap_host\`           VARCHAR(255) NOT NULL DEFAULT '',
+        \`imap_port\`           INT NOT NULL DEFAULT 993,
+        \`imap_secure\`         TINYINT(1) NOT NULL DEFAULT 1,
+        \`imap_user\`           VARCHAR(320) NOT NULL DEFAULT '',
+        \`imap_password_enc\`   TEXT NOT NULL,
+        \`smtp_host\`           VARCHAR(255) NOT NULL DEFAULT '',
+        \`smtp_port\`           INT NOT NULL DEFAULT 587,
+        \`smtp_secure\`         TINYINT(1) NOT NULL DEFAULT 0,
+        \`smtp_user\`           VARCHAR(320) NOT NULL DEFAULT '',
+        \`smtp_password_enc\`   TEXT NOT NULL,
+        \`from_name\`           VARCHAR(255) NOT NULL DEFAULT '',
+        \`from_email\`          VARCHAR(320) NOT NULL DEFAULT '',
+        \`is_active\`           TINYINT(1) NOT NULL DEFAULT 1,
+        \`is_default\`          TINYINT(1) NOT NULL DEFAULT 0,
+        \`sync_enabled\`        TINYINT(1) NOT NULL DEFAULT 1,
+        \`sync_interval_min\`   INT NOT NULL DEFAULT 5,
+        \`last_sync_at\`        TIMESTAMP NULL,
+        \`last_sync_error\`     TEXT NULL,
+        \`folder_inbox\`        VARCHAR(100) NOT NULL DEFAULT 'INBOX',
+        \`folder_sent\`         VARCHAR(100) NOT NULL DEFAULT 'Sent',
+        \`folder_archive\`      VARCHAR(100) NOT NULL DEFAULT 'Archive',
+        \`folder_trash\`        VARCHAR(100) NOT NULL DEFAULT 'Trash',
+        \`max_emails_per_sync\` INT NOT NULL DEFAULT 50,
+        \`created_at\`          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\`          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`commercial_emails\` (
+        \`id\`                    INT AUTO_INCREMENT PRIMARY KEY,
+        \`account_id\`            INT NOT NULL,
+        \`message_id\`            VARCHAR(512) NOT NULL,
+        \`in_reply_to\`           VARCHAR(512) NULL,
+        \`from_email\`            VARCHAR(320) NOT NULL,
+        \`from_name\`             VARCHAR(255) NULL,
+        \`to_emails\`             JSON NOT NULL,
+        \`cc_emails\`             JSON NOT NULL,
+        \`subject\`               VARCHAR(512) NOT NULL,
+        \`body_html\`             MEDIUMTEXT NULL,
+        \`body_text\`             MEDIUMTEXT NULL,
+        \`snippet\`               VARCHAR(300) NULL,
+        \`sent_at\`               TIMESTAMP NULL,
+        \`is_read\`               TINYINT(1) NOT NULL DEFAULT 0,
+        \`is_answered\`           TINYINT(1) NOT NULL DEFAULT 0,
+        \`is_archived\`           TINYINT(1) NOT NULL DEFAULT 0,
+        \`is_deleted\`            TINYINT(1) NOT NULL DEFAULT 0,
+        \`is_sent\`               TINYINT(1) NOT NULL DEFAULT 0,
+        \`folder\`                VARCHAR(100) NOT NULL DEFAULT 'INBOX',
+        \`has_attachments\`       TINYINT(1) NOT NULL DEFAULT 0,
+        \`labels\`                JSON NULL,
+        \`assigned_user_id\`      INT NULL,
+        \`linked_lead_id\`        INT NULL,
+        \`linked_client_id\`      INT NULL,
+        \`linked_quote_id\`       INT NULL,
+        \`linked_reservation_id\` INT NULL,
+        \`imap_uid\`              INT NULL,
+        \`created_at\`            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\`            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY \`uq_ce_msg_id\` (\`message_id\`(255)),
+        INDEX \`idx_ce_account\`    (\`account_id\`),
+        INDEX \`idx_ce_sent_at\`    (\`sent_at\`),
+        INDEX \`idx_ce_from_email\` (\`from_email\`(100)),
+        INDEX \`idx_ce_folder\`     (\`folder\`),
+        INDEX \`idx_ce_is_read\`    (\`is_read\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    await conn.execute(
+      "ALTER TABLE commercial_emails ADD COLUMN IF NOT EXISTS attachments_meta JSON NULL"
+    ).catch(() => {});
+
+    await conn.end();
+    console.log("[Migrate] Schema expense email ingestion verificado");
+  } catch (err: any) {
+    console.error("[Migrate] Error en ensureExpenseEmailIngestionSchema:", err.message);
+  }
+}
+
+export async function fixBrokenInvoicePdfUrls() {
+  try {
+    const { drizzle } = await import("drizzle-orm/mysql2");
+    const { sql } = await import("drizzle-orm");
+    const conn = await mysql.createConnection(process.env.DATABASE_URL!);
+    const db = drizzle(conn);
+    const result = await db.execute(sql`
+      UPDATE invoices
+      SET \`pdfUrl\` = CONCAT('/api/invoices/preview?n=', \`invoiceNumber\`),
+          \`pdfKey\` = ''
+      WHERE \`pdfUrl\` LIKE '/local-storage/%'
+    `);
+    const affected = (result[0] as any).affectedRows ?? 0;
+    if (affected > 0) console.log(`[Migrate] Corregidas ${affected} facturas con URL /local-storage/ rota -> on-demand`);
+    await conn.end();
+  } catch (e) {
+    console.error("[Migrate] Error corrigiendo URLs de facturas:", e);
+  }
+}
+
+/**
+ * Orquestador — ejecuta todas las reparaciones de schema heredadas, en el mismo
+ * orden en que corrían antes dentro de la cadena de arranque. Solo se invoca desde
+ * scripts/db-migrate.ts (comando explícito), nunca desde server/_core/index.ts.
+ */
+export async function runLegacySchemaMaintenance() {
+  await applyLegacyFiscalAndRoleSchemaFixes();
+  await migrateSiteSettingsToSystemSettings();
+  await ensurePricingColumns();
+  await ensureRefundColumns();
+  await ensureReservationPublicToken();
+  await ensureDiscountColumns();
+  await ensureLeadSourceColumn();
+  await ensureTicketingChannel();
+  await ensureExpenseEmailIngestionSchema();
+  await fixBrokenInvoicePdfUrls();
+}

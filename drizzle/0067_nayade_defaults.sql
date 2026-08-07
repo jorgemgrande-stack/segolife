@@ -1,13 +1,14 @@
-UPDATE `system_settings` SET `value` = 'reservas@nayadeexperiences.es', `updated_at` = NOW() WHERE `key` = 'email_reservations' AND (`value` IS NULL OR `value` = '');
---> statement-breakpoint
-UPDATE `system_settings` SET `value` = 'administracion@nayadeexperiences.es', `updated_at` = NOW() WHERE `key` = 'email_admin_alerts' AND (`value` IS NULL OR `value` = '');
---> statement-breakpoint
-UPDATE `system_settings` SET `value` = 'administracion@nayadeexperiences.es', `updated_at` = NOW() WHERE `key` = 'email_accounting' AND (`value` IS NULL OR `value` = '');
---> statement-breakpoint
-UPDATE `system_settings` SET `value` = 'reservas@nayadeexperiences.es', `updated_at` = NOW() WHERE `key` = 'email_cancellations' AND (`value` IS NULL OR `value` = '');
---> statement-breakpoint
-UPDATE `system_settings` SET `value` = 'administracion@nayadeexperiences.es', `updated_at` = NOW() WHERE `key` = 'email_tpv_ingestion' AND (`value` IS NULL OR `value` = '');
---> statement-breakpoint
-UPDATE `system_settings` SET `value` = 'noreply@nayadeexperiences.es', `updated_at` = NOW() WHERE `key` = 'email_noreply_sender' AND (`value` IS NULL OR `value` = '');
---> statement-breakpoint
-UPDATE `system_settings` SET `value` = 'reservas@nayadeexperiences.es', `updated_at` = NOW() WHERE `key` = 'email_copy_recipient' AND (`value` IS NULL OR `value` = '');
+-- NEUTRALIZADA — Fase de saneamiento de startup SEGOLIFE (ver CLAUDE.md).
+-- Esta migración forzaba las direcciones de email operativas de
+-- system_settings (email_reservations, email_admin_alerts, email_accounting,
+-- email_cancellations, email_tpv_ingestion, email_noreply_sender,
+-- email_copy_recipient) a las direcciones reales @nayadeexperiences.es en
+-- cualquier base de datos donde se aplicara — es decir, cualquier email
+-- transaccional real de Segolife (confirmaciones, cancelaciones, alertas)
+-- habría terminado enviándose a la bandeja real de un tercero ajeno a este
+-- proyecto. Nunca se ha aplicado contra ningún entorno real (no hay checksum
+-- de migración que preservar). Se deja vacía intencionadamente: cada entorno
+-- de Segolife debe configurar sus propias direcciones de contacto desde el
+-- panel de administración (system_settings), no recibir un valor por defecto
+-- ajeno.
+SELECT 1;

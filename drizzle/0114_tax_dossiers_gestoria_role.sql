@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS `tax_dossiers` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT `tax_dossiers_id` PRIMARY KEY(`id`)
 );
+--> statement-breakpoint
 
 -- El rol 'gestoria' se añade al enum preservando los valores existentes.
 ALTER TABLE `users`

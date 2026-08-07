@@ -57,4 +57,3 @@ CREATE TABLE IF NOT EXISTS `proposal_options` (
   CONSTRAINT `fk_proposal_options_proposal`
     FOREIGN KEY (`proposalId`) REFERENCES `proposals` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
---> statement-breakpoint

@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS `commercial_followup_settings` (
   `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `commercial_followup_rules` (
   `id` int AUTO_INCREMENT PRIMARY KEY,
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS `commercial_followup_rules` (
   `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `quote_commercial_tracking` (
   `id` int AUTO_INCREMENT PRIMARY KEY,
@@ -48,6 +50,7 @@ CREATE TABLE IF NOT EXISTS `quote_commercial_tracking` (
   `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `commercial_communications` (
   `id` int AUTO_INCREMENT PRIMARY KEY,
@@ -69,9 +72,11 @@ CREATE TABLE IF NOT EXISTS `commercial_communications` (
   INDEX `idx_comm_sentAt` (`sentAt`),
   UNIQUE KEY `uq_comm_quote_rule` (`quoteId`, `ruleId`, `type`)
 );
+--> statement-breakpoint
 
 -- Seed: configuración global por defecto (solo si no existe)
 INSERT IGNORE INTO `commercial_followup_settings` (id, enabled) VALUES (1, true);
+--> statement-breakpoint
 
 -- Seed: 3 reglas por defecto
 INSERT IGNORE INTO `commercial_followup_rules` (id, name, isActive, delayHours, triggerFrom, onlyIfNotViewed, allowIfViewedButUnpaid, maxSendsPerQuoteForThisRule, emailSubject, emailBody, sortOrder)

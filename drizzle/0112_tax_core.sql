@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS `tax_obligations` (
   CONSTRAINT `tax_obligations_id` PRIMARY KEY(`id`),
   CONSTRAINT `uq_tax_obligation_model_period` UNIQUE(`model`,`period_key`)
 );
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `tax_obligation_lines` (
   `id` int AUTO_INCREMENT NOT NULL,
@@ -43,6 +44,7 @@ CREATE TABLE IF NOT EXISTS `tax_obligation_lines` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT `tax_obligation_lines_id` PRIMARY KEY(`id`)
 );
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `tax_obligation_log` (
   `id` int AUTO_INCREMENT NOT NULL,
@@ -55,6 +57,7 @@ CREATE TABLE IF NOT EXISTS `tax_obligation_log` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT `tax_obligation_log_id` PRIMARY KEY(`id`)
 );
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `tax_documents` (
   `id` int AUTO_INCREMENT NOT NULL,
@@ -67,6 +70,7 @@ CREATE TABLE IF NOT EXISTS `tax_documents` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT `tax_documents_id` PRIMARY KEY(`id`)
 );
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `tax_settings` (
   `id` int NOT NULL DEFAULT 1,
@@ -81,5 +85,6 @@ CREATE TABLE IF NOT EXISTS `tax_settings` (
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `tax_settings_id` PRIMARY KEY(`id`)
 );
+--> statement-breakpoint
 
 INSERT IGNORE INTO `tax_settings` (`id`) VALUES (1);

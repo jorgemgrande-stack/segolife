@@ -1,12 +1,15 @@
--- Token público para que el cliente acceda a su reserva vía URL sin login.
--- DEFAULT con expresión MySQL 8.0.13+: el token se auto-genera en cada INSERT
--- si la aplicación no lo pasa explícitamente. Esto evita tocar los 12+ puntos
--- de inserción de reservations en el código.
-ALTER TABLE `reservations`
-  ADD COLUMN IF NOT EXISTS `public_token` varchar(128)
-  DEFAULT (SHA2(CONCAT(UUID(), UUID(), RAND()), 256));
---> statement-breakpoint
--- Backfill: rellenar tokens en reservas existentes que aún tengan NULL
-UPDATE `reservations`
-SET `public_token` = SHA2(CONCAT(UUID(), UUID(), RAND(), id), 256)
-WHERE `public_token` IS NULL;
+-- NEUTRALIZADA — Fase de saneamiento de startup SEGOLIFE (ver CLAUDE.md).
+-- Esta migración tenía dos problemas reales que impedían que se aplicara
+-- nunca contra MySQL real: (1) ADD COLUMN IF NOT EXISTS no es sintaxis válida
+-- en MySQL 8 estándar (extensión de MariaDB); (2) DEFAULT (SHA2(CONCAT(UUID(),
+-- UUID(), RAND()), 256)) usa funciones no deterministas (UUID/RAND) en una
+-- expresión DEFAULT, que MySQL rechaza. Esto es justo lo que documentaba el
+-- comentario histórico de ensureReservationPublicToken() en
+-- server/_core/index.ts ("la versión MySQL de Railway no lo aceptaba").
+-- Esa misma función (ahora en server/_core/legacyMaintenance.ts, se ejecuta
+-- después de todas las migraciones dentro de `pnpm db:migrate`) añade la
+-- columna sin DEFAULT problemático, hace el backfill, y crea un TRIGGER
+-- BEFORE INSERT para autogenerar el token — cubre exactamente lo que esta
+-- migración pretendía, de forma compatible con MySQL real. Se deja como
+-- no-op para no duplicar la columna.
+SELECT 1;

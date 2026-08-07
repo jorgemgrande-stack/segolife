@@ -35,10 +35,10 @@ CREATE TABLE IF NOT EXISTS `hr_bonus` (
 );
 --> statement-breakpoint
 
-CREATE INDEX IF NOT EXISTS `idx_hr_bonus_employee` ON `hr_bonus` (`employee_id`);
+CREATE INDEX `idx_hr_bonus_employee` ON `hr_bonus` (`employee_id`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `idx_hr_bonus_status` ON `hr_bonus` (`status`);
+CREATE INDEX `idx_hr_bonus_status` ON `hr_bonus` (`status`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `idx_hr_bonus_paid_at` ON `hr_bonus` (`paid_at`);
+CREATE INDEX `idx_hr_bonus_paid_at` ON `hr_bonus` (`paid_at`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `idx_hr_bonus_fiscal_status` ON `hr_bonus` (`fiscal_status`);
+CREATE INDEX `idx_hr_bonus_fiscal_status` ON `hr_bonus` (`fiscal_status`);

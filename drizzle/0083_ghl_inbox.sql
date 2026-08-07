@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS ghl_conversations (
   INDEX idx_ghl_conv_lastMsg (lastMessageAt),
   INDEX idx_ghl_conv_contact (ghlContactId)
 );
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS ghl_messages (
   id int AUTO_INCREMENT PRIMARY KEY,
@@ -44,6 +45,7 @@ CREATE TABLE IF NOT EXISTS ghl_messages (
   INDEX idx_ghl_msg_conv (ghlConversationId),
   INDEX idx_ghl_msg_sentAt (sentAt)
 );
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS ghl_webhook_events (
   id int AUTO_INCREMENT PRIMARY KEY,

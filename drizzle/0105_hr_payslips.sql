@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS `hr_payslips` (
 );
 --> statement-breakpoint
 
-CREATE INDEX IF NOT EXISTS `idx_hr_payslips_period` ON `hr_payslips` (`period`);
+CREATE INDEX `idx_hr_payslips_period` ON `hr_payslips` (`period`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `idx_hr_payslips_batch` ON `hr_payslips` (`batch_id`);
+CREATE INDEX `idx_hr_payslips_batch` ON `hr_payslips` (`batch_id`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `idx_hr_payslips_fiscal_status` ON `hr_payslips` (`fiscal_status`);
+CREATE INDEX `idx_hr_payslips_fiscal_status` ON `hr_payslips` (`fiscal_status`);

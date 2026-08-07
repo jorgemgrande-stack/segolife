@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS `crm_lead_sources` (
   `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
   UNIQUE KEY `crm_lead_sources_code_unique` (`code`)
 );
--->statement-breakpoint
+--> statement-breakpoint
 -- Seed: orígenes de sistema (INSERT IGNORE para ser idempotente)
 INSERT IGNORE INTO `crm_lead_sources` (`code`, `name`, `description`, `color`, `icon`, `sort_order`, `is_active`, `is_system`) VALUES
   ('LANDING_FORM',       'Formulario web',          'Lead enviado desde el formulario de presupuesto de la landing page', '#3B82F6', 'Globe',        10, true, true),
@@ -30,42 +30,42 @@ INSERT IGNORE INTO `crm_lead_sources` (`code`, `name`, `description`, `color`, `
   ('EVENTO_PRESENCIAL',  'Evento presencial',        'Lead conocido en feria, evento o presentación presencial',           '#84CC16', 'Calendar',    120, true, false),
   ('PUBLICIDAD',         'Publicidad (Ads)',         'Lead procedente de campañas de Google Ads, Meta Ads, etc.',          '#F43F5E', 'TrendingUp',  130, true, false),
   ('OTRO',               'Otro',                     'Origen no clasificado en las categorías anteriores',                 '#9CA3AF', 'HelpCircle',  999, true, false);
--->statement-breakpoint
+--> statement-breakpoint
 -- ─── ADD COLUMN TO LEADS (MySQL 8 compatible — conditional via PREPARE/EXECUTE) ──
 SET @col_exists = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'leads' AND COLUMN_NAME = 'lead_source_id');
--->statement-breakpoint
+--> statement-breakpoint
 SET @add_col_sql = IF(@col_exists = 0, 'ALTER TABLE `leads` ADD COLUMN `lead_source_id` int NULL', 'SELECT 1 AS skipped');
--->statement-breakpoint
+--> statement-breakpoint
 PREPARE _add_col FROM @add_col_sql;
--->statement-breakpoint
+--> statement-breakpoint
 EXECUTE _add_col;
--->statement-breakpoint
+--> statement-breakpoint
 DEALLOCATE PREPARE _add_col;
--->statement-breakpoint
--- ─── CREATE INDEX IF NOT EXISTS (MySQL 8.0.1+ syntax) ────────────────────────
-CREATE INDEX IF NOT EXISTS `idx_leads_lead_source_id` ON `leads` (`lead_source_id`);
--->statement-breakpoint
+--> statement-breakpoint
+-- ─── CREATE INDEX (MySQL 8.0.1+ syntax) ────────────────────────
+CREATE INDEX `idx_leads_lead_source_id` ON `leads` (`lead_source_id`);
+--> statement-breakpoint
 -- ─── BACKFILL EXISTING LEADS ──────────────────────────────────────────────────
 UPDATE `leads` SET `lead_source_id` = (SELECT `id` FROM `crm_lead_sources` WHERE `code` = 'LANDING_FORM')
   WHERE `source` IN ('landing_presupuesto', 'web') AND `lead_source_id` IS NULL;
--->statement-breakpoint
+--> statement-breakpoint
 UPDATE `leads` SET `lead_source_id` = (SELECT `id` FROM `crm_lead_sources` WHERE `code` = 'HOME_FORM')
   WHERE `source` = 'web_experiencia' AND `lead_source_id` IS NULL;
--->statement-breakpoint
+--> statement-breakpoint
 UPDATE `leads` SET `lead_source_id` = (SELECT `id` FROM `crm_lead_sources` WHERE `code` = 'GHL_WHATSAPP')
   WHERE `source` = 'ghl_webhook' AND `lead_source_id` IS NULL;
--->statement-breakpoint
+--> statement-breakpoint
 UPDATE `leads` SET `lead_source_id` = (SELECT `id` FROM `crm_lead_sources` WHERE `code` = 'VAPI_CALL')
   WHERE `source` = 'vapi_llamada' AND `lead_source_id` IS NULL;
--->statement-breakpoint
+--> statement-breakpoint
 UPDATE `leads` SET `lead_source_id` = (SELECT `id` FROM `crm_lead_sources` WHERE `code` = 'PARTNERS')
   WHERE `source` = 'PARTNER' AND `lead_source_id` IS NULL;
--->statement-breakpoint
+--> statement-breakpoint
 UPDATE `leads` SET `lead_source_id` = (SELECT `id` FROM `crm_lead_sources` WHERE `code` = 'PRESUPUESTO_DIRECTO')
   WHERE `source` = 'presupuesto_directo' AND `lead_source_id` IS NULL;
--->statement-breakpoint
+--> statement-breakpoint
 UPDATE `leads` SET `lead_source_id` = (SELECT `id` FROM `crm_lead_sources` WHERE `code` = 'CHECKOUT_ABANDONED')
   WHERE `source` = 'venta_perdida' AND `lead_source_id` IS NULL;
--->statement-breakpoint
+--> statement-breakpoint
 UPDATE `leads` SET `lead_source_id` = (SELECT `id` FROM `crm_lead_sources` WHERE `code` = 'CRM_MANUAL')
   WHERE `lead_source_id` IS NULL;
