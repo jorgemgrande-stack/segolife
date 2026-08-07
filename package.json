@@ -67,19 +67,19 @@
     "embla-carousel-react": "^8.6.0",
     "express": "^4.21.2",
     "express-rate-limit": "^8.3.1",
+    "imapflow": "^1.0.198",
     "input-otp": "^1.4.2",
     "jose": "6.1.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.453.0",
+    "mailparser": "^3.7.2",
     "multer": "^2.1.1",
     "mysql2": "^3.15.0",
     "nanoid": "^5.1.5",
     "next-themes": "^0.4.6",
-    "imapflow": "^1.0.198",
-    "pdf-parse": "^1.1.1",
-    "mailparser": "^3.7.2",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.2",
+    "pdf-parse": "^1.1.1",
     "puppeteer-core": "^24.40.0",
     "react": "^19.2.1",
     "react-day-picker": "^9.11.1",
@@ -105,10 +105,10 @@
     "@types/bcryptjs": "^3.0.0",
     "@types/express": "4.17.21",
     "@types/google.maps": "^3.58.1",
-    "@types/node": "^24.7.0",
     "@types/mailparser": "^3.4.4",
-    "@types/pdf-parse": "^1.1.5",
+    "@types/node": "^24.7.0",
     "@types/node-cron": "^3.0.11",
+    "@types/pdf-parse": "^1.1.5",
     "@types/react": "^19.2.1",
     "@types/react-dom": "^19.2.1",
     "@vitejs/plugin-react": "^5.0.4",
@@ -135,6 +135,10 @@
     },
     "overrides": {
       "tailwindcss>nanoid": "3.3.7"
-    }
+    },
+    "onlyBuiltDependencies": [
+      "@tailwindcss/oxide",
+      "esbuild"
+    ]
   }
 }
