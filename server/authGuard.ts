@@ -154,6 +154,14 @@ const PUBLIC_TRPC_ROUTES = new Set([
   "partners.activateInvite",
   "suppliers.activateSupplierInvite",
   "gestoria.portal.activate",
+
+  // ── Segolife: venues/eventos (Fase 1D) — /ie, /uva ────────────────────────
+  "venues.publicActive",
+  "venues.publicGetBySlug",
+  "events.publicActive",
+  "events.publicFeatured",
+  "events.publicByVenue",
+  "events.publicGetBySlug",
 ]);
 
 // ─── Parsear el nombre del procedimiento desde la URL de tRPC ─────────────────
