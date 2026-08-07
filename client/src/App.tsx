@@ -149,6 +149,11 @@ const VenueDetail = lazy(() => import("./pages/admin/venues/VenueDetail"));
 const EventsManager = lazy(() => import("./pages/admin/events/EventsManager"));
 const EventDetail = lazy(() => import("./pages/admin/events/EventDetail"));
 
+// Segolife: Motor de SegoTokens (Fase 2)
+const TokensDashboard = lazy(() => import("./pages/admin/tokens/TokensDashboard"));
+const TokensRulesManager = lazy(() => import("./pages/admin/tokens/RulesManager"));
+const TokensCampaignsManager = lazy(() => import("./pages/admin/tokens/CampaignsManager"));
+
 // Users & Settings
 const UsersManager = lazy(() => import("./pages/admin/users/UsersManager"));
 const Settings = lazy(() => import("./pages/admin/settings/Settings"));
@@ -440,6 +445,9 @@ function Router() {
       <Route path="/admin/venues/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><VenueDetail /></Suspense>}</Route>
       <Route path="/admin/events">{() => <Suspense fallback={<AdminLoadingFallback />}><EventsManager /></Suspense>}</Route>
       <Route path="/admin/events/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><EventDetail /></Suspense>}</Route>
+      <Route path="/admin/tokens">{() => <Suspense fallback={<AdminLoadingFallback />}><TokensDashboard /></Suspense>}</Route>
+      <Route path="/admin/tokens/rules">{() => <Suspense fallback={<AdminLoadingFallback />}><TokensRulesManager /></Suspense>}</Route>
+      <Route path="/admin/tokens/campaigns">{() => <Suspense fallback={<AdminLoadingFallback />}><TokensCampaignsManager /></Suspense>}</Route>
       <Route path="/admin/configuracion">{() => <Suspense fallback={<AdminLoadingFallback />}><ConfigPanel /></Suspense>}</Route>
       <Route path="/admin/configuracion/sitio">{() => <Suspense fallback={<AdminLoadingFallback />}><Settings /></Suspense>}</Route>
       <Route path="/admin/configuracion/estado">{() => <Suspense fallback={<AdminLoadingFallback />}><ConfigStatus /></Suspense>}</Route>

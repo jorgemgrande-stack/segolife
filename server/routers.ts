@@ -165,6 +165,7 @@ import { communitiesRouter } from "./routers/communities";
 import { studentsRouter } from "./routers/students";
 import { venuesRouter } from "./routers/venues";
 import { eventsRouter } from "./routers/events";
+import { tokensRouter } from "./routers/tokens";
 import { restaurantsRouter } from "./routers/restaurants";
 import { crmRouter } from "./routers/crm";
 import { suppliersRouter, settlementsRouter } from "./routers/suppliers";
@@ -2154,6 +2155,7 @@ export const appRouter = router({
   students: studentsRouter,
   venues: venuesRouter,
   events: eventsRouter,
+  tokens: tokensRouter,
   restaurants: restaurantsRouter,
   crm: crmRouter,
   commercialFollowup: commercialFollowupRouter,

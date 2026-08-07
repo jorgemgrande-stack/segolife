@@ -1,0 +1,395 @@
+/**
+ * tokenLedgerService.ts — núcleo atómico del motor de SegoTokens (Fase 2).
+ *
+ * `postLedgerMovement` es la ÚNICA función que escribe en token_wallets +
+ * token_ledger — todo lo demás (tokenEngine.ts, adjustManualTokens,
+ * reverseTransaction) pasa por aquí. Garantías:
+ *
+ *  - ATOMICIDAD: wallet + ledger se actualizan dentro de la misma transacción
+ *    MySQL (db.transaction). Nunca se crea un ledger sin actualizar el
+ *    wallet, ni viceversa.
+ *  - CONCURRENCIA: el wallet se lee con `SELECT ... FOR UPDATE` dentro de la
+ *    transacción — dos débitos simultáneos sobre el mismo wallet quedan
+ *    serializados por el motor MySQL real, no por lógica de aplicación.
+ *  - IDEMPOTENCIA: si se proporciona `idempotencyKey` y ya existe un
+ *    movimiento con esa clave, se devuelve el movimiento existente sin
+ *    repetir el efecto (ni siquiera si dos peticiones llegan a la vez — el
+ *    UNIQUE de MySQL sobre idempotency_key corta la carrera y el ER_DUP_ENTRY
+ *    se captura para reconsultar en vez de fallar).
+ *  - INMUTABILIDAD: nunca se hace UPDATE/DELETE de una fila de token_ledger
+ *    ya insertada. Una corrección es un movimiento nuevo de signo opuesto
+ *    (ver reverseTransaction).
+ *  - SALDO NUNCA NEGATIVO: un `debit` que dejaría balance < 0 lanza
+ *    TokenEngineError('INSUFFICIENT_BALANCE') y revierte la transacción.
+ */
+import { drizzle } from "drizzle-orm/mysql2";
+import mysql from "mysql2/promise";
+import { eq, and, gte, desc, sql as drizzleSql, type SQL } from "drizzle-orm";
+import {
+  tokenWallets,
+  tokenLedger,
+  users,
+  type TokenWallet,
+  type TokenLedgerEntry,
+} from "../../../drizzle/schema";
+
+// Pool con más de 1 conexión (a diferencia de venuesDb.ts/studentsDb.ts) —
+// aquí varias transacciones concurrentes SÍ deben poder abrirse a la vez
+// (cada una sobre su propia conexión); es el SELECT...FOR UPDATE dentro de
+// cada transacción, no el tamaño del pool, lo que serializa el acceso a un
+// mismo wallet.
+const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 5 });
+const _db = drizzle(_pool);
+
+type DbHandle = typeof _db;
+// El callback de `.transaction()` recibe un tipo distinto (MySqlTransaction),
+// incompatible en TypeScript con MySql2Database aunque comparten la misma
+// API de query builder en tiempo de ejecución — este alias cubre ambos para
+// las funciones internas que pueden recibir cualquiera de los dos.
+type TxHandle = Parameters<Parameters<DbHandle["transaction"]>[0]>[0];
+type AnyDbHandle = DbHandle | TxHandle;
+
+async function getDb(): Promise<DbHandle> {
+  return _db;
+}
+
+export type TokenEngineErrorCode =
+  | "INVALID_AMOUNT"
+  | "INSUFFICIENT_BALANCE"
+  | "NOT_FOUND"
+  | "ALREADY_REVERSED"
+  | "REASON_REQUIRED"
+  | "OUTSIDE_SCHEDULE"
+  | "NO_RULE_FOUND"
+  | "RULE_LIMIT_EXCEEDED";
+
+export class TokenEngineError extends Error {
+  code: TokenEngineErrorCode;
+  constructor(code: TokenEngineErrorCode, message: string) {
+    super(message);
+    this.name = "TokenEngineError";
+    this.code = code;
+  }
+}
+
+function isDuplicateKeyError(err: unknown): boolean {
+  return !!err && typeof err === "object" && "errno" in err && (err as { errno?: number }).errno === 1062;
+}
+
+export interface PostLedgerMovementInput {
+  userId: number;
+  direction: "credit" | "debit";
+  /** Siempre positivo — direction determina el signo real aplicado al balance. */
+  amount: number;
+  reason: string;
+  sourceType: string;
+  sourceId?: number | null;
+  venueId?: number | null;
+  eventId?: number | null;
+  ruleId?: number | null;
+  campaignId?: number | null;
+  idempotencyKey?: string | null;
+  metadata?: Record<string, unknown> | null;
+  createdByUserId?: number | null;
+  reversedLedgerId?: number | null;
+}
+
+async function postLedgerMovementInTx(
+  tx: AnyDbHandle,
+  input: PostLedgerMovementInput
+): Promise<{ wallet: TokenWallet; ledger: TokenLedgerEntry }> {
+  if (!Number.isInteger(input.amount) || input.amount <= 0) {
+    throw new TokenEngineError("INVALID_AMOUNT", "El importe debe ser un entero positivo");
+  }
+
+  // 1. Idempotencia — comprobación previa (camino feliz, sin carrera).
+  if (input.idempotencyKey) {
+    const [existing] = await tx.select().from(tokenLedger)
+      .where(eq(tokenLedger.idempotencyKey, input.idempotencyKey)).limit(1);
+    if (existing) {
+      const [wallet] = await tx.select().from(tokenWallets).where(eq(tokenWallets.id, existing.walletId)).limit(1);
+      return { wallet, ledger: existing };
+    }
+  }
+
+  // 2. Wallet con lock de fila — ensureWallet inline para no salir de la transacción.
+  let [wallet] = await tx.select().from(tokenWallets)
+    .where(eq(tokenWallets.userId, input.userId)).limit(1).for("update");
+  if (!wallet) {
+    await tx.insert(tokenWallets).values({ userId: input.userId });
+    [wallet] = await tx.select().from(tokenWallets)
+      .where(eq(tokenWallets.userId, input.userId)).limit(1).for("update");
+  }
+
+  // 3. Calcular nuevo saldo — nunca negativo.
+  const delta = input.direction === "credit" ? input.amount : -input.amount;
+  const newBalance = wallet.balance + delta;
+  if (newBalance < 0) {
+    throw new TokenEngineError(
+      "INSUFFICIENT_BALANCE",
+      `Saldo insuficiente: ${wallet.balance} disponible(s), se intentó descontar ${input.amount}`
+    );
+  }
+
+  // 4. Insertar ledger (capturando la carrera de idempotencia si dos
+  //    peticiones con la misma clave llegan a la vez).
+  let insertId: number;
+  try {
+    const insertResult = await tx.insert(tokenLedger).values({
+      walletId: wallet.id,
+      userId: input.userId,
+      direction: input.direction,
+      amount: input.amount,
+      balanceAfter: newBalance,
+      reason: input.reason,
+      sourceType: input.sourceType,
+      sourceId: input.sourceId ?? null,
+      venueId: input.venueId ?? null,
+      eventId: input.eventId ?? null,
+      ruleId: input.ruleId ?? null,
+      campaignId: input.campaignId ?? null,
+      idempotencyKey: input.idempotencyKey ?? null,
+      metadata: input.metadata ?? null,
+      createdByUserId: input.createdByUserId ?? null,
+      reversedLedgerId: input.reversedLedgerId ?? null,
+    });
+    insertId = (insertResult as unknown as [{ insertId: number }])[0].insertId;
+  } catch (err) {
+    if (isDuplicateKeyError(err) && input.idempotencyKey) {
+      const [existing] = await tx.select().from(tokenLedger)
+        .where(eq(tokenLedger.idempotencyKey, input.idempotencyKey)).limit(1);
+      if (existing) {
+        const [existingWallet] = await tx.select().from(tokenWallets).where(eq(tokenWallets.id, existing.walletId)).limit(1);
+        return { wallet: existingWallet, ledger: existing };
+      }
+    }
+    throw err;
+  }
+
+  // 5. Actualizar wallet — misma transacción, nunca desde la UI directamente.
+  await tx.update(tokenWallets).set({
+    balance: newBalance,
+    lifetimeEarned: input.direction === "credit" ? wallet.lifetimeEarned + input.amount : wallet.lifetimeEarned,
+    lifetimeSpent: input.direction === "debit" ? wallet.lifetimeSpent + input.amount : wallet.lifetimeSpent,
+  }).where(eq(tokenWallets.id, wallet.id));
+
+  const [updatedWallet] = await tx.select().from(tokenWallets).where(eq(tokenWallets.id, wallet.id)).limit(1);
+  const [ledgerRow] = await tx.select().from(tokenLedger).where(eq(tokenLedger.id, insertId)).limit(1);
+  return { wallet: updatedWallet, ledger: ledgerRow };
+}
+
+export async function postLedgerMovement(
+  input: PostLedgerMovementInput,
+  db?: DbHandle
+): Promise<{ wallet: TokenWallet; ledger: TokenLedgerEntry }> {
+  const conn = db ?? (await getDb());
+  return conn.transaction(tx => postLedgerMovementInTx(tx, input));
+}
+
+export interface ReverseTransactionInput {
+  ledgerId: number;
+  reason: string;
+  adminUserId: number;
+}
+
+/**
+ * Reversión administrativa — nunca borra/edita el movimiento original.
+ * Impide doble reversal comprobando (dentro de la MISMA transacción que la
+ * inserción) que ninguna otra fila ya referencia `reversedLedgerId = ledgerId`.
+ */
+export async function reverseTransaction(
+  input: ReverseTransactionInput,
+  db?: DbHandle
+): Promise<{ wallet: TokenWallet; ledger: TokenLedgerEntry }> {
+  if (!input.reason || !input.reason.trim()) {
+    throw new TokenEngineError("REASON_REQUIRED", "La reversión requiere un motivo");
+  }
+  const conn = db ?? (await getDb());
+  return conn.transaction(async (tx) => {
+    const [original] = await tx.select().from(tokenLedger).where(eq(tokenLedger.id, input.ledgerId)).limit(1);
+    if (!original) throw new TokenEngineError("NOT_FOUND", "Movimiento no encontrado");
+
+    const [alreadyReversed] = await tx.select({ id: tokenLedger.id }).from(tokenLedger)
+      .where(eq(tokenLedger.reversedLedgerId, input.ledgerId)).limit(1);
+    if (alreadyReversed) throw new TokenEngineError("ALREADY_REVERSED", "Este movimiento ya ha sido revertido");
+
+    const oppositeDirection = original.direction === "credit" ? "debit" : "credit";
+    return postLedgerMovementInTx(tx, {
+      userId: original.userId,
+      direction: oppositeDirection,
+      amount: original.amount,
+      reason: input.reason,
+      sourceType: "reversal",
+      sourceId: original.id,
+      venueId: original.venueId,
+      eventId: original.eventId,
+      ruleId: original.ruleId,
+      campaignId: original.campaignId,
+      createdByUserId: input.adminUserId,
+      reversedLedgerId: original.id,
+    });
+  });
+}
+
+export interface AdjustManualTokensInput {
+  userId: number;
+  direction: "credit" | "debit";
+  amount: number;
+  reason: string;
+  adminUserId: number;
+}
+
+/** Ajuste manual de admin (+/-) — motivo obligatorio, pasa por el mismo núcleo atómico. Nunca edita balance directamente. */
+export async function adjustManualTokens(
+  input: AdjustManualTokensInput,
+  db?: DbHandle
+): Promise<{ wallet: TokenWallet; ledger: TokenLedgerEntry }> {
+  if (!input.reason || !input.reason.trim()) {
+    throw new TokenEngineError("REASON_REQUIRED", "El ajuste manual requiere un motivo");
+  }
+  return postLedgerMovement({
+    userId: input.userId,
+    direction: input.direction,
+    amount: input.amount,
+    reason: input.reason,
+    sourceType: "manual_adjustment",
+    createdByUserId: input.adminUserId,
+  }, db);
+}
+
+export async function ensureWallet(userId: number, db?: DbHandle): Promise<TokenWallet> {
+  const conn = db ?? (await getDb());
+  const [existing] = await conn.select().from(tokenWallets).where(eq(tokenWallets.userId, userId)).limit(1);
+  if (existing) return existing;
+  try {
+    await conn.insert(tokenWallets).values({ userId });
+  } catch (err) {
+    if (!isDuplicateKeyError(err)) throw err;
+  }
+  const [created] = await conn.select().from(tokenWallets).where(eq(tokenWallets.userId, userId)).limit(1);
+  return created;
+}
+
+export async function getWalletByUserId(userId: number, db?: DbHandle): Promise<TokenWallet | null> {
+  const conn = db ?? (await getDb());
+  const [wallet] = await conn.select().from(tokenWallets).where(eq(tokenWallets.userId, userId)).limit(1);
+  return wallet ?? null;
+}
+
+export interface LedgerListFilters {
+  limit?: number;
+  offset?: number;
+}
+
+export async function listLedgerByUserId(
+  userId: number,
+  filters: LedgerListFilters = {},
+  db?: DbHandle
+): Promise<TokenLedgerEntry[]> {
+  const conn = db ?? (await getDb());
+  return conn.select().from(tokenLedger).where(eq(tokenLedger.userId, userId))
+    .orderBy(desc(tokenLedger.createdAt))
+    .limit(filters.limit ?? 50)
+    .offset(filters.offset ?? 0);
+}
+
+export async function getLedgerById(id: number, db?: DbHandle): Promise<TokenLedgerEntry | null> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select().from(tokenLedger).where(eq(tokenLedger.id, id)).limit(1);
+  return row ?? null;
+}
+
+// ─── Lecturas usadas por el motor de reglas (recurrencia + límites) ────────
+// Se calculan en caliente contando token_ledger — deliberadamente NO existe
+// una tabla de contadores separada (ver drizzle/schema.ts, comentario de
+// token_rules) para no arriesgar un contador que se desincronice del ledger real.
+
+export async function countRecentEarnEvents(
+  userId: number,
+  sinceDate: Date,
+  venueId?: number,
+  db?: DbHandle
+): Promise<number> {
+  const conn = db ?? (await getDb());
+  const conditions: SQL[] = [
+    eq(tokenLedger.userId, userId),
+    eq(tokenLedger.direction, "credit"),
+    gte(tokenLedger.createdAt, sinceDate),
+  ];
+  if (venueId) conditions.push(eq(tokenLedger.venueId, venueId));
+  const rows = await conn.select({ id: tokenLedger.id }).from(tokenLedger).where(and(...conditions));
+  return rows.length;
+}
+
+export async function countDistinctVenuesVisited(
+  userId: number,
+  sinceDate: Date,
+  db?: DbHandle
+): Promise<number> {
+  const conn = db ?? (await getDb());
+  const rows = await conn.select({ venueId: tokenLedger.venueId }).from(tokenLedger)
+    .where(and(eq(tokenLedger.userId, userId), eq(tokenLedger.direction, "credit"), gte(tokenLedger.createdAt, sinceDate)));
+  const distinctVenues = new Set(rows.map(r => r.venueId).filter((v): v is number => v != null));
+  return distinctVenues.size;
+}
+
+/**
+ * Suma de tokens movidos por una regla concreta desde `sinceDate`, en una
+ * dirección — usado por tokenEngine.ts para daily_limit/monthly_limit tanto
+ * en earn (credit, se recorta el importe) como en spend (debit, se rechaza
+ * la operación si ya se alcanzó el límite — descontar precio de un producto
+ * no tiene sentido).
+ */
+export async function sumAmountByRuleInWindow(
+  userId: number,
+  ruleId: number,
+  direction: "credit" | "debit",
+  sinceDate: Date,
+  db?: DbHandle
+): Promise<number> {
+  const conn = db ?? (await getDb());
+  const rows = await conn.select({ amount: tokenLedger.amount }).from(tokenLedger)
+    .where(and(
+      eq(tokenLedger.userId, userId),
+      eq(tokenLedger.ruleId, ruleId),
+      eq(tokenLedger.direction, direction),
+      gte(tokenLedger.createdAt, sinceDate)
+    ));
+  return rows.reduce((sum, r) => sum + r.amount, 0);
+}
+
+// ─── Agregados globales — dashboard admin (/admin/tokens) ──────────────────
+
+export interface GlobalTokenStats {
+  totalIssued: number;
+  totalSpent: number;
+  totalBalance: number;
+}
+
+/** Suma agregada real (no cacheada) — solo la consulta el dashboard admin, tráfico bajo. */
+export async function getGlobalTokenStats(db?: DbHandle): Promise<GlobalTokenStats> {
+  const conn = db ?? (await getDb());
+  const [[issuedRow], [spentRow], [balanceRow]] = await Promise.all([
+    conn.select({ total: drizzleSql<string>`COALESCE(SUM(${tokenLedger.amount}), 0)` }).from(tokenLedger).where(eq(tokenLedger.direction, "credit")),
+    conn.select({ total: drizzleSql<string>`COALESCE(SUM(${tokenLedger.amount}), 0)` }).from(tokenLedger).where(eq(tokenLedger.direction, "debit")),
+    conn.select({ total: drizzleSql<string>`COALESCE(SUM(${tokenWallets.balance}), 0)` }).from(tokenWallets),
+  ]);
+  return {
+    totalIssued: Number(issuedRow?.total ?? 0),
+    totalSpent: Number(spentRow?.total ?? 0),
+    totalBalance: Number(balanceRow?.total ?? 0),
+  };
+}
+
+export interface RecentLedgerEntry extends TokenLedgerEntry {
+  userName: string | null;
+}
+
+export async function listRecentLedgerGlobal(limit = 20, db?: DbHandle): Promise<RecentLedgerEntry[]> {
+  const conn = db ?? (await getDb());
+  const rows = await conn.select({ ledger: tokenLedger, userName: users.name }).from(tokenLedger)
+    .leftJoin(users, eq(tokenLedger.userId, users.id))
+    .orderBy(desc(tokenLedger.createdAt))
+    .limit(limit);
+  return rows.map(r => ({ ...r.ledger, userName: r.userName }));
+}

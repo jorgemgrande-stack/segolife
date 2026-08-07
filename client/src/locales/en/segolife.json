@@ -42,6 +42,10 @@
     "address": "Address",
     "city": "City",
     "postalCode": "Postal code",
-    "save": "Save"
+    "save": "Save",
+    "tokensTitle": "SegoTokens",
+    "tokensBalance": "Balance",
+    "tokensHistory": "Recent history",
+    "tokensNoMovements": "No movements yet."
   }
 }

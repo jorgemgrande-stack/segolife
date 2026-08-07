@@ -10,7 +10,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Loader2, GraduationCap } from "lucide-react";
+import { Loader2, GraduationCap, Coins } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 /**
  * Perfil autoservicio del estudiante — /ie/profile, /uva/profile (un único
@@ -53,6 +54,8 @@ export default function StudentProfile() {
 
   const { data: me, isLoading } = trpc.students.me.useQuery();
   const { data: universities } = trpc.communities.listUniversities.useQuery();
+  const { data: wallet } = trpc.tokens.getMyWallet.useQuery();
+  const { data: ledger } = trpc.tokens.listMyLedger.useQuery({ limit: 10, offset: 0 });
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
 
@@ -142,6 +145,33 @@ export default function StudentProfile() {
                 </button>
               ))}
             </div>
+          )}
+        </div>
+
+        <div className="bg-card border border-border rounded-lg p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Coins className="w-5 h-5 text-primary" />
+              <span className="text-sm font-semibold text-foreground">{t("studentProfile.tokensTitle", { defaultValue: "SegoTokens" })}</span>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground">{t("studentProfile.tokensBalance", { defaultValue: "Saldo" })}</p>
+              <p className="text-2xl font-semibold text-foreground">{wallet?.balance ?? 0}</p>
+            </div>
+          </div>
+          {ledger && ledger.length > 0 && (
+            <div className="space-y-1.5 pt-2 border-t border-border">
+              <p className="text-xs uppercase tracking-widest text-muted-foreground">{t("studentProfile.tokensHistory", { defaultValue: "Historial reciente" })}</p>
+              {ledger.map(l => (
+                <div key={l.id} className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">{l.reason}</span>
+                  <Badge variant={l.direction === "credit" ? "default" : "outline"}>{l.direction === "credit" ? "+" : "-"}{l.amount}</Badge>
+                </div>
+              ))}
+            </div>
+          )}
+          {(!ledger || ledger.length === 0) && (
+            <p className="text-xs text-muted-foreground pt-2 border-t border-border">{t("studentProfile.tokensNoMovements", { defaultValue: "Todavía no tienes movimientos." })}</p>
           )}
         </div>
 

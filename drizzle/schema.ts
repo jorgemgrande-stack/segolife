@@ -3907,3 +3907,267 @@ export const communityEvents = mysqlTable("community_events", {
 }));
 export type CommunityEvent = typeof communityEvents.$inferSelect;
 export type InsertCommunityEvent = typeof communityEvents.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEGOLIFE FASE 2 — MOTOR DE SEGOTOKENS
+// ═══════════════════════════════════════════════════════════════════════════
+// Auditoría previa (ver informe de fase): no existe infraestructura heredada
+// reutilizable. `transactions` es el libro mayor fiscal REAL de Náyade (EUR,
+// IVA, régimen REAV) — reutilizarlo mezclaría dinero real con puntos
+// internos. `discount_codes`/`coupon_redemptions` son cupones de canje
+// externo (Groupon/Smartbox), sin relación con un saldo de usuario. No existe
+// ninguna tabla "wallet"/"points"/"loyalty"/"token" previa. Todo lo de abajo
+// es nuevo.
+
+// ─── SEGOLIFE: TOKEN_WALLETS (Fase 2) ───────────────────────────────────────────
+// Una wallet por usuario. Los tokens son unidades ENTERAS (int, nunca float)
+// — evita errores de redondeo acumulados en un sistema de puntos vivo.
+// `balance` es un saldo MATERIALIZADO por rendimiento (evita sumar todo
+// token_ledger en cada lectura), pero NUNCA es la fuente de verdad: solo se
+// escribe dentro de la misma transacción atómica que inserta la fila de
+// token_ledger correspondiente (ver server/segolife/tokens/tokenLedgerService.ts,
+// postLedgerMovement). El saldo siempre debe ser reconstruible sumando
+// direction=credit menos direction=debit de token_ledger para ese wallet_id.
+
+export const tokenWallets = mysqlTable("token_wallets", {
+  id:             int("id").autoincrement().primaryKey(),
+  userId:         int("user_id").notNull(),
+  balance:        int("balance").notNull().default(0),
+  lifetimeEarned: int("lifetime_earned").notNull().default(0),
+  lifetimeSpent:  int("lifetime_spent").notNull().default(0),
+  status:         mysqlEnum("status", ["active", "inactive"]).notNull().default("active"),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+  updatedAt:      timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  userIdUnique: unique("token_wallets_user_id_unique").on(table.userId),
+}));
+export type TokenWallet = typeof tokenWallets.$inferSelect;
+export type InsertTokenWallet = typeof tokenWallets.$inferInsert;
+
+// ─── SEGOLIFE: TOKEN_LEDGER (Fase 2) ────────────────────────────────────────────
+// Ledger INMUTABLE — fuente de verdad real del saldo. Un movimiento POSTED
+// nunca se edita ni se borra (sin UPDATE de amount/direction, sin DELETE);
+// una corrección se modela como un movimiento de signo opuesto que referencia
+// al original vía `reversed_ledger_id` (ver reverseTransaction en
+// tokenLedgerService.ts). `balance_after` se materializa en el momento de
+// insertar (dentro de la misma transacción que actualiza token_wallets) para
+// poder auditar/depurar sin recalcular todo el histórico.
+//
+// `idempotency_key` es UNIQUE cuando no es null (MySQL permite múltiples NULL
+// en un índice UNIQUE — comportamiento exactamente deseado: solo se exige
+// unicidad cuando el llamador la proporciona). Protege contra doble concesión
+// si un futuro origen (QR, Fourvenues, asistencia) reenvía el mismo evento
+// más de una vez.
+//
+// venue_id/event_id/rule_id/campaign_id sin FK real (convención del schema,
+// ver community_universities) — son referencias informativas para trazar de
+// dónde vino cada movimiento, usadas también para poder filtrar el histórico
+// del admin/estudiante por venue o evento.
+
+export const tokenLedger = mysqlTable("token_ledger", {
+  id:                 int("id").autoincrement().primaryKey(),
+  walletId:           int("wallet_id").notNull(),
+  userId:             int("user_id").notNull(),
+  direction:          mysqlEnum("direction", ["credit", "debit"]).notNull(),
+  amount:             int("amount").notNull(),
+  balanceAfter:       int("balance_after").notNull(),
+  reason:             varchar("reason", { length: 256 }).notNull(),
+  sourceType:         varchar("source_type", { length: 64 }).notNull(),
+  sourceId:           int("source_id"),
+  venueId:            int("venue_id"),
+  eventId:            int("event_id"),
+  ruleId:             int("rule_id"),
+  campaignId:         int("campaign_id"),
+  idempotencyKey:     varchar("idempotency_key", { length: 191 }),
+  metadata:           json("metadata").$type<Record<string, unknown>>(),
+  createdByUserId:    int("created_by_user_id"),
+  reversedLedgerId:   int("reversed_ledger_id"),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  idempotencyKeyUnique: unique("token_ledger_idempotency_key_unique").on(table.idempotencyKey),
+}));
+export type TokenLedgerEntry = typeof tokenLedger.$inferSelect;
+export type InsertTokenLedgerEntry = typeof tokenLedger.$inferInsert;
+
+// ─── SEGOLIFE: VENUE_PRODUCTS (Fase 2) ──────────────────────────────────────────
+// Catálogo MÍNIMO de conceptos de un venue que pueden originar una regla
+// SegoTokens (copa, menú, entrada...) — deliberadamente NO es un TPV: sin
+// stock, sin variantes, sin impuestos. `price` es opcional y solo se usa como
+// referencia para reglas per_euro/percentage (ver token_rules.calc_method).
+// unique(venue_id, slug) evita duplicar el mismo producto dentro de un venue
+// (el mismo slug SÍ puede repetirse en venues distintos).
+
+export const venueProducts = mysqlTable("venue_products", {
+  id:           int("id").autoincrement().primaryKey(),
+  venueId:      int("venue_id").notNull(),
+  name:         varchar("name", { length: 256 }).notNull(),
+  slug:         varchar("slug", { length: 128 }).notNull(),
+  category:     varchar("category", { length: 64 }),
+  price:        decimal("price", { precision: 10, scale: 2 }),
+  isActive:     boolean("is_active").notNull().default(true),
+  metadata:     json("metadata").$type<Record<string, unknown>>(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  venueSlugUnique: unique("venue_products_venue_slug_unique").on(table.venueId, table.slug),
+}));
+export type VenueProduct = typeof venueProducts.$inferSelect;
+export type InsertVenueProduct = typeof venueProducts.$inferInsert;
+
+// ─── SEGOLIFE: TOKEN_RULES (Fase 2) ─────────────────────────────────────────────
+// Motor de reglas configurable — nunca se hardcodean ratios en código
+// (tokenRuleEngine.ts solo interpreta filas de esta tabla). Una fila define
+// CUÁNDO aplica (direction/origin/scope) y CUÁNTO otorga (calc_method +
+// parámetros). El scope usa columnas nullable (scope_venue_id, etc.) en vez
+// de tablas puente M2M: a diferencia de venues/events (que pueden pertenecer
+// a varias comunidades), una regla aplica a UN alcance concreto a la vez —
+// para cubrir "esta regla en 3 venues" se crean 3 filas (o se usa
+// scope=global si el matiz por venue no importa). `priority` (mayor gana)
+// es el único criterio de desempate cuando varias reglas encajan — así el
+// admin controla explícitamente qué regla es "más específica", sin que el
+// motor tenga que adivinar jerarquías.
+//
+// recurrence_window/recurrence_threshold/recurrence_mode solo se usan cuando
+// origin='recurrence' (ver tokenRuleEngine.applyRecurrenceBonus): p.ej.
+// window='week', threshold=2, mode='visit_count' → bonus en la 2ª visita de
+// la semana. mode='distinct_venues' cuenta venues distintos visitados en vez
+// de visitas. No se creó una tabla de contadores aparte (user_activity_counters)
+// — el conteo se calcula en caliente contando token_ledger (ver
+// countRecentEarnEvents/countDistinctVenuesVisited), evitando un contador
+// duplicado que podría desincronizarse del ledger real.
+//
+// daily_limit/monthly_limit son límites de la propia regla (no globales del
+// usuario): el motor recorta (clamp) el importe final para no superarlos en
+// vez de rechazar la operación entera — ver tokenEngine.ts, paso "límites".
+
+export const tokenRules = mysqlTable("token_rules", {
+  id:                   int("id").autoincrement().primaryKey(),
+  name:                 varchar("name", { length: 256 }).notNull(),
+  description:          text("description"),
+  direction:            mysqlEnum("direction", ["earn", "spend"]).notNull(),
+  origin:               mysqlEnum("origin", ["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign"]).notNull(),
+  scope:                mysqlEnum("scope", ["global", "community", "venue", "event", "product"]).notNull().default("global"),
+  scopeCommunityId:     int("scope_community_id"),
+  scopeVenueId:         int("scope_venue_id"),
+  scopeEventId:         int("scope_event_id"),
+  scopeProductId:       int("scope_product_id"),
+  calcMethod:           mysqlEnum("calc_method", ["fixed", "per_euro", "percentage", "multiplier"]).notNull().default("fixed"),
+  fixedAmount:          int("fixed_amount"),
+  rate:                 decimal("rate", { precision: 10, scale: 4 }),
+  multiplier:           decimal("multiplier", { precision: 6, scale: 2 }),
+  minSpend:             decimal("min_spend", { precision: 10, scale: 2 }),
+  maxTokens:            int("max_tokens"),
+  dailyLimit:           int("daily_limit"),
+  monthlyLimit:         int("monthly_limit"),
+  recurrenceWindow:     mysqlEnum("recurrence_window", ["day", "week", "month"]),
+  recurrenceThreshold:  int("recurrence_threshold"),
+  recurrenceMode:       mysqlEnum("recurrence_mode", ["visit_count", "distinct_venues"]),
+  startsAt:             timestamp("starts_at"),
+  endsAt:               timestamp("ends_at"),
+  active:               boolean("active").notNull().default(true),
+  priority:             int("priority").notNull().default(0),
+  createdAt:            timestamp("created_at").defaultNow().notNull(),
+  updatedAt:            timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type TokenRule = typeof tokenRules.$inferSelect;
+export type InsertTokenRule = typeof tokenRules.$inferInsert;
+
+// ─── SEGOLIFE: TOKEN_CAMPAIGNS (Fase 2) ─────────────────────────────────────────
+// Campañas temporales (x2, x3, bonus fijo) que se aplican DESPUÉS de calcular
+// el importe base de una regla (ver tokenRuleEngine.applyCampaignBonus). Solo
+// se aplica la campaña activa de mayor prioridad que encaje — evita
+// apilamientos ambiguos/inexplicables (x2 + x3 simultáneos). El alcance
+// (comunidad/venue/evento) es M2M vía las 3 tablas puente de abajo, NUNCA un
+// literal "ie"/"uva" — una campaña sin ninguna fila en las 3 tablas puente
+// aplica GLOBALMENTE (sin restricción de alcance).
+
+export const tokenCampaigns = mysqlTable("token_campaigns", {
+  id:           int("id").autoincrement().primaryKey(),
+  name:         varchar("name", { length: 256 }).notNull(),
+  description:  text("description"),
+  multiplier:   decimal("multiplier", { precision: 6, scale: 2 }),
+  bonusTokens:  int("bonus_tokens"),
+  startsAt:     timestamp("starts_at"),
+  endsAt:       timestamp("ends_at"),
+  active:       boolean("active").notNull().default(true),
+  priority:     int("priority").notNull().default(0),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type TokenCampaign = typeof tokenCampaigns.$inferSelect;
+export type InsertTokenCampaign = typeof tokenCampaigns.$inferInsert;
+
+// ─── SEGOLIFE: CAMPAIGN_COMMUNITIES / CAMPAIGN_VENUES / CAMPAIGN_EVENTS (Fase 2) ─
+// Tablas puente M2M del alcance de una campaña — mismo patrón exacto que
+// community_venues/community_events. Una campaña puede afectar a varias
+// comunidades/venues/eventos a la vez; si las 3 quedan vacías para una
+// campaña, esa campaña se considera global (ver tokenRuleEngine.ts).
+
+export const campaignCommunities = mysqlTable("campaign_communities", {
+  id:           int("id").autoincrement().primaryKey(),
+  campaignId:   int("campaign_id").notNull(),
+  communityId:  int("community_id").notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  campaignCommunityUnique: unique("campaign_communities_unique").on(table.campaignId, table.communityId),
+}));
+export type CampaignCommunity = typeof campaignCommunities.$inferSelect;
+export type InsertCampaignCommunity = typeof campaignCommunities.$inferInsert;
+
+export const campaignVenues = mysqlTable("campaign_venues", {
+  id:           int("id").autoincrement().primaryKey(),
+  campaignId:   int("campaign_id").notNull(),
+  venueId:      int("venue_id").notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  campaignVenueUnique: unique("campaign_venues_unique").on(table.campaignId, table.venueId),
+}));
+export type CampaignVenue = typeof campaignVenues.$inferSelect;
+export type InsertCampaignVenue = typeof campaignVenues.$inferInsert;
+
+export const campaignEvents = mysqlTable("campaign_events", {
+  id:           int("id").autoincrement().primaryKey(),
+  campaignId:   int("campaign_id").notNull(),
+  eventId:      int("event_id").notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  campaignEventUnique: unique("campaign_events_unique").on(table.campaignId, table.eventId),
+}));
+export type CampaignEvent = typeof campaignEvents.$inferSelect;
+export type InsertCampaignEvent = typeof campaignEvents.$inferInsert;
+
+// ─── SEGOLIFE: VENUE_TOKEN_SCHEDULES (Fase 2) ───────────────────────────────────
+// Horarios en los que un venue permite GANAR y/o GASTAR tokens — dos
+// operation_type independientes (un venue puede ganar tokens todo el día
+// pero solo dejar gastarlos por la noche). Varias filas = varias franjas al
+// mismo día. day_of_week según JS Date#getDay() (0=domingo..6=sábado), para
+// que el servicio de horarios no tenga que traducir convenciones distintas.
+// start_time/end_time como varchar "HH:MM" (mismo patrón que las fechas
+// calendario del schema, p.ej. student_profiles.date_of_birth) en vez de un
+// tipo TIME nativo — más simple de comparar en JS sin líos de zona horaria
+// del driver. Si end_time < start_time, la franja cruza medianoche (p.ej.
+// 22:00–02:00) — la interpretación de ese cruce vive en
+// tokenScheduleService.ts, no en el schema.
+//
+// SIN NINGUNA FILA para un venue+operation_type = SIN RESTRICCIÓN (permitido
+// siempre) — decisión deliberada: un venue recién adherido no debe quedar
+// bloqueado por defecto solo por no haber configurado horarios todavía.
+// timezone por fila (no global) para poder soportar honestamente un futuro
+// venue fuera de Europe/Madrid sin migrar nada.
+
+export const venueTokenSchedules = mysqlTable("venue_token_schedules", {
+  id:             int("id").autoincrement().primaryKey(),
+  venueId:        int("venue_id").notNull(),
+  operationType:  mysqlEnum("operation_type", ["earn", "spend"]).notNull(),
+  dayOfWeek:      int("day_of_week").notNull(),
+  startTime:      varchar("start_time", { length: 5 }).notNull(),
+  endTime:        varchar("end_time", { length: 5 }).notNull(),
+  active:         boolean("active").notNull().default(true),
+  timezone:       varchar("timezone", { length: 64 }).notNull().default("Europe/Madrid"),
+  validFrom:      varchar("valid_from", { length: 10 }),
+  validTo:        varchar("valid_to", { length: 10 }),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+  updatedAt:      timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type VenueTokenSchedule = typeof venueTokenSchedules.$inferSelect;
+export type InsertVenueTokenSchedule = typeof venueTokenSchedules.$inferInsert;

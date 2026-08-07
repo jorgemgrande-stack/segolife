@@ -46,6 +46,89 @@ function FutureModulePlaceholder({ label }: { label: string }) {
   );
 }
 
+/** Pestaña SegoTokens de la ficha de estudiante — wallet, historial y ajuste manual (Fase 2). */
+function StudentTokensTab({ userId }: { userId: number }) {
+  const utils = trpc.useUtils();
+  const [adjustDirection, setAdjustDirection] = useState<"credit" | "debit">("credit");
+  const [adjustAmount, setAdjustAmount] = useState("");
+  const [adjustReason, setAdjustReason] = useState("");
+
+  const { data: wallet, isLoading: loadingWallet } = trpc.tokens.getWallet.useQuery({ userId });
+  const { data: ledger, isLoading: loadingLedger } = trpc.tokens.listLedger.useQuery({ userId, limit: 30, offset: 0 });
+
+  const adjustMut = trpc.tokens.adjustManual.useMutation({
+    onSuccess: () => {
+      toast.success("Ajuste aplicado");
+      setAdjustAmount(""); setAdjustReason("");
+      utils.tokens.getWallet.invalidate({ userId });
+      utils.tokens.listLedger.invalidate({ userId, limit: 30, offset: 0 });
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const handleAdjust = () => {
+    const amount = Number(adjustAmount);
+    if (!amount || amount <= 0) { toast.error("Introduce un importe válido"); return; }
+    if (!adjustReason.trim()) { toast.error("El motivo es obligatorio"); return; }
+    adjustMut.mutate({ userId, direction: adjustDirection, amount, reason: adjustReason.trim() });
+  };
+
+  if (loadingWallet) return <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-card border border-border rounded-lg p-4">
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Saldo actual</p>
+          <p className="text-2xl font-semibold text-foreground">{wallet?.balance ?? 0}</p>
+        </div>
+        <div className="bg-card border border-border rounded-lg p-4">
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Ganados (total)</p>
+          <p className="text-2xl font-semibold text-emerald-600">{wallet?.lifetimeEarned ?? 0}</p>
+        </div>
+        <div className="bg-card border border-border rounded-lg p-4">
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Gastados (total)</p>
+          <p className="text-2xl font-semibold text-orange-600">{wallet?.lifetimeSpent ?? 0}</p>
+        </div>
+      </div>
+
+      <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+        <p className="text-sm font-semibold text-foreground">Ajuste manual</p>
+        <div className="flex flex-wrap gap-2 items-end">
+          <Select value={adjustDirection} onValueChange={v => setAdjustDirection(v as "credit" | "debit")}>
+            <SelectTrigger className="w-[110px]"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="credit">+ Añadir</SelectItem><SelectItem value="debit">− Restar</SelectItem></SelectContent>
+          </Select>
+          <Input type="number" min={1} placeholder="Importe" className="w-[100px]" value={adjustAmount} onChange={e => setAdjustAmount(e.target.value)} />
+          <Input placeholder="Motivo (obligatorio)" className="flex-1 min-w-[200px]" value={adjustReason} onChange={e => setAdjustReason(e.target.value)} />
+          <Button size="sm" disabled={adjustMut.isPending} onClick={handleAdjust}>Aplicar</Button>
+        </div>
+      </div>
+
+      <div className="bg-card border border-border rounded-lg p-4">
+        <p className="text-sm font-semibold text-foreground mb-3">Historial de movimientos</p>
+        {loadingLedger ? (
+          <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+        ) : !ledger || ledger.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sin movimientos todavía.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {ledger.map(l => (
+              <div key={l.id} className="flex items-center justify-between text-sm bg-accent/40 rounded-md px-2.5 py-1.5">
+                <div>
+                  <span className="text-foreground">{l.reason}</span>
+                  <span className="text-xs text-muted-foreground ml-2">{new Date(l.createdAt).toLocaleString("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                </div>
+                <Badge variant={l.direction === "credit" ? "default" : "outline"}>{l.direction === "credit" ? "+" : "-"}{l.amount}</Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function StudentDetail() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
@@ -144,6 +227,7 @@ export default function StudentDetail() {
             <TabsTrigger value="comunidades">Comunidades</TabsTrigger>
             <TabsTrigger value="etiquetas">Etiquetas</TabsTrigger>
             <TabsTrigger value="notas">Notas internas</TabsTrigger>
+            <TabsTrigger value="segotokens">SegoTokens</TabsTrigger>
             <TabsTrigger value="futuro">Próximamente</TabsTrigger>
           </TabsList>
 
@@ -244,12 +328,13 @@ export default function StudentDetail() {
             </div>
           </TabsContent>
 
+          <TabsContent value="segotokens">
+            <StudentTokensTab userId={student.profile.userId} />
+          </TabsContent>
+
           <TabsContent value="futuro" className="space-y-3">
-            <FutureModulePlaceholder label="Actividad (frecuencia/recurrencia)" />
-            <FutureModulePlaceholder label="SegoTokens" />
             <FutureModulePlaceholder label="Beneficios" />
-            <FutureModulePlaceholder label="Eventos" />
-            <FutureModulePlaceholder label="Gasto" />
+            <FutureModulePlaceholder label="QR de acceso / consumiciones" />
           </TabsContent>
         </Tabs>
       </div>

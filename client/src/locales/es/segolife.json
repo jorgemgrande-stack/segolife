@@ -42,6 +42,10 @@
     "address": "Dirección",
     "city": "Ciudad",
     "postalCode": "Código postal",
-    "save": "Guardar"
+    "save": "Guardar",
+    "tokensTitle": "SegoTokens",
+    "tokensBalance": "Saldo",
+    "tokensHistory": "Historial reciente",
+    "tokensNoMovements": "Todavía no tienes movimientos."
   }
 }
