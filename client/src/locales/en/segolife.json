@@ -6,7 +6,12 @@
     "languageLabel": "Language",
     "loading": "Loading community...",
     "notFound": "Community not found",
-    "tagline": "Community, events and rewards for students in Segovia."
+    "tagline": "Community, events and rewards for students in Segovia.",
+    "venuesTitle": "Venues",
+    "noVenues": "No venues published for this community yet.",
+    "eventsTitle": "Upcoming events",
+    "noEvents": "No events published for this community yet.",
+    "featuredBadge": "Featured"
   },
   "languageSwitcher": {
     "en": "English",

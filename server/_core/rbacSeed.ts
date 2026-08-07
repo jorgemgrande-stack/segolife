@@ -12,7 +12,9 @@
  *     funciona incluso si db:migrate aún no corrió en este entorno).
  *  2. Añade los permisos `students.view` / `students.manage` — usados ya por
  *     server/routers/students.ts pero nunca sembrados en ninguna migración
- *     histórica (el módulo de estudiantes es posterior a 0070).
+ *     histórica (el módulo de estudiantes es posterior a 0070) — y, con el
+ *     mismo criterio, `venues.view` / `venues.manage` / `events.view` /
+ *     `events.manage` (Fase 1D, server/routers/venues.ts y events.ts).
  *  3. Concede esos permisos al rol `admin`.
  *  4. Confirma que `settings.manage` existe (ya sembrado en 0070 — solo
  *     verificación, no inserta nada nuevo).
@@ -34,6 +36,13 @@ const BASELINE_ROLES: Array<[string, string, string, boolean]> = [
 const STUDENTS_PERMISSIONS: Array<[string, string, string, string]> = [
   ["students.view",   "students", "view",   "Ver perfiles y datos de estudiantes"],
   ["students.manage", "students", "manage", "Gestionar (crear/editar/anotar) perfiles de estudiantes"],
+];
+
+const VENUES_EVENTS_PERMISSIONS: Array<[string, string, string, string]> = [
+  ["venues.view",   "venues", "view",   "Ver venues/negocios"],
+  ["venues.manage", "venues", "manage", "Gestionar (crear/editar/activar) venues/negocios"],
+  ["events.view",   "events", "view",   "Ver eventos"],
+  ["events.manage", "events", "manage", "Gestionar (crear/editar/activar/destacar) eventos"],
 ];
 
 export async function seedRbacIfNeeded(): Promise<{
@@ -58,8 +67,9 @@ export async function seedRbacIfNeeded(): Promise<{
       if ((result as any).affectedRows > 0) rolesEnsured.push(key);
     }
 
-    // 2. Permisos students.view / students.manage — no sembrados en ninguna migración histórica.
-    for (const [key, module, action, description] of STUDENTS_PERMISSIONS) {
+    // 2. Permisos students.view / students.manage / venues.* / events.* — no
+    //    sembrados en ninguna migración histórica.
+    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_permissions (\`key\`, module, action, description) VALUES (?, ?, ?, ?)`,
         [key, module, action, description]
@@ -67,9 +77,10 @@ export async function seedRbacIfNeeded(): Promise<{
       if ((result as any).affectedRows > 0) permissionsAdded.push(key);
     }
 
-    // 3. Conceder students.* al rol admin (idempotente, no asume que el CROSS JOIN
-    //    histórico de 0070/0077 se haya vuelto a ejecutar para este permiso nuevo).
-    for (const [key] of STUDENTS_PERMISSIONS) {
+    // 3. Conceder students.* / venues.* / events.* al rol admin (idempotente, no
+    //    asume que el CROSS JOIN histórico de 0070/0077 se haya vuelto a
+    //    ejecutar para estos permisos nuevos).
+    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
          SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p

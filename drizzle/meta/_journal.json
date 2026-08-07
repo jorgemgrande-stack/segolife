@@ -883,6 +883,13 @@
       "when": 1779224812206,
       "tag": "0126_segolife_student_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "5",
+      "when": 1779224813206,
+      "tag": "0127_segolife_venues_events",
+      "breakpoints": true
     }
   ]
 }

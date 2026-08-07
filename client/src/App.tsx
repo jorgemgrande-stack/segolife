@@ -143,6 +143,12 @@ const GlobalCalendar = lazy(() => import("./pages/admin/restaurants/GlobalCalend
 const StudentsManager = lazy(() => import("./pages/admin/students/StudentsManager"));
 const StudentDetail = lazy(() => import("./pages/admin/students/StudentDetail"));
 
+// Segolife: Venues / Negocios / Eventos (Fase 1D)
+const VenuesManager = lazy(() => import("./pages/admin/venues/VenuesManager"));
+const VenueDetail = lazy(() => import("./pages/admin/venues/VenueDetail"));
+const EventsManager = lazy(() => import("./pages/admin/events/EventsManager"));
+const EventDetail = lazy(() => import("./pages/admin/events/EventDetail"));
+
 // Users & Settings
 const UsersManager = lazy(() => import("./pages/admin/users/UsersManager"));
 const Settings = lazy(() => import("./pages/admin/settings/Settings"));
@@ -430,6 +436,10 @@ function Router() {
       <Route path="/admin/usuarios">{() => <Suspense fallback={<AdminLoadingFallback />}><UsersManager /></Suspense>}</Route>
       <Route path="/admin/students">{() => <Suspense fallback={<AdminLoadingFallback />}><StudentsManager /></Suspense>}</Route>
       <Route path="/admin/students/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><StudentDetail /></Suspense>}</Route>
+      <Route path="/admin/venues">{() => <Suspense fallback={<AdminLoadingFallback />}><VenuesManager /></Suspense>}</Route>
+      <Route path="/admin/venues/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><VenueDetail /></Suspense>}</Route>
+      <Route path="/admin/events">{() => <Suspense fallback={<AdminLoadingFallback />}><EventsManager /></Suspense>}</Route>
+      <Route path="/admin/events/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><EventDetail /></Suspense>}</Route>
       <Route path="/admin/configuracion">{() => <Suspense fallback={<AdminLoadingFallback />}><ConfigPanel /></Suspense>}</Route>
       <Route path="/admin/configuracion/sitio">{() => <Suspense fallback={<AdminLoadingFallback />}><Settings /></Suspense>}</Route>
       <Route path="/admin/configuracion/estado">{() => <Suspense fallback={<AdminLoadingFallback />}><ConfigStatus /></Suspense>}</Route>

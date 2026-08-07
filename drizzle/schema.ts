@@ -3802,3 +3802,108 @@ export const studentNotes = mysqlTable("student_notes", {
 });
 export type StudentNote = typeof studentNotes.$inferSelect;
 export type InsertStudentNote = typeof studentNotes.$inferInsert;
+
+// ─── SEGOLIFE: VENUE_CATEGORIES (Fase 1D) ──────────────────────────────────────
+// Catálogo configurable de categorías de venue (bar, coworking, tienda,
+// alojamiento...) — mismo patrón que student_tags: nunca se hardcodea un
+// enum de categorías en código, son filas gestionables desde el admin.
+
+export const venueCategories = mysqlTable("venue_categories", {
+  id:         int("id").autoincrement().primaryKey(),
+  name:       varchar("name", { length: 64 }).notNull().unique(),
+  slug:       varchar("slug", { length: 64 }).notNull().unique(),
+  createdAt:  timestamp("created_at").defaultNow().notNull(),
+});
+export type VenueCategory = typeof venueCategories.$inferSelect;
+export type InsertVenueCategory = typeof venueCategories.$inferInsert;
+
+// ─── SEGOLIFE: VENUES (Fase 1D) ─────────────────────────────────────────────────
+// Negocio/local físico (bar, tienda, espacio) que puede acoger eventos y (a
+// futuro, Fase 2+) beneficios/redenciones — ver shared/segolife/domain.ts y
+// docs/SEGOLIFE_DOMAIN_MODEL.md. Tabla nueva, no reutiliza ninguna tabla
+// heredada de Náyade (`restaurants`/`experiences`/`partners`/`organizations`
+// evaluadas y descartadas — cada una arrastra lógica de negocio turístico
+// específica de Náyade: depósitos Redsys, IVA de agencia de viajes, comisión
+// B2B... ninguna es un "venue" genérico). category_id sin FK real (igual que
+// el resto del schema) — nullable porque un venue puede quedar sin
+// categorizar hasta que un admin lo clasifique.
+//
+// NO tiene community_id directo — un venue puede estar vinculado a varias
+// comunidades (IE, UVA, ambas) a la vez, igual que community_universities.
+// Ver `communityVenues` justo debajo.
+
+export const venues = mysqlTable("venues", {
+  id:           int("id").autoincrement().primaryKey(),
+  name:         varchar("name", { length: 256 }).notNull(),
+  slug:         varchar("slug", { length: 128 }).notNull().unique(),
+  description:  text("description"),
+  categoryId:   int("category_id"),
+  address:      varchar("address", { length: 256 }),
+  city:         varchar("city", { length: 128 }).notNull().default("Segovia"),
+  phone:        varchar("phone", { length: 32 }),
+  email:        varchar("email", { length: 256 }),
+  website:      varchar("website", { length: 256 }),
+  imageUrl:     varchar("image_url", { length: 512 }),
+  status:       mysqlEnum("status", ["active", "inactive"]).notNull().default("active"),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type Venue = typeof venues.$inferSelect;
+export type InsertVenue = typeof venues.$inferInsert;
+
+// ─── SEGOLIFE: COMMUNITY_VENUES (Fase 1D) ──────────────────────────────────────
+// Tabla puente M2M entre `communities` y `venues` — mismo patrón exacto que
+// `communityUniversities`: un venue puede acoger a 0, 1 o varias comunidades.
+// unique(community_id, venue_id) evita duplicar el mismo enlace.
+
+export const communityVenues = mysqlTable("community_venues", {
+  id:           int("id").autoincrement().primaryKey(),
+  communityId:  int("community_id").notNull(),
+  venueId:      int("venue_id").notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  communityVenueUnique: unique("community_venues_unique").on(table.communityId, table.venueId),
+}));
+export type CommunityVenue = typeof communityVenues.$inferSelect;
+export type InsertCommunityVenue = typeof communityVenues.$inferInsert;
+
+// ─── SEGOLIFE: EVENTS (Fase 1D) ─────────────────────────────────────────────────
+// Evento de comunidad (fiesta, charla, actividad...) — puede anclarse a un
+// venue (venue_id, sin FK real, nullable: un evento online o itinerante no
+// tiene local fijo) y a 1+ comunidades vía `communityEvents` (no un
+// community_id directo, mismo razonamiento que venues/comunidades).
+// is_featured es una bandera editorial simple (destacar en portada) — no un
+// sistema de ranking, a propósito, para no construir de más sin necesidad.
+
+export const events = mysqlTable("events", {
+  id:           int("id").autoincrement().primaryKey(),
+  name:         varchar("name", { length: 256 }).notNull(),
+  slug:         varchar("slug", { length: 128 }).notNull().unique(),
+  description:  text("description"),
+  venueId:      int("venue_id"),
+  startsAt:     timestamp("starts_at").notNull(),
+  endsAt:       timestamp("ends_at"),
+  capacity:     int("capacity"),
+  imageUrl:     varchar("image_url", { length: 512 }),
+  status:       mysqlEnum("status", ["active", "inactive"]).notNull().default("active"),
+  isFeatured:   boolean("is_featured").notNull().default(false),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type SegolifeEvent = typeof events.$inferSelect;
+export type InsertSegolifeEvent = typeof events.$inferInsert;
+
+// ─── SEGOLIFE: COMMUNITY_EVENTS (Fase 1D) ──────────────────────────────────────
+// Tabla puente M2M entre `communities` y `events` — mismo patrón que
+// community_venues/community_universities. unique(community_id, event_id).
+
+export const communityEvents = mysqlTable("community_events", {
+  id:           int("id").autoincrement().primaryKey(),
+  communityId:  int("community_id").notNull(),
+  eventId:      int("event_id").notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  communityEventUnique: unique("community_events_unique").on(table.communityId, table.eventId),
+}));
+export type CommunityEvent = typeof communityEvents.$inferSelect;
+export type InsertCommunityEvent = typeof communityEvents.$inferInsert;

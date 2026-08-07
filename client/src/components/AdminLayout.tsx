@@ -6,7 +6,7 @@ import {
   Bell, Search, User, BedDouble, Sparkles, UtensilsCrossed, AlertCircle,
   UserPlus, FileCheck, ChevronRight, Receipt, Truck, Monitor, Tag, Ticket,
   Sun, Moon, ExternalLink, Target, MessageCircle, Bot, Mail, Building2,
-  Briefcase, GraduationCap,
+  Briefcase, GraduationCap, Store, CalendarDays,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -61,6 +61,18 @@ const navItems = [
     label: "Estudiantes",
     href: "/admin/students",
     icon: GraduationCap,
+    roles: ["admin"],
+  },
+  {
+    label: "Venues",
+    href: "/admin/venues",
+    icon: Store,
+    roles: ["admin"],
+  },
+  {
+    label: "Eventos",
+    href: "/admin/events",
+    icon: CalendarDays,
     roles: ["admin"],
   },
   {

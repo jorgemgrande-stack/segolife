@@ -1,0 +1,291 @@
+/**
+ * eventsDb.test.ts — modelo de eventos, su asociación a un venue y su
+ * relación M2M con comunidades (Fase 1D). Mismo patrón de inyección de
+ * dependencia que server/db/venuesDb.test.ts / studentsDb.test.ts.
+ */
+import { describe, it, expect } from "vitest";
+import {
+  listEvents,
+  getEventById,
+  createEvent,
+  setEventCommunities,
+  setEventActive,
+  setEventFeatured,
+  listActiveEvents,
+  listFeaturedEvents,
+} from "./eventsDb";
+import { events, venues, communityEvents } from "../../drizzle/schema";
+
+function blankEvent(id: number, overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id, name: "Fiesta de bienvenida", slug: "fiesta-de-bienvenida", description: null, venueId: null,
+    startsAt: new Date("2026-09-15T20:00:00Z"), endsAt: null, capacity: null, imageUrl: null,
+    status: "active" as const, isFeatured: false,
+    createdAt: new Date("2026-01-01"), updatedAt: new Date("2026-01-01"),
+    ...overrides,
+  };
+}
+
+describe("eventsDb — filtro por comunidad (listEvents)", () => {
+  it("filtro IE devuelve solo eventos vinculados a la comunidad IE", async () => {
+    const eventIE = blankEvent(1);
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ eventId: 1 }]); // getEventIdsInCommunities([IE])
+        if (phase === 2) return resolve([{ event: eventIE, venue: null }]);
+        if (phase === 3) return resolve([{ event: eventIE }]); // count
+        return resolve([{ eventId: 1, community: { id: 1, name: "Segolife IE", slug: "ie" } }]);
+      },
+    };
+    const { items, total } = await listEvents({ communityIds: [1] }, db as unknown as Parameters<typeof listEvents>[1]);
+    expect(total).toBe(1);
+    expect(items[0].communities).toEqual([{ id: 1, name: "Segolife IE", slug: "ie" }]);
+  });
+
+  it("filtro UVA devuelve solo eventos vinculados a la comunidad UVA", async () => {
+    const eventUVA = blankEvent(2, { name: "Noche de cine" });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ eventId: 2 }]);
+        if (phase === 2) return resolve([{ event: eventUVA, venue: null }]);
+        if (phase === 3) return resolve([{ event: eventUVA }]);
+        return resolve([{ eventId: 2, community: { id: 2, name: "Segolife UVA", slug: "uva" } }]);
+      },
+    };
+    const { items, total } = await listEvents({ communityIds: [2] }, db as unknown as Parameters<typeof listEvents>[1]);
+    expect(total).toBe(1);
+    expect(items[0].communities[0].slug).toBe("uva");
+  });
+
+  it("evento vinculado a IE Y UVA a la vez aparece con ambas comunidades", async () => {
+    const eventBoth = blankEvent(3, { name: "Fiesta multicampus" });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ eventId: 3 }]);
+        if (phase === 2) return resolve([{ event: eventBoth, venue: null }]);
+        if (phase === 3) return resolve([{ event: eventBoth }]);
+        return resolve([
+          { eventId: 3, community: { id: 1, name: "Segolife IE", slug: "ie" } },
+          { eventId: 3, community: { id: 2, name: "Segolife UVA", slug: "uva" } },
+        ]);
+      },
+    };
+    const { items } = await listEvents({ communityIds: [1, 2] }, db as unknown as Parameters<typeof listEvents>[1]);
+    expect(items[0].communities).toHaveLength(2);
+  });
+
+  it("comunidad sin ningún evento devuelve lista vacía sin consultar el resto", async () => {
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, where: () => db,
+      then: (resolve: (v: unknown) => void) => resolve([]),
+    };
+    const { items, total } = await listEvents({ communityIds: [999] }, db as unknown as Parameters<typeof listEvents>[1]);
+    expect(items).toEqual([]);
+    expect(total).toBe(0);
+  });
+});
+
+describe("eventsDb — leer ficha (getEventById) con venue asociado", () => {
+  function makeDetailMockDb(byTable: Map<unknown, unknown[]>) {
+    const selectStub = {
+      from(table: unknown) {
+        const result = byTable.get(table) ?? [];
+        const builder: Record<string, unknown> = {};
+        builder.where = () => builder;
+        builder.limit = () => builder;
+        builder.innerJoin = () => builder;
+        builder.then = (resolve: (v: unknown) => void) => resolve(result);
+        return builder;
+      },
+    };
+    return { select: () => selectStub };
+  }
+
+  it("devuelve el evento con su venue (event↔venue association) y comunidades", async () => {
+    const event = blankEvent(5, { venueId: 7 });
+    const byTable = new Map<unknown, unknown[]>([
+      [events, [event]],
+      [venues, [{ id: 7, name: "Café Central", slug: "cafe-central" }]],
+      [communityEvents, [{ eventId: 5, community: { id: 1, name: "Segolife IE", slug: "ie" } }]],
+    ]);
+    const db = makeDetailMockDb(byTable);
+    const detail = await getEventById(5, db as unknown as Parameters<typeof getEventById>[1]);
+    expect(detail?.venue?.name).toBe("Café Central");
+    expect(detail?.communities).toEqual([{ id: 1, name: "Segolife IE", slug: "ie" }]);
+  });
+
+  it("un evento sin venue fijo (venueId=null) devuelve venue=null sin lanzar", async () => {
+    const event = blankEvent(6, { venueId: null });
+    const byTable = new Map<unknown, unknown[]>([
+      [events, [event]],
+      [communityEvents, []],
+    ]);
+    const db = makeDetailMockDb(byTable);
+    const detail = await getEventById(6, db as unknown as Parameters<typeof getEventById>[1]);
+    expect(detail?.venue).toBeNull();
+  });
+
+  it("devuelve null si el eventId no existe", async () => {
+    const db = makeDetailMockDb(new Map([[events, []]]));
+    const detail = await getEventById(999, db as unknown as Parameters<typeof getEventById>[1]);
+    expect(detail).toBeNull();
+  });
+});
+
+/** Mock con estado real de events + community_events — simula la constraint UNIQUE(community_id, event_id). */
+function makeCreateEventMockDb() {
+  const linkRows: Array<{ id: number; communityId: number; eventId: number }> = [];
+  let nextLinkId = 1;
+  let createdEvent: Record<string, unknown> | null = null;
+  let mode: unknown = null;
+
+  const builder: Record<string, unknown> = {};
+  builder.select = () => builder;
+  builder.from = (table: unknown) => { mode = table; return builder; };
+  builder.where = () => builder;
+  builder.limit = () => builder;
+  builder.leftJoin = () => builder;
+  builder.insert = (table: unknown) => { mode = table; return builder; };
+  builder.delete = (table: unknown) => {
+    if (table === communityEvents) linkRows.length = 0;
+    return builder;
+  };
+  builder.values = (v: Record<string, unknown>) => {
+    if (mode === events) {
+      createdEvent = { id: 1, status: "active", isFeatured: false, createdAt: new Date(), updatedAt: new Date(), ...v };
+      return Promise.resolve([{ insertId: 1 }]);
+    }
+    const dup = linkRows.some(r => r.communityId === v.communityId && r.eventId === v.eventId);
+    if (dup) {
+      const err = new Error("Duplicate entry") as Error & { errno: number };
+      err.errno = 1062;
+      throw err;
+    }
+    const row = { id: nextLinkId++, communityId: v.communityId as number, eventId: v.eventId as number };
+    linkRows.push(row);
+    return Promise.resolve([{ insertId: row.id }]);
+  };
+  builder.then = (resolve: (v: unknown) => void) => resolve(createdEvent ? [createdEvent] : []);
+  return { db: builder, linkRows, getCreatedEvent: () => createdEvent };
+}
+
+describe("eventsDb — crear evento vinculado a comunidades (createEvent)", () => {
+  it("crea el evento vinculado a IE + UVA simultáneamente (event↔múltiples comunidades)", async () => {
+    const { db, linkRows } = makeCreateEventMockDb();
+    const event = await createEvent(
+      { name: "Fiesta de bienvenida", slug: "fiesta-de-bienvenida", startsAt: new Date("2026-09-15T20:00:00Z") },
+      [1, 2],
+      db as unknown as Parameters<typeof createEvent>[2]
+    );
+    expect(event.name).toBe("Fiesta de bienvenida");
+    expect(linkRows.map(r => r.communityId).sort()).toEqual([1, 2]);
+  });
+
+  it("crea el evento vinculado solo a IE", async () => {
+    const { db, linkRows } = makeCreateEventMockDb();
+    await createEvent(
+      { name: "Fiesta de bienvenida", slug: "fiesta-de-bienvenida", startsAt: new Date("2026-09-15T20:00:00Z") },
+      [1],
+      db as unknown as Parameters<typeof createEvent>[2]
+    );
+    expect(linkRows).toHaveLength(1);
+    expect(linkRows[0].communityId).toBe(1);
+  });
+});
+
+describe("eventsDb — UNIQUE(community_id, event_id): prevenir duplicados (setEventCommunities)", () => {
+  it("un communityId repetido en el mismo array no duplica la fila community_events", async () => {
+    const { db, linkRows } = makeCreateEventMockDb();
+    await setEventCommunities(1, [1, 1], db as unknown as Parameters<typeof setEventCommunities>[2]);
+    expect(linkRows).toHaveLength(1);
+  });
+});
+
+describe("eventsDb — activar/desactivar y destacar/quitar destacado", () => {
+  it("setEventActive(false) desactiva un evento activo", async () => {
+    let event = blankEvent(1, { status: "active" });
+    const db: Record<string, unknown> = {
+      update: () => db,
+      set: (fields: Record<string, unknown>) => { event = { ...event, ...fields }; return db; },
+      where: () => db, select: () => db, from: () => db, limit: () => db,
+      then: (resolve: (v: unknown) => void) => resolve([event]),
+    };
+    const updated = await setEventActive(1, false, db as unknown as Parameters<typeof setEventActive>[2]);
+    expect(updated?.status).toBe("inactive");
+  });
+
+  it("setEventFeatured(true) destaca un evento no destacado", async () => {
+    let event = blankEvent(1, { isFeatured: false });
+    const db: Record<string, unknown> = {
+      update: () => db,
+      set: (fields: Record<string, unknown>) => { event = { ...event, ...fields }; return db; },
+      where: () => db, select: () => db, from: () => db, limit: () => db,
+      then: (resolve: (v: unknown) => void) => resolve([event]),
+    };
+    const updated = await setEventFeatured(1, true, db as unknown as Parameters<typeof setEventFeatured>[2]);
+    expect(updated?.isFeatured).toBe(true);
+  });
+
+  it("setEventFeatured(false) quita el destacado a un evento destacado", async () => {
+    let event = blankEvent(1, { isFeatured: true });
+    const db: Record<string, unknown> = {
+      update: () => db,
+      set: (fields: Record<string, unknown>) => { event = { ...event, ...fields }; return db; },
+      where: () => db, select: () => db, from: () => db, limit: () => db,
+      then: (resolve: (v: unknown) => void) => resolve([event]),
+    };
+    const updated = await setEventFeatured(1, false, db as unknown as Parameters<typeof setEventFeatured>[2]);
+    expect(updated?.isFeatured).toBe(false);
+  });
+});
+
+describe("eventsDb — público (listActiveEvents / listFeaturedEvents)", () => {
+  it("listActiveEvents con communityId restringe a esa comunidad", async () => {
+    const event = blankEvent(2);
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ eventId: 2 }]);
+        if (phase === 2) return resolve([{ event, venue: null }]);
+        if (phase === 3) return resolve([{ event }]);
+        return resolve([{ eventId: 2, community: { id: 2, name: "Segolife UVA", slug: "uva" } }]);
+      },
+    };
+    const items = await listActiveEvents(2, db as unknown as Parameters<typeof listActiveEvents>[1]);
+    expect(items).toHaveLength(1);
+    expect(items[0].communities[0].slug).toBe("uva");
+  });
+
+  it("listFeaturedEvents devuelve los eventos que llegan de la BD (endpoint público, sin sesión)", async () => {
+    const event = blankEvent(3, { isFeatured: true });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event, venue: null }]);
+        if (phase === 2) return resolve([{ event }]);
+        return resolve([]);
+      },
+    };
+    const items = await listFeaturedEvents(undefined, db as unknown as Parameters<typeof listFeaturedEvents>[1]);
+    expect(items).toHaveLength(1);
+    expect(items[0].isFeatured).toBe(true);
+  });
+});

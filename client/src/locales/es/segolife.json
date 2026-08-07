@@ -6,7 +6,12 @@
     "languageLabel": "Idioma",
     "loading": "Cargando comunidad...",
     "notFound": "Comunidad no encontrada",
-    "tagline": "Comunidad, eventos y recompensas para estudiantes en Segovia."
+    "tagline": "Comunidad, eventos y recompensas para estudiantes en Segovia.",
+    "venuesTitle": "Venues",
+    "noVenues": "Todavía no hay venues publicados para esta comunidad.",
+    "eventsTitle": "Próximos eventos",
+    "noEvents": "Todavía no hay eventos publicados para esta comunidad.",
+    "featuredBadge": "Destacado"
   },
   "languageSwitcher": {
     "en": "English",

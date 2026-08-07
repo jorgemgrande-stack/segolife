@@ -163,6 +163,8 @@ import { spaRouter } from "./routers/spa";
 import { reviewsRouter } from "./routers/reviews";
 import { communitiesRouter } from "./routers/communities";
 import { studentsRouter } from "./routers/students";
+import { venuesRouter } from "./routers/venues";
+import { eventsRouter } from "./routers/events";
 import { restaurantsRouter } from "./routers/restaurants";
 import { crmRouter } from "./routers/crm";
 import { suppliersRouter, settlementsRouter } from "./routers/suppliers";
@@ -2150,6 +2152,8 @@ export const appRouter = router({
   reviews: reviewsRouter,
   communities: communitiesRouter,
   students: studentsRouter,
+  venues: venuesRouter,
+  events: eventsRouter,
   restaurants: restaurantsRouter,
   crm: crmRouter,
   commercialFollowup: commercialFollowupRouter,
