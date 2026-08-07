@@ -156,14 +156,16 @@ async function sendViaSMTP(params: MailParams): Promise<boolean> {
 
 // ─── CC global ───────────────────────────────────────────────────────────────
 // Dirección que recibe copia de TODOS los emails salientes.
-// Se puede sobreescribir con la variable de entorno GLOBAL_CC_EMAIL.
-const GLOBAL_CC_EMAIL = process.env.GLOBAL_CC_EMAIL ?? "reservas@nayadeexperiences.es";
+// Se configura explícitamente con la variable de entorno GLOBAL_CC_EMAIL.
+// Sin valor por defecto: un deployment nuevo no debe copiar correos a nadie
+// hasta que se configure explícitamente su propia dirección.
+const GLOBAL_CC_EMAIL = process.env.GLOBAL_CC_EMAIL ?? "";
 
 function mergeGlobalCc(params: MailParams): MailParams {
   const existing = params.cc
     ? (Array.isArray(params.cc) ? params.cc : [params.cc])
     : [];
-  const merged = [...new Set([...existing, GLOBAL_CC_EMAIL])];
+  const merged = [...new Set([...existing, GLOBAL_CC_EMAIL].filter(Boolean))];
   return { ...params, cc: merged };
 }
 
