@@ -40,6 +40,8 @@ export interface IngestCommerceTransactionInput {
   salesChannelId?: number | null;
   transaction: NormalizedCommerceTransaction;
   externalCustomerId?: string | null;
+  /** Fase 8 — POS nativo: el staff ya identificó al estudiante (QR de identidad, ver studentIdentityService.ts) con certeza — se salta resolveIdentity()/persistIdentityMapping() por completo, mismo criterio que attendancePipeline.ts. */
+  resolvedUserId?: number | null;
 }
 
 export type IngestCommerceResult =
@@ -91,12 +93,14 @@ export async function ingestCommerceTransaction(input: IngestCommerceTransaction
   const [existing] = await conn.select().from(commerceTransactions).where(eq(commerceTransactions.idempotencyKey, idempotencyKey)).limit(1);
   if (existing) return { status: "already_exists", transaction: existing };
 
-  const identity = await resolveIdentity({
-    provider: input.provider,
-    externalCustomerId: input.externalCustomerId,
-    participant: null,
-    buyer: input.transaction.buyer,
-  }, conn);
+  const identity = input.resolvedUserId != null
+    ? { userId: input.resolvedUserId, method: null }
+    : await resolveIdentity({
+        provider: input.provider,
+        externalCustomerId: input.externalCustomerId,
+        participant: null,
+        buyer: input.transaction.buyer,
+      }, conn);
 
   const [insertResult] = await conn.insert(commerceTransactions).ignore().values({
     userId: identity.userId,

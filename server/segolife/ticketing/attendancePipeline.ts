@@ -9,6 +9,14 @@
  * Idempotente: idempotency_key = `${provider}:${integrationType ?? "native"}:${integrationId ?? 0}:${externalAttendanceId}`.
  * Reintentar (polling repetido, reprocesar un unresolved_operations ya
  * vinculado) nunca duplica ni la fila de event_attendance ni el ledger.
+ *
+ * FASE 8: `resolvedUserId` (opcional) permite a un llamador que YA CONOCE
+ * con certeza la identidad — un check-in nativo, donde `event_tickets.userId`
+ * ES el comprador real de Segolife, sin ninguna heurística de email/teléfono
+ * de por medio; o la vinculación manual de un `unresolved_operations` de
+ * asistencia, donde un admin ya decidió el userId — saltarse por completo
+ * `resolveIdentity()`/`persistIdentityMapping()`. Sin `resolvedUserId`, el
+ * comportamiento es IDÉNTICO al de siempre (proveedores externos).
  */
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -39,6 +47,8 @@ export interface IngestAttendanceInput {
   ticketId?: number | null;
   attendance: NormalizedAttendance;
   externalCustomerId?: string | null;
+  /** Identidad ya resuelta con certeza — ver nota de Fase 8 arriba. */
+  resolvedUserId?: number | null;
 }
 
 export type IngestAttendanceResult =
@@ -57,44 +67,50 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
   const [existing] = await conn.select().from(eventAttendance).where(eq(eventAttendance.idempotencyKey, idempotencyKey)).limit(1);
   if (existing) return { status: "already_processed", attendance: existing };
 
-  const identity = await resolveIdentity({
-    provider: input.provider,
-    externalCustomerId: input.externalCustomerId,
-    participant: input.attendance.participant,
-    buyer: null,
-  }, conn);
-
-  if (!identity.userId) {
-    await recordUnresolvedOperation({
-      operationType: "attendance",
-      provider: input.provider,
-      integrationType: input.integrationType ?? null,
-      integrationId: input.integrationId ?? null,
-      externalReferenceId: input.attendance.externalAttendanceId,
-      eventId: input.eventId,
-      venueId: input.venueId ?? null,
-      occurredAt: input.attendance.occurredAt,
-      identityHintEmail: input.attendance.participant.email ?? null,
-      identityHintPhone: input.attendance.participant.phone ?? null,
-      identityHintName: input.attendance.participant.name ?? null,
-      amountCents: null,
-    }, conn);
-    return { status: "unresolved" };
-  }
-
-  if (identity.method && identity.method !== "previous_mapping") {
-    await persistIdentityMapping({
+  let userId: number;
+  if (input.resolvedUserId != null) {
+    userId = input.resolvedUserId;
+  } else {
+    const identity = await resolveIdentity({
       provider: input.provider,
       externalCustomerId: input.externalCustomerId,
       participant: input.attendance.participant,
       buyer: null,
-      userId: identity.userId,
-      method: identity.method,
     }, conn);
+
+    if (!identity.userId) {
+      await recordUnresolvedOperation({
+        operationType: "attendance",
+        provider: input.provider,
+        integrationType: input.integrationType ?? null,
+        integrationId: input.integrationId ?? null,
+        externalReferenceId: input.attendance.externalAttendanceId,
+        eventId: input.eventId,
+        venueId: input.venueId ?? null,
+        occurredAt: input.attendance.occurredAt,
+        identityHintEmail: input.attendance.participant.email ?? null,
+        identityHintPhone: input.attendance.participant.phone ?? null,
+        identityHintName: input.attendance.participant.name ?? null,
+        amountCents: null,
+      }, conn);
+      return { status: "unresolved" };
+    }
+
+    if (identity.method && identity.method !== "previous_mapping") {
+      await persistIdentityMapping({
+        provider: input.provider,
+        externalCustomerId: input.externalCustomerId,
+        participant: input.attendance.participant,
+        buyer: null,
+        userId: identity.userId,
+        method: identity.method,
+      }, conn);
+    }
+    userId = identity.userId;
   }
 
   const tokenResult = await earnTokens({
-    userId: identity.userId,
+    userId,
     communityId: input.communityId ?? null,
     venueId: input.venueId ?? null,
     eventId: input.eventId,
@@ -106,7 +122,7 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
   const [insertResult] = await conn.insert(eventAttendance).ignore().values({
     eventId: input.eventId,
     ticketId: input.ticketId ?? null,
-    userId: identity.userId,
+    userId,
     venueId: input.venueId ?? null,
     provider: input.provider,
     integrationType: input.integrationType ?? null,
@@ -126,7 +142,7 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
   // consumptionQrService.ts en Fase 3/4).
   await evaluateBenefitsForOrigin({
     type: "event_attendance",
-    userId: identity.userId,
+    userId,
     venueId: input.venueId ?? null,
     eventId: input.eventId,
     communityId: input.communityId ?? null,

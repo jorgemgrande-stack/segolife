@@ -123,6 +123,43 @@ export interface ManualAnnouncementPayload {
   createdByUserId: number;
 }
 
+// ─── Fase 8 — Native Ticketing (spec punto 25) ────────────────────────────────
+// Igual que el resto del catálogo: la infraestructura queda preparada aquí,
+// pero NO se conecta ningún listener real que envíe email/push/WhatsApp — a
+// lo sumo, un futuro listener in-app siguiendo el mismo patrón que
+// benefitGrantedListener.ts, nunca activado por defecto en esta fase.
+
+export interface TicketPurchasedPayload {
+  userId: number;
+  communityId: number | null;
+  orderId: number;
+  eventId: number;
+}
+
+export interface TicketIssuedPayload {
+  userId: number;
+  communityId: number | null;
+  ticketId: number;
+  eventId: number;
+}
+
+export interface TicketCheckedInPayload {
+  userId: number;
+  communityId: number | null;
+  ticketId: number;
+  eventId: number;
+  venueId: number | null;
+}
+
+export interface OrderRefundedPayload {
+  userId: number;
+  communityId: number | null;
+  orderId: number;
+  eventId: number;
+  amountCents: number;
+  partial: boolean;
+}
+
 export interface EngagementDomainEvents {
   benefit_granted: BenefitGrantedPayload;
   benefit_expiring: BenefitExpiringPayload;
@@ -138,6 +175,10 @@ export interface EngagementDomainEvents {
   commerce_processed: CommerceProcessedPayload;
   profile_incomplete: ProfileIncompletePayload;
   manual_announcement: ManualAnnouncementPayload;
+  ticket_purchased: TicketPurchasedPayload;
+  ticket_issued: TicketIssuedPayload;
+  ticket_checked_in: TicketCheckedInPayload;
+  order_refunded: OrderRefundedPayload;
 }
 
 export type EngagementEventType = keyof EngagementDomainEvents;

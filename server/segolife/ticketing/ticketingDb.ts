@@ -8,7 +8,7 @@ import { eq, and, inArray, sql, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import {
-  salesChannels, eventTicketTypes, ticketOrders, ticketOrderItems, eventTickets, eventAttendance,
+  salesChannels, eventTicketTypes, ticketOrders, ticketOrderItems, eventTickets, eventAttendance, events,
   type SalesChannel, type EventTicketType, type InsertSalesChannel, type InsertEventTicketType,
   type TicketOrder, type EventTicket, type EventAttendance,
 } from "../../../drizzle/schema";
@@ -109,4 +109,69 @@ export async function listEventTickets(eventId: number, db?: DbHandle): Promise<
 export async function listEventAttendance(eventId: number, db?: DbHandle): Promise<EventAttendance[]> {
   const conn = db ?? (await getDb());
   return conn.select().from(eventAttendance).where(eq(eventAttendance.eventId, eventId)).orderBy(desc(eventAttendance.occurredAt));
+}
+
+// ─── ESTUDIANTE (Fase 8) — "My Orders" / "My Tickets" ─────────────────────────
+// Ownership real: SIEMPRE filtrado por userId, nunca un id suelto sin
+// comprobar propiedad (spec Fase 8 punto 32) — ver studentNotifications.ts
+// (Fase 7) para el mismo criterio ya aplicado a otro dominio.
+
+export async function listMyOrders(userId: number, db?: DbHandle): Promise<TicketOrder[]> {
+  const conn = db ?? (await getDb());
+  return conn.select().from(ticketOrders).where(eq(ticketOrders.userId, userId)).orderBy(desc(ticketOrders.createdAt));
+}
+
+export interface MyOrderItemWithTypeName {
+  id: number;
+  ticketTypeId: number | null;
+  ticketTypeName: string | null;
+  quantity: number;
+  unitPriceCents: number;
+  totalPriceCents: number;
+}
+
+export async function getMyOrderById(orderId: number, userId: number, db?: DbHandle): Promise<{ order: TicketOrder; items: MyOrderItemWithTypeName[] } | null> {
+  const conn = db ?? (await getDb());
+  const [order] = await conn.select().from(ticketOrders).where(and(eq(ticketOrders.id, orderId), eq(ticketOrders.userId, userId))).limit(1);
+  if (!order) return null;
+  const items = await conn.select({
+    id: ticketOrderItems.id,
+    ticketTypeId: ticketOrderItems.ticketTypeId,
+    ticketTypeName: eventTicketTypes.name,
+    quantity: ticketOrderItems.quantity,
+    unitPriceCents: ticketOrderItems.unitPriceCents,
+    totalPriceCents: ticketOrderItems.totalPriceCents,
+  }).from(ticketOrderItems)
+    .leftJoin(eventTicketTypes, eq(ticketOrderItems.ticketTypeId, eventTicketTypes.id))
+    .where(eq(ticketOrderItems.orderId, orderId));
+  return { order, items };
+}
+
+export interface MyTicketWithEvent {
+  ticket: EventTicket;
+  event: { id: number; name: string; slug: string; startsAt: Date; imageUrl: string | null } | null;
+}
+
+export async function listMyTickets(userId: number, db?: DbHandle): Promise<MyTicketWithEvent[]> {
+  const conn = db ?? (await getDb());
+  const rows = await conn.select({
+    ticket: eventTickets,
+    event: { id: events.id, name: events.name, slug: events.slug, startsAt: events.startsAt, imageUrl: events.imageUrl },
+  }).from(eventTickets)
+    .leftJoin(events, eq(eventTickets.eventId, events.id))
+    .where(eq(eventTickets.userId, userId))
+    .orderBy(desc(eventTickets.createdAt));
+  return rows;
+}
+
+export async function getMyTicketById(ticketId: number, userId: number, db?: DbHandle): Promise<MyTicketWithEvent | null> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select({
+    ticket: eventTickets,
+    event: { id: events.id, name: events.name, slug: events.slug, startsAt: events.startsAt, imageUrl: events.imageUrl },
+  }).from(eventTickets)
+    .leftJoin(events, eq(eventTickets.eventId, events.id))
+    .where(and(eq(eventTickets.id, ticketId), eq(eventTickets.userId, userId)))
+    .limit(1);
+  return row ?? null;
 }

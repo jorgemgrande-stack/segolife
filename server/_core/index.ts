@@ -137,6 +137,50 @@ const benefitRedeemRateLimit = rateLimit({
   },
 });
 
+/**
+ * Check-in nativo de tickets en puerta (Fase 8, spec punto 33): mismo
+ * límite/criterio que benefitRedeemRateLimit — reutiliza express-rate-limit
+ * existente, sin infraestructura nueva.
+ */
+const ticketCheckinRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Demasiados intentos de validación. Espera 1 minuto.",
+    code: "RATE_LIMIT_EXCEEDED",
+  },
+});
+
+/**
+ * Checkout/pago nativo (Fase 8, spec punto 33): límite razonable — proteger
+ * contra scripts que machaquen la creación de holds/reintento de pago, sin
+ * bloquear a un estudiante normal seleccionando/reintentando su compra.
+ */
+const ticketCheckoutRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Demasiadas solicitudes de compra. Espera 1 minuto.",
+    code: "RATE_LIMIT_EXCEEDED",
+  },
+});
+
+/** POS nativo (Fase 8, spec punto 33) — mismo criterio que benefitRedeemRateLimit/ticketCheckinRateLimit (un mismo terminal puede registrar varias ventas seguidas). */
+const posRecordSaleRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Demasiadas operaciones de POS. Espera 1 minuto.",
+    code: "RATE_LIMIT_EXCEEDED",
+  },
+});
+
 // Modo de autenticación: LOCAL_AUTH=true usa email+password local en lugar de Manus OAuth
 const USE_LOCAL_AUTH = process.env.LOCAL_AUTH === "true";
 
@@ -216,6 +260,16 @@ async function startServer() {
 
   // Rate limiting en validación de QR de Benefit (Fase 4, 30 req/min por IP)
   app.use("/api/trpc/benefits.staffRedeem", benefitRedeemRateLimit);
+
+  // Rate limiting en check-in nativo de tickets (Fase 8, 30 req/min por IP)
+  app.use("/api/trpc/staffCheckin.checkIn", ticketCheckinRateLimit);
+
+  // Rate limiting en checkout/pago nativo (Fase 8, 20 req/min por IP)
+  app.use("/api/trpc/ticketPurchase.startCheckout", ticketCheckoutRateLimit);
+  app.use("/api/trpc/ticketPurchase.initiatePayment", ticketCheckoutRateLimit);
+
+  // Rate limiting en POS nativo (Fase 8, 30 req/min por IP)
+  app.use("/api/trpc/commerce.posRecordSale", posRecordSaleRateLimit);
 
   // Middleware de protección: bloquea rutas /api/trpc de procedimientos protegidos
   // si no hay sesión válida. Funciona en ambos modos (local y Manus OAuth).

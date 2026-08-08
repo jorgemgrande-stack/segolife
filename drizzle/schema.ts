@@ -4661,6 +4661,18 @@ export type InsertEventTicketType = typeof eventTicketTypes.$inferInsert;
 // docs/integrations/ticketing-commerce-architecture.md para la estrategia
 // futura de reservation-timeout (NO implementada aún, no hace falta todavía).
 
+// FASE 8: status ampliado (aditivo — nunca se quitan valores existentes) para
+// representar la state machine real de compra nativa: pending (hold recién
+// creado) → awaiting_payment (PaymentProvider invocado) → paid; pending/
+// awaiting_payment → expired (hold caducado, ver expiresAt) o cancelled;
+// paid → refunded/partially_refunded; cualquier estado → reconciliation_required
+// si un refund no puede compensar SegoTokens/Benefits de forma automática
+// (mismo criterio que commerce_transactions.status, spec Fase 8 punto 18).
+// `expiresAt` es el mecanismo de HOLD temporal de inventario (spec punto 4):
+// mientras status IN (pending, awaiting_payment) y expiresAt > NOW(), el
+// order cuenta como inventario ocupado; pasado ese instante, deja de contar
+// (se considera liberado) SIN necesidad de un job que lo borre activamente
+// — getTicketTypeInventory() lo calcula en caliente igual que "sold".
 export const ticketOrders = mysqlTable("ticket_orders", {
   id:                 int("id").autoincrement().primaryKey(),
   userId:             int("user_id"),
@@ -4669,7 +4681,7 @@ export const ticketOrders = mysqlTable("ticket_orders", {
   provider:           varchar("provider", { length: 32 }),
   externalOrderId:    varchar("external_order_id", { length: 128 }),
   externalPaymentId:  varchar("external_payment_id", { length: 128 }),
-  status:             mysqlEnum("status", ["pending", "paid", "cancelled", "refunded", "failed"]).notNull().default("pending"),
+  status:             mysqlEnum("status", ["pending", "awaiting_payment", "paid", "cancelled", "expired", "refunded", "partially_refunded", "failed", "reconciliation_required"]).notNull().default("pending"),
   subtotalCents:      int("subtotal_cents").notNull().default(0),
   feesCents:          int("fees_cents").notNull().default(0),
   totalCents:         int("total_cents").notNull().default(0),
@@ -4678,6 +4690,9 @@ export const ticketOrders = mysqlTable("ticket_orders", {
   buyerEmail:         varchar("buyer_email", { length: 320 }),
   buyerPhone:         varchar("buyer_phone", { length: 32 }),
   purchasedAt:        timestamp("purchased_at"),
+  expiresAt:          timestamp("expires_at"),
+  cancelledAt:        timestamp("cancelled_at"),
+  refundedAt:         timestamp("refunded_at"),
   idempotencyKey:     varchar("idempotency_key", { length: 191 }),
   metadata:           json("metadata").$type<Record<string, unknown>>(),
   createdAt:          timestamp("created_at").defaultNow().notNull(),
@@ -4688,6 +4703,33 @@ export const ticketOrders = mysqlTable("ticket_orders", {
 }));
 export type TicketOrder = typeof ticketOrders.$inferSelect;
 export type InsertTicketOrder = typeof ticketOrders.$inferInsert;
+
+// ─── TICKET_PAYMENTS (Fase 8) ─────────────────────────────────────────────────
+// Auditoría antes de crearla (spec punto 7): ticket_orders.status ya cubre el
+// resultado final, pero no el DETALLE de cada intento de pago (proveedor,
+// referencia externa, importe, idempotencia por intento) — necesario para que
+// PaymentProvider.createPayment()/confirmPayment()/refundPayment() tengan
+// dónde registrar cada llamada real sin sobreescribir la anterior. NUNCA
+// contiene PAN/CVV/datos de tarjeta — solo lo que el proveedor devuelve como
+// referencia (id de pago, estado, importe).
+export const ticketPayments = mysqlTable("ticket_payments", {
+  id:                 int("id").autoincrement().primaryKey(),
+  orderId:            int("order_id").notNull(),
+  provider:           varchar("provider", { length: 32 }).notNull(),
+  externalPaymentId:  varchar("external_payment_id", { length: 128 }),
+  amountCents:        int("amount_cents").notNull(),
+  currency:           varchar("currency", { length: 8 }).notNull().default("EUR"),
+  status:             mysqlEnum("status", ["pending", "succeeded", "failed", "refunded"]).notNull().default("pending"),
+  idempotencyKey:     varchar("idempotency_key", { length: 191 }).notNull(),
+  failureReason:      varchar("failure_reason", { length: 256 }),
+  metadata:           json("metadata").$type<Record<string, unknown>>(),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+  updatedAt:          timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  idempotencyKeyUnique: unique("ticket_payments_idempotency_key_unique").on(table.idempotencyKey),
+}));
+export type TicketPayment = typeof ticketPayments.$inferSelect;
+export type InsertTicketPayment = typeof ticketPayments.$inferInsert;
 
 export const ticketOrderItems = mysqlTable("ticket_order_items", {
   id:               int("id").autoincrement().primaryKey(),
@@ -5005,6 +5047,30 @@ export const commerceTransactionItems = mysqlTable("commerce_transaction_items",
 });
 export type CommerceTransactionItem = typeof commerceTransactionItems.$inferSelect;
 export type InsertCommerceTransactionItem = typeof commerceTransactionItems.$inferInsert;
+
+// ─── STUDENT_IDENTITY_TOKENS (Fase 8) ─────────────────────────────────────────
+// QR de identidad para POS nativo — auditado antes de crear (spec punto 23):
+// NUNCA reutiliza el QR de Benefits (autoriza un canje real), el de
+// Consumption (de un solo uso, hash-only) ni el de un Ticket (identifica una
+// ENTRADA, no una persona). Este token identifica solo AL ESTUDIANTE frente
+// al staff de un POS — el staff sigue eligiendo productos/importe a mano, el
+// QR nunca autoriza un cargo por sí mismo (perfil de riesgo bajo, igual que
+// llevar puesta una pulsera con nombre). Mismo patrón cripto que Benefits:
+// token en claro recuperable (se muestra repetidamente desde el perfil) +
+// hash único para la búsqueda del staff — nunca se compara el texto plano.
+export const studentIdentityTokens = mysqlTable("student_identity_tokens", {
+  id:          int("id").autoincrement().primaryKey(),
+  userId:      int("user_id").notNull(),
+  token:       varchar("token", { length: 64 }).notNull(),
+  tokenHash:   varchar("token_hash", { length: 64 }).notNull(),
+  rotatedAt:   timestamp("rotated_at"),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  userIdUnique: unique("student_identity_tokens_user_id_unique").on(table.userId),
+  tokenHashUnique: unique("student_identity_tokens_token_hash_unique").on(table.tokenHash),
+}));
+export type StudentIdentityToken = typeof studentIdentityTokens.$inferSelect;
+export type InsertStudentIdentityToken = typeof studentIdentityTokens.$inferInsert;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SEGOLIFE FASE 7 — ENGAGEMENT, NOTIFICATIONS & COMMUNICATIONS CORE

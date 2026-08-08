@@ -116,6 +116,16 @@ const ENGAGEMENT_PERMISSIONS: Array<[string, string, string, string]> = [
   ["engagement.templates.manage",  "engagement", "templates.manage",  "Ver el catálogo de plantillas de sistema (gestión real vive en código/versionado)"],
 ];
 
+// Fase 8 — Native Ticketing, Check-in & Commerce/POS Core. NUEVOS de verdad
+// (auditado: no existía nada equivalente a "validar en puerta" ni "registrar
+// una venta de POS" — solo el "view"/"manage" de nivel admin de Fase 5) —
+// mismo patrón que benefits.redeem: acción de staff en puerta/caja, alcance
+// por venue vía venue_staff (ver venueStaffAccess.ts, ahora parametrizado).
+const TICKETING_COMMERCE_STAFF_PERMISSIONS: Array<[string, string, string, string]> = [
+  ["attendance.redeem", "attendance", "redeem", "Validar (check-in) un ticket nativo en puerta"],
+  ["commerce.record",   "commerce",   "record", "Registrar una venta de POS nativo (consumición en efectivo) en un venue"],
+];
+
 export async function seedRbacIfNeeded(): Promise<{
   rolesEnsured: string[];
   permissionsAdded: string[];
@@ -141,7 +151,7 @@ export async function seedRbacIfNeeded(): Promise<{
     // 2. Permisos students.view / students.manage / venues.* / events.* /
     //    tokens.* / qr.* / benefits.* / integrations.* / ticketing.* /
     //    commerce.* / attendance.* — no sembrados en ninguna migración histórica.
-    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS]) {
+    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_permissions (\`key\`, module, action, description) VALUES (?, ?, ?, ?)`,
         [key, module, action, description]
@@ -154,7 +164,7 @@ export async function seedRbacIfNeeded(): Promise<{
     //    attendance.* al rol admin (idempotente, no asume que el CROSS JOIN
     //    histórico de 0070/0077 se haya vuelto a ejecutar para estos permisos
     //    nuevos).
-    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS]) {
+    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
          SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p
@@ -164,12 +174,14 @@ export async function seedRbacIfNeeded(): Promise<{
       if ((result as any).affectedRows > 0) grantsEnsured.push(`admin -> ${key}`);
     }
 
-    // 3b. El rol `staff` (nuevo) SOLO recibe benefits.view/benefits.redeem —
-    //     nunca manage/grant/cancel (esos siguen siendo exclusivos de admin).
-    //     El alcance por venue concreto se aplica en runtime vía venue_staff,
-    //     no aquí (RBAC solo resuelve el verbo, no el dato — ver
-    //     communityAccess.ts para el mismo criterio aplicado a comunidad).
-    for (const key of ["benefits.view", "benefits.redeem"]) {
+    // 3b. El rol `staff` recibe benefits.view/benefits.redeem (Fase 4) y, desde
+    //     Fase 8, también attendance.view/attendance.redeem (check-in nativo)
+    //     y commerce.view/commerce.record (POS nativo) — nunca manage/grant/
+    //     cancel (exclusivos de admin). El alcance por venue concreto se
+    //     aplica en runtime vía venue_staff, no aquí (RBAC solo resuelve el
+    //     verbo, no el dato — ver communityAccess.ts para el mismo criterio
+    //     aplicado a comunidad).
+    for (const key of ["benefits.view", "benefits.redeem", "attendance.view", "attendance.redeem", "commerce.view", "commerce.record"]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
          SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p

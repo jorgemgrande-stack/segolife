@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { toast } from "sonner";
-import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell } from "lucide-react";
+import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell, Ticket, IdCard, RotateCw } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -50,6 +51,47 @@ const EMPTY_FORM: FormState = {
   universityId: "", degreeProgram: "", academicYear: "", arrivalDate: "",
   expectedDepartureDate: "", addressLine: "", postalCode: "", city: "",
 };
+
+/**
+ * QR de identidad para POS nativo (Fase 8, spec punto 23) — identifica al
+ * estudiante frente al staff, nunca autoriza un cargo por sí mismo. Se
+ * muestra siempre plegado por defecto para no competir visualmente con
+ * SegoTokens (la sección más importante de Profile).
+ */
+function StudentIdentitySection() {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const { data, isLoading } = trpc.ticketPurchase.myIdentityToken.useQuery(undefined, { enabled: open });
+  const rotateMut = trpc.ticketPurchase.rotateMyIdentityToken.useMutation({
+    onSuccess: () => toast.success(t("profile.identityQrRotated")),
+  });
+
+  return (
+    <section className="space-y-3">
+      <button onClick={() => setOpen(o => !o)} className="flex w-full items-center justify-between rounded-2xl bg-secondary px-4 py-3 text-secondary-foreground">
+        <span className="flex items-center gap-2 text-sm font-medium">
+          <IdCard className="size-4" aria-hidden="true" /> {t("profile.identityQrTitle")}
+        </span>
+        <ChevronRight className={`size-4 transition-transform ${open ? "rotate-90" : ""}`} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="segolife-card-shadow flex flex-col items-center gap-3 rounded-2xl bg-card p-5">
+          {isLoading || !data ? (
+            <Loader2 className="size-6 animate-spin text-primary" aria-hidden="true" />
+          ) : (
+            <>
+              <div className="rounded-2xl bg-white p-3"><QRCodeSVG value={data.token} size={160} level="M" /></div>
+              <p className="text-center text-xs text-muted-foreground">{t("profile.identityQrDescription")}</p>
+              <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" disabled={rotateMut.isPending} onClick={() => rotateMut.mutate()}>
+                <RotateCw className="size-3.5" aria-hidden="true" /> {t("profile.identityQrRegenerate")}
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
 
 function initials(firstName: string, lastName: string, fallbackName: string): string {
   const a = firstName.trim()[0];
@@ -185,6 +227,15 @@ export default function Profile() {
             </span>
             <ChevronRight className="size-4" aria-hidden="true" />
           </Link>
+          <Link
+            href={`/${slug}/tickets`}
+            className="flex items-center justify-between rounded-2xl bg-secondary px-4 py-3 text-secondary-foreground"
+          >
+            <span className="flex items-center gap-2 text-sm font-medium">
+              <Ticket className="size-4" aria-hidden="true" /> {t("ticketing.viewMyTickets")}
+            </span>
+            <ChevronRight className="size-4" aria-hidden="true" />
+          </Link>
         </section>
 
         {showLanguageSwitcher && (
@@ -284,6 +335,8 @@ export default function Profile() {
             </div>
           </div>
         </section>
+
+        <StudentIdentitySection />
 
         <section className="space-y-3">
           <h2 className="text-lg font-semibold text-foreground">{t("profile.sectionSettings")}</h2>

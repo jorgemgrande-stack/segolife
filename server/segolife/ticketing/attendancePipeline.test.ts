@@ -146,4 +146,37 @@ describe("ingestAttendance", () => {
 
     expect(result.status).toBe("processed");
   });
+
+  // ─── Fase 8 — resolvedUserId (check-in nativo / reproceso de unresolved) ────
+  it("resolvedUserId salta resolveIdentity()/persistIdentityMapping() por completo y usa ese userId directamente", async () => {
+    const db = fakeDb();
+
+    const result = await ingestAttendance({
+      provider: "segolife",
+      eventId: 5,
+      venueId: 10,
+      resolvedUserId: 77,
+      attendance: attendanceFixture({ externalAttendanceId: "native_checkin:900" }),
+    }, db);
+
+    expect(result.status).toBe("processed");
+    expect(mockResolveIdentity).not.toHaveBeenCalled();
+    expect(mockPersistIdentityMapping).not.toHaveBeenCalled();
+    expect(mockEarnTokens).toHaveBeenCalledOnce();
+    expect(mockEarnTokens.mock.calls[0][0]).toMatchObject({ userId: 77, origin: "attendance" });
+  });
+
+  it("resolvedUserId sigue siendo idempotente por idempotency_key — reprocesar (p.ej. vincular dos veces un unresolved_operations) no duplica", async () => {
+    const db = fakeDb({ existingAttendance: { id: 900, idempotencyKey: "segolife:native:0:native_checkin:900" } });
+
+    const result = await ingestAttendance({
+      provider: "segolife",
+      eventId: 5,
+      resolvedUserId: 77,
+      attendance: attendanceFixture({ externalAttendanceId: "native_checkin:900" }),
+    }, db);
+
+    expect(result.status).toBe("already_processed");
+    expect(mockEarnTokens).not.toHaveBeenCalled();
+  });
 });

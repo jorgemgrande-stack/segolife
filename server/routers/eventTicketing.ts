@@ -7,16 +7,26 @@
  * "event_ticketing.*" (nunca "ticketing.*" a secas).
  */
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { router, permissionProcedure } from "../_core/trpc";
 import {
   listSalesChannels, createSalesChannel, setSalesChannelStatus, isEventHybrid,
   listTicketTypes, createTicketType, getTicketTypeInventory,
   listOrders, listEventTickets, listEventAttendance,
 } from "../segolife/ticketing/ticketingDb";
+import { cancelOrder, refundOrder } from "../segolife/ticketing/ticketCancellationService";
+import { CheckoutError } from "../segolife/ticketing/inventoryHoldService";
 
 const eventTicketingViewProcedure = permissionProcedure("event_ticketing.view", ["admin"]);
 const eventTicketingManageProcedure = permissionProcedure("event_ticketing.manage", ["admin"]);
 const attendanceViewProcedure = permissionProcedure("attendance.view", ["admin"]);
+
+function mapAdminCheckoutError(err: unknown): never {
+  if (err instanceof CheckoutError) {
+    throw new TRPCError({ code: err.code === "NOT_FOUND" ? "NOT_FOUND" : "BAD_REQUEST", message: err.message, cause: err });
+  }
+  throw err;
+}
 
 export const eventTicketingRouter = router({
   getEventTicketingSummary: eventTicketingViewProcedure
@@ -63,4 +73,25 @@ export const eventTicketingRouter = router({
   listEventAttendance: attendanceViewProcedure
     .input(z.object({ eventId: z.number().int().positive() }))
     .query(({ input }) => listEventAttendance(input.eventId)),
+
+  // ─── Cancelaciones / reembolsos (Fase 8, spec punto 18) ──────────────────────
+  cancelOrder: eventTicketingManageProcedure
+    .input(z.object({ orderId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await cancelOrder(input.orderId, ctx.user.id);
+      } catch (err) {
+        mapAdminCheckoutError(err);
+      }
+    }),
+
+  refundOrder: eventTicketingManageProcedure
+    .input(z.object({ orderId: z.number().int().positive(), reason: z.string().min(1).max(500) }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await refundOrder(input.orderId, ctx.user.id, input.reason);
+      } catch (err) {
+        mapAdminCheckoutError(err);
+      }
+    }),
 });

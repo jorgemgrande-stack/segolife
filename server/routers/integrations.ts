@@ -18,6 +18,7 @@ import { WEEZEVENT_BASE_URL } from "../segolife/integrations/weezeventAdapter";
 import { decryptCredentials } from "../segolife/integrations/integrationCredentialCrypto";
 import { isExternalIntegrationsGloballyEnabled } from "../segolife/integrations/integrationSyncService";
 import { processCommerceLoyalty } from "../segolife/commerce/commercePipeline";
+import { ingestAttendance } from "../segolife/ticketing/attendancePipeline";
 import { commerceTransactions } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -149,11 +150,6 @@ export const integrationsRouter = router({
         const linked = await linkUnresolvedOperation(input.id, input.userId, ctx.user.id);
         // Reprocesamiento idempotente para COMERCIO: la fila commerce_transactions
         // ya existía (user_id era null) — solo hace falta asociarla y procesar loyalty.
-        // NOTA/gap conocido: la vinculación manual de ATTENDANCE no crea todavía la
-        // fila event_attendance retroactivamente (attendancePipeline.ingestAttendance
-        // vuelve a resolver identidad en vez de aceptar un userId ya decidido por el
-        // admin) — documentado como pendiente en el informe de cierre de Fase 5, no
-        // bloquea el resto del Integration Hub.
         if (linked.operationType === "commerce" && linked.referenceId) {
           const [tx] = await _db.select().from(commerceTransactions).where(eq(commerceTransactions.id, linked.referenceId)).limit(1);
           if (tx) {
@@ -161,6 +157,32 @@ export const integrationsRouter = router({
             const [updatedTx] = await _db.select().from(commerceTransactions).where(eq(commerceTransactions.id, tx.id)).limit(1);
             await processCommerceLoyalty(updatedTx);
           }
+        }
+        // FASE 8 — bloqueador de Fase 5 resuelto: la vinculación manual de
+        // ATTENDANCE ahora SÍ reprocesa event_attendance retroactivamente.
+        // `unresolved_operations` ya guardaba todo lo necesario para
+        // reconstruir el evento normalizado (eventId/venueId/occurredAt/
+        // externalReferenceId) — solo faltaba pasarle `resolvedUserId` al
+        // pipeline para que se salte resolveIdentity() y use el userId que
+        // el admin ya decidió. Idempotente: si esta operación se vincula dos
+        // veces (o el mismo externalReferenceId ya se procesó por otra vía),
+        // ingestAttendance() detecta la idempotency_key existente y no
+        // duplica ni event_attendance ni el ledger de SegoTokens.
+        if (linked.operationType === "attendance" && linked.eventId) {
+          await ingestAttendance({
+            provider: linked.provider,
+            integrationType: linked.integrationType ?? null,
+            integrationId: linked.integrationId ?? null,
+            eventId: linked.eventId,
+            venueId: linked.venueId ?? null,
+            resolvedUserId: input.userId,
+            attendance: {
+              externalAttendanceId: linked.externalReferenceId ?? `unresolved:${linked.id}`,
+              externalEventId: String(linked.eventId),
+              participant: { email: linked.identityHintEmail, phone: linked.identityHintPhone, name: linked.identityHintName },
+              occurredAt: linked.occurredAt ?? new Date(),
+            },
+          });
         }
         return linked;
       } catch (err) {

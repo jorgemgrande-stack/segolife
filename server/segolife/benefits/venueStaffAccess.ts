@@ -28,11 +28,20 @@ async function getDb(): Promise<DbHandle> {
   return _db;
 }
 
-/** "all" = sin restricción (admin global de Benefits). number[] = solo esos venues. */
+/** "all" = sin restricción (admin global). number[] = solo esos venues. */
 export type VenueStaffAccess = "all" | number[];
 
-export async function getVenueStaffAccess(userId: number, legacyRole: string, db?: DbHandle): Promise<VenueStaffAccess> {
-  const isGlobal = await checkRbacOrLegacy(userId, legacyRole, "benefits.manage", ["admin"]);
+/**
+ * `permissionKey` es parametrizable (Fase 8, spec punto 14) — Benefits sigue
+ * usando "benefits.manage" (valor por defecto, compatibilidad con todas las
+ * llamadas ya existentes sin tocarlas), Ticketing check-in usa
+ * "event_ticketing.manage" y Commerce/POS usa "commerce.manage". La tabla
+ * `venue_staff` en sí es genérica (userId+venueId) — un mismo miembro de
+ * staff puede tener alcance de Benefits Y de Ticketing en el mismo venue
+ * con una única fila, el permiso GLOBAL es lo único que cambia por dominio.
+ */
+export async function getVenueStaffAccess(userId: number, legacyRole: string, db?: DbHandle, permissionKey: string = "benefits.manage"): Promise<VenueStaffAccess> {
+  const isGlobal = await checkRbacOrLegacy(userId, legacyRole, permissionKey, ["admin"]);
   if (isGlobal) return "all";
 
   const conn = db ?? (await getDb());

@@ -28,6 +28,12 @@ const Activity = lazy(() => import("./pages/segolife/Activity"));
 // Fase 7: Engagement Core — inbox de notificaciones + ajustes de preferencias.
 const SegolifeNotifications = lazy(() => import("./pages/segolife/Notifications"));
 const NotificationPreferences = lazy(() => import("./pages/segolife/NotificationPreferences"));
+// Fase 8: Native Ticketing — checkout, My Tickets, staff scanner/POS.
+const TicketCheckout = lazy(() => import("./pages/segolife/TicketCheckout"));
+const MyTickets = lazy(() => import("./pages/segolife/MyTickets"));
+const TicketDetail = lazy(() => import("./pages/segolife/TicketDetail"));
+const StaffEventScan = lazy(() => import("./pages/staff/StaffEventScan"));
+const StaffPos = lazy(() => import("./pages/staff/StaffPos"));
 
 // ── PUBLIC PAGES (carga inmediata — visibles sin autenticación) ──────────────
 import Home from "./pages/Home";
@@ -256,6 +262,8 @@ function Router() {
 
       {/* ── SEGOLIFE: escáner de staff para validar Benefits en puerta (Fase 4) ── */}
       <Route path="/staff/benefits/scan">{() => <Suspense fallback={null}><StaffBenefitScan /></Suspense>}</Route>
+      <Route path="/staff/events/scan">{() => <Suspense fallback={null}><StaffEventScan /></Suspense>}</Route>
+      <Route path="/staff/pos">{() => <Suspense fallback={null}><StaffPos /></Suspense>}</Route>
 
       <Route path="/experiencias" component={Experiences} />
       <Route path="/experiencias/:slug" component={ExperienceDetail} />
@@ -509,6 +517,9 @@ function Router() {
       <Route path="/:community/activity">{() => <Suspense fallback={null}><Activity /></Suspense>}</Route>
       <Route path="/:community/settings/notifications">{() => <Suspense fallback={null}><NotificationPreferences /></Suspense>}</Route>
       <Route path="/:community/notifications">{() => <Suspense fallback={null}><SegolifeNotifications /></Suspense>}</Route>
+      <Route path="/:community/checkout/:orderId">{() => <Suspense fallback={null}><TicketCheckout /></Suspense>}</Route>
+      <Route path="/:community/tickets/:id">{() => <Suspense fallback={null}><TicketDetail /></Suspense>}</Route>
+      <Route path="/:community/tickets">{() => <Suspense fallback={null}><MyTickets /></Suspense>}</Route>
       <Route path="/:community/profile">{() => <Suspense fallback={null}><SegolifeProfile /></Suspense>}</Route>
       <Route path="/:community">{() => <Suspense fallback={null}><SegolifeHome /></Suspense>}</Route>
 

@@ -1,8 +1,12 @@
+import { useState } from "react";
 import { useParams, useLocation, Link } from "wouter";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, CalendarDays, Clock, MapPin, Users, Ticket } from "lucide-react";
+import { ChevronLeft, CalendarDays, Clock, MapPin, Users, Ticket, Minus, Plus, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { getLoginUrl } from "@/const";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
 import { SegolifeImage } from "@/components/segolife/SegolifeImage";
 import { SegolifeErrorState } from "@/components/segolife/SegolifeErrorState";
@@ -24,11 +28,41 @@ export default function EventDetail() {
   const params = useParams<{ slug: string }>();
   const [, navigate] = useLocation();
   const eventSlug = params.slug;
+  const { user } = useAuth();
 
   const { data, isLoading, error, refetch } = trpc.events.publicGetBySlug.useQuery(
     { slug: eventSlug },
     { enabled: !!eventSlug }
   );
+
+  const [quantities, setQuantities] = useState<Record<number, number>>({});
+  const startCheckoutMut = trpc.ticketPurchase.startCheckout.useMutation({
+    onSuccess: res => navigate(`/${slug}/checkout/${res.order.id}`),
+    onError: e => toast.error(e.message),
+  });
+
+  const setQty = (ticketTypeId: number, delta: number, max: number | null) => {
+    setQuantities(q => {
+      const next = Math.max(0, (q[ticketTypeId] ?? 0) + delta);
+      return { ...q, [ticketTypeId]: max != null ? Math.min(next, max) : next };
+    });
+  };
+
+  const handleContinue = () => {
+    if (!user) { window.location.href = getLoginUrl(); return; }
+    if (data?.purchaseAction?.type !== "native_checkout") return;
+    const items = Object.entries(quantities)
+      .filter(([, qty]) => qty > 0)
+      .map(([ticketTypeId, quantity]) => ({ ticketTypeId: Number(ticketTypeId), quantity }));
+    if (!items.length) return;
+    startCheckoutMut.mutate({
+      eventId: data.purchaseAction.eventId,
+      items,
+      idempotencyKey: `checkout:${data.purchaseAction.eventId}:${crypto.randomUUID()}`,
+    });
+  };
+
+  const totalQuantity = Object.values(quantities).reduce((a, b) => a + b, 0);
 
   return (
     <SegolifeAppShell hideNav title={data?.event.name}>
@@ -121,13 +155,59 @@ export default function EventDetail() {
               </div>
             )}
 
-            {data.purchaseAction?.type === "external_url" ? (
+            {data.purchaseAction?.type === "external_url" && (
               <Button asChild className="w-full rounded-full py-6 text-sm font-semibold">
                 <a href={data.purchaseAction.url} target="_blank" rel="noopener noreferrer">
                   <Ticket className="mr-2 size-4" aria-hidden="true" /> {t("eventDetail.buyTickets")}
                 </a>
               </Button>
-            ) : (
+            )}
+
+            {data.purchaseAction?.type === "native_checkout" && (
+              <div className="space-y-3">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{t("ticketing.selectTickets")}</h2>
+                <div className="space-y-2">
+                  {data.purchaseAction.ticketTypes.map(tt => {
+                    const soldOut = tt.available === 0;
+                    const qty = quantities[tt.id] ?? 0;
+                    return (
+                      <div key={tt.id} className="segolife-card-shadow flex items-center justify-between gap-3 rounded-2xl bg-card p-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-foreground">{tt.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {(tt.priceCents / 100).toFixed(2)} {tt.currency}
+                            {tt.available != null && <> · {soldOut ? t("ticketing.soldOut") : t("ticketing.available", { count: tt.available })}</>}
+                          </p>
+                        </div>
+                        {soldOut ? (
+                          <Badge variant="secondary">{t("ticketing.soldOut")}</Badge>
+                        ) : (
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Button size="icon" variant="outline" className="size-8 rounded-full" disabled={qty === 0} onClick={() => setQty(tt.id, -1, tt.available)}>
+                              <Minus className="size-3.5" aria-hidden="true" />
+                            </Button>
+                            <span className="w-5 text-center text-sm font-semibold tabular-nums">{qty}</span>
+                            <Button size="icon" variant="outline" className="size-8 rounded-full" disabled={tt.available != null && qty >= tt.available} onClick={() => setQty(tt.id, 1, tt.available)}>
+                              <Plus className="size-3.5" aria-hidden="true" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <Button
+                  className="w-full rounded-full py-6 text-sm font-semibold"
+                  disabled={totalQuantity === 0 || startCheckoutMut.isPending}
+                  onClick={handleContinue}
+                >
+                  {startCheckoutMut.isPending ? <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" /> : <Ticket className="mr-2 size-4" aria-hidden="true" />}
+                  {t("ticketing.continueToCheckout")}
+                </Button>
+              </div>
+            )}
+
+            {data.purchaseAction?.type === "unavailable" && (
               <Button variant="outline" disabled className="w-full rounded-full py-6 text-sm font-semibold">
                 <Ticket className="mr-2 size-4" aria-hidden="true" /> {t("eventDetail.ticketsComingSoon")}
               </Button>
