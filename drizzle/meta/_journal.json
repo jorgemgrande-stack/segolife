@@ -932,6 +932,13 @@
       "when": 1779224819206,
       "tag": "0133_segolife_native_ticketing_commerce",
       "breakpoints": true
+    },
+    {
+      "idx": 133,
+      "version": "5",
+      "when": 1779224820206,
+      "tag": "0134_fix_legacy_schema_drift",
+      "breakpoints": true
     }
   ]
 }
