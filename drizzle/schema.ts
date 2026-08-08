@@ -5005,3 +5005,185 @@ export const commerceTransactionItems = mysqlTable("commerce_transaction_items",
 });
 export type CommerceTransactionItem = typeof commerceTransactionItems.$inferSelect;
 export type InsertCommerceTransactionItem = typeof commerceTransactionItems.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEGOLIFE FASE 7 — ENGAGEMENT, NOTIFICATIONS & COMMUNICATIONS CORE
+// ═══════════════════════════════════════════════════════════════════════════
+// Auditoría previa (ver docs/engagement/architecture.md): NO se reutiliza
+// `emailManager.ts`/`email_template_configs`/`email_comm_log`/
+// `email_scheduled_jobs`/`customer_email_prefs` (pipeline comercial de
+// Náyade — presupuestos/reservas, dominio ajeno), ni `emailTemplates.ts`
+// (marca real Náyade), ni GHL/Vapi/Meta CAPI (explícitamente prohibidos).
+// server/routers/notifications.ts YA EXISTE (campana admin legacy de 6
+// fuentes de negocio heredadas) — el router de estudiante de esta fase se
+// registra como `studentNotifications`, nunca se toca ese archivo.
+//
+// Sin tabla de eventos de dominio crudos — el catálogo vive en código
+// (engagementEvents.ts, mismo patrón que benefitEvents.ts). La fila de
+// `notifications` ES el punto de durabilidad: una vez escrita, sobrevive a
+// cualquier reinicio del proceso.
+
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
+// Entidad canónica — alimenta la inbox in-app. title/body YA RENDERIZADOS
+// (snapshot inmutable, spec punto 72): editar una plantilla mañana no
+// cambia lo que un estudiante ya recibió. template_key/template_version
+// trazan el origen sin depender de él para mostrar el contenido.
+
+export const notifications = mysqlTable("notifications", {
+  id:               int("id").autoincrement().primaryKey(),
+  userId:           int("user_id").notNull(),
+  communityId:      int("community_id"),
+  type:             varchar("type", { length: 64 }).notNull(),
+  category:         mysqlEnum("category", ["events", "rewards", "benefits", "promotions", "account"]).notNull(),
+  audienceType:     mysqlEnum("audience_type", ["transactional", "marketing"]).notNull(),
+  titleEn:          varchar("title_en", { length: 256 }).notNull(),
+  titleEs:          varchar("title_es", { length: 256 }).notNull(),
+  bodyEn:           text("body_en").notNull(),
+  bodyEs:           text("body_es").notNull(),
+  deepLink:         varchar("deep_link", { length: 512 }),
+  imageUrl:         varchar("image_url", { length: 512 }),
+  status:           mysqlEnum("status", ["active", "archived"]).notNull().default("active"),
+  priority:         mysqlEnum("priority", ["low", "normal", "high"]).notNull().default("normal"),
+  templateKey:      varchar("template_key", { length: 128 }),
+  templateVersion:  int("template_version"),
+  sourceType:       varchar("source_type", { length: 64 }),
+  sourceId:         int("source_id"),
+  campaignId:       int("campaign_id"),
+  idempotencyKey:   varchar("idempotency_key", { length: 191 }),
+  readAt:           timestamp("read_at"),
+  clickedAt:        timestamp("clicked_at"),
+  expiresAt:        timestamp("expires_at"),
+  metadata:         json("metadata").$type<Record<string, unknown>>(),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  idempotencyKeyUnique: unique("notifications_idempotency_key_unique").on(table.idempotencyKey),
+}));
+export type Notification = typeof notifications.$inferSelect;
+export type InsertNotification = typeof notifications.$inferInsert;
+
+// ─── NOTIFICATION_DELIVERIES ──────────────────────────────────────────────────
+// Separa la notificación del canal — 1 fila por canal intentado. in_app no
+// necesita retry real (ya está "entregada" al escribirse notifications).
+
+export const notificationDeliveries = mysqlTable("notification_deliveries", {
+  id:                 int("id").autoincrement().primaryKey(),
+  notificationId:     int("notification_id").notNull(),
+  channel:            mysqlEnum("channel", ["in_app", "email", "push", "whatsapp"]).notNull(),
+  provider:           varchar("provider", { length: 32 }),
+  status:             mysqlEnum("status", ["pending", "sent", "delivered", "failed", "skipped", "cancelled"]).notNull().default("pending"),
+  attemptCount:       int("attempt_count").notNull().default(0),
+  maxAttempts:        int("max_attempts").notNull().default(3),
+  scheduledAt:        timestamp("scheduled_at").notNull(),
+  sentAt:             timestamp("sent_at"),
+  deliveredAt:        timestamp("delivered_at"),
+  failedAt:           timestamp("failed_at"),
+  lastError:          varchar("last_error", { length: 512 }),
+  externalMessageId:  varchar("external_message_id", { length: 191 }),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+  updatedAt:          timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  notificationChannelUnique: unique("notification_deliveries_notification_channel_unique").on(table.notificationId, table.channel),
+}));
+export type NotificationDelivery = typeof notificationDeliveries.$inferSelect;
+export type InsertNotificationDelivery = typeof notificationDeliveries.$inferInsert;
+
+// ─── NOTIFICATION_PREFERENCES ─────────────────────────────────────────────────
+// (user_id, category, channel) → enabled. AUSENCIA de fila = default de
+// política (ver notificationPreferencesService.ts): marketing OFF,
+// transactional siempre permitido independientemente de esta tabla. Esta
+// tabla ES el registro de consentimiento de marketing — no hay tabla de
+// consent separada (spec punto 10).
+
+export const notificationPreferences = mysqlTable("notification_preferences", {
+  id:         int("id").autoincrement().primaryKey(),
+  userId:     int("user_id").notNull(),
+  category:   mysqlEnum("category", ["events", "rewards", "benefits", "promotions", "account"]).notNull(),
+  channel:    mysqlEnum("channel", ["in_app", "email", "push", "whatsapp"]).notNull(),
+  enabled:    boolean("enabled").notNull(),
+  updatedAt:  timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  userCategoryChannelUnique: unique("notification_preferences_unique").on(table.userId, table.category, table.channel),
+}));
+export type NotificationPreference = typeof notificationPreferences.$inferSelect;
+export type InsertNotificationPreference = typeof notificationPreferences.$inferInsert;
+
+// ─── PUSH_SUBSCRIPTIONS (preparado, Push NO activado) ─────────────────────────
+
+export const pushSubscriptions = mysqlTable("push_subscriptions", {
+  id:         int("id").autoincrement().primaryKey(),
+  userId:     int("user_id").notNull(),
+  endpoint:   varchar("endpoint", { length: 512 }).notNull(),
+  keysP256dh: varchar("keys_p256dh", { length: 256 }),
+  keysAuth:   varchar("keys_auth", { length: 256 }),
+  createdAt:  timestamp("created_at").defaultNow().notNull(),
+  revokedAt:  timestamp("revoked_at"),
+}, (table) => ({
+  endpointUnique: unique("push_subscriptions_endpoint_unique").on(table.endpoint),
+}));
+export type PushSubscription = typeof pushSubscriptions.$inferSelect;
+export type InsertPushSubscription = typeof pushSubscriptions.$inferInsert;
+
+// ─── ENGAGEMENT_CAMPAIGNS ──────────────────────────────────────────────────────
+// manual (envío inmediato) | scheduled (fecha futura) | triggered (por
+// evento de dominio, spec punto 26 — infraestructura preparada, sin
+// triggers activados salvo BenefitGranted → in-app, ya cubierto sin pasar
+// por campaign). community_id nullable = todas las comunidades.
+
+export const engagementCampaigns = mysqlTable("engagement_campaigns", {
+  id:                   int("id").autoincrement().primaryKey(),
+  name:                 varchar("name", { length: 256 }).notNull(),
+  type:                 mysqlEnum("type", ["manual", "scheduled", "triggered"]).notNull(),
+  status:               mysqlEnum("status", ["draft", "scheduled", "running", "completed", "cancelled"]).notNull().default("draft"),
+  communityId:          int("community_id"),
+  audienceDefinition:   json("audience_definition").$type<Record<string, unknown>>().notNull(),
+  triggerEventType:     varchar("trigger_event_type", { length: 64 }),
+  scheduledAt:          timestamp("scheduled_at"),
+  audienceSnapshotAt:   timestamp("audience_snapshot_at"),
+  startedAt:            timestamp("started_at"),
+  completedAt:          timestamp("completed_at"),
+  cancelledAt:          timestamp("cancelled_at"),
+  cancelledByUserId:    int("cancelled_by_user_id"),
+  createdByUserId:      int("created_by_user_id").notNull(),
+  createdAt:            timestamp("created_at").defaultNow().notNull(),
+  updatedAt:            timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type EngagementCampaign = typeof engagementCampaigns.$inferSelect;
+export type InsertEngagementCampaign = typeof engagementCampaigns.$inferInsert;
+
+// ─── ENGAGEMENT_CAMPAIGN_AUDIENCES ─────────────────────────────────────────────
+// Snapshot de destinatarios ÚNICOS resuelto al programar/enviar (spec punto
+// 70) — dos filtros que coinciden en el mismo usuario nunca lo duplican
+// (spec punto 46, dedupe real vía UNIQUE, no solo por convención de código).
+
+export const engagementCampaignAudiences = mysqlTable("engagement_campaign_audiences", {
+  id:           int("id").autoincrement().primaryKey(),
+  campaignId:   int("campaign_id").notNull(),
+  userId:       int("user_id").notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  campaignUserUnique: unique("engagement_campaign_audiences_unique").on(table.campaignId, table.userId),
+}));
+export type EngagementCampaignAudience = typeof engagementCampaignAudiences.$inferSelect;
+export type InsertEngagementCampaignAudience = typeof engagementCampaignAudiences.$inferInsert;
+
+// ─── ENGAGEMENT_CAMPAIGN_MESSAGES ──────────────────────────────────────────────
+// Contenido por canal — audiencia y contenido deliberadamente separados
+// (spec punto 24). 1 fila por canal seleccionado en la campaña.
+
+export const engagementCampaignMessages = mysqlTable("engagement_campaign_messages", {
+  id:           int("id").autoincrement().primaryKey(),
+  campaignId:   int("campaign_id").notNull(),
+  channel:      mysqlEnum("channel", ["in_app", "email", "push", "whatsapp"]).notNull(),
+  category:     mysqlEnum("category", ["events", "rewards", "benefits", "promotions", "account"]).notNull(),
+  titleEn:      varchar("title_en", { length: 256 }).notNull(),
+  titleEs:      varchar("title_es", { length: 256 }).notNull(),
+  bodyEn:       text("body_en").notNull(),
+  bodyEs:       text("body_es").notNull(),
+  deepLink:     varchar("deep_link", { length: 512 }),
+  imageUrl:     varchar("image_url", { length: 512 }),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  campaignChannelUnique: unique("engagement_campaign_messages_campaign_channel_unique").on(table.campaignId, table.channel),
+}));
+export type EngagementCampaignMessage = typeof engagementCampaignMessages.$inferSelect;
+export type InsertEngagementCampaignMessage = typeof engagementCampaignMessages.$inferInsert;

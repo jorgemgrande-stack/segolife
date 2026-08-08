@@ -1,0 +1,67 @@
+/**
+ * templates.test.ts — interpolación segura (solo variables declaradas en
+ * allowedVariables, spec punto 16) y sustitución dual EN/ES cuando la
+ * propia variable es un texto traducido (p.ej. nombre de un beneficio).
+ * Esto es lo que respalda el requisito de idioma: IE=EN/UVA=ES se resuelve
+ * en el FRONTEND eligiendo titleEn/titleEs — aquí se comprueba que ambas
+ * versiones quedan correctamente renderizadas y snapshot-eadas desde ya.
+ */
+import { describe, it, expect } from "vitest";
+import { renderTemplate, ENGAGEMENT_TEMPLATES } from "./templates";
+
+describe("templates — renderTemplate", () => {
+  it("usa la copia EXACTA del spec para benefit_granted (EN/ES)", () => {
+    const rendered = renderTemplate("benefit_granted", { benefitName: "Free entry tomorrow at Casanova" });
+    expect(rendered.titleEn).toBe("You unlocked a benefit");
+    expect(rendered.titleEs).toBe("Has desbloqueado un beneficio");
+    expect(rendered.bodyEn).toBe("Free entry tomorrow at Casanova");
+  });
+
+  it("sustituye la MISMA variable con texto distinto en EN vs ES cuando se pasa varsEs", () => {
+    const rendered = renderTemplate(
+      "benefit_granted",
+      { benefitName: "Free Entry Tomorrow" },
+      null,
+      { benefitName: "Entrada gratis mañana" }
+    );
+    expect(rendered.bodyEn).toBe("Free Entry Tomorrow");
+    expect(rendered.bodyEs).toBe("Entrada gratis mañana");
+  });
+
+  it("sin varsEs, reutiliza el mismo vars para ambos idiomas (variables no traducibles, p.ej. cantidades)", () => {
+    const rendered = renderTemplate("recurrence_progress", { bonusAmount: "200" });
+    expect(rendered.bodyEn).toBe("One more visit to unlock +200 SegoTokens");
+    expect(rendered.bodyEs).toBe("Una visita más para desbloquear +200 SegoTokens");
+  });
+
+  it("NUNCA sustituye una variable no declarada en allowedVariables (anti-injection)", () => {
+    const rendered = renderTemplate("benefit_granted", { benefitName: "X", evil: "{{__proto__}}" } as any);
+    expect(rendered.bodyEn).toBe("X"); // benefitName sí declarada
+    // Si alguien intentara colar {{evil}} en el propio texto de plantilla no pasaría —
+    // esto se comprueba a nivel de catálogo: ninguna plantilla usa una variable no listada.
+    for (const t of Object.values(ENGAGEMENT_TEMPLATES)) {
+      const usedVars = [...`${t.titleEn}${t.titleEs}${t.bodyEn}${t.bodyEs}`.matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]);
+      for (const v of usedVars) expect(t.allowedVariables).toContain(v);
+    }
+  });
+
+  it("una variable pasada pero no declarada se ignora silenciosamente (placeholder queda intacto)", () => {
+    // recurrence_progress solo declara bonusAmount — probar con una clave extra irrelevante.
+    const rendered = renderTemplate("recurrence_progress", { bonusAmount: "50", unrelated: "hacked" });
+    expect(rendered.bodyEn).toBe("One more visit to unlock +50 SegoTokens");
+  });
+
+  it("lanza para una clave de plantilla desconocida", () => {
+    expect(() => renderTemplate("no_existe", {})).toThrow();
+  });
+
+  it("aplica el whitelist de deep link también aquí (una URL externa nunca sobrevive al render)", () => {
+    const rendered = renderTemplate("benefit_granted", { benefitName: "X" }, "https://evil.example");
+    expect(rendered.deepLink).toBeNull();
+  });
+
+  it("cada plantilla declara audienceType y esto determina si respeta preferencias (transactional siempre pasa)", () => {
+    expect(ENGAGEMENT_TEMPLATES.benefit_granted.audienceType).toBe("transactional");
+    expect(ENGAGEMENT_TEMPLATES.event_tonight.audienceType).toBe("marketing");
+  });
+});

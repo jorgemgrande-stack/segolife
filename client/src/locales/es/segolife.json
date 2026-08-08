@@ -269,5 +269,27 @@
     "typeSpent": "SegoTokens gastados",
     "typeBenefitUnlocked": "Beneficio desbloqueado",
     "typeBenefitUsed": "Beneficio usado"
+  },
+  "notifications": {
+    "bellLabel": "Notificaciones",
+    "inboxTitle": "Notificaciones",
+    "empty": "Todavía no tienes notificaciones",
+    "emptyDescription": "Aquí verás novedades sobre tus recompensas, beneficios y eventos.",
+    "markAllRead": "Marcar todo como leído",
+    "openSettings": "Ajustes de notificaciones",
+    "settingsTitle": "Ajustes de notificaciones",
+    "settingsDescription": "Elige qué novedades quieres recibir y por qué canal, por tema.",
+    "categoryEvents": "Eventos",
+    "categoryRewards": "Recompensas",
+    "categoryBenefits": "Beneficios",
+    "categoryPromotions": "Promociones",
+    "categoryAccount": "Cuenta",
+    "channelInApp": "En la app",
+    "channelEmail": "Email",
+    "channelPush": "Notificaciones push",
+    "channelWhatsapp": "WhatsApp",
+    "channelUnavailable": "Todavía no disponible",
+    "transactionalNote": "Las notificaciones esenciales de cuenta siempre se entregan en la app y no se pueden desactivar.",
+    "saved": "Preferencias actualizadas"
   }
 }

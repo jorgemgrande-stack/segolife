@@ -25,6 +25,8 @@ import { healthRouter } from "./healthRouter";
 import { startCancellationStaleJob } from "../cancellationStaleJob";
 import { startEmailAutomationJob } from "../emailAutomationJob";
 import { startTaxReminderJob } from "../taxReminderJob";
+import { registerBenefitGrantedListener } from "../segolife/engagement/benefitGrantedListener";
+import { startEngagementScheduler, isEngagementDeliveryEnabled } from "../segolife/engagement/engagementScheduler";
 import { startEmailIngestionJob } from "../services/emailTpvIngestionService";
 import { startExpenseEmailIngestionJob } from "../services/expenseEmailIngestionService";
 import { startCommercialEmailSyncJob } from "../services/commercialEmailService";
@@ -620,5 +622,17 @@ verifyDatabaseConnectivity()
   .then(() => conditionallyStartJob("card_terminal_relink_enabled",   startRelinkJob,   "Card Terminal Relink",   false))
   .then(() => conditionallyStartJob("email_automation_job_enabled",   startEmailAutomationJob, "Email Automation"))
   .then(() => conditionallyStartJob("tax_reminder_job_enabled",       startTaxReminderJob,     "Tax Reminder", false))
+  // Fase 7 — Engagement Core. El listener de BenefitGranted es puramente
+  // in-process (nunca sale del sistema, nunca llama a un provider externo
+  // directamente) — se registra siempre. El scheduler de deliveries SÍ
+  // requiere el kill switch explícito (spec punto 61-63, nunca default true).
+  .then(() => { registerBenefitGrantedListener(); })
+  .then(() => {
+    if (isEngagementDeliveryEnabled()) {
+      startEngagementScheduler();
+    } else {
+      console.log("[Jobs] 'Engagement Scheduler' desactivado — ENGAGEMENT_DELIVERY_ENABLED no está en 'true'");
+    }
+  })
   .catch(console.error);
 

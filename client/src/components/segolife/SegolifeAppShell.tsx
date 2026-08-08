@@ -55,6 +55,13 @@ export function SegolifeAppShell({
     staleTime: 60_000,
   });
 
+  // Badge de la campana — polling ligero, nunca websocket (spec Fase 7, punto 17).
+  const { data: unreadCount } = trpc.studentNotifications.unreadCount.useQuery(undefined, {
+    enabled: !!user,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+  });
+
   if (loading || (requireAuth && authLoading)) {
     return (
       <div className="segolife-theme flex min-h-dvh items-center justify-center">
@@ -97,7 +104,7 @@ export function SegolifeAppShell({
 
   return (
     <div className="segolife-theme flex min-h-dvh flex-col">
-      <SegolifeHeader slug={slug} availableLocales={availableLocales} />
+      <SegolifeHeader slug={slug} availableLocales={availableLocales} unreadCount={unreadCount ?? 0} />
       {/* pb-32: pb-24 dejaba el último elemento de páginas largas (ej. "Log
           out" en Profile) tocando el bottom nav en el punto de scroll máximo
           — visto en revisión visual real, no solo margen visual de sobra. */}

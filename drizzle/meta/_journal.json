@@ -918,6 +918,13 @@
       "when": 1779224817206,
       "tag": "0131_segolife_ticketing_commerce",
       "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "5",
+      "when": 1779224818206,
+      "tag": "0132_segolife_engagement",
+      "breakpoints": true
     }
   ]
 }

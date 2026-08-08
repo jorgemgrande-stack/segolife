@@ -25,6 +25,9 @@ const Rewards = lazy(() => import("./pages/segolife/Rewards"));
 const BenefitDetail = lazy(() => import("./pages/segolife/BenefitDetail"));
 const SegolifeProfile = lazy(() => import("./pages/segolife/Profile"));
 const Activity = lazy(() => import("./pages/segolife/Activity"));
+// Fase 7: Engagement Core — inbox de notificaciones + ajustes de preferencias.
+const SegolifeNotifications = lazy(() => import("./pages/segolife/Notifications"));
+const NotificationPreferences = lazy(() => import("./pages/segolife/NotificationPreferences"));
 
 // ── PUBLIC PAGES (carga inmediata — visibles sin autenticación) ──────────────
 import Home from "./pages/Home";
@@ -169,6 +172,11 @@ const StudentScan = lazy(() => import("./pages/segolife/StudentScan"));
 
 // Segolife: Motor de Benefits (Fase 4)
 const BenefitsManager = lazy(() => import("./pages/admin/benefits/BenefitsManager"));
+const EngagementCampaignsManager = lazy(() => import("./pages/admin/engagement/CampaignsManager"));
+const EngagementNotificationsLog = lazy(() => import("./pages/admin/engagement/NotificationsLog"));
+const EngagementDeliveriesLog = lazy(() => import("./pages/admin/engagement/DeliveriesLog"));
+const EngagementTemplatesViewer = lazy(() => import("./pages/admin/engagement/TemplatesViewer"));
+const EngagementAudiencePage = lazy(() => import("./pages/admin/engagement/AudiencePage"));
 const StaffBenefitScan = lazy(() => import("./pages/staff/StaffBenefitScan"));
 
 // Segolife: Ticketing & Commerce Core + Integration Hub (Fase 5)
@@ -466,6 +474,11 @@ function Router() {
       <Route path="/admin/tokens/campaigns">{() => <Suspense fallback={<AdminLoadingFallback />}><TokensCampaignsManager /></Suspense>}</Route>
       <Route path="/admin/qr">{() => <Suspense fallback={<AdminLoadingFallback />}><QrManager /></Suspense>}</Route>
       <Route path="/admin/benefits">{() => <Suspense fallback={<AdminLoadingFallback />}><BenefitsManager /></Suspense>}</Route>
+      <Route path="/admin/engagement/campaigns">{() => <Suspense fallback={<AdminLoadingFallback />}><EngagementCampaignsManager /></Suspense>}</Route>
+      <Route path="/admin/engagement/notifications">{() => <Suspense fallback={<AdminLoadingFallback />}><EngagementNotificationsLog /></Suspense>}</Route>
+      <Route path="/admin/engagement/deliveries">{() => <Suspense fallback={<AdminLoadingFallback />}><EngagementDeliveriesLog /></Suspense>}</Route>
+      <Route path="/admin/engagement/templates">{() => <Suspense fallback={<AdminLoadingFallback />}><EngagementTemplatesViewer /></Suspense>}</Route>
+      <Route path="/admin/engagement/audience">{() => <Suspense fallback={<AdminLoadingFallback />}><EngagementAudiencePage /></Suspense>}</Route>
       <Route path="/admin/integrations/unresolved">{() => <Suspense fallback={<AdminLoadingFallback />}><UnresolvedOperations /></Suspense>}</Route>
       <Route path="/admin/integrations">{() => <Suspense fallback={<AdminLoadingFallback />}><IntegrationsManager /></Suspense>}</Route>
       <Route path="/admin/configuracion">{() => <Suspense fallback={<AdminLoadingFallback />}><ConfigPanel /></Suspense>}</Route>
@@ -494,6 +507,8 @@ function Router() {
       <Route path="/:community/benefits">{() => <Suspense fallback={null}><Rewards /></Suspense>}</Route>
       <Route path="/:community/rewards">{() => <Suspense fallback={null}><Rewards /></Suspense>}</Route>
       <Route path="/:community/activity">{() => <Suspense fallback={null}><Activity /></Suspense>}</Route>
+      <Route path="/:community/settings/notifications">{() => <Suspense fallback={null}><NotificationPreferences /></Suspense>}</Route>
+      <Route path="/:community/notifications">{() => <Suspense fallback={null}><SegolifeNotifications /></Suspense>}</Route>
       <Route path="/:community/profile">{() => <Suspense fallback={null}><SegolifeProfile /></Suspense>}</Route>
       <Route path="/:community">{() => <Suspense fallback={null}><SegolifeHome /></Suspense>}</Route>
 

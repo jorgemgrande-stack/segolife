@@ -99,6 +99,19 @@ const navItems = [
     roles: ["admin"],
   },
   {
+    label: "Engagement",
+    href: "/admin/engagement/campaigns",
+    icon: Bell,
+    roles: ["admin"],
+    children: [
+      { label: "Campañas", href: "/admin/engagement/campaigns" },
+      { label: "Notificaciones", href: "/admin/engagement/notifications" },
+      { label: "Entregas", href: "/admin/engagement/deliveries" },
+      { label: "Plantillas", href: "/admin/engagement/templates" },
+      { label: "Audiencia", href: "/admin/engagement/audience" },
+    ],
+  },
+  {
     label: "CRM",
     href: "/admin/crm",
     icon: FileText,

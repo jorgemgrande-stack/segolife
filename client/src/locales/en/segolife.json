@@ -269,5 +269,27 @@
     "typeSpent": "SegoTokens spent",
     "typeBenefitUnlocked": "Benefit unlocked",
     "typeBenefitUsed": "Benefit used"
+  },
+  "notifications": {
+    "bellLabel": "Notifications",
+    "inboxTitle": "Notifications",
+    "empty": "No notifications yet",
+    "emptyDescription": "Updates about your rewards, benefits and events will show up here.",
+    "markAllRead": "Mark all as read",
+    "openSettings": "Notification settings",
+    "settingsTitle": "Notification settings",
+    "settingsDescription": "Choose which updates you want to receive and how, per topic.",
+    "categoryEvents": "Events",
+    "categoryRewards": "Rewards",
+    "categoryBenefits": "Benefits",
+    "categoryPromotions": "Promotions",
+    "categoryAccount": "Account",
+    "channelInApp": "In-app",
+    "channelEmail": "Email",
+    "channelPush": "Push notifications",
+    "channelWhatsapp": "WhatsApp",
+    "channelUnavailable": "Not available yet",
+    "transactionalNote": "Essential account notifications are always delivered in the app and can't be turned off.",
+    "saved": "Preferences updated"
   }
 }

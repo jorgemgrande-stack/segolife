@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { toast } from "sonner";
-import { Coins, ChevronRight, Loader2, LogOut, Sparkles } from "lucide-react";
+import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -287,6 +287,15 @@ export default function Profile() {
 
         <section className="space-y-3">
           <h2 className="text-lg font-semibold text-foreground">{t("profile.sectionSettings")}</h2>
+          <Link
+            href={`/${slug}/settings/notifications`}
+            className="flex items-center justify-between rounded-2xl bg-secondary px-4 py-3 text-secondary-foreground"
+          >
+            <span className="flex items-center gap-2 text-sm font-medium">
+              <Bell className="size-4" aria-hidden="true" /> {t("notifications.openSettings")}
+            </span>
+            <ChevronRight className="size-4" aria-hidden="true" />
+          </Link>
           <Button
             variant="outline"
             onClick={() => logout()}
