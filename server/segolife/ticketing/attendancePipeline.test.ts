@@ -164,9 +164,12 @@ describe("ingestAttendance", () => {
     expect(mockPersistIdentityMapping).not.toHaveBeenCalled();
     expect(mockEarnTokens).toHaveBeenCalledOnce();
     expect(mockEarnTokens.mock.calls[0][0]).toMatchObject({ userId: 77, origin: "attendance" });
+    // Loyalty completo, no solo tokens: evaluateBenefitsForOrigin también se invoca para ese mismo userId resuelto.
+    expect(mockEvaluateBenefitsForOrigin).toHaveBeenCalledOnce();
+    expect(mockEvaluateBenefitsForOrigin.mock.calls[0][0]).toMatchObject({ type: "event_attendance", userId: 77 });
   });
 
-  it("resolvedUserId sigue siendo idempotente por idempotency_key — reprocesar (p.ej. vincular dos veces un unresolved_operations) no duplica", async () => {
+  it("resolvedUserId sigue siendo idempotente por idempotency_key — reprocesar (p.ej. vincular dos veces un unresolved_operations) no duplica NI tokens NI Benefits (loyalty completo, no solo event_attendance)", async () => {
     const db = fakeDb({ existingAttendance: { id: 900, idempotencyKey: "segolife:native:0:native_checkin:900" } });
 
     const result = await ingestAttendance({
@@ -178,5 +181,6 @@ describe("ingestAttendance", () => {
 
     expect(result.status).toBe("already_processed");
     expect(mockEarnTokens).not.toHaveBeenCalled();
+    expect(mockEvaluateBenefitsForOrigin).not.toHaveBeenCalled();
   });
 });
