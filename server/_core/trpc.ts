@@ -4,8 +4,33 @@ import superjson from "superjson";
 import type { TrpcContext } from "./context";
 import { checkRbacOrLegacy, getUserPermissions } from "./rbac";
 
+/**
+ * errorFormatter — expone `data.domainCode` cuando el error tiene una causa
+ * con un `.code` de dominio propio (QrError, BenefitError, TokenEngineError…)
+ * — Fase 6: el frontend de Segolife necesita poder mapear errores técnicos
+ * ("ALREADY_REDEEMED") a copy humano EN/ES sin hacer string-matching sobre
+ * `error.message` (que siempre es texto en español, ver
+ * consumptionQrService.ts). Genérico a propósito: no importa ninguna clase
+ * de error de dominio concreta — cualquier `error.cause` con un `.code`
+ * string se expone igual, así que un futuro módulo no necesita tocar este
+ * archivo. Los llamadores deben pasar `cause: err` explícitamente al lanzar
+ * el TRPCError (ver server/routers/consumptionQr.ts, mapQrOrEngineError, y
+ * server/routers/benefits.ts, mapBenefitError) — sin eso, domainCode es
+ * simplemente `undefined` y el frontend cae a un mensaje genérico.
+ */
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
+  errorFormatter({ shape, error }) {
+    const cause = error.cause as { code?: unknown } | undefined;
+    const domainCode = cause && typeof cause.code === "string" ? cause.code : undefined;
+    return {
+      ...shape,
+      data: {
+        ...shape.data,
+        domainCode,
+      },
+    };
+  },
 });
 
 export const router = t.router;

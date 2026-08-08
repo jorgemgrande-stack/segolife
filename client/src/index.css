@@ -581,3 +581,74 @@ html:not(.dark) select {
     }
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * SEGOLIFE — design system propio (Fase 6), escopado a `.segolife-theme`
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Mismo mecanismo que `.force-light` (arriba): redefine el MISMO conjunto de
+ * variables semánticas (--primary, --background, etc.) para el subárbol
+ * envuelto por SegolifeAppShell, sin tocar ni duplicar el design system del
+ * admin/legado Náyade — sigue siendo UN solo sistema de tokens, solo con
+ * valores distintos dentro de este wrapper. Una regla de clase simple (sin
+ * necesitar el prefijo `html.dark`) ya gana sobre cualquier valor heredado
+ * de `.dark` en un ancestro, porque una coincidencia directa sobre el propio
+ * elemento siempre gana sobre un valor heredado — Segolife nunca seguía el
+ * modo oscuro del admin de todas formas (spec Fase 6: "no priorizar dark
+ * mode", solo light).
+ *
+ * Dirección de marca: lila/violeta suave como identidad (botones, nav activa,
+ * marca), un acento coral/magenta cálido reservado para "Tonight"/badges en
+ * vivo (deliberadamente el ÚNICO acento adicional — "acentos controlados",
+ * no un arcoíris). Fondos casi blancos, tarjetas limpias, texto casi negro
+ * con un matiz frío sutil.
+ */
+.segolife-theme {
+  --radius: 1rem;
+  --background: oklch(0.985 0.004 300);
+  --foreground: oklch(0.20 0.02 300);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.20 0.02 300);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.20 0.02 300);
+  /* Lila/violeta — identidad Segolife */
+  --primary: oklch(0.52 0.19 296);
+  --primary-foreground: oklch(0.99 0.01 296);
+  /* Lavanda pálida — superficies secundarias */
+  --secondary: oklch(0.94 0.03 300);
+  --secondary-foreground: oklch(0.32 0.12 300);
+  --muted: oklch(0.96 0.012 300);
+  --muted-foreground: oklch(0.52 0.02 300);
+  /* Coral/magenta cálido — único acento adicional (Tonight, badges en vivo) */
+  --accent: oklch(0.68 0.19 350);
+  --accent-foreground: oklch(0.99 0.01 350);
+  --destructive: oklch(0.55 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.90 0.015 300);
+  --input: oklch(0.92 0.015 300);
+  --ring: oklch(0.52 0.19 296);
+  --sidebar: oklch(0.99 0.004 300);
+  --sidebar-foreground: oklch(0.20 0.02 300);
+  --sidebar-primary: oklch(0.52 0.19 296);
+  --sidebar-primary-foreground: oklch(0.99 0.01 296);
+  --sidebar-accent: oklch(0.94 0.03 300);
+  --sidebar-accent-foreground: oklch(0.32 0.12 300);
+  --sidebar-border: oklch(0.90 0.015 300);
+  --sidebar-ring: oklch(0.52 0.19 296);
+  color-scheme: light;
+  background: var(--background);
+  color: var(--foreground);
+  min-height: 100dvh;
+}
+
+/* Sombra suave de tarjeta/elevación consistente para toda la superficie Segolife
+   (evita `shadow-*` arbitrarios página por página). */
+.segolife-theme {
+  --segolife-shadow-card: 0 1px 2px oklch(0.20 0.02 300 / 0.04), 0 4px 16px oklch(0.20 0.02 300 / 0.06);
+  --segolife-shadow-elevated: 0 8px 24px oklch(0.20 0.02 300 / 0.12), 0 2px 8px oklch(0.20 0.02 300 / 0.08);
+}
+.segolife-card-shadow { box-shadow: var(--segolife-shadow-card); }
+.segolife-elevated-shadow { box-shadow: var(--segolife-shadow-elevated); }
+
+/* Safe-area para nav inferior / scanner en iPhone con notch/home indicator. */
+.segolife-safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.segolife-safe-top { padding-top: env(safe-area-inset-top, 0px); }

@@ -53,7 +53,7 @@ function mapBenefitError(err: unknown): never {
       REASON_REQUIRED: "BAD_REQUEST",
       LIMIT_EXCEEDED: "BAD_REQUEST",
     };
-    throw new TRPCError({ code: codeMap[err.code] ?? "BAD_REQUEST", message: err.message });
+    throw new TRPCError({ code: codeMap[err.code] ?? "BAD_REQUEST", message: err.message, cause: err });
   }
   throw err;
 }

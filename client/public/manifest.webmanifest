@@ -1,0 +1,15 @@
+{
+  "name": "Segolife",
+  "short_name": "Segolife",
+  "description": "Community, events and rewards for students in Segovia.",
+  "start_url": "/ie",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fbfaff",
+  "theme_color": "#7a3ad1",
+  "icons": [
+    { "src": "/icons/segolife-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icons/segolife-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

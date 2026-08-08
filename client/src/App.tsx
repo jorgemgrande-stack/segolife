@@ -14,8 +14,17 @@ import { CommunityProvider } from "./contexts/CommunityContext";
 import "./lib/i18n";
 
 // ── SEGOLIFE (lazy — páginas nuevas, independientes de la app heredada) ─────
-const CommunityHome = lazy(() => import("./pages/segolife/CommunityHome"));
-const StudentProfile = lazy(() => import("./pages/segolife/StudentProfile"));
+// Fase 6: experiencia pública definitiva del estudiante — reemplaza
+// CommunityHome/StudentProfile/MyBenefits (Fases 1B/1C/4), que quedan
+// retiradas. `SegolifeHome` (no `Home`, ya usado por la home legada Náyade).
+const SegolifeHome = lazy(() => import("./pages/segolife/Home"));
+const Explore = lazy(() => import("./pages/segolife/Explore"));
+const SegolifeEventDetail = lazy(() => import("./pages/segolife/EventDetail"));
+const SegolifeVenueDetail = lazy(() => import("./pages/segolife/VenueDetail"));
+const Rewards = lazy(() => import("./pages/segolife/Rewards"));
+const BenefitDetail = lazy(() => import("./pages/segolife/BenefitDetail"));
+const SegolifeProfile = lazy(() => import("./pages/segolife/Profile"));
+const Activity = lazy(() => import("./pages/segolife/Activity"));
 
 // ── PUBLIC PAGES (carga inmediata — visibles sin autenticación) ──────────────
 import Home from "./pages/Home";
@@ -160,7 +169,6 @@ const StudentScan = lazy(() => import("./pages/segolife/StudentScan"));
 
 // Segolife: Motor de Benefits (Fase 4)
 const BenefitsManager = lazy(() => import("./pages/admin/benefits/BenefitsManager"));
-const MyBenefits = lazy(() => import("./pages/segolife/MyBenefits"));
 const StaffBenefitScan = lazy(() => import("./pages/staff/StaffBenefitScan"));
 
 // Users & Settings
@@ -233,22 +241,6 @@ function Router() {
     <Switch>
       {/* ── PUBLIC ROUTES ── */}
       <Route path="/" component={Home} />
-
-      {/* ── SEGOLIFE: comunidades (Fase 1B) — un único componente, sin duplicar frontend ── */}
-      <Route path="/ie">{() => <Suspense fallback={null}><CommunityHome /></Suspense>}</Route>
-      <Route path="/uva">{() => <Suspense fallback={null}><CommunityHome /></Suspense>}</Route>
-
-      {/* ── SEGOLIFE: perfil autoservicio del estudiante (Fase 1C) ── */}
-      <Route path="/ie/profile">{() => <Suspense fallback={null}><StudentProfile /></Suspense>}</Route>
-      <Route path="/uva/profile">{() => <Suspense fallback={null}><StudentProfile /></Suspense>}</Route>
-
-      {/* ── SEGOLIFE: escaneo de QR de consumición (Fase 3) ── */}
-      <Route path="/ie/scan">{() => <Suspense fallback={null}><StudentScan /></Suspense>}</Route>
-      <Route path="/uva/scan">{() => <Suspense fallback={null}><StudentScan /></Suspense>}</Route>
-
-      {/* ── SEGOLIFE: Mis Beneficios del estudiante (Fase 4) ── */}
-      <Route path="/ie/benefits">{() => <Suspense fallback={null}><MyBenefits /></Suspense>}</Route>
-      <Route path="/uva/benefits">{() => <Suspense fallback={null}><MyBenefits /></Suspense>}</Route>
 
       {/* ── SEGOLIFE: escáner de staff para validar Benefits en puerta (Fase 4) ── */}
       <Route path="/staff/benefits/scan">{() => <Suspense fallback={null}><StaffBenefitScan /></Suspense>}</Route>
@@ -477,6 +469,27 @@ function Router() {
       <Route path="/admin/configuracion/email">{() => <Suspense fallback={<AdminLoadingFallback />}><EmailAccountsSettings /></Suspense>}</Route>
       <Route path="/admin/onboarding">{() => <Suspense fallback={<AdminLoadingFallback />}><OnboardingWizard /></Suspense>}</Route>
       <Route path="/admin/numeracion">{() => <Suspense fallback={<AdminLoadingFallback />}><DocumentNumbersAdmin /></Suspense>}</Route>
+
+      {/* ── SEGOLIFE: rutas dinámicas de comunidad (Fase 6) ──────────────────────
+          Deliberadamente al final del Switch (justo antes del 404): `/:community`
+          es un patrón genérico de un solo segmento que podría confundirse con
+          cualquier ruta literal (/login, /experiencias, etc.) si se declarase
+          antes — así, cualquier ruta más específica ya declarada arriba gana
+          siempre. La resolución real de comunidad (¿"ie" existe de verdad?)
+          la hace SegolifeAppShell/CommunityContext consultando la API, nunca
+          aquí — esto es solo la forma de la URL. Compatible con las rutas ya
+          en producción (/ie/scan, /ie/benefits, etc. siguen funcionando
+          exactamente igual, ahora servidas por el mismo patrón dinámico). */}
+      <Route path="/:community/events/:slug">{() => <Suspense fallback={null}><SegolifeEventDetail /></Suspense>}</Route>
+      <Route path="/:community/venues/:slug">{() => <Suspense fallback={null}><SegolifeVenueDetail /></Suspense>}</Route>
+      <Route path="/:community/explore">{() => <Suspense fallback={null}><Explore /></Suspense>}</Route>
+      <Route path="/:community/scan">{() => <Suspense fallback={null}><StudentScan /></Suspense>}</Route>
+      <Route path="/:community/benefits/:id">{() => <Suspense fallback={null}><BenefitDetail /></Suspense>}</Route>
+      <Route path="/:community/benefits">{() => <Suspense fallback={null}><Rewards /></Suspense>}</Route>
+      <Route path="/:community/rewards">{() => <Suspense fallback={null}><Rewards /></Suspense>}</Route>
+      <Route path="/:community/activity">{() => <Suspense fallback={null}><Activity /></Suspense>}</Route>
+      <Route path="/:community/profile">{() => <Suspense fallback={null}><SegolifeProfile /></Suspense>}</Route>
+      <Route path="/:community">{() => <Suspense fallback={null}><SegolifeHome /></Suspense>}</Route>
 
       {/* 404 */}
       <Route path="/404" component={NotFound} />

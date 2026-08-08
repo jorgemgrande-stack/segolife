@@ -42,10 +42,10 @@ function mapQrOrEngineError(err: unknown): never {
       REASON_REQUIRED: "BAD_REQUEST",
       CANNOT_CANCEL: "CONFLICT",
     };
-    throw new TRPCError({ code: codeMap[err.code] ?? "BAD_REQUEST", message: err.message });
+    throw new TRPCError({ code: codeMap[err.code] ?? "BAD_REQUEST", message: err.message, cause: err });
   }
   if (err instanceof TokenEngineError) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: err.message });
+    throw new TRPCError({ code: "BAD_REQUEST", message: err.message, cause: err });
   }
   throw err;
 }
