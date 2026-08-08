@@ -15,6 +15,7 @@ import {
   listFeaturedEvents,
   listEventsByVenue,
 } from "../db/eventsDb";
+import { computePurchaseAction } from "../segolife/ticketing/purchaseAction";
 
 // Lectura: ver el listado/fichas de eventos.
 const eventsViewProcedure = permissionProcedure("events.view", ["admin"]);
@@ -157,11 +158,18 @@ export const eventsRouter = router({
     .input(z.object({ venueId: z.number().int().positive() }))
     .query(async ({ input }) => listEventsByVenue(input.venueId)),
 
+  /**
+   * `purchaseAction` (Fase 5, puntos 59-60) se calcula aquí en vez de exigir
+   * al frontend público un segundo endpoint o preguntar por proveedor — el
+   * frontend solo recibe { type: "external_url" | "native_checkout" |
+   * "unavailable" }, nunca conoce Fourvenues/Weezevent.
+   */
   publicGetBySlug: publicProcedure
     .input(z.object({ slug: z.string().min(1).max(128) }))
     .query(async ({ input }) => {
       const detail = await getEventBySlug(input.slug);
       if (!detail || detail.event.status !== "active") return null;
-      return detail;
+      const purchaseAction = await computePurchaseAction(detail.event.id);
+      return { ...detail, purchaseAction };
     }),
 });

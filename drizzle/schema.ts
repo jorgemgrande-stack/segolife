@@ -4587,3 +4587,421 @@ export const venueStaff = mysqlTable("venue_staff", {
 }));
 export type VenueStaff = typeof venueStaff.$inferSelect;
 export type InsertVenueStaff = typeof venueStaff.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEGOLIFE FASE 5 — TICKETING CORE
+// ═══════════════════════════════════════════════════════════════════════════
+// Auditoría previa (ver docs/integrations/ticketing-commerce-architecture.md):
+// NO se reutiliza `transactions` (libro fiscal REAL de Náyade — REAV/IVA/
+// Redsys/comisiones), ni `bookings`/`dailyOrders`/`reservations` (reserva
+// turística + pago Redsys), ni `discountCodes`/`couponRedemptions` (cupón
+// externo tipo Groupon/Smartbox). Dominio nuevo, propio, se engancha a
+// `events`/`venues` (Fase 1D) vía event_id/venue_id SIN tocar esas tablas.
+// Dinero siempre en céntimos (int), nunca float/decimal. Sin FKs reales
+// (mismo criterio que el resto del schema — ver drizzle/relations.ts vacío),
+// integridad aplicada en el servicio, no en MySQL.
+//
+// El order/ticket/transacción Segolife EXISTE incluso si viene de un
+// proveedor externo — provider + external_*_id lo trazan hasta el origen sin
+// que CRM/analítica necesiten saber de dónde vino. Nunca se crean entidades
+// "FourvenuesTicket"/"WeezeventOrder" — solo Segolife* con un mapping.
+
+// ─── SALES_CHANNELS ──────────────────────────────────────────────────────────
+// Un evento puede venderse por varios canales a la vez (Fourvenues +
+// Segolife Native + futura Guest List). "hybrid" NUNCA se almacena — se
+// DERIVA de tener >1 fila con status=active para el mismo event_id (evita
+// que el dato se desincronice de la realidad). integration_type+integration_id
+// es un patrón polimórfico reutilizado en todo Fase 5 (puede apuntar a
+// venue_integrations o event_integrations) — ver comentario de
+// external_entity_mappings más abajo.
+
+export const salesChannels = mysqlTable("sales_channels", {
+  id:               int("id").autoincrement().primaryKey(),
+  eventId:          int("event_id").notNull(),
+  channelType:      mysqlEnum("channel_type", ["fourvenues", "weezevent", "segolife_native", "manual", "partner"]).notNull(),
+  salesMode:        mysqlEnum("sales_mode", ["external_redirect", "external_checkout", "native"]).notNull(),
+  externalUrl:      varchar("external_url", { length: 1024 }),
+  integrationType:  mysqlEnum("integration_type", ["venue_integration", "event_integration"]),
+  integrationId:    int("integration_id"),
+  status:           mysqlEnum("status", ["active", "inactive"]).notNull().default("active"),
+  isPrimary:        boolean("is_primary").notNull().default(false),
+  sortOrder:        int("sort_order").notNull().default(0),
+  metadata:         json("metadata").$type<Record<string, unknown>>(),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+  updatedAt:        timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type SalesChannel = typeof salesChannels.$inferSelect;
+export type InsertSalesChannel = typeof salesChannels.$inferInsert;
+
+// ─── EVENT_TICKET_TYPES ──────────────────────────────────────────────────────
+
+export const eventTicketTypes = mysqlTable("event_ticket_types", {
+  id:           int("id").autoincrement().primaryKey(),
+  eventId:      int("event_id").notNull(),
+  name:         varchar("name", { length: 256 }).notNull(),
+  description:  text("description"),
+  priceCents:   int("price_cents").notNull(),
+  currency:     varchar("currency", { length: 8 }).notNull().default("EUR"),
+  capacity:     int("capacity"),
+  salesStart:   timestamp("sales_start"),
+  salesEnd:     timestamp("sales_end"),
+  status:       mysqlEnum("status", ["active", "inactive"]).notNull().default("active"),
+  metadata:     json("metadata").$type<Record<string, unknown>>(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type EventTicketType = typeof eventTicketTypes.$inferSelect;
+export type InsertEventTicketType = typeof eventTicketTypes.$inferInsert;
+
+// ─── TICKET_ORDERS / TICKET_ORDER_ITEMS ──────────────────────────────────────
+// Inventory (capacity/reserved/sold/available) se calcula EN CALIENTE desde
+// event_ticket_types.capacity − SUM(ticket_order_items.quantity) de orders
+// con status paid/confirmed — mismo criterio que token_ledger en Fase 2 (no
+// crear una segunda fuente de verdad mutable que pueda desincronizarse). Ver
+// docs/integrations/ticketing-commerce-architecture.md para la estrategia
+// futura de reservation-timeout (NO implementada aún, no hace falta todavía).
+
+export const ticketOrders = mysqlTable("ticket_orders", {
+  id:                 int("id").autoincrement().primaryKey(),
+  userId:             int("user_id"),
+  eventId:            int("event_id").notNull(),
+  salesChannelId:     int("sales_channel_id"),
+  provider:           varchar("provider", { length: 32 }),
+  externalOrderId:    varchar("external_order_id", { length: 128 }),
+  externalPaymentId:  varchar("external_payment_id", { length: 128 }),
+  status:             mysqlEnum("status", ["pending", "paid", "cancelled", "refunded", "failed"]).notNull().default("pending"),
+  subtotalCents:      int("subtotal_cents").notNull().default(0),
+  feesCents:          int("fees_cents").notNull().default(0),
+  totalCents:         int("total_cents").notNull().default(0),
+  currency:           varchar("currency", { length: 8 }).notNull().default("EUR"),
+  buyerName:          varchar("buyer_name", { length: 256 }),
+  buyerEmail:         varchar("buyer_email", { length: 320 }),
+  buyerPhone:         varchar("buyer_phone", { length: 32 }),
+  purchasedAt:        timestamp("purchased_at"),
+  idempotencyKey:     varchar("idempotency_key", { length: 191 }),
+  metadata:           json("metadata").$type<Record<string, unknown>>(),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+  updatedAt:          timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  idempotencyKeyUnique: unique("ticket_orders_idempotency_key_unique").on(table.idempotencyKey),
+  providerExternalOrderUnique: unique("ticket_orders_provider_external_unique").on(table.provider, table.externalOrderId),
+}));
+export type TicketOrder = typeof ticketOrders.$inferSelect;
+export type InsertTicketOrder = typeof ticketOrders.$inferInsert;
+
+export const ticketOrderItems = mysqlTable("ticket_order_items", {
+  id:               int("id").autoincrement().primaryKey(),
+  orderId:          int("order_id").notNull(),
+  ticketTypeId:     int("ticket_type_id"),
+  quantity:         int("quantity").notNull(),
+  unitPriceCents:   int("unit_price_cents").notNull(),
+  totalPriceCents:  int("total_price_cents").notNull(),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+});
+export type TicketOrderItem = typeof ticketOrderItems.$inferSelect;
+export type InsertTicketOrderItem = typeof ticketOrderItems.$inferInsert;
+
+// ─── EVENT_TICKETS ────────────────────────────────────────────────────────────
+// 1 fila por entrada individual, nativa o externa. qr_token/qr_token_hash
+// nullable a propósito — deja sitio para Native Ticketing QR (spec Fase 5,
+// punto 47) sin migración destructiva futura; hoy siempre null salvo que un
+// proveedor externo exponga su propio código de barras/QR en metadata.
+
+export const eventTickets = mysqlTable("event_tickets", {
+  id:                     int("id").autoincrement().primaryKey(),
+  eventId:                int("event_id").notNull(),
+  ticketTypeId:           int("ticket_type_id"),
+  orderId:                int("order_id"),
+  userId:                 int("user_id"),
+  salesChannel:           mysqlEnum("sales_channel", ["native", "external"]).notNull(),
+  provider:               varchar("provider", { length: 32 }),
+  externalTicketId:       varchar("external_ticket_id", { length: 128 }),
+  externalParticipantId:  varchar("external_participant_id", { length: 128 }),
+  status:                 mysqlEnum("status", ["issued", "cancelled", "refunded", "used"]).notNull().default("issued"),
+  qrToken:                varchar("qr_token", { length: 64 }),
+  qrTokenHash:            varchar("qr_token_hash", { length: 64 }),
+  issuedAt:               timestamp("issued_at"),
+  cancelledAt:            timestamp("cancelled_at"),
+  refundedAt:             timestamp("refunded_at"),
+  metadata:               json("metadata").$type<Record<string, unknown>>(),
+  createdAt:              timestamp("created_at").defaultNow().notNull(),
+  updatedAt:              timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  providerExternalTicketUnique: unique("event_tickets_provider_external_unique").on(table.provider, table.externalTicketId),
+}));
+export type EventTicket = typeof eventTickets.$inferSelect;
+export type InsertEventTicket = typeof eventTickets.$inferInsert;
+
+// ─── EVENT_ATTENDANCE ─────────────────────────────────────────────────────────
+// Fuente de verdad ÚNICA de asistencia Segolife. Idempotente por
+// idempotency_key real (provider+integration+external_attendance_id
+// compuesto por el servicio que inserta) — polling repetido nunca duplica.
+// provider='segolife' queda preparado para un scanner de check-in propio
+// futuro (spec punto 48) — dominio distinto del scanner de Benefits, no se
+// reutiliza ese QR/flujo.
+
+export const eventAttendance = mysqlTable("event_attendance", {
+  id:                     int("id").autoincrement().primaryKey(),
+  eventId:                int("event_id").notNull(),
+  ticketId:               int("ticket_id"),
+  userId:                 int("user_id").notNull(),
+  venueId:                int("venue_id"),
+  provider:               varchar("provider", { length: 32 }).notNull(),
+  integrationType:        mysqlEnum("integration_type", ["venue_integration", "event_integration"]),
+  integrationId:          int("integration_id"),
+  externalAttendanceId:   varchar("external_attendance_id", { length: 128 }),
+  occurredAt:             timestamp("occurred_at").notNull(),
+  idempotencyKey:         varchar("idempotency_key", { length: 191 }).notNull(),
+  tokensLedgerId:         int("tokens_ledger_id"),
+  metadata:               json("metadata").$type<Record<string, unknown>>(),
+  createdAt:              timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  idempotencyKeyUnique: unique("event_attendance_idempotency_key_unique").on(table.idempotencyKey),
+}));
+export type EventAttendance = typeof eventAttendance.$inferSelect;
+export type InsertEventAttendance = typeof eventAttendance.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEGOLIFE FASE 5 — INTEGRATION HUB
+// ═══════════════════════════════════════════════════════════════════════════
+// Arquitectura provider-agnostic. Un adapter (Fourvenues, Weezevent, futuros)
+// declara sus `capabilities` explícitas en integration_providers.capabilities
+// (catálogo) y, si difieren por integración concreta (p.ej. el scope real
+// autorizado a Casanova puede no incluir "consumptions" aunque la API lo
+// soporte en teoría), se sobreescriben en capabilities de
+// venue_integrations/event_integrations. El código SIEMPRE consulta
+// capabilities, nunca asume.
+
+export const integrationProviders = mysqlTable("integration_providers", {
+  id:            int("id").autoincrement().primaryKey(),
+  key:           varchar("key", { length: 32 }).notNull(),
+  name:          varchar("name", { length: 128 }).notNull(),
+  capabilities:  json("capabilities").$type<Record<string, boolean | "unknown">>().notNull(),
+  active:        boolean("active").notNull().default(true),
+  createdAt:     timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  keyUnique: unique("integration_providers_key_unique").on(table.key),
+}));
+export type IntegrationProviderRow = typeof integrationProviders.$inferSelect;
+export type InsertIntegrationProviderRow = typeof integrationProviders.$inferInsert;
+
+// Fourvenues se configura POR VENUE — cada local (Casanova, Tía Felisa,
+// Limoncello) tendrá su propia fila cuando se dé de alta, con credenciales,
+// estado y sync completamente independientes entre sí. NO se siembran estos
+// tres locales en esta fase — solo la infraestructura que los soportará.
+export const venueIntegrations = mysqlTable("venue_integrations", {
+  id:                    int("id").autoincrement().primaryKey(),
+  venueId:               int("venue_id").notNull(),
+  providerId:            int("provider_id").notNull(),
+  externalAccountId:     varchar("external_account_id", { length: 128 }),
+  externalVenueId:       varchar("external_venue_id", { length: 128 }),
+  environment:           mysqlEnum("environment", ["sandbox", "production"]).notNull().default("sandbox"),
+  enabled:               boolean("enabled").notNull().default(false),
+  status:                mysqlEnum("status", ["not_configured", "configured", "connected", "error", "disabled"]).notNull().default("not_configured"),
+  capabilities:          json("capabilities").$type<Record<string, boolean | "unknown">>(),
+  // Nunca se devuelve al frontend — ver server/segolife/integrations/integrationCredentialCrypto.ts.
+  credentialsEncrypted:  text("credentials_encrypted"),
+  credentialsLast4:      varchar("credentials_last4", { length: 8 }),
+  syncEnabled:           boolean("sync_enabled").notNull().default(false),
+  syncIntervalMinutes:   int("sync_interval_minutes"),
+  lastSyncAt:            timestamp("last_sync_at"),
+  lastSuccessAt:         timestamp("last_success_at"),
+  lastErrorAt:           timestamp("last_error_at"),
+  lastErrorMessage:      varchar("last_error_message", { length: 512 }),
+  createdAt:             timestamp("created_at").defaultNow().notNull(),
+  updatedAt:             timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  venueProviderUnique: unique("venue_integrations_venue_provider_unique").on(table.venueId, table.providerId),
+}));
+export type VenueIntegration = typeof venueIntegrations.$inferSelect;
+export type InsertVenueIntegration = typeof venueIntegrations.$inferInsert;
+
+// Weezevent se configura POR EVENTO — no exige venue (Tankers/Mambo no
+// necesitan existir como venue permanente). NO se siembran estos eventos.
+export const eventIntegrations = mysqlTable("event_integrations", {
+  id:                    int("id").autoincrement().primaryKey(),
+  eventId:               int("event_id").notNull(),
+  providerId:            int("provider_id").notNull(),
+  externalEventId:       varchar("external_event_id", { length: 128 }),
+  environment:           mysqlEnum("environment", ["sandbox", "production"]).notNull().default("sandbox"),
+  enabled:               boolean("enabled").notNull().default(false),
+  status:                mysqlEnum("status", ["not_configured", "configured", "connected", "error", "disabled"]).notNull().default("not_configured"),
+  capabilities:          json("capabilities").$type<Record<string, boolean | "unknown">>(),
+  credentialsEncrypted:  text("credentials_encrypted"),
+  credentialsLast4:      varchar("credentials_last4", { length: 8 }),
+  syncEnabled:           boolean("sync_enabled").notNull().default(false),
+  syncIntervalMinutes:   int("sync_interval_minutes"),
+  lastSyncAt:            timestamp("last_sync_at"),
+  lastSuccessAt:         timestamp("last_success_at"),
+  lastErrorAt:           timestamp("last_error_at"),
+  lastErrorMessage:      varchar("last_error_message", { length: 512 }),
+  createdAt:             timestamp("created_at").defaultNow().notNull(),
+  updatedAt:             timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  eventProviderUnique: unique("event_integrations_event_provider_unique").on(table.eventId, table.providerId),
+}));
+export type EventIntegration = typeof eventIntegrations.$inferSelect;
+export type InsertEventIntegration = typeof eventIntegrations.$inferInsert;
+
+export const externalEntityMappings = mysqlTable("external_entity_mappings", {
+  id:               int("id").autoincrement().primaryKey(),
+  provider:         varchar("provider", { length: 32 }).notNull(),
+  integrationType:  mysqlEnum("integration_type", ["venue_integration", "event_integration"]).notNull(),
+  integrationId:    int("integration_id").notNull(),
+  externalType:     varchar("external_type", { length: 32 }).notNull(),
+  externalId:       varchar("external_id", { length: 128 }).notNull(),
+  internalType:     varchar("internal_type", { length: 32 }).notNull(),
+  internalId:       int("internal_id").notNull(),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  externalMappingUnique: unique("external_entity_mappings_unique").on(table.provider, table.externalType, table.externalId),
+}));
+export type ExternalEntityMapping = typeof externalEntityMappings.$inferSelect;
+export type InsertExternalEntityMapping = typeof externalEntityMappings.$inferInsert;
+
+export const integrationSyncRuns = mysqlTable("integration_sync_runs", {
+  id:               int("id").autoincrement().primaryKey(),
+  integrationType:  mysqlEnum("integration_type", ["venue_integration", "event_integration"]).notNull(),
+  integrationId:    int("integration_id").notNull(),
+  syncType:         mysqlEnum("sync_type", ["full", "incremental"]).notNull(),
+  status:           mysqlEnum("status", ["running", "success", "partial", "failed"]).notNull().default("running"),
+  fetchedCount:     int("fetched_count").notNull().default(0),
+  createdCount:     int("created_count").notNull().default(0),
+  updatedCount:     int("updated_count").notNull().default(0),
+  unresolvedCount:  int("unresolved_count").notNull().default(0),
+  failedCount:      int("failed_count").notNull().default(0),
+  errorMessage:     varchar("error_message", { length: 512 }),
+  startedAt:        timestamp("started_at").defaultNow().notNull(),
+  finishedAt:       timestamp("finished_at"),
+});
+export type IntegrationSyncRun = typeof integrationSyncRuns.$inferSelect;
+export type InsertIntegrationSyncRun = typeof integrationSyncRuns.$inferInsert;
+
+export const integrationSyncState = mysqlTable("integration_sync_state", {
+  id:               int("id").autoincrement().primaryKey(),
+  integrationType:  mysqlEnum("integration_type", ["venue_integration", "event_integration"]).notNull(),
+  integrationId:    int("integration_id").notNull(),
+  cursor:           varchar("cursor", { length: 256 }),
+  updatedSince:     timestamp("updated_since"),
+  updatedAt:        timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  integrationUnique: unique("integration_sync_state_unique").on(table.integrationType, table.integrationId),
+}));
+export type IntegrationSyncStateRow = typeof integrationSyncState.$inferSelect;
+export type InsertIntegrationSyncStateRow = typeof integrationSyncState.$inferInsert;
+
+// ─── IDENTITY RESOLUTION ──────────────────────────────────────────────────────
+// Política de resolución (nunca fuzzy-match por nombre): 1) mapping previo,
+// 2) email de participante, 3) teléfono de participante, 4) email de
+// comprador (solo si es semánticamente la misma persona), 5) unresolved.
+
+export const externalIdentityMappings = mysqlTable("external_identity_mappings", {
+  id:                  int("id").autoincrement().primaryKey(),
+  provider:            varchar("provider", { length: 32 }).notNull(),
+  externalCustomerId:  varchar("external_customer_id", { length: 128 }),
+  buyerEmail:          varchar("buyer_email", { length: 320 }),
+  buyerPhone:          varchar("buyer_phone", { length: 32 }),
+  participantEmail:    varchar("participant_email", { length: 320 }),
+  participantPhone:    varchar("participant_phone", { length: 32 }),
+  name:                varchar("name", { length: 256 }),
+  userId:              int("user_id").notNull(),
+  resolutionMethod:    mysqlEnum("resolution_method", ["previous_mapping", "participant_email", "participant_phone", "buyer_email", "manual"]).notNull(),
+  createdAt:           timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  providerCustomerUnique: unique("external_identity_mappings_provider_customer_unique").on(table.provider, table.externalCustomerId),
+}));
+export type ExternalIdentityMapping = typeof externalIdentityMappings.$inferSelect;
+export type InsertExternalIdentityMapping = typeof externalIdentityMappings.$inferInsert;
+
+// Cola de operaciones (asistencia/comercio/pedido) que llegaron sin poder
+// resolver a un userId Segolife. NUNCA se pierde una operación — queda aquí
+// hasta que el admin la vincula manualmente o la descarta explícitamente.
+//
+// reference_type/reference_id apuntan a una fila interna YA CREADA (p.ej.
+// commerce_transactions, cuyo user_id es nullable — la fila existe aunque
+// la identidad no se resuelva) — nullable porque NO aplica a `attendance`:
+// event_attendance.user_id es NOT NULL por diseño (spec Fase 5, punto 11 —
+// la asistencia es intrínsecamente un hecho por-usuario), así que si no se
+// resuelve identidad, NO existe ninguna fila event_attendance a la que
+// apuntar — el contexto completo (event_id/venue_id/occurred_at/
+// external_reference_id) se guarda AQUÍ MISMO para poder reprocesar una vez
+// vinculado. `external_reference_id` + provider + operation_type es la
+// idempotencia real contra polling repetido, para los tres tipos.
+export const unresolvedOperations = mysqlTable("unresolved_operations", {
+  id:                   int("id").autoincrement().primaryKey(),
+  operationType:        mysqlEnum("operation_type", ["attendance", "commerce", "order"]).notNull(),
+  provider:             varchar("provider", { length: 32 }).notNull(),
+  integrationType:      mysqlEnum("integration_type", ["venue_integration", "event_integration"]),
+  integrationId:        int("integration_id"),
+  referenceType:        varchar("reference_type", { length: 32 }),
+  referenceId:          int("reference_id"),
+  externalReferenceId:  varchar("external_reference_id", { length: 128 }),
+  eventId:              int("event_id"),
+  venueId:              int("venue_id"),
+  occurredAt:           timestamp("occurred_at"),
+  identityHintEmail:    varchar("identity_hint_email", { length: 320 }),
+  identityHintPhone:    varchar("identity_hint_phone", { length: 32 }),
+  identityHintName:     varchar("identity_hint_name", { length: 256 }),
+  amountCents:          int("amount_cents"),
+  status:               mysqlEnum("status", ["unresolved", "linked", "ignored", "conflict"]).notNull().default("unresolved"),
+  linkedUserId:         int("linked_user_id"),
+  linkedByUserId:       int("linked_by_user_id"),
+  linkedAt:             timestamp("linked_at"),
+  createdAt:            timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  externalReferenceUnique: unique("unresolved_operations_external_reference_unique").on(table.provider, table.operationType, table.externalReferenceId),
+}));
+export type UnresolvedOperation = typeof unresolvedOperations.$inferSelect;
+export type InsertUnresolvedOperation = typeof unresolvedOperations.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEGOLIFE FASE 5 — COMMERCE CORE
+// ═══════════════════════════════════════════════════════════════════════════
+// Dominio propio para consumiciones/operaciones de venta dentro de un local
+// (Fourvenues POS futuro si el scope real lo permite, y Segolife POS nativo
+// futuro) — NUNCA `transactions` (legacy fiscal). provider='segolife' queda
+// preparado para un POS propio futuro: misma entidad CommerceTransaction,
+// distinto provider, sin migración adicional (spec Fase 5, punto 44).
+
+export const commerceTransactions = mysqlTable("commerce_transactions", {
+  id:                     int("id").autoincrement().primaryKey(),
+  userId:                 int("user_id"),
+  venueId:                int("venue_id").notNull(),
+  eventId:                int("event_id"),
+  provider:               varchar("provider", { length: 32 }).notNull(),
+  integrationType:        mysqlEnum("integration_type", ["venue_integration", "event_integration"]),
+  integrationId:          int("integration_id"),
+  salesChannelId:         int("sales_channel_id"),
+  externalTransactionId:  varchar("external_transaction_id", { length: 128 }),
+  status:                 mysqlEnum("status", ["pending", "confirmed", "cancelled", "refunded", "reconciliation_required"]).notNull().default("pending"),
+  subtotalCents:          int("subtotal_cents").notNull().default(0),
+  feesCents:              int("fees_cents").notNull().default(0),
+  totalCents:             int("total_cents").notNull().default(0),
+  currency:               varchar("currency", { length: 8 }).notNull().default("EUR"),
+  paymentMethod:          varchar("payment_method", { length: 32 }),
+  occurredAt:             timestamp("occurred_at").notNull(),
+  idempotencyKey:         varchar("idempotency_key", { length: 191 }).notNull(),
+  loyaltyProcessedAt:     timestamp("loyalty_processed_at"),
+  loyaltyLedgerId:        int("loyalty_ledger_id"),
+  metadata:               json("metadata").$type<Record<string, unknown>>(),
+  createdAt:              timestamp("created_at").defaultNow().notNull(),
+  updatedAt:              timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  idempotencyKeyUnique: unique("commerce_transactions_idempotency_key_unique").on(table.idempotencyKey),
+}));
+export type CommerceTransaction = typeof commerceTransactions.$inferSelect;
+export type InsertCommerceTransaction = typeof commerceTransactions.$inferInsert;
+
+export const commerceTransactionItems = mysqlTable("commerce_transaction_items", {
+  id:                 int("id").autoincrement().primaryKey(),
+  transactionId:      int("transaction_id").notNull(),
+  venueProductId:     int("venue_product_id"),
+  externalProductId:  varchar("external_product_id", { length: 128 }),
+  description:        varchar("description", { length: 256 }).notNull(),
+  quantity:           int("quantity").notNull().default(1),
+  unitAmountCents:    int("unit_amount_cents").notNull(),
+  totalAmountCents:   int("total_amount_cents").notNull(),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+});
+export type CommerceTransactionItem = typeof commerceTransactionItems.$inferSelect;
+export type InsertCommerceTransactionItem = typeof commerceTransactionItems.$inferInsert;

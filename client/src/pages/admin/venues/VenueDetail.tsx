@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, Store, Sparkles, Clock, Package, Trash2, QrCode } from "lucide-react";
+import { VenueCommerceTab } from "./VenueCommerceTab";
 
 const NONE = "__none__";
 const WEEKDAYS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
@@ -415,6 +416,7 @@ export default function VenueDetail() {
             <TabsTrigger value="segotokens">SegoTokens</TabsTrigger>
             <TabsTrigger value="qr">QR / Consumiciones</TabsTrigger>
             <TabsTrigger value="benefits">Benefits</TabsTrigger>
+            <TabsTrigger value="commerce">Commerce / Integrations</TabsTrigger>
             <TabsTrigger value="futuro">Próximamente</TabsTrigger>
           </TabsList>
 
@@ -515,6 +517,10 @@ export default function VenueDetail() {
 
           <TabsContent value="benefits">
             <VenueBenefitsTab venueId={venueId} />
+          </TabsContent>
+
+          <TabsContent value="commerce" className="bg-card border border-border rounded-lg p-5">
+            <VenueCommerceTab venueId={venueId} />
           </TabsContent>
 
           <TabsContent value="futuro" className="space-y-3">

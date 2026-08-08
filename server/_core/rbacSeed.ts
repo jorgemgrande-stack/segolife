@@ -82,6 +82,32 @@ const BENEFITS_PERMISSIONS: Array<[string, string, string, string]> = [
   ["benefits.cancel",  "benefits", "cancel",  "Cancelar un beneficio concedido no usado"],
 ];
 
+// Fase 5 — Ticketing & Commerce Core + Integration Hub. No sembrados en
+// ninguna migración histórica (igual que benefits.* en Fase 4).
+const INTEGRATIONS_PERMISSIONS: Array<[string, string, string, string]> = [
+  ["integrations.view",   "integrations", "view",   "Ver integraciones (Fourvenues/Weezevent), su estado y credenciales configuradas (nunca el secreto)"],
+  ["integrations.manage", "integrations", "manage", "Crear/editar/activar/desactivar integraciones, cambiar credenciales, lanzar sync manual"],
+];
+
+// event_ticketing.* (NO "ticketing.*" a secas — ese permiso ya existe y lo
+// usa server/routers/ticketing.ts, el pipeline LEGACY de cupones/plataformas
+// de Náyade, sin ninguna relación con venta de entradas de eventos — un
+// nombre igual habría concedido acceso cruzado sin querer).
+const EVENT_TICKETING_PERMISSIONS: Array<[string, string, string, string]> = [
+  ["event_ticketing.view",   "event_ticketing", "view",   "Ver canales de venta, tipos de entrada, inventario, pedidos y entradas de un evento"],
+  ["event_ticketing.manage", "event_ticketing", "manage", "Crear/editar canales de venta y tipos de entrada"],
+];
+
+const COMMERCE_PERMISSIONS: Array<[string, string, string, string]> = [
+  ["commerce.view",   "commerce", "view",   "Ver transacciones de comercio (consumiciones) de un venue"],
+  ["commerce.manage", "commerce", "manage", "Vincular manualmente operaciones de comercio no resueltas a un estudiante"],
+];
+
+const ATTENDANCE_PERMISSIONS: Array<[string, string, string, string]> = [
+  ["attendance.view",   "attendance", "view",   "Ver asistencia registrada de un evento"],
+  ["attendance.manage", "attendance", "manage", "Vincular manualmente operaciones de asistencia no resueltas a un estudiante"],
+];
+
 export async function seedRbacIfNeeded(): Promise<{
   rolesEnsured: string[];
   permissionsAdded: string[];
@@ -105,8 +131,9 @@ export async function seedRbacIfNeeded(): Promise<{
     }
 
     // 2. Permisos students.view / students.manage / venues.* / events.* /
-    //    tokens.* / qr.* / benefits.* — no sembrados en ninguna migración histórica.
-    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS]) {
+    //    tokens.* / qr.* / benefits.* / integrations.* / ticketing.* /
+    //    commerce.* / attendance.* — no sembrados en ninguna migración histórica.
+    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_permissions (\`key\`, module, action, description) VALUES (?, ?, ?, ?)`,
         [key, module, action, description]
@@ -115,10 +142,11 @@ export async function seedRbacIfNeeded(): Promise<{
     }
 
     // 3. Conceder students.* / venues.* / events.* / tokens.* / qr.* /
-    //    benefits.* al rol admin (idempotente, no asume que el CROSS JOIN
+    //    benefits.* / integrations.* / ticketing.* / commerce.* /
+    //    attendance.* al rol admin (idempotente, no asume que el CROSS JOIN
     //    histórico de 0070/0077 se haya vuelto a ejecutar para estos permisos
     //    nuevos).
-    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS]) {
+    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
          SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p

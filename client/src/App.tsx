@@ -171,6 +171,10 @@ const StudentScan = lazy(() => import("./pages/segolife/StudentScan"));
 const BenefitsManager = lazy(() => import("./pages/admin/benefits/BenefitsManager"));
 const StaffBenefitScan = lazy(() => import("./pages/staff/StaffBenefitScan"));
 
+// Segolife: Ticketing & Commerce Core + Integration Hub (Fase 5)
+const IntegrationsManager = lazy(() => import("./pages/admin/integrations/IntegrationsManager"));
+const UnresolvedOperations = lazy(() => import("./pages/admin/integrations/UnresolvedOperations"));
+
 // Users & Settings
 const UsersManager = lazy(() => import("./pages/admin/users/UsersManager"));
 const Settings = lazy(() => import("./pages/admin/settings/Settings"));
@@ -462,6 +466,8 @@ function Router() {
       <Route path="/admin/tokens/campaigns">{() => <Suspense fallback={<AdminLoadingFallback />}><TokensCampaignsManager /></Suspense>}</Route>
       <Route path="/admin/qr">{() => <Suspense fallback={<AdminLoadingFallback />}><QrManager /></Suspense>}</Route>
       <Route path="/admin/benefits">{() => <Suspense fallback={<AdminLoadingFallback />}><BenefitsManager /></Suspense>}</Route>
+      <Route path="/admin/integrations/unresolved">{() => <Suspense fallback={<AdminLoadingFallback />}><UnresolvedOperations /></Suspense>}</Route>
+      <Route path="/admin/integrations">{() => <Suspense fallback={<AdminLoadingFallback />}><IntegrationsManager /></Suspense>}</Route>
       <Route path="/admin/configuracion">{() => <Suspense fallback={<AdminLoadingFallback />}><ConfigPanel /></Suspense>}</Route>
       <Route path="/admin/configuracion/sitio">{() => <Suspense fallback={<AdminLoadingFallback />}><Settings /></Suspense>}</Route>
       <Route path="/admin/configuracion/estado">{() => <Suspense fallback={<AdminLoadingFallback />}><ConfigStatus /></Suspense>}</Route>

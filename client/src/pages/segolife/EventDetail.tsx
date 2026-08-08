@@ -121,9 +121,17 @@ export default function EventDetail() {
               </div>
             )}
 
-            <Button variant="outline" disabled className="w-full rounded-full py-6 text-sm font-semibold">
-              <Ticket className="mr-2 size-4" aria-hidden="true" /> {t("eventDetail.ticketsComingSoon")}
-            </Button>
+            {data.purchaseAction?.type === "external_url" ? (
+              <Button asChild className="w-full rounded-full py-6 text-sm font-semibold">
+                <a href={data.purchaseAction.url} target="_blank" rel="noopener noreferrer">
+                  <Ticket className="mr-2 size-4" aria-hidden="true" /> {t("eventDetail.buyTickets")}
+                </a>
+              </Button>
+            ) : (
+              <Button variant="outline" disabled className="w-full rounded-full py-6 text-sm font-semibold">
+                <Ticket className="mr-2 size-4" aria-hidden="true" /> {t("eventDetail.ticketsComingSoon")}
+              </Button>
+            )}
           </div>
         )}
       </div>

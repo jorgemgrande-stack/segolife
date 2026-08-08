@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, CalendarDays, Sparkles, Star } from "lucide-react";
+import { EventTicketingTab } from "./EventTicketingTab";
 
 const NONE = "__none__";
 
@@ -164,6 +165,7 @@ export default function EventDetail() {
           <TabsList>
             <TabsTrigger value="general">Datos generales</TabsTrigger>
             <TabsTrigger value="comunidades">Comunidades</TabsTrigger>
+            <TabsTrigger value="ticketing">Ticketing / Sales</TabsTrigger>
             <TabsTrigger value="futuro">Próximamente</TabsTrigger>
           </TabsList>
 
@@ -231,10 +233,13 @@ export default function EventDetail() {
             </Button>
           </TabsContent>
 
+          <TabsContent value="ticketing" className="bg-card border border-border rounded-lg p-5">
+            <EventTicketingTab eventId={eventId} />
+          </TabsContent>
+
           <TabsContent value="futuro" className="space-y-3">
             <FutureModulePlaceholder label="SegoTokens / recompensas" />
             <FutureModulePlaceholder label="QR / control de acceso" />
-            <FutureModulePlaceholder label="Aforo en tiempo real" />
           </TabsContent>
         </Tabs>
       </div>
