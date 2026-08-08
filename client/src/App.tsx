@@ -158,6 +158,11 @@ const TokensCampaignsManager = lazy(() => import("./pages/admin/tokens/Campaigns
 const QrManager = lazy(() => import("./pages/admin/qr/QrManager"));
 const StudentScan = lazy(() => import("./pages/segolife/StudentScan"));
 
+// Segolife: Motor de Benefits (Fase 4)
+const BenefitsManager = lazy(() => import("./pages/admin/benefits/BenefitsManager"));
+const MyBenefits = lazy(() => import("./pages/segolife/MyBenefits"));
+const StaffBenefitScan = lazy(() => import("./pages/staff/StaffBenefitScan"));
+
 // Users & Settings
 const UsersManager = lazy(() => import("./pages/admin/users/UsersManager"));
 const Settings = lazy(() => import("./pages/admin/settings/Settings"));
@@ -240,6 +245,13 @@ function Router() {
       {/* ── SEGOLIFE: escaneo de QR de consumición (Fase 3) ── */}
       <Route path="/ie/scan">{() => <Suspense fallback={null}><StudentScan /></Suspense>}</Route>
       <Route path="/uva/scan">{() => <Suspense fallback={null}><StudentScan /></Suspense>}</Route>
+
+      {/* ── SEGOLIFE: Mis Beneficios del estudiante (Fase 4) ── */}
+      <Route path="/ie/benefits">{() => <Suspense fallback={null}><MyBenefits /></Suspense>}</Route>
+      <Route path="/uva/benefits">{() => <Suspense fallback={null}><MyBenefits /></Suspense>}</Route>
+
+      {/* ── SEGOLIFE: escáner de staff para validar Benefits en puerta (Fase 4) ── */}
+      <Route path="/staff/benefits/scan">{() => <Suspense fallback={null}><StaffBenefitScan /></Suspense>}</Route>
 
       <Route path="/experiencias" component={Experiences} />
       <Route path="/experiencias/:slug" component={ExperienceDetail} />
@@ -457,6 +469,7 @@ function Router() {
       <Route path="/admin/tokens/rules">{() => <Suspense fallback={<AdminLoadingFallback />}><TokensRulesManager /></Suspense>}</Route>
       <Route path="/admin/tokens/campaigns">{() => <Suspense fallback={<AdminLoadingFallback />}><TokensCampaignsManager /></Suspense>}</Route>
       <Route path="/admin/qr">{() => <Suspense fallback={<AdminLoadingFallback />}><QrManager /></Suspense>}</Route>
+      <Route path="/admin/benefits">{() => <Suspense fallback={<AdminLoadingFallback />}><BenefitsManager /></Suspense>}</Route>
       <Route path="/admin/configuracion">{() => <Suspense fallback={<AdminLoadingFallback />}><ConfigPanel /></Suspense>}</Route>
       <Route path="/admin/configuracion/sitio">{() => <Suspense fallback={<AdminLoadingFallback />}><Settings /></Suspense>}</Route>
       <Route path="/admin/configuracion/estado">{() => <Suspense fallback={<AdminLoadingFallback />}><ConfigStatus /></Suspense>}</Route>

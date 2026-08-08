@@ -26,6 +26,10 @@ import {
   tokenWallets,
   tokenCampaigns,
   venueTokenSchedules,
+  benefitRules,
+  benefitDefinitions,
+  benefitCommunities,
+  userBenefits,
 } from "../../../drizzle/schema";
 import { TokenEngineError } from "../tokens/tokenLedgerService";
 
@@ -64,6 +68,34 @@ function blankRule(overrides: Partial<Record<string, unknown>> = {}) {
  * perezosamente) y las de dentro de `.transaction()` (canje atómico),
  * simulando ROLLBACK real si el callback de la transacción lanza.
  */
+function blankBenefitDefinition(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 1, name: "Entrada gratis Casanova", slug: "entrada-casanova", description: null,
+    benefitType: "free_entry", destinationVenueId: 20, destinationEventId: null, productId: null,
+    discountType: null, discountValue: null, valueMetadata: null, active: true, imageUrl: null,
+    nameEn: "Free entry Casanova", nameEs: "Entrada gratis Casanova",
+    descriptionEn: null, descriptionEs: null, termsEn: null, termsEs: null,
+    createdAt: new Date(), updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
+function blankBenefitRule(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 1, name: "Beneficio por consumo", description: null, sourceType: "consumption",
+    sourceVenueId: null, sourceEventId: null, sourceProductId: null, communityId: null,
+    minAmountCents: null, minVisits: null, recurrenceWindow: null,
+    conditionDaysOfWeek: null, conditionStartTime: null, conditionEndTime: null,
+    startsAt: null, endsAt: null, active: true, priority: 0,
+    benefitDefinitionId: 1, quantity: 1,
+    validityType: "immediate", validityOffsetMinutes: null, validityDurationMinutes: null,
+    validityStartTime: null, validityEndTime: null, validityDaysOffset: null,
+    maxPerUser: null, maxPerDay: null, maxTotal: null, oncePerOrigin: false, oncePerRule: false,
+    createdAt: new Date(), updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
 function makeQrServiceMockDb(config: {
   qr: Record<string, unknown>;
   venue?: Record<string, unknown> | null;
@@ -72,12 +104,19 @@ function makeQrServiceMockDb(config: {
   rules?: Array<Record<string, unknown>>;
   schedules?: Array<Record<string, unknown>>;
   wallet?: Record<string, unknown>;
+  /** Fase 4 — reglas de benefit_rules que "ya habría filtrado" la query real por sourceType/active (ver benefitRuleEngine.test.ts). [] o undefined = ningún Benefit se desbloquea (comportamiento por defecto, igual que Fase 3 sin este campo). */
+  benefitRuleRows?: Array<Record<string, unknown>>;
+  benefitDefinitionRow?: Record<string, unknown> | null;
+  /** Fuerza que el INSERT de user_benefits lance un error real (no ER_DUP_ENTRY) — para probar que un fallo del motor de Benefits revierte TODA la transacción, incluidos tokens y la marca redeemed del QR. */
+  throwOnBenefitGrant?: boolean;
 }) {
   let qr = { ...config.qr };
   let wallet = config.wallet ?? { id: 1, userId: 42, balance: 0, lifetimeEarned: 0, lifetimeSpent: 0, status: "active", createdAt: new Date(), updatedAt: new Date() };
   const ledgerRows: Array<Record<string, unknown>> = [];
   const attempts: Array<Record<string, unknown>> = [];
+  const userBenefitRows: Array<Record<string, unknown>> = [];
   let nextLedgerId = 1;
+  let nextUserBenefitId = 1;
 
   function makeBuilder() {
     let mode: "select" | "insert" | "update" = "select";
@@ -128,6 +167,12 @@ function makeQrServiceMockDb(config: {
       if (table === qrBatches) {
         return Promise.resolve([{ insertId: 1 }]);
       }
+      if (table === userBenefits) {
+        if (config.throwOnBenefitGrant) throw new Error("Fallo simulado al conceder el Benefit");
+        const row = { id: nextUserBenefitId++, status: "active", qrToken: "benefit-token", qrTokenHash: "benefit-hash", ...v };
+        userBenefitRows.push(row);
+        return Promise.resolve([{ insertId: row.id }]);
+      }
       const row = { id: nextLedgerId++, ...v };
       ledgerRows.push(row);
       insertedLedgerRow = row;
@@ -140,6 +185,10 @@ function makeQrServiceMockDb(config: {
       if (table === venueProducts) return resolve(config.product ? [config.product] : []);
       if (table === communityVenues) return resolve(config.venueCommunityRows ?? []);
       if (table === tokenRules) return resolve(config.rules ?? [blankRule()]);
+      if (table === benefitRules) return resolve(config.benefitRuleRows ?? []);
+      if (table === benefitDefinitions) return resolve(config.benefitDefinitionRow !== undefined ? (config.benefitDefinitionRow ? [config.benefitDefinitionRow] : []) : [blankBenefitDefinition()]);
+      if (table === benefitCommunities) return resolve([]);
+      if (table === userBenefits) return resolve(userBenefitRows);
       if (table === tokenCampaigns) return resolve([]);
       if (table === venueTokenSchedules) return resolve(config.schedules ?? []);
       if (table === tokenWallets) return resolve([wallet]);
@@ -164,6 +213,7 @@ function makeQrServiceMockDb(config: {
     const qrSnapshot = { ...qr };
     const walletSnapshot = { ...wallet };
     const ledgerSnapshot = [...ledgerRows];
+    const userBenefitsSnapshot = [...userBenefitRows];
     try {
       return await cb(makeBuilder());
     } catch (err) {
@@ -171,6 +221,8 @@ function makeQrServiceMockDb(config: {
       wallet = walletSnapshot;
       ledgerRows.length = 0;
       ledgerRows.push(...ledgerSnapshot);
+      userBenefitRows.length = 0;
+      userBenefitRows.push(...userBenefitsSnapshot);
       throw err;
     }
   };
@@ -180,6 +232,7 @@ function makeQrServiceMockDb(config: {
     db: root as any,
     getQr: () => qr,
     getWallet: () => wallet,
+    getUserBenefitRows: () => userBenefitRows,
     getLedgerRows: () => ledgerRows,
     getAttempts: () => attempts,
   };
@@ -333,6 +386,71 @@ describe("consumptionQrService — canje (redeemConsumptionQr)", () => {
     });
     await expect(redeemConsumptionQr({ token: "x", userId: 42 }, db)).rejects.toThrow(TokenEngineError);
     expect(getQr().status).toBe("issued");
+  });
+});
+
+describe("consumptionQrService — integración con Fase 4 (benefitsUnlocked)", () => {
+  it("un canje que NO dispara ninguna regla de Benefits devuelve benefitsUnlocked: [] sin romper la respuesta de Fase 3", async () => {
+    const { db, getQr, getWallet } = makeQrServiceMockDb({
+      qr: blankQr(),
+      venue: blankVenue(),
+      rules: [blankRule({ fixedAmount: 20 })],
+      benefitRuleRows: [], // ninguna regla de Benefits activa
+    });
+    const result = await redeemConsumptionQr({ token: "x", userId: 42 }, db);
+    expect(result.benefitsUnlocked).toEqual([]);
+    expect(result.breakdown.final).toBe(20); // el resultado de tokens sigue intacto
+    expect(getQr().status).toBe("redeemed");
+    expect(getWallet().balance).toBe(20);
+  });
+
+  it("un canje que SÍ dispara una regla de Benefits concede el beneficio dentro de la MISMA transacción y lo devuelve en benefitsUnlocked", async () => {
+    const { db, getUserBenefitRows } = makeQrServiceMockDb({
+      qr: blankQr(),
+      venue: blankVenue(),
+      rules: [blankRule({ fixedAmount: 20 })],
+      benefitRuleRows: [blankBenefitRule({ sourceVenueId: 10 })], // encaja con el venue del QR (10)
+      benefitDefinitionRow: blankBenefitDefinition({ destinationVenueId: 20 }), // Casanova — venue DISTINTO del origen (10)
+    });
+    const result = await redeemConsumptionQr({ token: "x", userId: 42 }, db);
+
+    expect(result.benefitsUnlocked).toHaveLength(1);
+    expect(result.benefitsUnlocked[0].destinationVenueId).toBe(20);
+    expect(result.benefitsUnlocked[0].qrToken).toBeTruthy();
+    // tokenResult y benefitsUnlocked nunca se mezclan en un mismo objeto:
+    expect(result.breakdown).not.toHaveProperty("benefitsUnlocked");
+    expect(getUserBenefitRows()).toHaveLength(1);
+    expect(getUserBenefitRows()[0].sourceVenueId).toBe(10); // origen (Chin Chin)
+  });
+
+  it("una definición inexistente/inactiva se descarta silenciosamente (no es un fallo) — el canje de tokens sigue funcionando", async () => {
+    const { db, getQr, getWallet, getUserBenefitRows } = makeQrServiceMockDb({
+      qr: blankQr(),
+      venue: blankVenue(),
+      rules: [blankRule({ fixedAmount: 20 })],
+      benefitRuleRows: [blankBenefitRule()],
+      benefitDefinitionRow: null, // la definición no existe/está inactiva → evaluateBenefitsForOrigin la descarta silenciosamente
+    });
+    const result = await redeemConsumptionQr({ token: "x", userId: 42 }, db);
+    expect(result.benefitsUnlocked).toEqual([]);
+    expect(getQr().status).toBe("redeemed");
+    expect(getWallet().balance).toBe(20);
+    expect(getUserBenefitRows()).toHaveLength(0);
+  });
+
+  it("si la concesión del Benefit falla de verdad, TODA la transacción se revierte — ni tokens ni QR redeemed quedan a medias", async () => {
+    const { db, getQr, getWallet, getUserBenefitRows } = makeQrServiceMockDb({
+      qr: blankQr(),
+      venue: blankVenue(),
+      rules: [blankRule({ fixedAmount: 20 })],
+      benefitRuleRows: [blankBenefitRule()],
+      benefitDefinitionRow: blankBenefitDefinition(),
+      throwOnBenefitGrant: true,
+    });
+    await expect(redeemConsumptionQr({ token: "x", userId: 42 }, db)).rejects.toThrow(/Fallo simulado/);
+    expect(getQr().status).toBe("issued"); // el rollback deshizo la marca redeemed
+    expect(getWallet().balance).toBe(0); // el rollback deshizo el crédito de tokens
+    expect(getUserBenefitRows()).toHaveLength(0);
   });
 });
 

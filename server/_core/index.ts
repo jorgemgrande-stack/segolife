@@ -116,6 +116,25 @@ const qrRedeemRateLimit = rateLimit({
   },
 });
 
+/**
+ * Validación de QR de Benefit en puerta/caja (Fase 4): 30 req/min por IP —
+ * reutiliza la misma infraestructura de express-rate-limit que Fase 3 (ver
+ * qrRedeemRateLimit) en vez de crear un limitador nuevo desde cero. Límite
+ * algo más alto que el de consumición porque un mismo terminal de puerta
+ * puede validar entradas de varias personas seguidas en poco tiempo — sigue
+ * sin bloquear el uso normal, solo protege contra spam/DoS del endpoint.
+ */
+const benefitRedeemRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Demasiados intentos de validación. Espera 1 minuto.",
+    code: "RATE_LIMIT_EXCEEDED",
+  },
+});
+
 // Modo de autenticación: LOCAL_AUTH=true usa email+password local en lugar de Manus OAuth
 const USE_LOCAL_AUTH = process.env.LOCAL_AUTH === "true";
 
@@ -192,6 +211,9 @@ async function startServer() {
 
   // Rate limiting en canje de QR de consumición (Fase 3, 20 req/min por IP)
   app.use("/api/trpc/consumptionQr.redeem", qrRedeemRateLimit);
+
+  // Rate limiting en validación de QR de Benefit (Fase 4, 30 req/min por IP)
+  app.use("/api/trpc/benefits.staffRedeem", benefitRedeemRateLimit);
 
   // Middleware de protección: bloquea rutas /api/trpc de procedimientos protegidos
   // si no hay sesión válida. Funciona en ambos modos (local y Manus OAuth).

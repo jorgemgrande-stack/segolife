@@ -18,17 +18,24 @@ import { Loader2, QrCode, Keyboard, CheckCircle2, XCircle, X } from "lucide-reac
 
 type ScanState = "idle" | "scanning" | "cameraError" | "submitting" | "result";
 
+interface BenefitUnlocked {
+  name: string; nameEn: string | null; nameEs: string | null;
+  destinationVenueName: string | null;
+}
+
 interface RedeemSuccess {
   breakdown: { base: number; recurrenceBonus: number; campaignMultiplier: number | null; campaignBonus: number | null; final: number };
   balanceAfter: number;
   venueName: string;
   productName: string | null;
+  /** Fase 4 — [] si este canje no desbloqueó ningún Benefit (caso normal). */
+  benefitsUnlocked: BenefitUnlocked[];
 }
 
 const SCAN_REGION_ID = "segolife-qr-scan-region";
 
 export default function StudentScan() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { community } = useCommunity();
 
   const [state, setState] = useState<ScanState>("idle");
@@ -40,7 +47,10 @@ export default function StudentScan() {
 
   const redeemMut = trpc.consumptionQr.redeem.useMutation({
     onSuccess: (res) => {
-      setSuccess({ breakdown: res.breakdown, balanceAfter: res.balanceAfter, venueName: res.venueName, productName: res.productName });
+      setSuccess({
+        breakdown: res.breakdown, balanceAfter: res.balanceAfter, venueName: res.venueName, productName: res.productName,
+        benefitsUnlocked: res.benefitsUnlocked,
+      });
       setErrorMessage(null);
       setState("result");
     },
@@ -204,6 +214,19 @@ export default function StudentScan() {
             <p className="text-sm text-muted-foreground">
               {t("scan.newBalance")}: <span className="font-semibold text-foreground">{success.balanceAfter.toLocaleString()}</span>
             </p>
+            {success.benefitsUnlocked.length > 0 && (
+              <div className="space-y-2">
+                {success.benefitsUnlocked.map((b, i) => (
+                  <div key={i} className="bg-primary/10 border border-primary/30 rounded-lg p-4 text-center space-y-1">
+                    <p className="text-xs font-semibold tracking-widest text-primary uppercase">{t("benefits.unlockedTitle")}</p>
+                    <p className="text-base font-semibold text-foreground">
+                      {i18n.language === "en" ? (b.nameEn ?? b.name) : (b.nameEs ?? b.name)}
+                    </p>
+                    {b.destinationVenueName && <p className="text-sm text-muted-foreground">{b.destinationVenueName}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
             <Button className="w-full" onClick={reset}>{t("scan.scanAnother")}</Button>
           </div>
         )}

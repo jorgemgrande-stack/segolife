@@ -23,6 +23,19 @@
  * idempotencyKey = `consumption_qr:<qrId>` se pasa a earnTokens() como
  * segunda capa de protección (además del UPDATE condicional) — impide doble
  * acreditación incluso si alguna capa superior reintenta la operación.
+ *
+ * INTEGRACIÓN CON FASE 4 (Benefits): tras earnTokens(), se llama a
+ * `evaluateBenefitsForOrigin` DENTRO de la MISMA transacción — si el canje
+ * de QR también desbloquea uno o varios Benefits, se conceden atómicamente
+ * junto con el ledger y la marca `redeemed` del QR (ver informe de Fase 4,
+ * política de atomicidad: "para beneficios disparados directamente por un
+ * QR de consumición, se prioriza la consistencia"). Si evaluateBenefitsForOrigin
+ * lanza, TODA la transacción se revierte — nunca queda un QR canjeado con
+ * tokens acreditados pero un Benefit a medio conceder, ni viceversa. Un
+ * canje que NO desbloquea ningún Benefit sigue funcionando exactamente
+ * igual que en Fase 3 (`benefitsUnlocked: []`) — este import es la ÚNICA
+ * dependencia de Fase 4 en este archivo; el motor de Benefits en sí nunca
+ * importa nada de este servicio (ver benefitRuleEngine.ts, cabecera).
  */
 import crypto from "crypto";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -40,6 +53,8 @@ import {
 } from "../../../drizzle/schema";
 import { earnTokens, type TokenBreakdown } from "../tokens/tokenEngine";
 import { TokenEngineError } from "../tokens/tokenLedgerService";
+import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
+import { buildBenefitUnlockedSummaries, type BenefitUnlockedSummary } from "../benefits/benefitSummary";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 5 });
 const _db = drizzle(_pool);
@@ -185,6 +200,8 @@ export interface RedeemQrResult {
   balanceAfter: number;
   venueName: string;
   productName: string | null;
+  /** Fase 4 — [] si este canje no desbloqueó ningún Benefit (caso normal). Nunca mezclado con `breakdown` (ver informe de Fase 4, "tokenResult y benefitsUnlocked siempre separados"). */
+  benefitsUnlocked: BenefitUnlockedSummary[];
 }
 
 async function logAttempt(
@@ -319,7 +336,20 @@ export async function redeemConsumptionQr(input: RedeemQrInput, db?: DbHandle): 
 
       await tx.update(consumptionQrCodes).set({ ledgerId: result.ledger.id }).where(eq(consumptionQrCodes.id, qr.id));
 
-      return result;
+      const unlocked = await evaluateBenefitsForOrigin({
+        type: "consumption",
+        userId: input.userId,
+        venueId: qr.venueId,
+        productId: qr.productId,
+        amountCents: qr.amountCents ?? undefined,
+        communityId: input.communityId,
+        sourceId: qr.id,
+        ledgerId: result.ledger.id,
+        occurredAt: result.ledger.createdAt,
+      }, tx);
+      const benefitsUnlocked = await buildBenefitUnlockedSummaries(unlocked, tx);
+
+      return { ...result, benefitsUnlocked };
     });
 
     await logAttempt(conn, { qrId: qr.id, tokenFingerprint: codeHash, userId: input.userId, result: "success", ipAddress: input.ipAddress, userAgent: input.userAgent });
@@ -333,6 +363,7 @@ export async function redeemConsumptionQr(input: RedeemQrInput, db?: DbHandle): 
       balanceAfter: engineResult.wallet.balance,
       venueName: venue.name,
       productName: product?.name ?? null,
+      benefitsUnlocked: engineResult.benefitsUnlocked,
     };
   } catch (err) {
     await logAttempt(conn, {

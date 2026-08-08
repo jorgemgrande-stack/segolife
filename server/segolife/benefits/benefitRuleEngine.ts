@@ -1,0 +1,201 @@
+/**
+ * benefitRuleEngine.ts — motor de reglas y punto de entrada genérico del
+ * módulo de Benefits (Fase 4). `evaluateBenefitsForOrigin` es la ÚNICA
+ * función que otros módulos deben llamar para preguntar "¿esta acción
+ * desbloquea algún Benefit?" — DELIBERADAMENTE genérica y desacoplada de
+ * consumptionQrService.ts (Fase 3): el canje de QR de consumición hoy es el
+ * único llamador real, pero Fourvenues (Fase 5 futura) podrá enviar
+ * `type: "event_attendance"` sin que este motor cambie una línea (ver
+ * informe de fase, punto de integración).
+ *
+ * SELECCIÓN DE REGLAS — a diferencia de tokenRuleEngine.findApplicableRule
+ * (donde solo UNA regla gana por prioridad), aquí TODAS las reglas activas
+ * que encajan se evalúan y pueden conceder, cada una de forma independiente:
+ * un Benefit es un desbloqueo ADITIVO (spec: "una acción puede generar solo
+ * tokens, solo benefit, ambos, o varios beneficios distintos a la vez"), no
+ * un cálculo competitivo como el importe de SegoTokens. `priority` sigue
+ * existiendo y se usa como ORDEN de evaluación — relevante cuando un
+ * `max_total` global está a punto de agotarse, la regla de mayor prioridad
+ * reclama el hueco restante primero.
+ */
+import { drizzle } from "drizzle-orm/mysql2";
+import mysql from "mysql2/promise";
+import { eq, and } from "drizzle-orm";
+import {
+  benefitRules,
+  benefitDefinitions,
+  benefitCommunities,
+  type BenefitRule,
+  type BenefitDefinition,
+  type UserBenefit,
+} from "../../../drizzle/schema";
+import { type AnyDbHandle, countRecentEarnEvents } from "../tokens/tokenLedgerService";
+import { isWithinTimeRange, resolveMadridMoment } from "../tokens/tokenScheduleService";
+import { computeValidityWindow } from "./benefitValidityEngine";
+import {
+  grantBenefit,
+  countGrantsByRuleForUser,
+  countGrantsByRuleForUserSince,
+  countGrantsByRuleTotal,
+  hasGrantForOrigin,
+} from "./benefitGrantService";
+
+const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
+const _db = drizzle(_pool);
+
+type DbHandle = typeof _db;
+
+async function getDb(): Promise<DbHandle> {
+  return _db;
+}
+
+export interface BenefitOrigin {
+  type: BenefitRule["sourceType"];
+  userId: number;
+  venueId?: number | null;
+  eventId?: number | null;
+  productId?: number | null;
+  amountCents?: number | null;
+  communityId?: number | null;
+  /** Id "natural" del registro origen en su propio módulo (p.ej. consumption_qr_codes.id) — usado para trazabilidad (user_benefits.source_id) e idempotencia. Independiente de sourceLedgerId. */
+  sourceId?: number | null;
+  /** Id del movimiento de token_ledger si esta acción también generó SegoTokens (Fase 2) — null si esta acción no pasó por el motor de tokens. */
+  ledgerId?: number | null;
+  occurredAt: Date;
+}
+
+export interface UnlockedBenefit {
+  userBenefit: UserBenefit;
+  definition: BenefitDefinition;
+  rule: BenefitRule;
+  /** Token en claro del QR de este Benefit — ver benefitGrantService.grantBenefit. */
+  qrToken: string;
+}
+
+function isWithinDateWindow(rule: { startsAt: Date | null; endsAt: Date | null }, at: Date): boolean {
+  if (rule.startsAt && rule.startsAt > at) return false;
+  if (rule.endsAt && rule.endsAt < at) return false;
+  return true;
+}
+
+function windowStart(window: "day" | "week" | "month", at: Date): Date {
+  const d = new Date(at);
+  if (window === "day") { d.setHours(0, 0, 0, 0); return d; }
+  if (window === "week") {
+    const day = d.getDay();
+    const diffToMonday = day === 0 ? 6 : day - 1;
+    d.setDate(d.getDate() - diffToMonday);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+  d.setDate(1);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function ruleMatchesOrigin(rule: BenefitRule, origin: BenefitOrigin, moment: { dayOfWeek: number; time: string }): boolean {
+  if (rule.sourceVenueId != null && rule.sourceVenueId !== origin.venueId) return false;
+  if (rule.sourceEventId != null && rule.sourceEventId !== origin.eventId) return false;
+  if (rule.sourceProductId != null && rule.sourceProductId !== origin.productId) return false;
+  if (rule.communityId != null && rule.communityId !== origin.communityId) return false;
+  if (rule.minAmountCents != null && (origin.amountCents ?? 0) < rule.minAmountCents) return false;
+  if (!isWithinDateWindow(rule, origin.occurredAt)) return false;
+  if (rule.conditionDaysOfWeek && rule.conditionDaysOfWeek.length > 0 && !rule.conditionDaysOfWeek.includes(moment.dayOfWeek)) return false;
+  if (rule.conditionStartTime && rule.conditionEndTime && !isWithinTimeRange(moment.time, rule.conditionStartTime, rule.conditionEndTime)) return false;
+  return true;
+}
+
+async function findApplicableBenefitRules(origin: BenefitOrigin, conn: AnyDbHandle): Promise<BenefitRule[]> {
+  const rows = await conn.select().from(benefitRules).where(and(
+    eq(benefitRules.sourceType, origin.type),
+    eq(benefitRules.active, true)
+  ));
+  const moment = resolveMadridMoment(origin.occurredAt);
+  return rows.filter(r => ruleMatchesOrigin(r, origin, moment)).sort((a, b) => b.priority - a.priority);
+}
+
+async function isDefinitionAllowedForCommunity(benefitDefinitionId: number, communityId: number, conn: AnyDbHandle): Promise<boolean> {
+  const rows = await conn.select({ communityId: benefitCommunities.communityId }).from(benefitCommunities)
+    .where(eq(benefitCommunities.benefitDefinitionId, benefitDefinitionId));
+  if (rows.length === 0) return true; // sin filas = sin restricción de comunidad
+  return rows.some(r => r.communityId === communityId);
+}
+
+/** Únicamente para uso interno del motor — comprueba min_visits/recurrence_window si la regla los define. */
+async function passesRecurrenceCondition(rule: BenefitRule, origin: BenefitOrigin, conn: AnyDbHandle): Promise<boolean> {
+  if (rule.minVisits == null || rule.recurrenceWindow == null) return true;
+  const since = windowStart(rule.recurrenceWindow, origin.occurredAt);
+  const visits = await countRecentEarnEvents(origin.userId, since, origin.venueId ?? undefined, conn);
+  // +1: la visita que dispara esta evaluación aún no está reflejada en el ledger consultado.
+  return visits + 1 >= rule.minVisits;
+}
+
+async function passesLimits(rule: BenefitRule, origin: BenefitOrigin, conn: AnyDbHandle): Promise<boolean> {
+  if (rule.oncePerOrigin && origin.sourceId != null) {
+    if (await hasGrantForOrigin(rule.id, origin.type, origin.sourceId, conn)) return false;
+  }
+  if (rule.oncePerRule || rule.maxPerUser != null) {
+    const grantedToUser = await countGrantsByRuleForUser(origin.userId, rule.id, conn);
+    if (rule.oncePerRule && grantedToUser > 0) return false;
+    if (rule.maxPerUser != null && grantedToUser >= rule.maxPerUser) return false;
+  }
+  if (rule.maxPerDay != null) {
+    const dayStart = windowStart("day", origin.occurredAt);
+    const grantedToday = await countGrantsByRuleForUserSince(origin.userId, rule.id, dayStart, conn);
+    if (grantedToday >= rule.maxPerDay) return false;
+  }
+  if (rule.maxTotal != null) {
+    const grantedTotal = await countGrantsByRuleTotal(rule.id, conn);
+    if (grantedTotal >= rule.maxTotal) return false;
+  }
+  return true;
+}
+
+/** Idempotencia legible — ver drizzle/schema.ts (comentario de user_benefits) y el informe de fase para el razonamiento de por qué se usa origin.type/origin.sourceId en vez del literal "consumption_qr" sugerido en el enunciado (el motor es deliberadamente agnóstico del módulo origen concreto). */
+function buildIdempotencyKey(rule: BenefitRule, origin: BenefitOrigin, index: number): string | null {
+  if (origin.sourceId == null) return null;
+  const base = `benefit_rule:${rule.id}:${origin.type}:${origin.sourceId}:user:${origin.userId}`;
+  return rule.quantity > 1 ? `${base}:${index}` : base;
+}
+
+export async function evaluateBenefitsForOrigin(origin: BenefitOrigin, db?: AnyDbHandle): Promise<UnlockedBenefit[]> {
+  const conn = db ?? (await getDb());
+  const candidateRules = await findApplicableBenefitRules(origin, conn);
+  const unlocked: UnlockedBenefit[] = [];
+
+  for (const rule of candidateRules) {
+    if (!(await passesRecurrenceCondition(rule, origin, conn))) continue;
+
+    const [definition] = await conn.select().from(benefitDefinitions)
+      .where(and(eq(benefitDefinitions.id, rule.benefitDefinitionId), eq(benefitDefinitions.active, true))).limit(1);
+    if (!definition) continue;
+
+    if (origin.communityId != null && !(await isDefinitionAllowedForCommunity(rule.benefitDefinitionId, origin.communityId, conn))) continue;
+    if (!(await passesLimits(rule, origin, conn))) continue;
+
+    const window = computeValidityWindow(rule, origin.occurredAt);
+    const quantity = Math.max(1, rule.quantity);
+
+    for (let i = 0; i < quantity; i++) {
+      const granted = await grantBenefit({
+        userId: origin.userId,
+        benefitDefinitionId: rule.benefitDefinitionId,
+        benefitRuleId: rule.id,
+        sourceType: origin.type,
+        sourceId: origin.sourceId ?? null,
+        sourceVenueId: origin.venueId ?? null,
+        sourceEventId: origin.eventId ?? null,
+        sourceLedgerId: origin.ledgerId ?? null,
+        communityId: origin.communityId ?? null,
+        validFrom: window.validFrom,
+        validUntil: window.validUntil,
+        idempotencyKey: buildIdempotencyKey(rule, origin, i),
+      }, conn);
+      if (granted.created) {
+        unlocked.push({ userBenefit: granted.benefit, definition, rule, qrToken: granted.qrToken });
+      }
+    }
+  }
+
+  return unlocked;
+}

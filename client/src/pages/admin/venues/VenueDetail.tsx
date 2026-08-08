@@ -231,6 +231,67 @@ function VenueQrTab({ venueId }: { venueId: number }) {
   );
 }
 
+/**
+ * Beneficios GENERADOS (este venue como ORIGEN de la regla que los concedió)
+ * vs CANJEADOS (este venue como DESTINO donde se validaron) — nunca se
+ * asume que origen y destino coinciden, ver drizzle/schema.ts comentario de
+ * benefit_rules ("cross-venue").
+ */
+function VenueBenefitsTab({ venueId }: { venueId: number }) {
+  const { data: stats, isLoading } = trpc.benefits.getVenueStats.useQuery({ venueId });
+  const { data: generated } = trpc.benefits.listGrants.useQuery({ communityId: "all", sourceVenueId: venueId, limit: 10, offset: 0 });
+  const { data: redeemed } = trpc.benefits.listGrants.useQuery({ communityId: "all", destinationVenueId: venueId, status: "used", limit: 10, offset: 0 });
+
+  if (isLoading) return <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-card border border-border rounded-lg p-4">
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Beneficios generados (origen)</p>
+          <p className="text-2xl font-semibold text-foreground">{stats?.generatedCount ?? 0}</p>
+        </div>
+        <div className="bg-card border border-border rounded-lg p-4">
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Beneficios canjeados (destino)</p>
+          <p className="text-2xl font-semibold text-emerald-600">{stats?.redeemedCount ?? 0}</p>
+        </div>
+      </div>
+
+      <div className="bg-card border border-border rounded-lg p-4">
+        <p className="text-sm font-semibold text-foreground mb-3">Últimos generados aquí (origen)</p>
+        {!generated || generated.items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sin beneficios generados desde este venue todavía.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {generated.items.map(g => (
+              <div key={g.id} className="flex items-center justify-between text-sm bg-accent/40 rounded-md px-2.5 py-1.5">
+                <span className="text-foreground">{g.definitionName}{g.destinationVenueName ? ` → ${g.destinationVenueName}` : ""}</span>
+                <Badge variant={g.status === "active" ? "default" : g.status === "used" ? "secondary" : "outline"}>{g.status}</Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-card border border-border rounded-lg p-4">
+        <p className="text-sm font-semibold text-foreground mb-3">Últimos canjeados aquí (destino)</p>
+        {!redeemed || redeemed.items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sin canjes en este venue todavía.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {redeemed.items.map(g => (
+              <div key={g.id} className="flex items-center justify-between text-sm bg-accent/40 rounded-md px-2.5 py-1.5">
+                <span className="text-foreground">{g.definitionName}{g.sourceVenueName ? ` (origen: ${g.sourceVenueName})` : ""}</span>
+                <span className="text-xs text-muted-foreground">{g.usedAt ? new Date(g.usedAt).toLocaleString("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function VenueDetail() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
@@ -353,6 +414,7 @@ export default function VenueDetail() {
             <TabsTrigger value="eventos">Eventos</TabsTrigger>
             <TabsTrigger value="segotokens">SegoTokens</TabsTrigger>
             <TabsTrigger value="qr">QR / Consumiciones</TabsTrigger>
+            <TabsTrigger value="benefits">Benefits</TabsTrigger>
             <TabsTrigger value="futuro">Próximamente</TabsTrigger>
           </TabsList>
 
@@ -451,8 +513,11 @@ export default function VenueDetail() {
             <VenueQrTab venueId={venueId} />
           </TabsContent>
 
+          <TabsContent value="benefits">
+            <VenueBenefitsTab venueId={venueId} />
+          </TabsContent>
+
           <TabsContent value="futuro" className="space-y-3">
-            <FutureModulePlaceholder label="Beneficios / redenciones" />
             <FutureModulePlaceholder label="Estadísticas de actividad" />
           </TabsContent>
         </Tabs>

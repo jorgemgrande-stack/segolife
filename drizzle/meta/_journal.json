@@ -904,6 +904,13 @@
       "when": 1779224815206,
       "tag": "0129_segolife_consumption_qr",
       "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "5",
+      "when": 1779224816206,
+      "tag": "0130_segolife_benefits",
+      "breakpoints": true
     }
   ]
 }

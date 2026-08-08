@@ -4294,3 +4294,280 @@ export const qrRedemptionAttempts = mysqlTable("qr_redemption_attempts", {
 });
 export type QrRedemptionAttempt = typeof qrRedemptionAttempts.$inferSelect;
 export type InsertQrRedemptionAttempt = typeof qrRedemptionAttempts.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEGOLIFE FASE 4 — MOTOR DE BENEFITS
+// ═══════════════════════════════════════════════════════════════════════════
+// Auditoría previa (ver informe de fase): `discount_codes`/`discount_code_uses`
+// son cupones de descuento de reserva (importe fijo/%, ligados a `booking_id`,
+// sin concepto de venue destino ni de vigencia relativa a un evento origen).
+// `ticketing_products`/`coupon_redemptions` son el flujo de cupones externos
+// Groupon/Smartbox (foto+OCR+conciliación financiera). `compensation_vouchers`
+// es un vale de atención al cliente ligado a `request_id` (incidencias de
+// reserva). Ninguna de las tres modela "una acción en el venue A desbloquea
+// una entrada gratis en el venue B, válida en una ventana horaria futura" —
+// acoplar cualquiera de ellas aquí introduciría semántica incorrecta de
+// reservas/incidencias/comercio externo. Todo lo de abajo es nuevo. `qr_batches`/
+// `consumption_qr_codes` (Fase 3) tampoco se reutilizan: ese QR lo escanea el
+// ESTUDIANTE para GANAR tokens; el QR de Benefit lo MUESTRA el estudiante y lo
+// ESCANEA EL STAFF para CONSUMIR un derecho ya concedido — flujo inverso,
+// infraestructura deliberadamente separada (ver comentario de user_benefits).
+//
+// DISTINCIÓN DE DOMINIO: un SegoToken es saldo fungible (Fase 2). Un Benefit
+// es un derecho concreto ya desbloqueado (entrada gratis, descuento, acceso
+// VIP...). `benefit_definitions` es la PLANTILLA reutilizable ("Entrada
+// gratis Casanova"); `user_benefits` es la CONCESIÓN individual a un usuario
+// concreto ("Jorge tiene una entrada gratis en Casanova, válida mañana").
+
+// ─── SEGOLIFE: BENEFIT_DEFINITIONS (Fase 4) ─────────────────────────────────
+// Plantilla de beneficio — nunca se concede directamente, solo la referencia
+// `user_benefits.benefit_definition_id`. `benefit_type` es la categoría
+// semántica (usada por el frontend para icono/copy genérico); `discount_type`
+// + `discount_value` son los PARÁMETROS cuando el tipo es un descuento
+// (percentage → valor en puntos enteros, p.ej. 20 = 20%; fixed → céntimos
+// enteros, p.ej. 500 = 5,00€ — nunca float, mismo criterio que amount_cents
+// en todo el resto del schema). `value_metadata` es un JSON abierto para
+// datos adicionales de un `benefit_type='custom'` sin tener que migrar el
+// schema por cada variante futura — el comportamiento visual NUNCA se
+// hardcodea por nombre/slug, solo por estos campos estructurados.
+// `destination_venue_id`/`destination_event_id` son el DESTINO donde se
+// canjea (p.ej. Casanova) — deliberadamente distinto del venue de ORIGEN que
+// disparó la concesión (p.ej. Chin Chin), que vive en `benefit_rules` y
+// `user_benefits.source_venue_id` (ver comentario de cross-venue más abajo).
+// nameEn/nameEs/descriptionEn/descriptionEs/termsEn/termsEs son contenido de
+// producto bilingüe gestionado por el admin (no textos de interfaz — esos
+// siguen en client/src/locales/*/segolife.json), por eso viven en fila y no
+// en el catálogo i18n.
+
+export const benefitDefinitions = mysqlTable("benefit_definitions", {
+  id:                   int("id").autoincrement().primaryKey(),
+  name:                 varchar("name", { length: 256 }).notNull(),
+  slug:                 varchar("slug", { length: 128 }).notNull(),
+  description:          text("description"),
+  benefitType:          mysqlEnum("benefit_type", [
+    "free_entry", "free_product", "discount_percentage", "discount_fixed",
+    "vip_access", "priority_access", "upgrade", "custom",
+  ]).notNull(),
+  destinationVenueId:   int("destination_venue_id"),
+  destinationEventId:   int("destination_event_id"),
+  productId:            int("product_id"),
+  discountType:         mysqlEnum("discount_type", ["percentage", "fixed"]),
+  discountValue:        int("discount_value"),
+  valueMetadata:        json("value_metadata").$type<Record<string, unknown>>(),
+  active:               boolean("active").notNull().default(true),
+  imageUrl:             varchar("image_url", { length: 512 }),
+  nameEn:               varchar("name_en", { length: 256 }),
+  nameEs:               varchar("name_es", { length: 256 }),
+  descriptionEn:        text("description_en"),
+  descriptionEs:        text("description_es"),
+  termsEn:              text("terms_en"),
+  termsEs:              text("terms_es"),
+  createdAt:            timestamp("created_at").defaultNow().notNull(),
+  updatedAt:            timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  slugUnique: unique("benefit_definitions_slug_unique").on(table.slug),
+}));
+export type BenefitDefinition = typeof benefitDefinitions.$inferSelect;
+export type InsertBenefitDefinition = typeof benefitDefinitions.$inferInsert;
+
+// ─── SEGOLIFE: BENEFIT_COMMUNITIES (Fase 4) ─────────────────────────────────
+// M2M de alcance de comunidad — mismo patrón exacto que campaign_communities.
+// Una definición SIN ninguna fila aquí aplica a CUALQUIER comunidad (ver
+// benefitRuleEngine.ts) — nunca se asume que el venue destino determina la
+// comunidad (un venue puede ser compartido por IE y UVA pero el beneficio
+// solo aplicar a una de las dos).
+
+export const benefitCommunities = mysqlTable("benefit_communities", {
+  id:                   int("id").autoincrement().primaryKey(),
+  benefitDefinitionId:  int("benefit_definition_id").notNull(),
+  communityId:          int("community_id").notNull(),
+  createdAt:            timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  benefitCommunityUnique: unique("benefit_communities_unique").on(table.benefitDefinitionId, table.communityId),
+}));
+export type BenefitCommunity = typeof benefitCommunities.$inferSelect;
+export type InsertBenefitCommunity = typeof benefitCommunities.$inferInsert;
+
+// ─── SEGOLIFE: BENEFIT_RULES (Fase 4) ───────────────────────────────────────
+// Mapeo ORIGEN→BENEFICIO configurable por admin — benefitRuleEngine.ts solo
+// interpreta filas de esta tabla, nunca hardcodea qué origen desbloquea qué
+// beneficio. `source_venue_id`/`source_event_id`/`source_product_id` son el
+// ORIGEN (p.ej. consumo en Chin Chin); `benefit_definition_id` resuelve el
+// DESTINO vía benefit_definitions.destination_venue_id (p.ej. Casanova) — la
+// separación explícita origen≠destino es lo que permite cross-venue real.
+// `community_id` filtra por comunidad del usuario que originó el evento
+// (independiente de benefit_communities, que filtra la vigencia del
+// beneficio ya concedido) — nullable = cualquier comunidad.
+//
+// VIGENCIA (ver benefitValidityEngine.ts para la interpretación exacta):
+// - validity_type='immediate': valid_from=instante origen, valid_until =
+//   +validity_duration_minutes (null = sin caducidad, intencional).
+// - validity_type='offset': valid_from = instante origen +
+//   validity_offset_minutes, valid_until = valid_from + validity_duration_minutes.
+// - validity_type='day_anchored': ancla al día calendario (Europe/Madrid) del
+//   instante origen + validity_days_offset. Si validity_start_time es null,
+//   valid_from=instante origen (dinámico); si tiene valor "HH:MM", valid_from
+//   es esa hora exacta de pared en el día ancla. Igual para
+//   validity_end_time/valid_until. Si end_time <= start_time se interpreta
+//   como que el fin cae al día siguiente (mismo criterio que
+//   venue_token_schedules cruzando medianoche). Ejemplo canónico: consumo
+//   viernes 23:45 en Chin Chin → days_offset=1, start_time="00:00",
+//   end_time="01:00" → válido sábado 00:00–01:00 en Casanova.
+//
+// condition_days_of_week/condition_start_time/condition_end_time son
+// condiciones ADICIONALES para que la regla dispare (p.ej. "solo viernes
+// noche") — independientes de venue_token_schedules (que regula
+// earn/spend de tokens, no la concesión de beneficios).
+//
+// Límites (max_per_user/max_per_day/max_total/once_per_origin/once_per_rule)
+// nunca se hardcodean — ver benefitGrantService.ts, paso "límites".
+
+export const benefitRules = mysqlTable("benefit_rules", {
+  id:                       int("id").autoincrement().primaryKey(),
+  name:                     varchar("name", { length: 256 }).notNull(),
+  description:              text("description"),
+  sourceType:               mysqlEnum("source_type", [
+    "consumption", "consumption_product", "venue_visit", "event_attendance",
+    "token_earning", "recurrence", "campaign", "manual", "ticket", "future_external",
+  ]).notNull(),
+  sourceVenueId:            int("source_venue_id"),
+  sourceEventId:            int("source_event_id"),
+  sourceProductId:          int("source_product_id"),
+  communityId:              int("community_id"),
+  minAmountCents:           int("min_amount_cents"),
+  minVisits:                int("min_visits"),
+  recurrenceWindow:         mysqlEnum("recurrence_window", ["day", "week", "month"]),
+  conditionDaysOfWeek:      json("condition_days_of_week").$type<number[]>(),
+  conditionStartTime:       varchar("condition_start_time", { length: 5 }),
+  conditionEndTime:         varchar("condition_end_time", { length: 5 }),
+  startsAt:                 timestamp("starts_at"),
+  endsAt:                   timestamp("ends_at"),
+  active:                   boolean("active").notNull().default(true),
+  priority:                 int("priority").notNull().default(0),
+  benefitDefinitionId:      int("benefit_definition_id").notNull(),
+  quantity:                 int("quantity").notNull().default(1),
+  validityType:             mysqlEnum("validity_type", ["immediate", "offset", "day_anchored"]).notNull().default("immediate"),
+  validityOffsetMinutes:    int("validity_offset_minutes"),
+  validityDurationMinutes:  int("validity_duration_minutes"),
+  validityStartTime:        varchar("validity_start_time", { length: 5 }),
+  validityEndTime:          varchar("validity_end_time", { length: 5 }),
+  validityDaysOffset:       int("validity_days_offset"),
+  maxPerUser:               int("max_per_user"),
+  maxPerDay:                int("max_per_day"),
+  maxTotal:                 int("max_total"),
+  oncePerOrigin:            boolean("once_per_origin").notNull().default(false),
+  oncePerRule:              boolean("once_per_rule").notNull().default(false),
+  createdAt:                timestamp("created_at").defaultNow().notNull(),
+  updatedAt:                timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type BenefitRule = typeof benefitRules.$inferSelect;
+export type InsertBenefitRule = typeof benefitRules.$inferInsert;
+
+// ─── SEGOLIFE: USER_BENEFITS (Fase 4) ───────────────────────────────────────
+// La concesión individual — nunca se borra (histórico permanente, incluso
+// used/expired/cancelled). `source_*` traza de dónde vino (consumo, QR de
+// Fase 3, manual...); `used_at_venue_id`/`used_at_event_id` registran DÓNDE
+// se canjeó realmente, permitiendo separar origen≠destino incluso en el
+// histórico (ver benefit_rules, comentario de cross-venue).
+//
+// DECISIÓN DE SEGURIDAD DEL QR — DELIBERADAMENTE DISTINTA DE FASE 3: el QR de
+// consumición (Fase 3) se genera una vez, en un contexto controlado por el
+// admin, y se muestra/imprime una única vez — por eso ahí solo se guarda el
+// hash. Un QR de Benefit lo debe poder volver a mostrar EL PROPIO ESTUDIANTE
+// en cualquier momento dentro de su ventana de vigencia (p.ej. concedido hoy,
+// mostrado en la puerta mañana por la noche) — un diseño hash-only sería
+// incapaz de volver a renderizar el código tras la respuesta inicial de
+// concesión, rompiendo "Mis Beneficios". Por eso aquí se persiste `qr_token`
+// en claro (mismo perfil de riesgo aceptado que `password_reset_tokens`) *a
+// la vez* que `qr_token_hash` — el flujo de canje (staff) SIEMPRE resuelve
+// por hash, nunca compara el campo en claro directamente, evitando timing
+// attacks sobre esa columna. Mitigaciones: 256 bits de entropía real, single-
+// use vía UPDATE condicional (igual que Fase 3), ventana de vigencia acotada,
+// el campo en claro nunca se devuelve en listados (solo en el procedure
+// `getMyBenefit` de UN beneficio propio, activo y vigente). El usuario pidió
+// explícitamente NO implementar rotación TOTP para el MVP (ver informe de
+// fase) — un token estático durante toda la vigencia es la decisión aceptada.
+//
+// idempotency_key (p.ej. "benefit_rule:12:consumption_qr:34:user:56") es
+// UNIQUE cuando no es null — impide conceder el mismo beneficio dos veces
+// ante un reintento, mismo patrón que token_ledger.idempotency_key.
+
+export const userBenefits = mysqlTable("user_benefits", {
+  id:                   int("id").autoincrement().primaryKey(),
+  userId:               int("user_id").notNull(),
+  benefitDefinitionId:  int("benefit_definition_id").notNull(),
+  benefitRuleId:        int("benefit_rule_id"),
+  sourceType:           varchar("source_type", { length: 64 }).notNull(),
+  sourceId:             int("source_id"),
+  sourceVenueId:        int("source_venue_id"),
+  sourceEventId:        int("source_event_id"),
+  sourceLedgerId:       int("source_ledger_id"),
+  communityId:          int("community_id"),
+  status:               mysqlEnum("status", ["active", "used", "expired", "cancelled"]).notNull().default("active"),
+  grantedAt:            timestamp("granted_at").defaultNow().notNull(),
+  validFrom:            timestamp("valid_from").notNull(),
+  validUntil:           timestamp("valid_until"),
+  usedAt:               timestamp("used_at"),
+  usedAtVenueId:        int("used_at_venue_id"),
+  usedAtEventId:        int("used_at_event_id"),
+  usedByStaffUserId:    int("used_by_staff_user_id"),
+  qrToken:              varchar("qr_token", { length: 64 }),
+  qrTokenHash:          varchar("qr_token_hash", { length: 64 }),
+  idempotencyKey:       varchar("idempotency_key", { length: 191 }),
+  metadata:             json("metadata").$type<Record<string, unknown>>(),
+  grantedByUserId:      int("granted_by_user_id"),
+  cancelledAt:          timestamp("cancelled_at"),
+  cancelledByUserId:    int("cancelled_by_user_id"),
+  cancellationReason:   varchar("cancellation_reason", { length: 256 }),
+  createdAt:            timestamp("created_at").defaultNow().notNull(),
+  updatedAt:            timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  idempotencyKeyUnique: unique("user_benefits_idempotency_key_unique").on(table.idempotencyKey),
+  qrTokenHashUnique: unique("user_benefits_qr_token_hash_unique").on(table.qrTokenHash),
+}));
+export type UserBenefit = typeof userBenefits.$inferSelect;
+export type InsertUserBenefit = typeof userBenefits.$inferInsert;
+
+// ─── SEGOLIFE: BENEFIT_REDEMPTION_ATTEMPTS (Fase 4) ─────────────────────────
+// Log de auditoría/antifraude del CANJE (staff escaneando) — INSERT-only,
+// mismo patrón que qr_redemption_attempts de Fase 3. `token_fingerprint` es
+// el SHA-256 del token escaneado (nunca el token en claro), igual que Fase 3.
+
+export const benefitRedemptionAttempts = mysqlTable("benefit_redemption_attempts", {
+  id:                 int("id").autoincrement().primaryKey(),
+  userBenefitId:      int("user_benefit_id"),
+  tokenFingerprint:   varchar("token_fingerprint", { length: 64 }),
+  staffUserId:        int("staff_user_id"),
+  venueId:            int("venue_id"),
+  result:             mysqlEnum("result", [
+    "valid", "already_used", "expired", "not_active_yet", "cancelled",
+    "wrong_venue", "wrong_event", "unauthorized_staff", "invalid_token",
+    "not_found", "rate_limited", "error",
+  ]).notNull(),
+  ipAddress:          varchar("ip_address", { length: 64 }),
+  userAgent:          varchar("user_agent", { length: 256 }),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+});
+export type BenefitRedemptionAttempt = typeof benefitRedemptionAttempts.$inferSelect;
+export type InsertBenefitRedemptionAttempt = typeof benefitRedemptionAttempts.$inferInsert;
+
+// ─── SEGOLIFE: VENUE_STAFF (Fase 4) ──────────────────────────────────────────
+// Nueva dimensión de alcance RBAC — no existía en el codebase hasta ahora
+// (community_admin de communityAccess.ts escopa por COMUNIDAD, no por venue
+// concreto). Un usuario con permiso `benefits.redeem` pero SIN permiso global
+// (`benefits.manage`) solo puede validar beneficios cuyo venue de canje tenga
+// una fila aquí para su user_id — ver server/segolife/benefits/venueStaffAccess.ts.
+// Sin ninguna fila para un usuario = sin ningún venue asignado (no "todos"),
+// deliberadamente restrictivo por defecto en un flujo de puerta/caja.
+
+export const venueStaff = mysqlTable("venue_staff", {
+  id:         int("id").autoincrement().primaryKey(),
+  userId:     int("user_id").notNull(),
+  venueId:    int("venue_id").notNull(),
+  active:     boolean("active").notNull().default(true),
+  createdAt:  timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  venueStaffUnique: unique("venue_staff_unique").on(table.userId, table.venueId),
+}));
+export type VenueStaff = typeof venueStaff.$inferSelect;
+export type InsertVenueStaff = typeof venueStaff.$inferInsert;

@@ -167,6 +167,7 @@ import { venuesRouter } from "./routers/venues";
 import { eventsRouter } from "./routers/events";
 import { tokensRouter } from "./routers/tokens";
 import { consumptionQrRouter } from "./routers/consumptionQr";
+import { benefitsRouter } from "./routers/benefits";
 import { restaurantsRouter } from "./routers/restaurants";
 import { crmRouter } from "./routers/crm";
 import { suppliersRouter, settlementsRouter } from "./routers/suppliers";
@@ -2158,6 +2159,7 @@ export const appRouter = router({
   events: eventsRouter,
   tokens: tokensRouter,
   consumptionQr: consumptionQrRouter,
+  benefits: benefitsRouter,
   restaurants: restaurantsRouter,
   crm: crmRouter,
   commercialFollowup: commercialFollowupRouter,

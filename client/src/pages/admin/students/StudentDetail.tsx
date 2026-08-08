@@ -56,6 +56,7 @@ function StudentTokensTab({ userId }: { userId: number }) {
   const { data: wallet, isLoading: loadingWallet } = trpc.tokens.getWallet.useQuery({ userId });
   const { data: ledger, isLoading: loadingLedger } = trpc.tokens.listLedger.useQuery({ userId, limit: 30, offset: 0 });
   const { data: qrRedemptions } = trpc.consumptionQr.list.useQuery({ communityId: "all", redeemedByUserId: userId, status: "redeemed", limit: 20, offset: 0 });
+  const { data: benefits } = trpc.benefits.listGrants.useQuery({ communityId: "all", userId, limit: 20, offset: 0 });
 
   const adjustMut = trpc.tokens.adjustManual.useMutation({
     onSuccess: () => {
@@ -142,6 +143,27 @@ function StudentTokensTab({ userId }: { userId: number }) {
                   </span>
                 </div>
                 <Badge variant="default">#{q.ledgerId ?? "—"}</Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-card border border-border rounded-lg p-4">
+        <p className="text-sm font-semibold text-foreground mb-3">Benefits</p>
+        {!benefits || benefits.items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sin beneficios concedidos todavía.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {benefits.items.map(b => (
+              <div key={b.id} className="flex items-center justify-between text-sm bg-accent/40 rounded-md px-2.5 py-1.5">
+                <div>
+                  <span className="text-foreground">{b.definitionName}</span>
+                  <span className="text-xs text-muted-foreground ml-2">
+                    {b.sourceVenueName ? `Origen: ${b.sourceVenueName}` : b.sourceType} → {b.destinationVenueName ?? "—"}
+                  </span>
+                </div>
+                <Badge variant={b.status === "active" ? "default" : b.status === "used" ? "secondary" : "outline"}>{b.status}</Badge>
               </div>
             ))}
           </div>

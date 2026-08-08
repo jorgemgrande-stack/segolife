@@ -16,8 +16,13 @@
  *     mismo criterio, `venues.view` / `venues.manage` / `events.view` /
  *     `events.manage` (Fase 1D, server/routers/venues.ts y events.ts),
  *     `tokens.view` / `tokens.manage` / `tokens.adjust` / `tokens.rules.manage`
- *     (Fase 2, server/routers/tokens.ts) y `qr.view` / `qr.issue` /
- *     `qr.manage` / `qr.cancel` (Fase 3, server/routers/consumptionQr.ts).
+ *     (Fase 2, server/routers/tokens.ts), `qr.view` / `qr.issue` /
+ *     `qr.manage` / `qr.cancel` (Fase 3, server/routers/consumptionQr.ts) y
+ *     `benefits.view` / `benefits.manage` / `benefits.grant` /
+ *     `benefits.redeem` / `benefits.cancel` (Fase 4, server/routers/benefits.ts).
+ *     También da de alta el rol RBAC `staff` (personal de puerta/venue, sin
+ *     acceso al resto del panel admin) — ver comentario de STAFF_PERMISSIONS
+ *     más abajo y drizzle/schema.ts, comentario de venue_staff.
  *  3. Concede esos permisos al rol `admin`.
  *  4. Confirma que `settings.manage` existe (ya sembrado en 0070 — solo
  *     verificación, no inserta nada nuevo).
@@ -35,6 +40,13 @@ const BASELINE_ROLES: Array<[string, string, string, boolean]> = [
   ["monitor", "Monitor",             "Operativa de actividades",     true],
   ["user",    "Usuario",             "Sin acceso al panel",          true],
 ];
+
+// Rol NUEVO (Fase 4, no legacy — is_legacy=false porque no existe un
+// users.role histórico equivalente). Personal de puerta/caja de UN venue
+// concreto (ver drizzle/schema.ts, venue_staff): solo puede validar Benefits,
+// y solo de los venues donde tenga una fila en venue_staff — el alcance por
+// venue se aplica en server/segolife/benefits/venueStaffAccess.ts, no aquí.
+const STAFF_ROLE: [string, string, string, boolean] = ["staff", "Staff de venue", "Validación de beneficios en puerta/caja", false];
 
 const STUDENTS_PERMISSIONS: Array<[string, string, string, string]> = [
   ["students.view",   "students", "view",   "Ver perfiles y datos de estudiantes"],
@@ -62,6 +74,14 @@ const QR_PERMISSIONS: Array<[string, string, string, string]> = [
   ["qr.cancel", "qr", "cancel", "Cancelar QR emitidos no canjeados"],
 ];
 
+const BENEFITS_PERMISSIONS: Array<[string, string, string, string]> = [
+  ["benefits.view",    "benefits", "view",    "Ver definiciones, reglas, beneficios concedidos y canjes"],
+  ["benefits.manage",  "benefits", "manage",  "Crear/editar/activar definiciones y reglas de beneficios"],
+  ["benefits.grant",   "benefits", "grant",   "Conceder un beneficio manualmente a un estudiante"],
+  ["benefits.redeem",  "benefits", "redeem",  "Validar (canjear) el QR de un beneficio en puerta/caja"],
+  ["benefits.cancel",  "benefits", "cancel",  "Cancelar un beneficio concedido no usado"],
+];
+
 export async function seedRbacIfNeeded(): Promise<{
   rolesEnsured: string[];
   permissionsAdded: string[];
@@ -75,7 +95,7 @@ export async function seedRbacIfNeeded(): Promise<{
 
   try {
     // 1. Catálogo mínimo de roles — defensivo, no depende de que db:migrate haya corrido.
-    for (const [key, name, description, isLegacy] of BASELINE_ROLES) {
+    for (const [key, name, description, isLegacy] of [...BASELINE_ROLES, STAFF_ROLE]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_roles (\`key\`, name, description, is_legacy, is_active, sort_order)
          VALUES (?, ?, ?, ?, 1, 0)`,
@@ -85,8 +105,8 @@ export async function seedRbacIfNeeded(): Promise<{
     }
 
     // 2. Permisos students.view / students.manage / venues.* / events.* /
-    //    tokens.* / qr.* — no sembrados en ninguna migración histórica.
-    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS]) {
+    //    tokens.* / qr.* / benefits.* — no sembrados en ninguna migración histórica.
+    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_permissions (\`key\`, module, action, description) VALUES (?, ?, ?, ?)`,
         [key, module, action, description]
@@ -94,10 +114,11 @@ export async function seedRbacIfNeeded(): Promise<{
       if ((result as any).affectedRows > 0) permissionsAdded.push(key);
     }
 
-    // 3. Conceder students.* / venues.* / events.* / tokens.* / qr.* al rol
-    //    admin (idempotente, no asume que el CROSS JOIN histórico de
-    //    0070/0077 se haya vuelto a ejecutar para estos permisos nuevos).
-    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS]) {
+    // 3. Conceder students.* / venues.* / events.* / tokens.* / qr.* /
+    //    benefits.* al rol admin (idempotente, no asume que el CROSS JOIN
+    //    histórico de 0070/0077 se haya vuelto a ejecutar para estos permisos
+    //    nuevos).
+    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
          SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p
@@ -105,6 +126,21 @@ export async function seedRbacIfNeeded(): Promise<{
         [key]
       ) as any[];
       if ((result as any).affectedRows > 0) grantsEnsured.push(`admin -> ${key}`);
+    }
+
+    // 3b. El rol `staff` (nuevo) SOLO recibe benefits.view/benefits.redeem —
+    //     nunca manage/grant/cancel (esos siguen siendo exclusivos de admin).
+    //     El alcance por venue concreto se aplica en runtime vía venue_staff,
+    //     no aquí (RBAC solo resuelve el verbo, no el dato — ver
+    //     communityAccess.ts para el mismo criterio aplicado a comunidad).
+    for (const key of ["benefits.view", "benefits.redeem"]) {
+      const [result] = await conn.execute(
+        `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
+         SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p
+         WHERE r.\`key\` = 'staff' AND p.\`key\` = ?`,
+        [key]
+      ) as any[];
+      if ((result as any).affectedRows > 0) grantsEnsured.push(`staff -> ${key}`);
     }
 
     // 4. Verificación de settings.manage (ya sembrado en 0070 vía CROSS JOIN a admin).
