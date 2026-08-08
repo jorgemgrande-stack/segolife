@@ -1,8 +1,8 @@
 {
-  "name": "Segolife",
-  "short_name": "Segolife",
+  "name": "SEGOLIFE",
+  "short_name": "SEGOLIFE",
   "description": "Community, events and rewards for students in Segovia.",
-  "start_url": "/ie",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",

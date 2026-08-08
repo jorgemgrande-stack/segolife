@@ -40,11 +40,18 @@ export function CommunityProvider({ children }: { children: React.ReactNode }) {
   // El idioma inicial de la comunidad lo aplica CommunityContext al resolverla
   // — un componente de página puede luego cambiarlo con el selector EN/ES,
   // eso no lo controla este Provider.
+  // Fase 6 hardening: `i18n` deliberadamente FUERA del array de dependencias.
+  // Con él dentro, el propio changeLanguage() disparaba un re-render que
+  // volvía a ejecutar este efecto con el mismo defaultLocale, revirtiendo
+  // sin descanso cualquier cambio manual del selector EN/ES del header
+  // (SegolifeHeader) — el selector quedaba visualmente inerte. `i18n` es el
+  // singleton de client/src/lib/i18n.ts, nunca cambia de verdad.
   useEffect(() => {
     if (community?.defaultLocale) {
       i18n.changeLanguage(community.defaultLocale);
     }
-  }, [community?.defaultLocale, i18n]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [community?.defaultLocale]);
 
   const value: CommunityContextType = {
     community,

@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
+import { useTranslation } from "react-i18next";
 import { Cookie, X, ChevronDown, ChevronUp, Shield, BarChart2, Megaphone, Settings } from "lucide-react";
+import { isPotentialCommunityRequest } from "@shared/segolife/routing";
 
 const STORAGE_KEY = "nayade_cookie_consent";
 
@@ -34,6 +36,15 @@ export default function CookieBanner() {
   const [analytics, setAnalytics] = useState(false);
   const [marketing, setMarketing] = useState(false);
   const [preferences, setPreferences] = useState(false);
+  const { t } = useTranslation();
+  const [location] = useLocation();
+  // Fase 6 hardening: mismo consentimiento/lógica, tratamiento visual y copy
+  // distintos en rutas de Segolife — el banner oscuro/corporativo heredado de
+  // Náyade desentonaba con el diseño claro tipo app (ver revisión visual).
+  const isSegolife = isPotentialCommunityRequest({
+    pathname: location,
+    hostname: typeof window !== "undefined" ? window.location.hostname : undefined,
+  });
 
   useEffect(() => {
     const consent = loadConsent();
@@ -81,6 +92,90 @@ export default function CookieBanner() {
     });
     setVisible(false);
   };
+
+  if (isSegolife) {
+    return (
+      <div className="segolife-theme fixed bottom-0 left-0 right-0 z-[9999] p-4 pointer-events-none">
+        <div className="segolife-elevated-shadow pointer-events-auto mx-auto max-w-md rounded-2xl border border-border bg-card overflow-hidden">
+          <div className="flex flex-col gap-3 p-4">
+            <div className="flex items-start gap-3">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Cookie className="size-4" aria-hidden="true" />
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t("cookie.message")}{" "}
+                <Link href="/cookies" className="underline underline-offset-2 text-foreground">
+                  {t("cookie.learnMore")}
+                </Link>
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setExpanded(v => !v)}
+                className="flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+              >
+                <Settings className="size-3" aria-hidden="true" />
+                {t("cookie.manage")}
+                {expanded ? <ChevronUp className="size-3" aria-hidden="true" /> : <ChevronDown className="size-3" aria-hidden="true" />}
+              </button>
+              <button
+                onClick={handleNecessaryOnly}
+                className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+              >
+                {t("cookie.necessaryOnly")}
+              </button>
+              <button
+                onClick={handleAcceptAll}
+                className="ml-auto rounded-full bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground"
+              >
+                {t("cookie.acceptAll")}
+              </button>
+            </div>
+            {expanded && (
+              <div className="space-y-2 border-t border-border pt-3">
+                {[
+                  { title: t("cookie.necessaryTitle"), desc: t("cookie.necessaryDescription"), icon: Shield, locked: true, value: true, onToggle: undefined },
+                  { title: t("cookie.analyticsTitle"), desc: t("cookie.analyticsDescription"), icon: BarChart2, locked: false, value: analytics, onToggle: () => setAnalytics(v => !v) },
+                  { title: t("cookie.marketingTitle"), desc: t("cookie.marketingDescription"), icon: Megaphone, locked: false, value: marketing, onToggle: () => setMarketing(v => !v) },
+                ].map(row => (
+                  <div key={row.title} className="flex items-start justify-between gap-3 rounded-xl bg-secondary/50 p-3">
+                    <div className="flex items-start gap-2">
+                      <row.icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      <div>
+                        <p className="text-xs font-semibold text-foreground">
+                          {row.title}
+                          {row.locked && <span className="ml-1.5 rounded-full bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">{t("cookie.necessaryAlwaysOn")}</span>}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">{row.desc}</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={row.locked}
+                      onClick={row.onToggle}
+                      aria-label={row.title}
+                      className="mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full px-0.5 transition-colors disabled:cursor-not-allowed"
+                      style={{ background: row.value ? "var(--primary)" : "var(--secondary)", justifyContent: row.value ? "flex-end" : "flex-start" }}
+                    >
+                      <div className="h-4 w-4 rounded-full bg-white shadow" />
+                    </button>
+                  </div>
+                ))}
+                <div className="flex justify-end pt-1">
+                  <button
+                    onClick={handleSaveCustom}
+                    className="rounded-full bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground"
+                  >
+                    {t("cookie.savePreferences")}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-[9999] p-4 md:p-6 pointer-events-none">

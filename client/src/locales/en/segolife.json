@@ -161,6 +161,21 @@
     "notFoundDescription": "The link you used doesn't match any Segolife community.",
     "backHome": "Go to home"
   },
+  "cookie": {
+    "message": "We use cookies to run Segolife and, if you allow it, to understand how you use it.",
+    "manage": "Manage",
+    "necessaryOnly": "Necessary only",
+    "acceptAll": "Accept all",
+    "learnMore": "Learn more",
+    "necessaryTitle": "Necessary",
+    "necessaryAlwaysOn": "Always on",
+    "necessaryDescription": "Required for login, security and basic preferences.",
+    "analyticsTitle": "Analytics",
+    "analyticsDescription": "Helps us understand how Segolife is used, so we can improve it.",
+    "marketingTitle": "Marketing",
+    "marketingDescription": "Used to measure the reach of Segolife campaigns.",
+    "savePreferences": "Save preferences"
+  },
   "home": {
     "greetingMorning": "Good morning",
     "greetingAfternoon": "Good afternoon",

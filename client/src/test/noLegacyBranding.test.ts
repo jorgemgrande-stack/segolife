@@ -23,6 +23,7 @@ const FORBIDDEN_PATTERNS = [
   /experiencias?\s+acu[áa]ticas?/i,
   /RAPALINAHOTELES/i,
   /reserva\s+de\s+hotel/i,
+  /skicenter/i,
 ];
 
 function listSourceFiles(dir: string): string[] {
@@ -57,5 +58,31 @@ describe("Segolife — locales (en/es) sin contenido heredado de Náyade", () =>
     for (const pattern of FORBIDDEN_PATTERNS) {
       expect(source, `${file} contiene un patrón prohibido: ${pattern}`).not.toMatch(pattern);
     }
+  });
+});
+
+describe("Segolife — metadata global (index.html, manifest) sin branding heredado de Náyade", () => {
+  const metadataFiles = [
+    join(__dirname, "..", "..", "index.html"),
+    join(__dirname, "..", "..", "public", "manifest.webmanifest"),
+  ];
+
+  it.each(metadataFiles)("%s no contiene ninguna cadena prohibida de Náyade", (file) => {
+    const source = readFileSync(file, "utf8");
+    for (const pattern of FORBIDDEN_PATTERNS) {
+      expect(source, `${file} contiene un patrón prohibido: ${pattern}`).not.toMatch(pattern);
+    }
+  });
+
+  it("index.html no referencia el ID de GA4 de Náyade (G-8E7HXCGN3P) de forma hardcodeada", () => {
+    const source = readFileSync(join(__dirname, "..", "..", "index.html"), "utf8");
+    expect(source).not.toMatch(/G-8E7HXCGN3P/);
+  });
+
+  it("manifest.webmanifest tiene name/short_name SEGOLIFE y start_url neutro (no fuerza /ie)", () => {
+    const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "public", "manifest.webmanifest"), "utf8"));
+    expect(manifest.name).toMatch(/segolife/i);
+    expect(manifest.short_name).toMatch(/segolife/i);
+    expect(manifest.start_url).toBe("/");
   });
 });

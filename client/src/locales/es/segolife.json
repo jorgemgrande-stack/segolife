@@ -161,6 +161,21 @@
     "notFoundDescription": "El enlace que has usado no corresponde a ninguna comunidad de Segolife.",
     "backHome": "Ir al inicio"
   },
+  "cookie": {
+    "message": "Usamos cookies para que Segolife funcione y, si lo permites, para entender cómo lo usas.",
+    "manage": "Configurar",
+    "necessaryOnly": "Solo necesarias",
+    "acceptAll": "Aceptar todas",
+    "learnMore": "Más información",
+    "necessaryTitle": "Necesarias",
+    "necessaryAlwaysOn": "Siempre activas",
+    "necessaryDescription": "Imprescindibles para el login, la seguridad y las preferencias básicas.",
+    "analyticsTitle": "Analíticas",
+    "analyticsDescription": "Nos ayudan a entender cómo se usa Segolife para poder mejorarlo.",
+    "marketingTitle": "Marketing",
+    "marketingDescription": "Se usan para medir el alcance de las campañas de Segolife.",
+    "savePreferences": "Guardar preferencias"
+  },
   "home": {
     "greetingMorning": "Buenos días",
     "greetingAfternoon": "Buenas tardes",

@@ -35,8 +35,14 @@ export function SegolifeAppShell({
 }) {
   const { t } = useTranslation();
   const { community, slug, loading, availableLocales } = useCommunity();
+  // El redirect-a-login de useAuth es un efecto independiente del render (navega
+  // con window.location.href), así que si se habilitara siempre que requireAuth
+  // es true, puede dispararse ANTES de saber si `community` es válida — mandando
+  // a un slug inexistente a /login (con marca heredada) en vez de al 404 "Community
+  // not found" de abajo. Solo se habilita una vez community terminó de resolverse
+  // y es una comunidad real.
   const { user, loading: authLoading } = useAuth({
-    redirectOnUnauthenticated: requireAuth,
+    redirectOnUnauthenticated: requireAuth && !loading && !!community,
     redirectPath: getLoginUrl(),
   });
 
@@ -92,7 +98,10 @@ export function SegolifeAppShell({
   return (
     <div className="segolife-theme flex min-h-dvh flex-col">
       <SegolifeHeader slug={slug} availableLocales={availableLocales} />
-      <main className={hideNav ? "flex-1" : "flex-1 pb-24"}>{children}</main>
+      {/* pb-32: pb-24 dejaba el último elemento de páginas largas (ej. "Log
+          out" en Profile) tocando el bottom nav en el punto de scroll máximo
+          — visto en revisión visual real, no solo margen visual de sobra. */}
+      <main className={hideNav ? "flex-1" : "flex-1 pb-32"}>{children}</main>
       {!hideNav && <SegolifeBottomNav slug={slug} benefitsBadge={!!homeSummary?.activeBenefit} />}
     </div>
   );

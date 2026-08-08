@@ -6,10 +6,16 @@ function writeFbcCookie(fbclid: string): void {
   if (document.cookie.includes('_fbc=')) return; // preservar primer toque
   const value = `fb.1.${Date.now()}.${fbclid}`;
   const expires = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toUTCString();
-  document.cookie = `_fbc=${value}; path=/; expires=${expires}; domain=.skicenter.es; SameSite=Lax`;
+  // Fase 6 hardening: dominio del cookie ligado al host actual, nunca hardcodeado
+  // (antes apuntaba a .skicenter.es, un dominio de otro negocio sin relación).
+  document.cookie = `_fbc=${value}; path=/; expires=${expires}; SameSite=Lax`;
 }
 
-const PIXEL_ID = (import.meta.env.VITE_META_PIXEL_ID as string | undefined) || '1542400900841433';
+// Fase 6 hardening: sin fallback a ningún Pixel ID ajeno (antes caía a un ID de
+// otro negocio — Skicenter, ni siquiera Náyade — mezclando el tracking de
+// visitantes de Segolife con la cuenta de Meta Ads de otro negocio). Sin
+// variable propia, el Pixel queda desactivado.
+const PIXEL_ID = import.meta.env.VITE_META_PIXEL_ID as string | undefined;
 
 /**
  * Carga fbevents.js y gestiona el tracking de Meta Pixel.
@@ -45,6 +51,7 @@ export function MetaPixelLoader() {
   // ── Efecto 1: inicializar fbq una sola vez ────────────────────────────────
   useEffect(() => {
     if (!hasConsent) return;
+    if (!PIXEL_ID) return;
     if (typeof window === 'undefined') return;
     if (window.fbq) return; // ya inicializado
 

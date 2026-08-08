@@ -5,13 +5,17 @@ declare global {
   }
 }
 
-const MEASUREMENT_ID =
-  (import.meta.env.VITE_GA4_MEASUREMENT_ID as string | undefined) || 'G-8E7HXCGN3P';
+// Fase 6 hardening: sin fallback a ningún ID ajeno (antes caía al GA4 real de
+// Náyade cuando la variable no estaba configurada, mezclando analítica de
+// estudiantes de Segolife con la cuenta de otro negocio). Sin variable propia,
+// GA4 queda desactivado.
+const MEASUREMENT_ID = import.meta.env.VITE_GA4_MEASUREMENT_ID as string | undefined;
 
 let ga4Configured = false;
 
 export function initGA4(): void {
   if (typeof window === 'undefined') return;
+  if (!MEASUREMENT_ID) return;
   if (ga4Configured) return;
   ga4Configured = true;
 
