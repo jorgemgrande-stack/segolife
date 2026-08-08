@@ -15,6 +15,7 @@
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "db:seed": "tsx scripts/db-seed.ts",
+    "admin:bootstrap": "tsx scripts/bootstrap-segolife-admin.ts",
     "seed:legacy-nayade-do-not-run": "node scripts/import-seed.mjs",
     "seed:export": "node scripts/export-seed.mjs"
   },
