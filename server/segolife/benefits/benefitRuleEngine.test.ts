@@ -8,6 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { evaluateBenefitsForOrigin, type BenefitOrigin } from "./benefitRuleEngine";
 import { benefitRules, benefitDefinitions, benefitCommunities, userBenefits, tokenLedger } from "../../../drizzle/schema";
+import { emitBenefitGranted, buildBenefitGrantedPayload, benefitEvents, type BenefitGrantedPayload } from "./benefitEvents";
 
 function blankRule(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -330,6 +331,37 @@ describe("evaluateBenefitsForOrigin — idempotencia end-to-end", () => {
     expect(first).toHaveLength(1);
     expect(second).toEqual([]); // ya existía por idempotencyKey — no se re-añade a "unlocked"
     expect(getUserBenefitRows()).toHaveLength(1);
+  });
+
+  /**
+   * evaluateBenefitsForOrigin() NUNCA emite BenefitGranted por sí mismo
+   * (ver benefitGrantService.ts, cabecera) — el llamador real (p.ej.
+   * consumptionQrService.redeemConsumptionQr) recorre el array devuelto y
+   * emite un evento por cada elemento, DESPUÉS de que su transacción haya
+   * confirmado. Aquí se simula exactamente ese patrón de llamador para
+   * probar que reevaluar el MISMO origen no produce una segunda emisión —
+   * el array ya viene vacío en la repetición, así que el bucle del
+   * llamador simplemente no tiene nada que emitir.
+   */
+  it("simulando el patrón del llamador real: reevaluar el mismo origen NO vuelve a emitir BenefitGranted", async () => {
+    const { db } = makeRuleEngineMockDb({
+      rules: [blankRule()],
+      definition: blankDefinition(),
+    });
+    const received: BenefitGrantedPayload[] = [];
+    const listener = (p: BenefitGrantedPayload) => { received.push(p); };
+    benefitEvents.onTyped("BenefitGranted", listener);
+
+    const origin = blankOrigin({ sourceId: 321 });
+    for (const attempt of [1, 2, 3]) {
+      const unlocked = await evaluateBenefitsForOrigin(origin, db);
+      for (const u of unlocked) emitBenefitGranted(buildBenefitGrantedPayload(u.userBenefit, u.definition));
+      void attempt;
+    }
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(received).toHaveLength(1); // solo el primer intento generó una concesión real → un único evento
+    benefitEvents.removeListener("BenefitGranted", listener);
   });
 });
 

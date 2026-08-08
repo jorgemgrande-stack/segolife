@@ -8,15 +8,19 @@
  * `type: "event_attendance"` sin que este motor cambie una línea (ver
  * informe de fase, punto de integración).
  *
- * SELECCIÓN DE REGLAS — a diferencia de tokenRuleEngine.findApplicableRule
- * (donde solo UNA regla gana por prioridad), aquí TODAS las reglas activas
- * que encajan se evalúan y pueden conceder, cada una de forma independiente:
- * un Benefit es un desbloqueo ADITIVO (spec: "una acción puede generar solo
- * tokens, solo benefit, ambos, o varios beneficios distintos a la vez"), no
- * un cálculo competitivo como el importe de SegoTokens. `priority` sigue
- * existiendo y se usa como ORDEN de evaluación — relevante cuando un
- * `max_total` global está a punto de agotarse, la regla de mayor prioridad
- * reclama el hueco restante primero.
+ * SELECCIÓN DE REGLAS — DECISIÓN DE DISEÑO MANTENIDA EXPLÍCITAMENTE (revisada
+ * y confirmada en el cierre de Fase 4, no cambiar a "gana la de mayor
+ * prioridad" sin una instrucción explícita nueva): a diferencia de
+ * tokenRuleEngine.findApplicableRule (donde solo UNA regla gana por
+ * prioridad), aquí TODAS las reglas activas que encajan se evalúan y pueden
+ * conceder, cada una de forma independiente — un Benefit es un desbloqueo
+ * ADITIVO, no un cálculo competitivo como el importe de SegoTokens. Una
+ * misma consumición puede producir tokens + Benefit A + Benefit B a la vez,
+ * cada uno protegido por sus propios límites/idempotencia (ver
+ * benefitGrantService.ts). `priority` es ORDEN de evaluación, NUNCA
+ * exclusividad: determina qué regla reclama primero un hueco de `max_total`
+ * casi agotado, no cuál "gana" frente a las demás — dos reglas de prioridad
+ * distinta que ambas encajan y tienen hueco disponible CONCEDEN LAS DOS.
  */
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";

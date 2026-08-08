@@ -6,7 +6,7 @@
  * descartando todos los cambios si el callback lanza — así se puede probar
  * honestamente "fallo tokens → QR no redeemed" sin una BD real.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   issueConsumptionQr,
   issueQrBatch,
@@ -14,6 +14,7 @@ import {
   cancelConsumptionQr,
   QrError,
 } from "./consumptionQrService";
+import { benefitEvents, type BenefitGrantedPayload } from "../benefits/benefitEvents";
 import {
   consumptionQrCodes,
   qrBatches,
@@ -451,6 +452,96 @@ describe("consumptionQrService — integración con Fase 4 (benefitsUnlocked)", 
     expect(getQr().status).toBe("issued"); // el rollback deshizo la marca redeemed
     expect(getWallet().balance).toBe(0); // el rollback deshizo el crédito de tokens
     expect(getUserBenefitRows()).toHaveLength(0);
+  });
+});
+
+describe("consumptionQrService — evento de dominio BenefitGranted (revisión de seguridad de cierre de Fase 4)", () => {
+  it("un canje que desbloquea un Benefit emite BenefitGranted exactamente una vez, con un payload sin qrToken", async () => {
+    const received: BenefitGrantedPayload[] = [];
+    const listener = (p: BenefitGrantedPayload) => { received.push(p); };
+    benefitEvents.onTyped("BenefitGranted", listener);
+
+    const { db } = makeQrServiceMockDb({
+      qr: blankQr(),
+      venue: blankVenue(),
+      rules: [blankRule({ fixedAmount: 20 })],
+      benefitRuleRows: [blankBenefitRule({ sourceVenueId: 10 })],
+      benefitDefinitionRow: blankBenefitDefinition({ destinationVenueId: 20 }),
+    });
+    const result = await redeemConsumptionQr({ token: "x", userId: 42 }, db);
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(received).toHaveLength(1);
+    expect(received[0].userBenefitId).toBe(result.benefitsUnlocked[0].userBenefitId);
+    expect(received[0].destinationVenueId).toBe(20);
+    expect(received[0].sourceVenueId).toBe(10);
+    expect(received[0]).not.toHaveProperty("qrToken");
+    expect(received[0]).not.toHaveProperty("qrTokenHash");
+    expect(JSON.stringify(received[0])).not.toContain(result.benefitsUnlocked[0].qrToken);
+
+    benefitEvents.removeListener("BenefitGranted", listener);
+  });
+
+  it("un canje que NO desbloquea ningún Benefit no emite BenefitGranted", async () => {
+    const received: BenefitGrantedPayload[] = [];
+    const listener = (p: BenefitGrantedPayload) => { received.push(p); };
+    benefitEvents.onTyped("BenefitGranted", listener);
+
+    const { db } = makeQrServiceMockDb({
+      qr: blankQr(), venue: blankVenue(), rules: [blankRule({ fixedAmount: 20 })], benefitRuleRows: [],
+    });
+    await redeemConsumptionQr({ token: "x", userId: 42 }, db);
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(received).toHaveLength(0);
+    benefitEvents.removeListener("BenefitGranted", listener);
+  });
+
+  it("un listener de BenefitGranted que falla NO revierte el Benefit ya concedido ni rompe la respuesta del canje", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const brokenListener = () => { throw new Error("listener de comunicaciones roto (Fase 7 futura)"); };
+    benefitEvents.onTyped("BenefitGranted", brokenListener);
+
+    const { db, getQr, getWallet, getUserBenefitRows } = makeQrServiceMockDb({
+      qr: blankQr(),
+      venue: blankVenue(),
+      rules: [blankRule({ fixedAmount: 20 })],
+      benefitRuleRows: [blankBenefitRule({ sourceVenueId: 10 })],
+      benefitDefinitionRow: blankBenefitDefinition({ destinationVenueId: 20 }),
+    });
+
+    // La promesa del canje debe resolver con éxito — el listener roto nunca debe propagarse hasta aquí.
+    const result = await redeemConsumptionQr({ token: "x", userId: 42 }, db);
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(result.benefitsUnlocked).toHaveLength(1);
+    expect(getQr().status).toBe("redeemed");
+    expect(getWallet().balance).toBe(20);
+    expect(getUserBenefitRows()).toHaveLength(1);
+    expect(getUserBenefitRows()[0].status).toBe("active"); // el Benefit sigue concedido, intacto
+
+    benefitEvents.removeListener("BenefitGranted", brokenListener);
+    errorSpy.mockRestore();
+  });
+
+  it("si la transacción falla (rollback), BenefitGranted NUNCA se emite para la concesión revertida", async () => {
+    const received: BenefitGrantedPayload[] = [];
+    const listener = (p: BenefitGrantedPayload) => { received.push(p); };
+    benefitEvents.onTyped("BenefitGranted", listener);
+
+    const { db } = makeQrServiceMockDb({
+      qr: blankQr(),
+      venue: blankVenue(),
+      rules: [blankRule({ fixedAmount: 20 })],
+      benefitRuleRows: [blankBenefitRule()],
+      benefitDefinitionRow: blankBenefitDefinition(),
+      throwOnBenefitGrant: true,
+    });
+    await expect(redeemConsumptionQr({ token: "x", userId: 42 }, db)).rejects.toThrow(/Fallo simulado/);
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(received).toHaveLength(0);
+    benefitEvents.removeListener("BenefitGranted", listener);
   });
 });
 

@@ -27,6 +27,7 @@ import {
 } from "../db/benefitsDb";
 import { grantBenefit, cancelBenefit, expireBenefitIfNeeded, BenefitError } from "../segolife/benefits/benefitGrantService";
 import { redeemBenefit } from "../segolife/benefits/benefitRedemptionService";
+import { emitBenefitGranted, buildBenefitGrantedPayload } from "../segolife/benefits/benefitEvents";
 
 const benefitsViewProcedure = permissionProcedure("benefits.view", ["admin"]);
 const benefitsManageProcedure = permissionProcedure("benefits.manage", ["admin"]);
@@ -218,14 +219,25 @@ export const benefitsRouter = router({
         grantedByUserId: ctx.user.id,
         metadata: { reason: input.reason },
       });
-      return { success: true, benefit: granted.benefit, qrToken: granted.qrToken };
+      // Emisión del evento de dominio DESPUÉS de que la concesión ya esté
+      // confirmada (grantBenefit no abre transacción propia aquí — sin
+      // db explícito, cada INSERT hace autocommit) — ver benefitEvents.ts.
+      if (granted.created) {
+        emitBenefitGranted(buildBenefitGrantedPayload(granted.benefit, definition));
+      }
+      // Respuesta sin qrToken/qrTokenHash — la concesión manual no es un
+      // endpoint de "mostrar mi QR" gated por ownership (ver informe de
+      // revisión, punto 2: solo getMyBenefit revela el token en claro).
+      const { qrToken: _qrToken, qrTokenHash: _qrTokenHash, ...safeBenefit } = granted.benefit;
+      return { success: true, benefit: safeBenefit };
     }),
 
   cancelGrant: benefitsCancelProcedure
     .input(z.object({ userBenefitId: z.number().int().positive(), reason: z.string().min(1).max(256) }))
     .mutation(async ({ input, ctx }) => {
       try {
-        const benefit = await cancelBenefit({ userBenefitId: input.userBenefitId, reason: input.reason, cancelledByUserId: ctx.user.id });
+        const cancelled = await cancelBenefit({ userBenefitId: input.userBenefitId, reason: input.reason, cancelledByUserId: ctx.user.id });
+        const { qrToken: _qrToken, qrTokenHash: _qrTokenHash, ...benefit } = cancelled;
         return { success: true, benefit };
       } catch (err) {
         mapBenefitError(err);
@@ -263,6 +275,11 @@ export const benefitsRouter = router({
 
   // ─── ESTUDIANTE — "Mis Beneficios" ──────────────────────────────────────────
 
+  // NUNCA incluye qrToken/qrTokenHash — es un LISTADO (ver informe de
+  // revisión de seguridad, punto 2): listUserBenefits ya los omite a nivel
+  // de BD (server/db/benefitsDb.ts), y aquí NO se reintroducen. El token en
+  // claro solo se revela desde getMyBenefit, de UN beneficio propio y
+  // únicamente cuando está realmente vigente ahora mismo.
   myBenefits: protectedProcedure.query(async ({ ctx }) => {
     const items = await listUserBenefits(ctx.user.id);
     return Promise.all(items.map(async (b) => {
@@ -276,6 +293,16 @@ export const benefitsRouter = router({
    * mostrable ahora mismo (status=active y dentro de [valid_from, valid_until])
    * — ver spec Fase 4, punto 26. Fuera de esa ventana, el frontend debe
    * mostrar "Disponible mañana"/fecha en vez de un código.
+   *
+   * OWNERSHIP: `benefit.userId !== ctx.user.id` rechaza con NOT_FOUND (no
+   * FORBIDDEN, para no confirmar a un usuario ajeno que el id existe) —
+   * este es el ÚNICO endpoint de todo el módulo que puede devolver el
+   * token en claro, y solo al dueño real del beneficio.
+   *
+   * Construcción EXPLÍCITA (sin spread de `benefit` completo + override
+   * posterior) a propósito — evita que un futuro campo nuevo en
+   * getUserBenefitWithDefinition() se filtre aquí sin pasar por esta
+   * decisión consciente.
    */
   getMyBenefit: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
@@ -287,8 +314,9 @@ export const benefitsRouter = router({
       const isCurrentlyValid = resolved.status === "active"
         && resolved.validFrom.getTime() <= now
         && (resolved.validUntil == null || resolved.validUntil.getTime() >= now);
+      const { qrToken: _qrToken, qrTokenHash: _qrTokenHash, ...safeBenefit } = benefit;
       return {
-        ...benefit,
+        ...safeBenefit,
         status: resolved.status,
         qrToken: isCurrentlyValid ? benefit.qrToken : null,
       };

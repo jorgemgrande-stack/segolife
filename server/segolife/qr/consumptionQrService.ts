@@ -36,6 +36,14 @@
  * igual que en Fase 3 (`benefitsUnlocked: []`) — este import es la ÚNICA
  * dependencia de Fase 4 en este archivo; el motor de Benefits en sí nunca
  * importa nada de este servicio (ver benefitRuleEngine.ts, cabecera).
+ *
+ * EVENTO `BenefitGranted` (ver benefitEvents.ts): se emite DESPUÉS de que
+ * `conn.transaction(...)` haya confirmado con éxito, nunca dentro — evita
+ * notificar una concesión que la propia transacción podría todavía
+ * revertir. `grantedForEvents` se rellena dentro del callback pero solo se
+ * recorre tras el `await` de la transacción; si esta lanza, el `catch` de
+ * más abajo intercepta el control de flujo antes de llegar al bucle de
+ * emisión — es intencional, no un olvido.
  */
 import crypto from "crypto";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -55,6 +63,7 @@ import { earnTokens, type TokenBreakdown } from "../tokens/tokenEngine";
 import { TokenEngineError } from "../tokens/tokenLedgerService";
 import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
 import { buildBenefitUnlockedSummaries, type BenefitUnlockedSummary } from "../benefits/benefitSummary";
+import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/benefitEvents";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 5 });
 const _db = drizzle(_pool);
@@ -314,6 +323,13 @@ export async function redeemConsumptionQr(input: RedeemQrInput, db?: DbHandle): 
     product = row;
   }
 
+  // Se rellena DENTRO de la transacción pero solo se usa para emitir
+  // BenefitGranted DESPUÉS de que `conn.transaction(...)` resuelva con
+  // éxito (ver más abajo) — si la transacción lanza, este array queda
+  // asignado pero nunca se recorre, así que nunca se emite un evento sobre
+  // una concesión que en realidad se revirtió. Ver benefitEvents.ts.
+  let grantedForEvents: Awaited<ReturnType<typeof evaluateBenefitsForOrigin>> = [];
+
   try {
     const engineResult = await conn.transaction(async (tx) => {
       const [updateResult] = await tx.update(consumptionQrCodes)
@@ -347,10 +363,19 @@ export async function redeemConsumptionQr(input: RedeemQrInput, db?: DbHandle): 
         ledgerId: result.ledger.id,
         occurredAt: result.ledger.createdAt,
       }, tx);
+      grantedForEvents = unlocked;
       const benefitsUnlocked = await buildBenefitUnlockedSummaries(unlocked, tx);
 
       return { ...result, benefitsUnlocked };
     });
+
+    // La transacción confirmó con éxito — ahora sí es seguro notificar. Si
+    // `conn.transaction(...)` hubiera lanzado, este bloque nunca se
+    // alcanza (el catch de más abajo captura el error antes) y
+    // `grantedForEvents` nunca se recorre, aunque ya estuviera asignado.
+    for (const g of grantedForEvents) {
+      emitBenefitGranted(buildBenefitGrantedPayload(g.userBenefit, g.definition));
+    }
 
     await logAttempt(conn, { qrId: qr.id, tokenFingerprint: codeHash, userId: input.userId, result: "success", ipAddress: input.ipAddress, userAgent: input.userAgent });
 

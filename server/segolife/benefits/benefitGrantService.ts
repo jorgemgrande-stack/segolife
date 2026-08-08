@@ -23,6 +23,19 @@
  * TOKEN QR — ver drizzle/schema.ts, comentario de user_benefits, para la
  * decisión de guardar el token en claro (a diferencia del QR de consumición
  * de Fase 3) y por qué es la elección correcta aquí.
+ *
+ * EVENTO DE DOMINIO `BenefitGranted` (ver benefitEvents.ts) — `grantBenefit`
+ * DELIBERADAMENTE no lo emite. Esta función puede ejecutarse dentro de una
+ * transacción abierta por otro módulo (p.ej. el canje de QR de consumición,
+ * que envuelve QR→earnTokens→evaluateBenefitsForOrigin→grantBenefit en una
+ * sola transacción) — emitir aquí significaría notificar una concesión que
+ * todavía podría revertirse si un paso posterior de esa misma transacción
+ * falla. El emisor real vive en el LLAMADOR de más alto nivel, justo
+ * DESPUÉS de que su transacción haya confirmado con éxito (ver
+ * server/segolife/qr/consumptionQrService.ts, redeemConsumptionQr, y
+ * server/routers/benefits.ts, manualGrant, como referencia). Esto es
+ * exactamente la semántica "no transaccional a propósito" documentada en
+ * benefitEvents.ts.
  */
 import crypto from "crypto";
 import { eq, and, gte, ne } from "drizzle-orm";
@@ -189,8 +202,15 @@ export async function hasGrantForOrigin(benefitRuleId: number, sourceType: strin
 
 // ─── EXPIRACIÓN PEREZOSA (sin cron, ver informe de fase) ───────────────────
 
-/** Si el beneficio está `active` pero ya pasó su valid_until, lo marca `expired` en este toque — mismo criterio que consumptionQrService.ts (Fase 3). */
-export async function expireBenefitIfNeeded(benefit: UserBenefit, db?: AnyDbHandle): Promise<UserBenefit> {
+/**
+ * Si el beneficio está `active` pero ya pasó su valid_until, lo marca
+ * `expired` en este toque — mismo criterio que consumptionQrService.ts
+ * (Fase 3). Genérico sobre `T` (solo exige id/status/validUntil) para poder
+ * recibir tanto la fila completa (getMyBenefit) como la forma "de listado"
+ * ya sin qrToken/qrTokenHash (myBenefits) sin forzar a nadie a rehidratar
+ * campos que no tiene ni necesita — ver server/db/benefitsDb.ts.
+ */
+export async function expireBenefitIfNeeded<T extends Pick<UserBenefit, "id" | "status" | "validUntil">>(benefit: T, db?: AnyDbHandle): Promise<T> {
   if (benefit.status !== "active" || !benefit.validUntil || benefit.validUntil.getTime() >= Date.now()) return benefit;
   const conn = db ?? (await getDb());
   await conn.update(userBenefits).set({ status: "expired" })

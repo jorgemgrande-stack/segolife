@@ -4491,6 +4491,22 @@ export type InsertBenefitRule = typeof benefitRules.$inferInsert;
 // idempotency_key (p.ej. "benefit_rule:12:consumption_qr:34:user:56") es
 // UNIQUE cuando no es null — impide conceder el mismo beneficio dos veces
 // ante un reintento, mismo patrón que token_ledger.idempotency_key.
+//
+// MVP security decision (revisión de cierre de Fase 4, confirmada, no
+// rehacer sin instrucción explícita nueva):
+// "the reusable benefit QR secret is persisted because the owner must be
+// able to retrieve it repeatedly during the validity window. It is
+// 256-bit random, single-use, time-bound and ownership-protected. Future
+// hardening may migrate the secret to encrypted-at-rest token storage
+// without changing the benefit domain."
+// Exposición auditada (ver server/db/benefitsDb.ts, UserBenefitSafeFields /
+// omitQrSecret y server/routers/benefits.ts, getMyBenefit): qr_token/
+// qr_token_hash NUNCA viajan en listados (admin, CRM, ficha de venue,
+// "Mis Beneficios" en lista), nunca en benefit_redemption_attempts (solo su
+// SHA-256 como token_fingerprint), nunca en metadata, nunca en logs. El
+// único punto de salida del valor en claro es getMyBenefit, y solo cuando
+// el que pregunta es el dueño real (userId de sesión) Y el beneficio está
+// vigente ahora mismo.
 
 export const userBenefits = mysqlTable("user_benefits", {
   id:                   int("id").autoincrement().primaryKey(),

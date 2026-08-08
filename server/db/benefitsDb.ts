@@ -134,7 +134,21 @@ export async function setBenefitRuleActive(id: number, active: boolean, db?: DbH
 
 // ─── USER_BENEFITS — admin "Concedidos" + CRM + estudiante ─────────────────
 
-export interface GrantedBenefitListItem extends UserBenefit {
+/**
+ * SEGURIDAD: `qrToken`/`qrTokenHash` se excluyen EXPLÍCITAMENTE del tipo de
+ * cualquier LISTADO (admin, CRM, ficha de venue) — ver informe de revisión
+ * de seguridad Fase 4, punto 2. El secreto en claro solo debe poder salir
+ * de `getUserBenefitWithDefinition` (un único beneficio, gateado por
+ * ownership en el router), nunca de una consulta que devuelve varias filas.
+ */
+type UserBenefitSafeFields = Omit<UserBenefit, "qrToken" | "qrTokenHash">;
+
+function omitQrSecret(row: UserBenefit): UserBenefitSafeFields {
+  const { qrToken: _qrToken, qrTokenHash: _qrTokenHash, ...safe } = row;
+  return safe;
+}
+
+export interface GrantedBenefitListItem extends UserBenefitSafeFields {
   definitionName: string;
   benefitType: string;
   studentName: string | null;
@@ -200,7 +214,7 @@ export async function listGrantedBenefits(filters: GrantedBenefitFilters, db?: D
   const venueNameById = new Map(venueRows.map(v => [v.id, v.name]));
 
   const items: GrantedBenefitListItem[] = rows.map(r => ({
-    ...r.ub,
+    ...omitQrSecret(r.ub),
     definitionName: r.def.name,
     benefitType: r.def.benefitType,
     studentName: r.student?.name ?? null,
@@ -211,20 +225,32 @@ export async function listGrantedBenefits(filters: GrantedBenefitFilters, db?: D
   return { items, total: countRows.length };
 }
 
+/** Forma "de listado" — SIN qrToken/qrTokenHash. Usada por myBenefits (varios beneficios a la vez). */
+export interface UserBenefitListItemWithDefinition extends UserBenefitSafeFields {
+  definition: BenefitDefinition;
+}
+
+/** Forma "de detalle" — SÍ incluye qrToken/qrTokenHash (fila completa). Solo debe usarla getUserBenefitWithDefinition, consumida por un único endpoint gateado por ownership (server/routers/benefits.ts, getMyBenefit). */
 export interface UserBenefitWithDefinition extends UserBenefit {
   definition: BenefitDefinition;
 }
 
-/** "Mis Beneficios" — estudiante, sus propios beneficios únicamente. */
-export async function listUserBenefits(userId: number, db?: DbHandle): Promise<UserBenefitWithDefinition[]> {
+/** "Mis Beneficios" — estudiante, sus propios beneficios únicamente. Listado: nunca lleva el secreto del QR. */
+export async function listUserBenefits(userId: number, db?: DbHandle): Promise<UserBenefitListItemWithDefinition[]> {
   const conn = db ?? (await getDb());
   const rows = await conn.select({ ub: userBenefits, def: benefitDefinitions }).from(userBenefits)
     .innerJoin(benefitDefinitions, eq(userBenefits.benefitDefinitionId, benefitDefinitions.id))
     .where(eq(userBenefits.userId, userId))
     .orderBy(desc(userBenefits.grantedAt));
-  return rows.map(r => ({ ...r.ub, definition: r.def }));
+  return rows.map(r => ({ ...omitQrSecret(r.ub), definition: r.def }));
 }
 
+/**
+ * Detalle de UN beneficio — incluye qrToken/qrTokenHash a propósito: es la
+ * única función que alimenta getMyBenefit, que decide si revelarlo o no
+ * (ownership + vigencia) ANTES de que llegue a la respuesta HTTP. No usar
+ * esta función para listados — para eso está listUserBenefits/listGrantedBenefits.
+ */
 export async function getUserBenefitWithDefinition(id: number, db?: DbHandle): Promise<UserBenefitWithDefinition | null> {
   const conn = db ?? (await getDb());
   const [row] = await conn.select({ ub: userBenefits, def: benefitDefinitions }).from(userBenefits)
