@@ -68,7 +68,7 @@ router.post(
       const ext = originalname.split(".").pop() || "jpg";
       const timestamp = Date.now();
       const random = Math.random().toString(36).substring(2, 8);
-      const key = `nayade/uploads/${timestamp}-${random}.${ext}`;
+      const key = `segolife/uploads/${timestamp}-${random}.${ext}`;
 
       const { url } = await storagePut(key, buffer, mimetype);
 
@@ -110,7 +110,7 @@ router.post(
       const ext = originalname.split(".").pop() || "jpg";
       const timestamp = Date.now();
       const random = Math.random().toString(36).substring(2, 8);
-      const key = `nayade/uploads/${timestamp}-${random}.${ext}`;
+      const key = `segolife/uploads/${timestamp}-${random}.${ext}`;
 
       const { url } = await storagePut(key, buffer, mimetype);
 
@@ -163,7 +163,7 @@ router.post("/api/upload-coupon", (req: Request, res: Response) => {
       const ext = originalname.split(".").pop() || "jpg";
       const timestamp = Date.now();
       const random = Math.random().toString(36).substring(2, 10);
-      const key = `nayade/coupons/${timestamp}-${random}.${ext}`;
+      const key = `segolife/coupons/${timestamp}-${random}.${ext}`;
       console.log(`[CouponUpload] Subiendo ${originalname} (${mimetype}, ${buffer.length} bytes) → ${key}`);
       const { url } = await storagePut(key, buffer, mimetype);
       console.log(`[CouponUpload] OK → ${url}`);
@@ -201,7 +201,7 @@ router.post(
       const ext = originalname.split(".").pop() || "jpg";
       const timestamp = Date.now();
       const random = Math.random().toString(36).substring(2, 10);
-      const key = `nayade/monitors/photos/${timestamp}-${random}.${ext}`;
+      const key = `segolife/monitors/photos/${timestamp}-${random}.${ext}`;
       const { url } = await storagePut(key, buffer, mimetype);
       res.json({ url, key });
     } catch (err: unknown) {
@@ -244,7 +244,7 @@ router.post(
       const ext = originalname.split(".").pop() || "bin";
       const timestamp = Date.now();
       const random = Math.random().toString(36).substring(2, 10);
-      const key = `nayade/monitors/docs/${timestamp}-${random}.${ext}`;
+      const key = `segolife/monitors/docs/${timestamp}-${random}.${ext}`;
       const { url } = await storagePut(key, buffer, mimetype);
       res.json({ url, key, filename: originalname });
     } catch (err: unknown) {
@@ -285,7 +285,7 @@ router.post(
         const ext = originalname.split(".").pop() || "pdf";
         const timestamp = Date.now();
         const random = Math.random().toString(36).substring(2, 10);
-        const key = `nayade/restaurants/menus/${timestamp}-${random}.${ext}`;
+        const key = `segolife/restaurants/menus/${timestamp}-${random}.${ext}`;
         const { url } = await storagePut(key, buffer, mimetype);
         res.json({ url, key, filename: originalname });
       } catch (e: unknown) {

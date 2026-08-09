@@ -48,7 +48,7 @@ async function localPut(
   await writeFile(filePath, data as Buffer);
   const base = (process.env.APP_URL ?? (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "")).replace(/\/+$/, "");
   const url = base ? `${base}/local-storage/${key}` : `/local-storage/${key}`;
-  console.warn(`[Storage] Sin S3/Forge — archivo guardado en ${filePath} (temporal, se perderá en el próximo deploy)`);
+  console.warn(`[Storage] Sin S3/Forge — archivo guardado en ${filePath} (persiste solo si este directorio está en un volumen montado; si no, se perderá en el próximo deploy)`);
   return { key, url };
 }
 
