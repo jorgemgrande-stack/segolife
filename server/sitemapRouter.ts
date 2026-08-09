@@ -21,7 +21,11 @@ import {
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const db = drizzle(_pool);
 
-const BASE_URL = "https://skicenter.es";
+// Fase 8.5 — corrección de cierre: apuntaba a "https://skicenter.es" (dominio
+// ajeno). El listado de páginas (hotel/spa/restaurantes) sigue siendo el
+// heredado de Náyade — pendiente de un sitemap propio de SEGOLIFE en una
+// fase futura — pero al menos ya no se publican URLs bajo un dominio ajeno.
+const BASE_URL = "https://segolife-production.up.railway.app";
 
 const STATIC_URLS: Array<{ path: string; changefreq: string; priority: string }> = [
   { path: "/",               changefreq: "weekly",  priority: "1.0" },

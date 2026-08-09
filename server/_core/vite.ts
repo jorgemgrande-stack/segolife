@@ -52,11 +52,19 @@ export async function setupVite(app: Express, server: Server) {
 // that crawlers (including Meta/WhatsApp) see route-specific title, description,
 // canonical and Open Graph tags without executing JavaScript.
 // Unknown routes fall back to the home-page meta defined in index.html itself.
-
-const BASE_URL = "https://skicenter.es";
-const CDN = "https://d2xsxph8kpxj0f.cloudfront.net/310519663410228097/AV298FS8t5SaTurBBRqhgQ/nayade/uploads";
-// Default OG image (Blob Jump – visually striking, brand-defining activity)
-const DEFAULT_OG_IMAGE = `${CDN}/1773762402377-dymd02.png`;
+//
+// Fase 8.5 — corrección de cierre: BASE_URL apuntaba a "https://skicenter.es"
+// (dominio ajeno) y SEO_ROUTES tenía título/descripción/imagen de Náyade
+// Experiences para "/" y para páginas legacy (experiencias/restaurantes/
+// hotel/spa/contacto) que ya no forman parte de la app activa de SEGOLIFE.
+// Como express.static() sirve dist/public/index.html directamente para "/"
+// (nunca llega a este middleware), esto NO afectaba a la home, pero SÍ a
+// TODAS las demás rutas — incluidas /ie, /uva, /login — que heredaban título,
+// canonical y Open Graph de Náyade. Sin rutas propias de SEGOLIFE todavía
+// definidas aquí, el fallback neutro (mismo texto que client/index.html) es
+// la opción correcta — no se inventan textos/imágenes de marca nuevos.
+const BASE_URL = "https://segolife-production.up.railway.app";
+const DEFAULT_OG_IMAGE = "/icons/segolife-icon.svg";
 
 interface RouteMeta {
   title: string;
@@ -66,46 +74,15 @@ interface RouteMeta {
   image?: string;
 }
 
+const SEGOLIFE_DEFAULT_META: RouteMeta = {
+  title: "SEGOLIFE — Your student life in Segovia",
+  description: "Discover events, venues, rewards and student life in Segovia with SEGOLIFE.",
+  h1: "SEGOLIFE",
+  body: "Discover events, venues, rewards and student life in Segovia.",
+};
+
 const SEO_ROUTES: Record<string, RouteMeta> = {
-  "/": {
-    title: "Náyade Experiences | Actividades, Spa, Hotel y Restaurantes en Segovia",
-    description: "Náyade Experiences ofrece actividades, experiencias acuáticas, spa, hotel y restauración en Los Ángeles de San Rafael, Segovia.",
-    h1: "Náyade Experiences",
-    body: "Actividades, experiencias, restauración y ocio en Los Ángeles de San Rafael, Segovia.",
-    image: `${CDN}/1773702396972-kd9hrk.png`,
-  },
-  "/experiencias": {
-    title: "Experiencias y Actividades | Náyade Experiences",
-    description: "Descubre todas las experiencias y actividades: deportes, aventura, bienestar y más en Los Ángeles de San Rafael, Segovia.",
-    h1: "Experiencias y Actividades",
-    body: "Explora nuestra selección de experiencias y actividades en Los Ángeles de San Rafael.",
-    image: `${CDN}/1773766863713-7gry6r.jpg`,
-  },
-  "/restaurantes": {
-    title: "Restaurantes | Náyade Experiences",
-    description: "Restaurantes de Náyade Experiences en Los Ángeles de San Rafael. Cocina con productos locales y menús de temporada.",
-    h1: "Restaurantes",
-    body: "Gastronomía y restauración en Los Ángeles de San Rafael, Segovia.",
-  },
-  "/hotel": {
-    title: "Hotel | Náyade Experiences",
-    description: "Alójate en el hotel de Náyade Experiences en Los Ángeles de San Rafael, Segovia. Habitaciones con encanto en plena naturaleza.",
-    h1: "Hotel",
-    body: "Alojamiento con encanto en Los Ángeles de San Rafael, Segovia.",
-  },
-  "/spa": {
-    title: "Spa y Bienestar | Náyade Experiences",
-    description: "Spa y tratamientos de bienestar en Los Ángeles de San Rafael, Segovia. Relax en plena naturaleza.",
-    h1: "Spa y Bienestar",
-    body: "Tratamientos, masajes y bienestar en Los Ángeles de San Rafael, Segovia.",
-    image: `${CDN}/1773867774581-gde9k3.png`,
-  },
-  "/contacto": {
-    title: "Contacto | Náyade Experiences",
-    description: "Contacta con Náyade Experiences en Los Ángeles de San Rafael, Segovia. Reservas, información y atención al cliente.",
-    h1: "Contacto",
-    body: "Ponte en contacto con nosotros para reservas e información.",
-  },
+  "/": SEGOLIFE_DEFAULT_META,
 };
 
 function resolveRouteMeta(pathname: string): { meta: RouteMeta; canonical: string } {
@@ -119,8 +96,8 @@ function resolveRouteMeta(pathname: string): { meta: RouteMeta; canonical: strin
   if (SEO_ROUTES[parent]) {
     return { meta: SEO_ROUTES[parent], canonical: `${BASE_URL}${parent}` };
   }
-  // Default: home meta, canonical = requested URL
-  return { meta: SEO_ROUTES["/"], canonical: `${BASE_URL}${pathname}` };
+  // Default: neutral SEGOLIFE meta, canonical = requested URL
+  return { meta: SEGOLIFE_DEFAULT_META, canonical: `${BASE_URL}${pathname}` };
 }
 
 // Cache the built index.html so we only read it from disk once per process.
