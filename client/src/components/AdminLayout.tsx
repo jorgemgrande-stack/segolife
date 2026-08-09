@@ -30,17 +30,19 @@ const navItems = [
     roles: ["admin", "agente", "monitor"],
   },
   {
-    // Slideshow/Módulos Home/Menús/Páginas/Multimedia ocultos del nav (audit
-    // de cierre de Fase 8.5): solo alimentan Home.tsx y módulos legacy
-    // (Hotel/Restaurantes/SPA/Páginas genéricas) que ya no se montan en
-    // ninguna ruta activa de SEGOLIFE — nada real que gestionar ahí hoy.
-    // Código, rutas y tablas de BD intactos, solo se ocultan del menú.
+    // Slideshow/Módulos Home/Menús/Páginas siguen ocultos (audit de cierre de
+    // Fase 8.5: solo alimentan Home.tsx y módulos legacy desconectados de
+    // toda ruta activa). Multimedia se restaura a petición explícita del
+    // usuario — es la biblioteca genérica de subida de imágenes, usada como
+    // utilidad general más allá de Galería. Código, rutas y tablas de BD de
+    // las que siguen ocultas están intactos, solo se ocultan del menú.
     label: "CMS",
     href: "/admin/cms/galeria",
     icon: Image,
     roles: ["admin"],
     children: [
       { label: "Galería", href: "/admin/cms/galeria" },
+      { label: "Multimedia", href: "/admin/cms/multimedia" },
     ],
   },
   {
