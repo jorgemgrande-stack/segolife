@@ -43,8 +43,11 @@ export default function CookieBanner() {
   // Náyade desentonaba con el diseño claro tipo app (ver revisión visual).
   // Fase 8.5: "/" pasó a ser la Home pública de Segolife (antes no era ruta
   // de ninguna comunidad, por eso isPotentialCommunityRequest no la cubría)
-  // — se comprueba aparte para que también reciba el banner claro.
-  const isSegolife = location === "/" || isPotentialCommunityRequest({
+  // — se comprueba aparte, junto con las páginas de login/legales/auth que
+  // en el cierre de Fase 8.5 se rebrandearon a SEGOLIFE (antes mostraban
+  // marca Náyade y por tanto no importaba que el banner tampoco encajara).
+  const SEGOLIFE_EXTRA_ROUTES = ["/login", "/recuperar-contrasena", "/nueva-contrasena", "/establecer-contrasena", "/privacidad", "/cookies"];
+  const isSegolife = location === "/" || SEGOLIFE_EXTRA_ROUTES.includes(location) || isPotentialCommunityRequest({
     pathname: location,
     hostname: typeof window !== "undefined" ? window.location.hostname : undefined,
   });
