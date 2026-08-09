@@ -1,6 +1,7 @@
 INSERT IGNORE INTO `system_settings` (`key`, `value`, `value_type`, `category`, `label`, `description`, `is_sensitive`, `is_public`) VALUES
   ('segolife_brand_name', 'SEGOLIFE', 'string', 'branding', 'Nombre de marca SEGOLIFE', 'Nombre de marca mostrado en el panel admin y pantallas del producto SEGOLIFE — separado a propósito de "brand_name" (heredado de Náyade, aún usado por email/facturas legacy).', false, true),
   ('segolife_brand_logo_url', '/icons/segolife-icon.svg', 'string', 'branding', 'Logo SEGOLIFE', 'Logo mostrado en el panel admin y pantallas del producto SEGOLIFE — separado a propósito de "brand_logo_url" (heredado de Náyade).', false, true);
+--> statement-breakpoint
 
 -- El mensaje de mantenimiento (MaintenanceNotice.tsx) envuelve TODA la app,
 -- incluidas las rutas /ie /uva de Segolife — si algún día se activa el modo
