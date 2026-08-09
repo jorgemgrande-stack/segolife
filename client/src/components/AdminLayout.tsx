@@ -30,16 +30,16 @@ const navItems = [
     roles: ["admin", "agente", "monitor"],
   },
   {
+    // Slideshow/Módulos Home/Menús/Páginas/Multimedia ocultos del nav (audit
+    // de cierre de Fase 8.5): solo alimentan Home.tsx y módulos legacy
+    // (Hotel/Restaurantes/SPA/Páginas genéricas) que ya no se montan en
+    // ninguna ruta activa de SEGOLIFE — nada real que gestionar ahí hoy.
+    // Código, rutas y tablas de BD intactos, solo se ocultan del menú.
     label: "CMS",
-    href: "/admin/cms",
+    href: "/admin/cms/galeria",
     icon: Image,
     roles: ["admin"],
     children: [
-      { label: "Slideshow", href: "/admin/cms/slideshow" },
-      { label: "Módulos Home", href: "/admin/cms/modulos-home" },
-      { label: "Menús", href: "/admin/cms/menus" },
-      { label: "Páginas", href: "/admin/cms/paginas" },
-      { label: "Multimedia", href: "/admin/cms/multimedia" },
       { label: "Galería", href: "/admin/cms/galeria" },
     ],
   },
