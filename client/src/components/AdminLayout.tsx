@@ -405,9 +405,15 @@ function AdminLayoutInner({ children, title }: AdminLayoutProps) {
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
-  const LOGO_FALLBACK = "https://d2xsxph8kpxj0f.cloudfront.net/310519663410228097/AV298FS8t5SaTurBBRqhgQ/nayade_blue_e9563f49.png";
-  const brandLogo = publicSettings?.brand_logo_url || LOGO_FALLBACK;
-  const brandName = publicSettings?.brand_name || "Admin";
+  // Fase 8.5 — el admin SEGOLIFE usa sus PROPIAS claves de marca
+  // (segolife_brand_name/segolife_brand_logo_url, ver migración
+  // 0136_segolife_brand_settings.sql), nunca brand_name/brand_logo_url
+  // (heredado de Náyade, todavía leído por email/facturas legacy — no se
+  // toca esa fila para no romper ese código apagado). El fallback nunca es
+  // Náyade bajo ninguna circunstancia, incluso si la fila aún no existe.
+  const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
+  const brandLogo = publicSettings?.segolife_brand_logo_url || SEGOLIFE_LOGO_FALLBACK;
+  const brandName = publicSettings?.segolife_brand_name || "SEGOLIFE";
 
   // Feature flags — used to hide nav items for disabled modules.
   // Defaults to showing all items when flags are not yet loaded (safe fallback).

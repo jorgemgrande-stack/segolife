@@ -6,8 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CheckCircle, Eye, EyeOff, Lock, AlertCircle, Loader2 } from "lucide-react";
 
-// Náyade logo URL (blue version)
-const LOGO_URL = "https://cdn-biz.manus.space/biz-file/c1/AV298FS8t5SaTurBBRqhgQ/1741956872-nayade_logo_azul.jpg";
+// Fase 8.5 — pantalla de activación genérica (server/inviteEmail.ts la
+// enlaza para cualquier rol invitado, no solo admin legacy) — nunca marca
+// heredada.
+const LOGO_URL = "/icons/segolife-icon.svg";
 
 export default function SetPassword() {
   const [, setLocation] = useLocation();
@@ -119,9 +121,8 @@ export default function SetPassword() {
       <div className="bg-white rounded-2xl shadow-2xl overflow-hidden max-w-md w-full">
         {/* Header */}
         <div className="bg-gradient-to-r from-blue-900 to-blue-700 px-8 py-6 text-center">
-          <img src={LOGO_URL} alt="Náyade Experiences" className="h-14 w-14 rounded-full mx-auto mb-3 object-cover border-2 border-white/30" />
-          <div className="text-white font-bold text-lg tracking-wide">NÁYADE</div>
-          <div className="text-blue-200 text-xs tracking-widest uppercase">Experiences</div>
+          <img src={LOGO_URL} alt="SEGOLIFE" className="h-14 w-14 rounded-full mx-auto mb-3 object-cover border-2 border-white/30" />
+          <div className="text-white font-bold text-lg tracking-wide">SEGOLIFE</div>
         </div>
 
         {/* Form */}
@@ -131,7 +132,7 @@ export default function SetPassword() {
             <h2 className="text-xl font-bold text-gray-900">Establece tu contraseña</h2>
           </div>
           <p className="text-sm text-gray-500 mb-6">
-            Crea una contraseña segura para acceder al panel de Náyade Experiences.
+            Crea una contraseña segura para acceder a tu cuenta.
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">

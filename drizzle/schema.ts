@@ -1226,6 +1226,10 @@ export const galleryItems = mysqlTable("gallery_items", {
   fileKey: varchar("fileKey", { length: 512 }).notNull(),
   title: varchar("title", { length: 256 }).default(""),
   category: varchar("category", { length: 128 }).notNull().default("General"),
+  // Fase 8.5 — asociación media↔venue mínima (sin FK real, mismo criterio que
+  // el resto del schema heredado): nullable a propósito, una foto de galería
+  // puede no pertenecer a ningún local concreto (foto general de Segovia).
+  venueId: int("venueId"),
   sortOrder: int("sortOrder").notNull().default(0),
   isActive: boolean("isActive").notNull().default(true),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

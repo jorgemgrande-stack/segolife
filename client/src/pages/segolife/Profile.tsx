@@ -9,6 +9,7 @@ import { useCommunity } from "@/contexts/CommunityContext";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { isSupportedLocale, type SupportedLocale } from "@/lib/i18n";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
+import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -177,7 +178,7 @@ export default function Profile() {
 
   return (
     <SegolifeAppShell requireAuth title={t("profile.title")}>
-      <div className="mx-auto max-w-md space-y-7 px-4 py-5">
+      <SegolifePageContainer className="space-y-7">
         <div className="flex items-center gap-4">
           <Avatar className="size-16">
             <AvatarFallback className="text-lg font-semibold text-foreground">
@@ -357,7 +358,7 @@ export default function Profile() {
             <LogOut className="size-4" aria-hidden="true" /> {t("profile.logout")}
           </Button>
         </section>
-      </div>
+      </SegolifePageContainer>
     </SegolifeAppShell>
   );
 }

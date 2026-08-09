@@ -5,6 +5,7 @@ import { ChevronLeft, CalendarDays, Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
+import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
@@ -43,14 +44,14 @@ export default function TicketDetail() {
   if (!ticket) {
     return (
       <SegolifeAppShell requireAuth hideNav title={t("ticketing.myTicketsTitle")}>
-        <div className="mx-auto max-w-md px-4 py-5 text-center text-sm text-muted-foreground">{t("eventDetail.notFoundTitle")}</div>
+        <SegolifePageContainer className="text-center text-sm text-muted-foreground">{t("eventDetail.notFoundTitle")}</SegolifePageContainer>
       </SegolifeAppShell>
     );
   }
 
   return (
     <SegolifeAppShell requireAuth hideNav title={ticket.event?.name}>
-      <div className="mx-auto max-w-md px-4 py-5">
+      <SegolifePageContainer>
         <Button variant="ghost" size="sm" className="-ml-2 mb-2" onClick={() => navigate(`/${slug}/tickets`)}>
           <ChevronLeft className="mr-1 size-4" aria-hidden="true" /> {t("common.back")}
         </Button>
@@ -81,7 +82,7 @@ export default function TicketDetail() {
             <p className="text-sm font-medium text-foreground">{t(STATUS_KEY[ticket.status] ?? ticket.status)}</p>
           </div>
         )}
-      </div>
+      </SegolifePageContainer>
     </SegolifeAppShell>
   );
 }

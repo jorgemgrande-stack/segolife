@@ -1,4 +1,4 @@
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, and } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { galleryItems, type GalleryItem, type NewGalleryItem } from "../drizzle/schema";
@@ -9,18 +9,21 @@ import { galleryItems, type GalleryItem, type NewGalleryItem } from "../drizzle/
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
 const _db = drizzle(_pool);
 
-async function getDb() {
+type DbHandle = typeof _db;
+
+async function getDb(): Promise<DbHandle> {
   return _db;
 }
 
 // ── Public ────────────────────────────────────────────────────────────────────
 
-export async function getActiveGalleryItems(): Promise<GalleryItem[]> {
-  const db = await getDb();
-  return db
+/** `db` inyectable (Fase 8.5, filtro venueId) — testeable sin conexión real, mismo patrón que server/segolife/**\/*.ts. */
+export async function getActiveGalleryItems(venueId?: number, db?: DbHandle): Promise<GalleryItem[]> {
+  const conn = db ?? (await getDb());
+  return conn
     .select()
     .from(galleryItems)
-    .where(eq(galleryItems.isActive, true))
+    .where(venueId != null ? and(eq(galleryItems.isActive, true), eq(galleryItems.venueId, venueId)) : eq(galleryItems.isActive, true))
     .orderBy(asc(galleryItems.sortOrder), asc(galleryItems.createdAt));
 }
 

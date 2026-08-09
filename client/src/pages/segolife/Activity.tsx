@@ -5,6 +5,7 @@ import { ChevronLeft, Coins, Gift, CheckCircle2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
+import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
 import { SegolifeRowSkeleton } from "@/components/segolife/SegolifeSkeletons";
 import { Button } from "@/components/ui/button";
@@ -99,7 +100,7 @@ export default function Activity() {
 
   return (
     <SegolifeAppShell requireAuth hideNav title={t("activity.title")}>
-      <div className="mx-auto max-w-md px-4 py-5">
+      <SegolifePageContainer>
         <Button variant="ghost" size="sm" className="-ml-2 mb-2" onClick={() => navigate(`/${slug}/profile`)}>
           <ChevronLeft className="mr-1 size-4" aria-hidden="true" /> {t("common.back")}
         </Button>
@@ -137,7 +138,7 @@ export default function Activity() {
             ))}
           </div>
         )}
-      </div>
+      </SegolifePageContainer>
     </SegolifeAppShell>
   );
 }

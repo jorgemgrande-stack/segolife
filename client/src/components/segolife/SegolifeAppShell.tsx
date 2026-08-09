@@ -1,12 +1,14 @@
 import { useEffect, type ReactNode } from "react";
+import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
-import { Loader2, MapPinOff } from "lucide-react";
+import { Loader2, MapPinOff, Bell, User as UserIcon } from "lucide-react";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
 import { SegolifeHeader } from "./SegolifeHeader";
 import { SegolifeBottomNav } from "./SegolifeBottomNav";
+import { SegolifeSidebar } from "./SegolifeSidebar";
 import { SegolifeEmptyState } from "./SegolifeEmptyState";
 
 /**
@@ -102,14 +104,63 @@ export function SegolifeAppShell({
   // separado aunque en la práctica van siempre juntos).
   if (!slug) return null;
 
+  // Fase 8.5 — shell responsive: <1200px conserva exactamente el shell mobile
+  // ya validado (header superior + bottom nav, "protected experience", spec
+  // "no reinterpretar visualmente mobile"). >=1200px sustituye ambos por un
+  // sidebar fijo (mismo `slug`, ningún shell paralelo por comunidad) — el QR
+  // deja de ser un FAB elevado y pasa a ser un ítem más de navegación, sin la
+  // restricción de alcance del pulgar que justificaba el diseño mobile.
   return (
-    <div className="segolife-theme flex min-h-dvh flex-col">
-      <SegolifeHeader slug={slug} availableLocales={availableLocales} unreadCount={unreadCount ?? 0} />
-      {/* pb-32: pb-24 dejaba el último elemento de páginas largas (ej. "Log
-          out" en Profile) tocando el bottom nav en el punto de scroll máximo
-          — visto en revisión visual real, no solo margen visual de sobra. */}
-      <main className={hideNav ? "flex-1" : "flex-1 pb-32"}>{children}</main>
-      {!hideNav && <SegolifeBottomNav slug={slug} benefitsBadge={!!homeSummary?.activeBenefit} />}
+    <div className="segolife-theme flex min-h-dvh flex-col xl:flex-row">
+      {!hideNav && <SegolifeSidebar slug={slug} benefitsBadge={!!homeSummary?.activeBenefit} />}
+      <div className="flex min-w-0 flex-1 flex-col xl:pl-64">
+        <div className="xl:hidden">
+          <SegolifeHeader slug={slug} availableLocales={availableLocales} unreadCount={unreadCount ?? 0} />
+        </div>
+        {!hideNav && <SegolifeDesktopTopBar slug={slug} unreadCount={unreadCount ?? 0} />}
+        {/* pb-32: pb-24 dejaba el último elemento de páginas largas (ej. "Log
+            out" en Profile) tocando el bottom nav en el punto de scroll máximo
+            — visto en revisión visual real, no solo margen visual de sobra.
+            xl:pb-0 — sin bottom nav que despejar en desktop. */}
+        <main className={hideNav ? "flex-1" : "flex-1 pb-32 xl:pb-12"}>{children}</main>
+        {!hideNav && (
+          <div className="xl:hidden">
+            <SegolifeBottomNav slug={slug} benefitsBadge={!!homeSummary?.activeBenefit} />
+          </div>
+        )}
+      </div>
     </div>
+  );
+}
+
+/**
+ * Top bar de escritorio — solo notificaciones + perfil (el resto del header
+ * mobile, logo y wordmark, ya vive en el sidebar fijo, repetirlo aquí sería
+ * ruido). Visible únicamente junto al sidebar (>=1200px).
+ */
+function SegolifeDesktopTopBar({ slug, unreadCount }: { slug: string; unreadCount: number }) {
+  const { t } = useTranslation();
+  return (
+    <header className="hidden h-16 items-center justify-end gap-3 border-b border-border px-8 xl:flex">
+      <Link
+        href={`/${slug}/notifications`}
+        aria-label={t("notifications.bellLabel")}
+        className="relative flex size-9 items-center justify-center rounded-full bg-secondary text-secondary-foreground transition-colors hover:bg-secondary/70"
+      >
+        <Bell className="size-4" aria-hidden="true" />
+        {unreadCount > 0 && (
+          <span className="absolute -right-0.5 -top-0.5 flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-accent px-0.5 text-[9px] font-bold leading-none text-white">
+            {unreadCount > 99 ? "99+" : unreadCount}
+          </span>
+        )}
+      </Link>
+      <Link
+        href={`/${slug}/profile`}
+        aria-label="Profile"
+        className="flex size-9 items-center justify-center rounded-full bg-secondary text-secondary-foreground transition-colors hover:bg-secondary/70"
+      >
+        <UserIcon className="size-4" aria-hidden="true" />
+      </Link>
+    </header>
   );
 }

@@ -5,6 +5,7 @@ import { ChevronLeft, Clock, Gift } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
+import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { SegolifeImage } from "@/components/segolife/SegolifeImage";
 import { SegolifeErrorState } from "@/components/segolife/SegolifeErrorState";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,7 @@ export default function BenefitDetail() {
 
   return (
     <SegolifeAppShell requireAuth hideNav title={t("benefits.myTitle")}>
-      <div className="mx-auto max-w-md px-4 py-5">
+      <SegolifePageContainer>
         <Button variant="ghost" size="sm" className="-ml-2 mb-2" onClick={() => navigate(`/${slug}/rewards`)}>
           <ChevronLeft className="mr-1 size-4" aria-hidden="true" /> {t("common.back")}
         </Button>
@@ -105,7 +106,7 @@ export default function BenefitDetail() {
             )}
           </div>
         )}
-      </div>
+      </SegolifePageContainer>
     </SegolifeAppShell>
   );
 }

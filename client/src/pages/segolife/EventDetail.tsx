@@ -8,6 +8,7 @@ import { useCommunity } from "@/contexts/CommunityContext";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
+import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { SegolifeImage } from "@/components/segolife/SegolifeImage";
 import { SegolifeErrorState } from "@/components/segolife/SegolifeErrorState";
 import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
@@ -66,7 +67,7 @@ export default function EventDetail() {
 
   return (
     <SegolifeAppShell hideNav title={data?.event.name}>
-      <div className="mx-auto max-w-md px-4 py-5">
+      <SegolifePageContainer>
         <Button variant="ghost" size="sm" className="-ml-2 mb-2" onClick={() => navigate(`/${slug}/explore`)}>
           <ChevronLeft className="mr-1 size-4" aria-hidden="true" /> {t("eventDetail.backToExplore")}
         </Button>
@@ -214,7 +215,7 @@ export default function EventDetail() {
             )}
           </div>
         )}
-      </div>
+      </SegolifePageContainer>
     </SegolifeAppShell>
   );
 }

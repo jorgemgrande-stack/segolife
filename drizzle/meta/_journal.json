@@ -939,6 +939,20 @@
       "when": 1779224820206,
       "tag": "0134_fix_legacy_schema_drift",
       "breakpoints": true
+    },
+    {
+      "idx": 134,
+      "version": "5",
+      "when": 1779224821206,
+      "tag": "0135_gallery_venue_association",
+      "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "5",
+      "when": 1779224822206,
+      "tag": "0136_segolife_brand_settings",
+      "breakpoints": true
     }
   ]
 }

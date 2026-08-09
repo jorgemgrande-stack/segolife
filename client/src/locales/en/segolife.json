@@ -1,5 +1,73 @@
 {
   "brand": "Segolife",
+  "publicHome": {
+    "nav": {
+      "join": "Join SEGOLIFE",
+      "login": "I have an account"
+    },
+    "hero": {
+      "eyebrow": "Segovia · Student life",
+      "titleLine1": "Your city.",
+      "titleLine2": "Your people.",
+      "titleLine3": "Your plans.",
+      "subtitle": "Events, venues, benefits and everything happening in your student life in Segovia.",
+      "ctaPrimary": "Join SEGOLIFE",
+      "ctaSecondary": "I have an account"
+    },
+    "events": {
+      "title": "What's happening",
+      "subtitle": "Upcoming plans in Segovia",
+      "empty": "No events published yet. Check back soon.",
+      "priceFrom": "From {{price}}",
+      "free": "Free",
+      "seeAll": "See all"
+    },
+    "tonight": {
+      "title": "Tonight in Segovia",
+      "subtitle": "The venues where it's all happening",
+      "empty": "We're onboarding Segovia's venues. Check back soon."
+    },
+    "explainer": {
+      "title": "Your student life, in one place",
+      "events": { "title": "Events", "desc": "Discover your community's plans, from parties to activities." },
+      "tickets": { "title": "Tickets", "desc": "Buy your ticket and keep it on your phone, ready for entry." },
+      "rewards": { "title": "Rewards", "desc": "Earn SegoTokens for living your city, redeem them for benefits." },
+      "venues": { "title": "Venues", "desc": "The classics and the new spots, all on the same map." },
+      "benefits": { "title": "Benefits", "desc": "Exclusive discounts and perks for students in your community." },
+      "community": { "title": "Community", "desc": "Connect with your university and with the rest of Segovia." }
+    },
+    "communities": {
+      "title": "A community for every university",
+      "subtitle": "SEGOLIFE adapts to your university — same product, your context.",
+      "cta": "Enter"
+    },
+    "rewards": {
+      "title": "SegoTokens",
+      "subtitle": "Discover. Go. Earn. Unlock.",
+      "discover": "Discover",
+      "discoverDesc": "Find events and venues in your city.",
+      "go": "Go",
+      "goDesc": "Live the plans of your student life.",
+      "earn": "Earn",
+      "earnDesc": "Rack up SegoTokens for your activity.",
+      "unlock": "Unlock",
+      "unlockDesc": "Redeem exclusive benefits and perks."
+    },
+    "finalCta": {
+      "title": "Segovia is better when you know what's happening.",
+      "subtitle": "Join SEGOLIFE",
+      "cta": "Join SEGOLIFE"
+    },
+    "footer": {
+      "tagline": "The digital meeting point for student life in Segovia.",
+      "communities": "Communities",
+      "product": "Product",
+      "explore": "Explore",
+      "rewards": "Rewards",
+      "login": "Log in",
+      "rights": "All rights reserved."
+    }
+  },
   "communityHome": {
     "poweredBy": "Powered by Segolife",
     "communityLabel": "Community",
@@ -183,6 +251,7 @@
     "home": "Home",
     "explore": "Explore",
     "scan": "Scan",
+    "tickets": "Tickets",
     "rewards": "Rewards",
     "profile": "Profile"
   },

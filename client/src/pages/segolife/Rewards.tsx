@@ -4,6 +4,7 @@ import { Gift, Coins, ChevronRight, Clock } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
+import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
 import { SegolifeRowSkeleton } from "@/components/segolife/SegolifeSkeletons";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -148,7 +149,7 @@ export default function Rewards() {
 
   return (
     <SegolifeAppShell requireAuth title={t("rewards.title")}>
-      <div className="mx-auto max-w-md space-y-4 px-4 py-5">
+      <SegolifePageContainer className="space-y-4">
         <h1 className="text-xl font-semibold text-foreground">{t("rewards.title")}</h1>
         <Tabs defaultValue={defaultTab}>
           <TabsList className="w-full">
@@ -158,7 +159,7 @@ export default function Rewards() {
           <TabsContent value="spend" className="mt-4"><SpendTab /></TabsContent>
           <TabsContent value="benefits" className="mt-4">{slug && <BenefitsTab slug={slug} />}</TabsContent>
         </Tabs>
-      </div>
+      </SegolifePageContainer>
     </SegolifeAppShell>
   );
 }

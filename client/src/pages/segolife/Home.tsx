@@ -4,6 +4,7 @@ import { Coins, Gift, ChevronRight, Flame, Sparkles, PartyPopper } from "lucide-
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
+import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { SegolifeEventCard } from "@/components/segolife/SegolifeEventCard";
 import { SegolifeVenueCard } from "@/components/segolife/SegolifeVenueCard";
 import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
@@ -38,7 +39,7 @@ export default function Home() {
 
   return (
     <SegolifeAppShell requireAuth title={t("home.tonightTitle")}>
-      <div className="mx-auto max-w-md space-y-7 px-4 py-5">
+      <SegolifePageContainer className="space-y-7">
         <div>
           <p className="text-xl font-semibold text-foreground">{greeting}{firstName ? `, ${firstName}` : ""}</p>
           {community?.name && <p className="text-sm text-muted-foreground">{community.name}</p>}
@@ -167,7 +168,7 @@ export default function Home() {
         >
           <Gift className="size-4" aria-hidden="true" /> {t("home.scanCta")}
         </Link>
-      </div>
+      </SegolifePageContainer>
     </SegolifeAppShell>
   );
 }

@@ -1,5 +1,73 @@
 {
   "brand": "Segolife",
+  "publicHome": {
+    "nav": {
+      "join": "Únete a SEGOLIFE",
+      "login": "Ya tengo cuenta"
+    },
+    "hero": {
+      "eyebrow": "Segovia · Vida universitaria",
+      "titleLine1": "Tu ciudad.",
+      "titleLine2": "Tu gente.",
+      "titleLine3": "Tus planes.",
+      "subtitle": "Eventos, locales, beneficios y todo lo que pasa en tu vida universitaria en Segovia.",
+      "ctaPrimary": "Únete a SEGOLIFE",
+      "ctaSecondary": "Ya tengo cuenta"
+    },
+    "events": {
+      "title": "Lo que se cuece",
+      "subtitle": "Próximos planes en Segovia",
+      "empty": "Todavía no hay eventos publicados. Vuelve pronto.",
+      "priceFrom": "Desde {{price}}",
+      "free": "Gratis",
+      "seeAll": "Ver todos"
+    },
+    "tonight": {
+      "title": "Esta noche en Segovia",
+      "subtitle": "Los locales donde va a pasar todo",
+      "empty": "Estamos incorporando los locales de Segovia. Vuelve pronto."
+    },
+    "explainer": {
+      "title": "Tu vida universitaria, en un solo sitio",
+      "events": { "title": "Eventos", "desc": "Descubre los planes de tu comunidad, desde fiestas hasta actividades." },
+      "tickets": { "title": "Entradas", "desc": "Compra tu entrada y guárdala en el móvil, lista para el acceso." },
+      "rewards": { "title": "Rewards", "desc": "Gana SegoTokens por vivir tu ciudad y canjéalos por beneficios." },
+      "venues": { "title": "Locales", "desc": "Los sitios de siempre y los nuevos, todos en un mismo mapa." },
+      "benefits": { "title": "Beneficios", "desc": "Descuentos y ventajas exclusivas para estudiantes de tu comunidad." },
+      "community": { "title": "Comunidad", "desc": "Conecta con tu universidad y con el resto de Segovia." }
+    },
+    "communities": {
+      "title": "Una comunidad para cada universidad",
+      "subtitle": "SEGOLIFE se adapta a tu universidad — mismo producto, tu contexto.",
+      "cta": "Entrar"
+    },
+    "rewards": {
+      "title": "SegoTokens",
+      "subtitle": "Descubre. Ve. Gana. Desbloquea.",
+      "discover": "Descubre",
+      "discoverDesc": "Encuentra eventos y locales en tu ciudad.",
+      "go": "Ve",
+      "goDesc": "Vive los planes de tu vida universitaria.",
+      "earn": "Gana",
+      "earnDesc": "Suma SegoTokens por tu actividad.",
+      "unlock": "Desbloquea",
+      "unlockDesc": "Canjea beneficios y ventajas exclusivas."
+    },
+    "finalCta": {
+      "title": "Segovia es mejor cuando sabes qué está pasando.",
+      "subtitle": "Únete a SEGOLIFE",
+      "cta": "Únete a SEGOLIFE"
+    },
+    "footer": {
+      "tagline": "El punto de encuentro digital de la vida universitaria en Segovia.",
+      "communities": "Comunidades",
+      "product": "Producto",
+      "explore": "Explorar",
+      "rewards": "Rewards",
+      "login": "Iniciar sesión",
+      "rights": "Todos los derechos reservados."
+    }
+  },
   "communityHome": {
     "poweredBy": "Con la tecnología de Segolife",
     "communityLabel": "Comunidad",
@@ -183,6 +251,7 @@
     "home": "Inicio",
     "explore": "Explorar",
     "scan": "Escanear",
+    "tickets": "Entradas",
     "rewards": "Recompensas",
     "profile": "Perfil"
   },

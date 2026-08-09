@@ -4,6 +4,7 @@ import { Search, CalendarDays, Store } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
+import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { SegolifeEventCard } from "@/components/segolife/SegolifeEventCard";
 import { SegolifeVenueCard } from "@/components/segolife/SegolifeVenueCard";
 import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
@@ -87,7 +88,7 @@ function EventsTab({ slug, communityId, search }: { slug: string; communityId?: 
 
   return (
     <div className="space-y-4">
-      <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
+      <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-wrap md:overflow-visible md:px-0">
         {filters.map(f => (
           <FilterChip key={f.key} label={f.label} active={dateFilter === f.key} onClick={() => setDateFilter(f.key)} />
         ))}
@@ -99,7 +100,7 @@ function EventsTab({ slug, communityId, search }: { slug: string; communityId?: 
           description={t("explore.noEventsFoundDescription")}
         />
       ) : (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 xl:grid-cols-4 xl:gap-5">
           {filtered.map(e => (
             <SegolifeEventCard key={e.id} event={e} slug={slug} />
           ))}
@@ -136,7 +137,7 @@ function VenuesTab({ slug, communityId, search }: { slug: string; communityId?: 
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">{t("explore.mapUnavailable")}</p>
       {!!categories.length && (
-        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
+        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-wrap md:overflow-visible md:px-0">
           <FilterChip label={t("explore.categoryAll")} active={!category} onClick={() => setCategory(null)} />
           {categories.map(c => (
             <FilterChip key={c} label={c} active={category === c} onClick={() => setCategory(c)} />
@@ -150,7 +151,7 @@ function VenuesTab({ slug, communityId, search }: { slug: string; communityId?: 
           description={t("explore.noVenuesFoundDescription")}
         />
       ) : (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 xl:grid-cols-4 xl:gap-5">
           {filtered.map(v => (
             <SegolifeVenueCard key={v.id} venue={{ ...v, categoryName: v.category?.name }} slug={slug} />
           ))}
@@ -168,23 +169,23 @@ export default function Explore() {
 
   return (
     <SegolifeAppShell title={t("explore.title")}>
-      <div className="mx-auto max-w-md space-y-4 px-4 py-5">
-        <h1 className="text-xl font-semibold text-foreground">{t("explore.title")}</h1>
+      <SegolifePageContainer wide className="space-y-4 md:space-y-6">
+        <h1 className="text-xl font-semibold text-foreground md:text-3xl">{t("explore.title")}</h1>
 
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+        <div className="relative md:max-w-xl">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground md:left-4 md:size-5" aria-hidden="true" />
           <Input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder={t("explore.searchPlaceholder")}
-            className="rounded-full pl-9"
+            className="rounded-full pl-9 md:h-12 md:pl-11 md:text-base"
           />
         </div>
 
         <Tabs value={tab} onValueChange={v => setTab(v as "events" | "venues")}>
-          <TabsList className="w-full">
-            <TabsTrigger value="events" className="flex-1">{t("explore.tabEvents")}</TabsTrigger>
-            <TabsTrigger value="venues" className="flex-1">{t("explore.tabVenues")}</TabsTrigger>
+          <TabsList className="w-full md:w-auto">
+            <TabsTrigger value="events" className="flex-1 md:flex-none md:px-6">{t("explore.tabEvents")}</TabsTrigger>
+            <TabsTrigger value="venues" className="flex-1 md:flex-none md:px-6">{t("explore.tabVenues")}</TabsTrigger>
           </TabsList>
           <TabsContent value="events" className="mt-4">
             {slug && <EventsTab slug={slug} communityId={community?.id} search={search} />}
@@ -193,7 +194,7 @@ export default function Explore() {
             {slug && <VenuesTab slug={slug} communityId={community?.id} search={search} />}
           </TabsContent>
         </Tabs>
-      </div>
+      </SegolifePageContainer>
     </SegolifeAppShell>
   );
 }

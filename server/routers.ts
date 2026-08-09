@@ -2404,11 +2404,11 @@ export const appRouter = router({
   }),
 
   gallery: router({
-    /** Público: obtener fotos activas */
+    /** Público: obtener fotos activas — venueId opcional (Fase 8.5, fotos por local). */
     getItems: publicProcedure
-      .input(z.object({ category: z.string().optional() }))
+      .input(z.object({ category: z.string().optional(), venueId: z.number().int().positive().optional() }))
       .query(async ({ input }) => {
-        const items = await getActiveGalleryItems();
+        const items = await getActiveGalleryItems(input.venueId);
         if (input.category && input.category !== "Todas") {
           return items.filter((i) => i.category === input.category);
         }
@@ -2426,6 +2426,7 @@ export const appRouter = router({
         title: z.string().optional(),
         category: z.string().default("General"),
         isActive: z.boolean().default(true),
+        venueId: z.number().int().positive().nullable().optional(),
       }))
       .mutation(async ({ input }) => createGalleryItem(input)),
     /** Admin: actualizar foto */
@@ -2435,6 +2436,7 @@ export const appRouter = router({
         title: z.string().optional(),
         category: z.string().optional(),
         isActive: z.boolean().optional(),
+        venueId: z.number().int().positive().nullable().optional(),
       }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;

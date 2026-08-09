@@ -62,6 +62,7 @@ interface GalleryItem {
   fileKey: string;
   title: string | null;
   category: string;
+  venueId: number | null;
   sortOrder: number;
   isActive: boolean;
   createdAt: Date;
@@ -364,7 +365,7 @@ function EditDialog({
 }: {
   item: GalleryItem;
   onClose: () => void;
-  onSave: (data: { title?: string; category?: string; isActive?: boolean }) => void;
+  onSave: (data: { title?: string; category?: string; isActive?: boolean; venueId?: number | null }) => void;
   saving: boolean;
 }) {
   const [title, setTitle] = useState(item.title || "");
@@ -372,6 +373,8 @@ function EditDialog({
   const [isActive, setIsActive] = useState(item.isActive);
   const [customCategory, setCustomCategory] = useState("");
   const [showCustom, setShowCustom] = useState(false);
+  const [venueId, setVenueId] = useState<number | null>(item.venueId);
+  const { data: venues } = trpc.venues.publicActive.useQuery({});
 
   const effectiveCategory = showCustom ? customCategory : category;
 
@@ -428,6 +431,23 @@ function EditDialog({
               </div>
             )}
           </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Local asociado (opcional)</label>
+            <Select
+              value={venueId == null ? "none" : String(venueId)}
+              onValueChange={(v) => setVenueId(v === "none" ? null : Number(v))}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Sin local asociado</SelectItem>
+                {(venues ?? []).map((v: { id: number; name: string }) => (
+                  <SelectItem key={v.id} value={String(v.id)}>{v.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <div className="flex items-center gap-3">
             <input
               type="checkbox"
@@ -444,7 +464,7 @@ function EditDialog({
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
           <Button
-            onClick={() => onSave({ title: title || undefined, category: effectiveCategory, isActive })}
+            onClick={() => onSave({ title: title || undefined, category: effectiveCategory, isActive, venueId })}
             disabled={saving || (showCustom && !customCategory.trim())}
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}

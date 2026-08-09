@@ -414,7 +414,7 @@ export default function AdminDashboard() {
               </div>
               <h1 className="text-xl font-black text-foreground">{greeting}, {firstName} 👋</h1>
               <p className="text-muted-foreground text-xs mt-0.5">
-                Náyade Experiences · {new Date().toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" })}
+                SEGOLIFE · {new Date().toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" })}
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">

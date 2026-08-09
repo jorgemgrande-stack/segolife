@@ -1,14 +1,16 @@
 import { Wrench } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 
-const LOGO_FALLBACK = "https://d2xsxph8kpxj0f.cloudfront.net/310519663410228097/AV298FS8t5SaTurBBRqhgQ/nayade_blue_e9563f49.png";
+// Fase 8.5 — MaintenanceGate envuelve TODA la app, incluidas /ie /uva de
+// Segolife (ver App.tsx) — el fallback nunca puede ser Náyade bajo ninguna
+// circunstancia, aunque la fila de BD siga sin personalizarse.
+const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
 
 const DEFAULT_MESSAGE =
   "Aviso importante\n\n" +
-  "Reservas online temporalmente no disponibles\n\n" +
-  "En estos momentos, el servicio de reservas a través de Náyade Experiences se encuentra temporalmente desactivado.\n\n" +
-  "Para información sobre actividades, servicios o nuevas reservas en Hotel Náyade, rogamos contactar directamente con el establecimiento.\n\n" +
-  "Gracias por vuestra comprensión";
+  "Servicio temporalmente no disponible\n\n" +
+  "Estamos realizando tareas de mantenimiento. Vuelve a intentarlo en unos minutos.\n\n" +
+  "Gracias por tu paciencia.";
 
 function splitMessage(message: string) {
   const blocks = message.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
@@ -25,8 +27,8 @@ function splitMessage(message: string) {
 
 export default function MaintenanceNotice({ message }: { message?: string | null }) {
   const { data: publicSettings } = trpc.config.getPublicSettings.useQuery();
-  const brandLogo = publicSettings?.brand_logo_url || LOGO_FALLBACK;
-  const brandName = publicSettings?.brand_name || "Náyade Experiences";
+  const brandLogo = publicSettings?.segolife_brand_logo_url || SEGOLIFE_LOGO_FALLBACK;
+  const brandName = publicSettings?.segolife_brand_name || "SEGOLIFE";
   const { eyebrow, headline, body } = splitMessage(message?.trim() || DEFAULT_MESSAGE);
 
   return (

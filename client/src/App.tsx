@@ -36,7 +36,11 @@ const StaffEventScan = lazy(() => import("./pages/staff/StaffEventScan"));
 const StaffPos = lazy(() => import("./pages/staff/StaffPos"));
 
 // ── PUBLIC PAGES (carga inmediata — visibles sin autenticación) ──────────────
-import Home from "./pages/Home";
+// `Home` (home heredada de Náyade Experiences) ya NO se monta en "/" desde
+// Fase 8.5 — sustituida por `PublicHome` (nueva Home SEGOLIFE). El archivo y
+// la ruta legacy siguen existiendo en el repo (no se ha purgado código,
+// solo se ha dejado de enlazar), por si algún flujo heredado aún la referencia.
+import PublicHome from "./pages/PublicHome";
 import Experiences from "./pages/Experiences";
 import ExperienceDetail from "./pages/ExperienceDetail";
 import Gallery from "./pages/Gallery";
@@ -258,7 +262,7 @@ function Router() {
   return (
     <Switch>
       {/* ── PUBLIC ROUTES ── */}
-      <Route path="/" component={Home} />
+      <Route path="/" component={PublicHome} />
 
       {/* ── SEGOLIFE: escáner de staff para validar Benefits en puerta (Fase 4) ── */}
       <Route path="/staff/benefits/scan">{() => <Suspense fallback={null}><StaffBenefitScan /></Suspense>}</Route>
