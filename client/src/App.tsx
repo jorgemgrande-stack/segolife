@@ -11,6 +11,7 @@ import { MetaPixelLoader } from "./components/MetaPixelLoader";
 import { GA4Loader } from "./components/GA4Loader";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { CommunityProvider } from "./contexts/CommunityContext";
+import { AdminCommunityProvider } from "./contexts/AdminCommunityContext";
 import "./lib/i18n";
 
 // ── SEGOLIFE (lazy — páginas nuevas, independientes de la app heredada) ─────
@@ -540,20 +541,27 @@ function App() {
       <ThemeProvider>
         {/* CommunityProvider sí envuelve toda la app (barato: solo consulta
             si la URL es potencialmente de comunidad, ver
-            shared/segolife/routing.ts). AdminCommunityProvider NO va aquí —
-            vive dentro de AdminLayout para no disparar su query en páginas
-            públicas; ver client/src/components/AdminLayout.tsx. */}
+            shared/segolife/routing.ts). AdminCommunityProvider envuelve toda
+            la app por necesidad estructural (páginas como StudentsManager
+            llaman a useAdminCommunity() antes de renderizar <AdminLayout>,
+            así que el provider no puede vivir dentro de AdminLayout — un
+            descendiente no puede proveer contexto a su propio ancestro); su
+            query `communities.list` solo se activa en rutas /admin (ver
+            AdminCommunityContext.tsx), así que sigue sin dispararse en
+            páginas públicas. */}
         <CommunityProvider>
-          <TooltipProvider>
-            <Toaster richColors position="top-right" />
-            <ScrollToTop />
-            <MaintenanceGate>
-              <Router />
-            </MaintenanceGate>
-            <CookieBanner />
-            <MetaPixelLoader />
-            <GA4Loader />
-          </TooltipProvider>
+          <AdminCommunityProvider>
+            <TooltipProvider>
+              <Toaster richColors position="top-right" />
+              <ScrollToTop />
+              <MaintenanceGate>
+                <Router />
+              </MaintenanceGate>
+              <CookieBanner />
+              <MetaPixelLoader />
+              <GA4Loader />
+            </TooltipProvider>
+          </AdminCommunityProvider>
         </CommunityProvider>
       </ThemeProvider>
     </ErrorBoundary>

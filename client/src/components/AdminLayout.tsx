@@ -19,7 +19,6 @@ import { trpc } from "@/lib/trpc";
 import { useTheme } from "@/contexts/ThemeContext";
 import MaintenanceModeControl from "./admin/MaintenanceModeControl";
 import AdminCommunitySelector from "./admin/AdminCommunitySelector";
-import { AdminCommunityProvider } from "@/contexts/AdminCommunityContext";
 
 // flagKey: if set, item is hidden when that feature_flag is disabled.
 // Missing flag or flags not yet loaded → item shown (safe default).
@@ -857,17 +856,15 @@ function AdminLayoutInner({ children, title }: AdminLayoutProps) {
 }
 
 /**
- * AdminCommunityProvider se monta aquí (solo dentro del admin), no en
- * client/src/App.tsx envolviendo toda la aplicación — así la query
- * `communities.list` que alimenta al selector nunca se dispara en ninguna
- * página pública. Cada página admin ya envuelve su contenido en
- * `<AdminLayout>`, así que esto cubre el 100% del admin sin tocar cada
- * página una a una.
+ * AdminCommunityProvider ya no se monta aquí — vive en App.tsx envolviendo
+ * toda la app (ver nota ahí). Páginas como StudentsManager llaman a
+ * useAdminCommunity() en su propio nivel superior, ANTES de renderizar
+ * <AdminLayout>, así que un provider anidado aquí dentro nunca podía
+ * alcanzarlas (un descendiente no puede proveer contexto a su ancestro) —
+ * ese desajuste causaba "useAdminCommunity must be used within
+ * AdminCommunityProvider" en /admin/students, /admin/venues y
+ * /admin/events en producción.
  */
 export default function AdminLayout(props: AdminLayoutProps) {
-  return (
-    <AdminCommunityProvider>
-      <AdminLayoutInner {...props} />
-    </AdminCommunityProvider>
-  );
+  return <AdminLayoutInner {...props} />;
 }

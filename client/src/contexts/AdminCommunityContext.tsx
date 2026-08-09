@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import type { Community } from "../../../drizzle/schema";
 import {
@@ -30,8 +31,19 @@ export function AdminCommunityProvider({ children }: { children: React.ReactNode
     localStorage.setItem(ADMIN_COMMUNITY_FILTER_STORAGE_KEY, serializeAdminCommunityFilter(filter));
   }, [filter]);
 
+  // Bug de cierre de Fase 8.5 (reportado en producción): páginas como
+  // StudentsManager/VenuesManager/EventsManager llaman a useAdminCommunity()
+  // antes de renderizar <AdminLayout>, así que el provider NO puede vivir
+  // dentro de AdminLayout (un descendiente de esas páginas nunca puede
+  // proveer contexto a su propio ancestro). Se sube a App.tsx envolviendo
+  // toda la app; para no disparar `communities.list` en páginas públicas
+  // (la razón original de que viviera dentro de AdminLayout) la query solo
+  // se habilita en rutas /admin.
+  const [location] = useLocation();
+  const isAdminRoute = location.startsWith("/admin");
   const { data, isLoading } = trpc.communities.list.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
+    enabled: isAdminRoute,
   });
 
   const setFilter = (value: AdminCommunityFilterValue) => setFilterState(value);
