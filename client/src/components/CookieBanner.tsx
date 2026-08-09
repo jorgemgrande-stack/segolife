@@ -41,7 +41,10 @@ export default function CookieBanner() {
   // Fase 6 hardening: mismo consentimiento/lógica, tratamiento visual y copy
   // distintos en rutas de Segolife — el banner oscuro/corporativo heredado de
   // Náyade desentonaba con el diseño claro tipo app (ver revisión visual).
-  const isSegolife = isPotentialCommunityRequest({
+  // Fase 8.5: "/" pasó a ser la Home pública de Segolife (antes no era ruta
+  // de ninguna comunidad, por eso isPotentialCommunityRequest no la cubría)
+  // — se comprueba aparte para que también reciba el banner claro.
+  const isSegolife = location === "/" || isPotentialCommunityRequest({
     pathname: location,
     hostname: typeof window !== "undefined" ? window.location.hostname : undefined,
   });
