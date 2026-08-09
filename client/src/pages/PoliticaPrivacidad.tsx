@@ -1,15 +1,18 @@
 import { Link } from "wouter";
 import { ChevronRight, Shield } from "lucide-react";
-import PublicLayout from "@/components/PublicLayout";
+import { PublicHomeNav } from "@/components/publicHome/PublicHomeNav";
+import { PublicHomeFooter } from "@/components/publicHome/PublicHomeFooter";
 
+// Fase 8.5 — corrección de cierre: ver nota equivalente en PoliticaCookies.tsx.
 export default function PoliticaPrivacidad() {
   return (
-    <PublicLayout>
+    <div className="segolife-theme flex min-h-screen flex-col bg-background">
+      <PublicHomeNav variant="solid" />
       {/* Hero */}
       <section className="bg-[oklch(0.14_0.03_240)] py-16">
         <div className="container">
           <div className="flex items-center gap-2 text-white/50 text-sm mb-4">
-            <Link href="/" className="hover:text-amber-400 transition-colors">Inicio</Link>
+            <Link href="/" className="hover:text-primary transition-colors">Inicio</Link>
             <ChevronRight className="w-3.5 h-3.5" />
             <span className="text-white/80">Política de Privacidad</span>
           </div>
@@ -33,25 +36,19 @@ export default function PoliticaPrivacidad() {
             <LegalSection number="1" title="Responsable del tratamiento">
               <p>
                 De conformidad con lo dispuesto en el Reglamento (UE) 2016/679 (RGPD) y la Ley Orgánica 3/2018
-                (LOPDGDD), se informa al usuario que los datos personales que facilite a través del sitio web
-                <strong> www.skicenter.es</strong> serán tratados por:
+                (LOPDGDD), se informa al usuario que los datos personales que facilite a través de este sitio web
+                serán tratados por SEGOLIFE. Los datos identificativos y de contacto completos del responsable del
+                tratamiento se publicarán en este apartado en cuanto estén formalizados.
               </p>
-              <InfoTable rows={[
-                ["Responsable", "Iron Elephant Consulting S.L."],
-                ["CIF", "B26987875"],
-                ["Domicilio social", "C/ Corazón de María 57, 1º D · 28002 Madrid"],
-                ["Email de contacto", "administracion@skicenter.es"],
-                ["Teléfono", "+34 639 57 66 27"],
-              ]} />
             </LegalSection>
 
             <LegalSection number="2" title="Finalidad del tratamiento">
               <p>Los datos personales recogidos se tratarán con las siguientes finalidades:</p>
               <ul>
-                <li>Gestionar la relación contractual derivada de la contratación de los servicios ofrecidos en Nayade Experiences (actividades acuáticas, packs, hotel, spa y restauración).</li>
+                <li>Gestionar la cuenta del usuario y su participación en la comunidad universitaria de SEGOLIFE (eventos, entradas, recompensas y beneficios).</li>
                 <li>Dar respuesta a consultas o solicitudes de información recibidas a través de los formularios del sitio web.</li>
-                <li>Remitir boletines (newsletters), comunicaciones comerciales, promociones y publicidad del sector de turismo activo y experiencias de ocio.</li>
-                <li>Gestionar reservas, pagos y la prestación de los servicios contratados.</li>
+                <li>Remitir comunicaciones sobre eventos, recompensas y novedades de la comunidad, cuando el usuario lo haya consentido.</li>
+                <li>Gestionar la compra de entradas y la prestación de los servicios contratados.</li>
                 <li>Mejorar la experiencia del usuario y la calidad de los servicios prestados.</li>
               </ul>
             </LegalSection>
@@ -68,7 +65,7 @@ export default function PoliticaPrivacidad() {
             <LegalSection number="4" title="Legitimación">
               <p>El tratamiento de los datos se basa en:</p>
               <ul>
-                <li><strong>La ejecución de un contrato:</strong> cuando el usuario contrata servicios a través del sitio web o en las instalaciones de Nayade Experiences.</li>
+                <li><strong>La ejecución de un contrato:</strong> cuando el usuario crea una cuenta o contrata servicios a través del sitio web.</li>
                 <li><strong>El consentimiento expreso del usuario:</strong> al aceptar la presente política de privacidad, al marcar casillas habilitadas o al enviar formularios.</li>
                 <li><strong>Interés legítimo:</strong> para el envío de comunicaciones comerciales a clientes con relación contractual previa sobre servicios similares a los contratados.</li>
               </ul>
@@ -78,11 +75,11 @@ export default function PoliticaPrivacidad() {
             <LegalSection number="5" title="Destinatarios">
               <p>
                 Los datos no se comunicarán a terceros salvo obligación legal o cuando sea necesario para la
-                prestación del servicio (por ejemplo, proveedores de alojamiento web, pasarelas de pago, plataformas
-                de cupones como Groupon o Smartbox, o servicios administrativos).
+                prestación del servicio (por ejemplo, proveedores de alojamiento web, pasarelas de pago o servicios
+                administrativos).
               </p>
               <p>
-                Nayade Experiences trabaja con proveedores que cumplen la normativa vigente en materia de protección
+                SEGOLIFE trabaja con proveedores que cumplen la normativa vigente en materia de protección
                 de datos. En ningún caso se cederán datos a terceros con fines de marketing sin el consentimiento
                 expreso del usuario.
               </p>
@@ -99,19 +96,16 @@ export default function PoliticaPrivacidad() {
                 <li><strong>Portabilidad</strong> — recibir sus datos en un formato estructurado y de uso común.</li>
               </ul>
               <p>
-                Para ello deberá enviar una solicitud a{" "}
-                <a href="mailto:administracion@skicenter.es" className="text-accent hover:underline">
-                  administracion@skicenter.es
-                </a>{" "}
-                o a la dirección postal indicada en el apartado 1, acompañada de un documento que acredite su identidad.
-                Asimismo, tiene derecho a presentar una reclamación ante la Agencia Española de Protección de Datos
-                (www.aepd.es) si considera que el tratamiento no se ajusta a la normativa vigente.
+                Para ello deberá enviar una solicitud a través de los canales de contacto de SEGOLIFE, acompañada de
+                un documento que acredite su identidad. Asimismo, tiene derecho a presentar una reclamación ante la
+                Agencia Española de Protección de Datos (www.aepd.es) si considera que el tratamiento no se ajusta a
+                la normativa vigente.
               </p>
             </LegalSection>
 
             <LegalSection number="7" title="Seguridad y confidencialidad">
               <p>
-                Nayade Experiences adopta las medidas técnicas y organizativas necesarias para garantizar la seguridad,
+                SEGOLIFE adopta las medidas técnicas y organizativas necesarias para garantizar la seguridad,
                 integridad y confidencialidad de los datos personales, de acuerdo con lo establecido en el RGPD y la
                 LOPDGDD. No obstante, ningún sistema de transmisión o almacenamiento de datos es completamente seguro
                 y no puede garantizarse la ausencia absoluta de accesos no autorizados.
@@ -121,7 +115,7 @@ export default function PoliticaPrivacidad() {
             <LegalSection number="8" title="Comunicaciones comerciales">
               <p>
                 De acuerdo con la Ley 34/2002 de Servicios de la Sociedad de la Información y Comercio Electrónico
-                (LSSI-CE), Nayade Experiences no enviará comunicaciones comerciales sin el consentimiento previo del
+                (LSSI-CE), SEGOLIFE no enviará comunicaciones comerciales sin el consentimiento previo del
                 usuario. En el caso de clientes con relación contractual previa, podrá enviar comunicaciones sobre
                 servicios similares a los inicialmente contratados, con opción de darse de baja en cualquier momento
                 a través del enlace incluido en cada comunicación.
@@ -130,7 +124,7 @@ export default function PoliticaPrivacidad() {
 
             <LegalSection number="9" title="Cookies">
               <p>
-                Nayade Experiences podrá utilizar cookies propias y de terceros para mejorar la experiencia de
+                SEGOLIFE podrá utilizar cookies propias y de terceros para mejorar la experiencia de
                 navegación, analizar el tráfico y personalizar el contenido. El usuario puede configurar su navegador
                 para rechazar las cookies o recibir avisos al respecto. Para más información, consulte nuestra{" "}
                 <Link href="/politica-de-cookies">
@@ -141,7 +135,7 @@ export default function PoliticaPrivacidad() {
 
             <LegalSection number="10" title="Modificaciones">
               <p>
-                Nayade Experiences podrá modificar la presente política para adaptarla a novedades legislativas o a
+                SEGOLIFE podrá modificar la presente política para adaptarla a novedades legislativas o a
                 cambios en sus servicios. La fecha de última actualización figurará siempre en el encabezado del
                 presente documento. Se recomienda al usuario revisar periódicamente esta política.
               </p>
@@ -150,7 +144,8 @@ export default function PoliticaPrivacidad() {
           </div>
         </div>
       </section>
-    </PublicLayout>
+      <PublicHomeFooter />
+    </div>
   );
 }
 

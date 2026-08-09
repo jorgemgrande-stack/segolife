@@ -55,27 +55,24 @@ export default function ForgotPassword() {
         <div className="absolute inset-0 bg-gradient-to-br from-[#0d1b2a] via-[#1a2f4a] to-[#0d1b2a]" />
         <div className="absolute inset-0 opacity-10"
           style={{
-            backgroundImage: "radial-gradient(circle at 30% 50%, #f5a623 0%, transparent 50%), radial-gradient(circle at 70% 20%, #3b82f6 0%, transparent 40%)"
+            backgroundImage: "radial-gradient(circle at 30% 50%, #7a3ad1 0%, transparent 50%), radial-gradient(circle at 70% 20%, #3b82f6 0%, transparent 40%)"
           }}
         />
         <div className="relative z-10 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#f5a623] flex items-center justify-center font-bold text-[#0d1b2a] text-lg">N</div>
-          <div>
-            <div className="text-white font-bold text-lg leading-tight">NÁYADE</div>
-            <div className="text-[#f5a623] text-xs tracking-widest uppercase">Experiences</div>
-          </div>
+          <img src="/icons/segolife-icon.svg" alt="SEGOLIFE" className="w-10 h-10 rounded-xl" />
+          <div className="text-white font-bold text-lg leading-tight">SEGOLIFE</div>
         </div>
         <div className="relative z-10">
           <h1 className="text-4xl font-bold text-white leading-tight mb-4">
             ¿Olvidaste tu<br />
-            <span className="text-[#f5a623]">contraseña?</span>
+            <span className="text-[#7a3ad1]">contraseña?</span>
           </h1>
           <p className="text-slate-400 text-lg leading-relaxed">
             No te preocupes. Te enviaremos un enlace seguro para crear una nueva contraseña.
           </p>
         </div>
         <div className="relative z-10 text-slate-500 text-sm">
-          Los Ángeles de San Rafael, Segovia · A 45 min de Madrid
+          Segovia · Vida universitaria
         </div>
       </div>
 
@@ -84,11 +81,8 @@ export default function ForgotPassword() {
         <div className="w-full max-w-md">
           {/* Logo móvil */}
           <div className="flex items-center gap-3 mb-8 lg:hidden">
-            <div className="w-10 h-10 rounded-xl bg-[#f5a623] flex items-center justify-center font-bold text-[#0d1b2a] text-lg">N</div>
-            <div>
-              <div className="text-white font-bold text-lg leading-tight">NÁYADE</div>
-              <div className="text-[#f5a623] text-xs tracking-widest uppercase">Experiences</div>
-            </div>
+            <img src="/icons/segolife-icon.svg" alt="SEGOLIFE" className="w-10 h-10 rounded-xl" />
+            <div className="text-white font-bold text-lg leading-tight">SEGOLIFE</div>
           </div>
 
           {sent ? (
@@ -132,7 +126,7 @@ export default function ForgotPassword() {
                       value={email}
                       onChange={e => setEmail(e.target.value)}
                       placeholder="tu@email.com"
-                      className="pl-10 bg-[#1a2f4a] border-[#2a4060] text-white placeholder:text-slate-600 focus:border-[#f5a623] focus:ring-[#f5a623]/20"
+                      className="pl-10 bg-[#1a2f4a] border-[#2a4060] text-white placeholder:text-slate-600 focus:border-[#7a3ad1] focus:ring-[#7a3ad1]/20"
                     />
                   </div>
                 </div>
@@ -147,7 +141,7 @@ export default function ForgotPassword() {
                 <Button
                   type="submit"
                   disabled={loading || !email}
-                  className="w-full bg-[#f5a623] hover:bg-[#e09520] text-[#0d1b2a] font-semibold py-2.5 text-base transition-colors disabled:opacity-50"
+                  className="w-full bg-[#7a3ad1] hover:bg-[#6a2fb8] text-white font-semibold py-2.5 text-base transition-colors disabled:opacity-50"
                 >
                   {loading ? (
                     <span className="flex items-center gap-2">

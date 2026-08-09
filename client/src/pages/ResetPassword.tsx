@@ -96,27 +96,24 @@ export default function ResetPassword() {
         <div className="absolute inset-0 bg-gradient-to-br from-[#0d1b2a] via-[#1a2f4a] to-[#0d1b2a]" />
         <div className="absolute inset-0 opacity-10"
           style={{
-            backgroundImage: "radial-gradient(circle at 30% 50%, #f5a623 0%, transparent 50%), radial-gradient(circle at 70% 20%, #3b82f6 0%, transparent 40%)"
+            backgroundImage: "radial-gradient(circle at 30% 50%, #7a3ad1 0%, transparent 50%), radial-gradient(circle at 70% 20%, #3b82f6 0%, transparent 40%)"
           }}
         />
         <div className="relative z-10 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#f5a623] flex items-center justify-center font-bold text-[#0d1b2a] text-lg">N</div>
-          <div>
-            <div className="text-white font-bold text-lg leading-tight">NÁYADE</div>
-            <div className="text-[#f5a623] text-xs tracking-widest uppercase">Experiences</div>
-          </div>
+          <img src="/icons/segolife-icon.svg" alt="SEGOLIFE" className="w-10 h-10 rounded-xl" />
+          <div className="text-white font-bold text-lg leading-tight">SEGOLIFE</div>
         </div>
         <div className="relative z-10">
           <h1 className="text-4xl font-bold text-white leading-tight mb-4">
             Nueva<br />
-            <span className="text-[#f5a623]">contraseña</span>
+            <span className="text-[#7a3ad1]">contraseña</span>
           </h1>
           <p className="text-slate-400 text-lg leading-relaxed">
             Elige una contraseña segura para proteger tu cuenta de administración.
           </p>
         </div>
         <div className="relative z-10 text-slate-500 text-sm">
-          Los Ángeles de San Rafael, Segovia · A 45 min de Madrid
+          Segovia · Vida universitaria
         </div>
       </div>
 
@@ -125,17 +122,14 @@ export default function ResetPassword() {
         <div className="w-full max-w-md">
           {/* Logo móvil */}
           <div className="flex items-center gap-3 mb-8 lg:hidden">
-            <div className="w-10 h-10 rounded-xl bg-[#f5a623] flex items-center justify-center font-bold text-[#0d1b2a] text-lg">N</div>
-            <div>
-              <div className="text-white font-bold text-lg leading-tight">NÁYADE</div>
-              <div className="text-[#f5a623] text-xs tracking-widest uppercase">Experiences</div>
-            </div>
+            <img src="/icons/segolife-icon.svg" alt="SEGOLIFE" className="w-10 h-10 rounded-xl" />
+            <div className="text-white font-bold text-lg leading-tight">SEGOLIFE</div>
           </div>
 
           {/* Validando token */}
           {tokenValid === null && (
             <div className="text-center py-12">
-              <Loader2 className="w-10 h-10 text-[#f5a623] animate-spin mx-auto mb-4" />
+              <Loader2 className="w-10 h-10 text-[#7a3ad1] animate-spin mx-auto mb-4" />
               <p className="text-slate-400">Verificando enlace…</p>
             </div>
           )}
@@ -152,7 +146,7 @@ export default function ResetPassword() {
               </p>
               <Button
                 onClick={() => navigate("/recuperar-contrasena")}
-                className="bg-[#f5a623] hover:bg-[#e09520] text-[#0d1b2a] font-semibold"
+                className="bg-[#7a3ad1] hover:bg-[#6a2fb8] text-white font-semibold"
               >
                 Solicitar nuevo enlace
               </Button>
@@ -174,7 +168,7 @@ export default function ResetPassword() {
               </p>
               <Button
                 onClick={() => navigate("/login")}
-                className="bg-[#f5a623] hover:bg-[#e09520] text-[#0d1b2a] font-semibold"
+                className="bg-[#7a3ad1] hover:bg-[#6a2fb8] text-white font-semibold"
               >
                 Ir al inicio de sesión
               </Button>
@@ -202,7 +196,7 @@ export default function ResetPassword() {
                       value={password}
                       onChange={e => setPassword(e.target.value)}
                       placeholder="Mínimo 8 caracteres"
-                      className="pl-10 pr-10 bg-[#1a2f4a] border-[#2a4060] text-white placeholder:text-slate-600 focus:border-[#f5a623] focus:ring-[#f5a623]/20"
+                      className="pl-10 pr-10 bg-[#1a2f4a] border-[#2a4060] text-white placeholder:text-slate-600 focus:border-[#7a3ad1] focus:ring-[#7a3ad1]/20"
                     />
                     <button
                       type="button"
@@ -239,7 +233,7 @@ export default function ResetPassword() {
                       value={confirmPassword}
                       onChange={e => setConfirmPassword(e.target.value)}
                       placeholder="Repite la contraseña"
-                      className="pl-10 pr-10 bg-[#1a2f4a] border-[#2a4060] text-white placeholder:text-slate-600 focus:border-[#f5a623] focus:ring-[#f5a623]/20"
+                      className="pl-10 pr-10 bg-[#1a2f4a] border-[#2a4060] text-white placeholder:text-slate-600 focus:border-[#7a3ad1] focus:ring-[#7a3ad1]/20"
                     />
                     <button
                       type="button"
@@ -271,7 +265,7 @@ export default function ResetPassword() {
                 <Button
                   type="submit"
                   disabled={loading || !password || !confirmPassword || password !== confirmPassword}
-                  className="w-full bg-[#f5a623] hover:bg-[#e09520] text-[#0d1b2a] font-semibold py-2.5 text-base transition-colors disabled:opacity-50"
+                  className="w-full bg-[#7a3ad1] hover:bg-[#6a2fb8] text-white font-semibold py-2.5 text-base transition-colors disabled:opacity-50"
                 >
                   {loading ? (
                     <span className="flex items-center gap-2">

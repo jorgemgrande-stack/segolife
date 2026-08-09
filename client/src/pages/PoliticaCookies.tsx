@@ -1,15 +1,22 @@
 import { Link } from "wouter";
 import { ChevronRight, Cookie } from "lucide-react";
-import PublicLayout from "@/components/PublicLayout";
+import { PublicHomeNav } from "@/components/publicHome/PublicHomeNav";
+import { PublicHomeFooter } from "@/components/publicHome/PublicHomeFooter";
 
+// Fase 8.5 — corrección de cierre: esta página usaba PublicLayout (nav/footer
+// heredados de Náyade: logo real, enlaces a restaurantes de skicenter.es,
+// WhatsApp de Náyade). Es una superficie SEGOLIFE activa (enlazada desde el
+// propio banner de cookies), así que usa el nav/footer nuevos — nunca los
+// heredados — igual que PublicHome.tsx.
 export default function PoliticaCookies() {
   return (
-    <PublicLayout>
+    <div className="segolife-theme flex min-h-screen flex-col bg-background">
+      <PublicHomeNav variant="solid" />
       {/* Hero */}
       <section className="bg-[oklch(0.14_0.03_240)] py-16">
         <div className="container">
           <div className="flex items-center gap-2 text-white/50 text-sm mb-4">
-            <Link href="/" className="hover:text-amber-400 transition-colors">Inicio</Link>
+            <Link href="/" className="hover:text-primary transition-colors">Inicio</Link>
             <ChevronRight className="w-3.5 h-3.5" />
             <span className="text-white/80">Política de Cookies</span>
           </div>
@@ -41,7 +48,7 @@ export default function PoliticaCookies() {
 
             <LegalSection number="2" title="Cookies utilizadas en este sitio web">
               <p>
-                El sitio web <strong>www.skicenter.es</strong> utiliza los siguientes tipos de cookies:
+                Este sitio web utiliza los siguientes tipos de cookies:
               </p>
 
               <h3 className="text-white font-semibold mt-6 mb-3">2.1 Cookies técnicas (necesarias)</h3>
@@ -139,7 +146,7 @@ export default function PoliticaCookies() {
 
             <LegalSection number="7" title="Actualizaciones de esta política">
               <p>
-                Nayade Experiences podrá modificar la presente Política de Cookies para adaptarla a cambios
+                SEGOLIFE podrá modificar la presente Política de Cookies para adaptarla a cambios
                 legislativos, técnicos o de los servicios prestados. Se recomienda al usuario revisar periódicamente
                 esta política. La fecha de última actualización figura siempre en el encabezado del documento.
               </p>
@@ -147,10 +154,9 @@ export default function PoliticaCookies() {
 
             <LegalSection number="8" title="Más información">
               <p>
-                Para cualquier consulta sobre el uso de cookies, puede contactar con nosotros en{" "}
-                <a href="mailto:reservas@nayadeexperiences.es" className="text-accent hover:underline">
-                  reservas@nayadeexperiences.es
-                </a>. Para más información sobre el tratamiento de sus datos personales, consulte nuestra{" "}
+                Para cualquier consulta sobre el uso de cookies, puede contactar con nosotros a través de los canales
+                de contacto de SEGOLIFE. Para más información sobre el tratamiento de sus datos personales, consulte
+                nuestra{" "}
                 <Link href="/privacidad">
                   <span className="text-accent hover:underline cursor-pointer">Política de Privacidad</span>
                 </Link>.
@@ -160,7 +166,8 @@ export default function PoliticaCookies() {
           </div>
         </div>
       </section>
-    </PublicLayout>
+      <PublicHomeFooter />
+    </div>
   );
 }
 
