@@ -30,17 +30,20 @@ const navItems = [
     roles: ["admin", "agente", "monitor"],
   },
   {
-    // Slideshow/Módulos Home/Menús/Páginas siguen ocultos (audit de cierre de
-    // Fase 8.5: solo alimentan Home.tsx y módulos legacy desconectados de
-    // toda ruta activa). Multimedia se restaura a petición explícita del
-    // usuario — es la biblioteca genérica de subida de imágenes, usada como
-    // utilidad general más allá de Galería. Código, rutas y tablas de BD de
-    // las que siguen ocultas están intactos, solo se ocultan del menú.
+    // Slideshow/Menús/Páginas siguen ocultos (audit de cierre de Fase 8.5:
+    // solo alimentan Home.tsx y módulos legacy desconectados de toda ruta
+    // activa). Multimedia se restaura a petición explícita del usuario — es
+    // la biblioteca genérica de subida de imágenes. "Módulos Home" apunta a
+    // SegolifeHomeManager (editor real de la Home actual), no al
+    // HomeModulesManager legacy — ese sigue existiendo sin tocar, oculto,
+    // porque gestiona Home.tsx. Código, rutas y tablas de BD de lo que
+    // sigue oculto están intactos, solo se ocultan del menú.
     label: "CMS",
-    href: "/admin/cms/galeria",
+    href: "/admin/cms/inicio",
     icon: Image,
     roles: ["admin"],
     children: [
+      { label: "Módulos Home", href: "/admin/cms/inicio" },
       { label: "Galería", href: "/admin/cms/galeria" },
       { label: "Multimedia", href: "/admin/cms/multimedia" },
     ],

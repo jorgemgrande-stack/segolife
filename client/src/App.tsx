@@ -89,6 +89,7 @@ const PagesManager = lazy(() => import("./pages/admin/cms/PagesManager"));
 const MultimediaManager = lazy(() => import("./pages/admin/cms/MultimediaManager"));
 const HomeModulesManager = lazy(() => import("./pages/admin/cms/HomeModulesManager"));
 const GalleryManager = lazy(() => import("./pages/admin/cms/GalleryManager"));
+const SegolifeHomeManager = lazy(() => import("./pages/admin/cms/SegolifeHomeManager"));
 
 // Products
 const ExperiencesManager = lazy(() => import("./pages/admin/products/ExperiencesManager"));
@@ -343,6 +344,7 @@ function Router() {
       <Route path="/admin/cms/multimedia">{() => <Suspense fallback={<AdminLoadingFallback />}><MultimediaManager /></Suspense>}</Route>
       <Route path="/admin/cms/modulos-home">{() => <Suspense fallback={<AdminLoadingFallback />}><HomeModulesManager /></Suspense>}</Route>
       <Route path="/admin/cms/galeria">{() => <Suspense fallback={<AdminLoadingFallback />}><GalleryManager /></Suspense>}</Route>
+      <Route path="/admin/cms/inicio">{() => <Suspense fallback={<AdminLoadingFallback />}><SegolifeHomeManager /></Suspense>}</Route>
 
       {/* Products */}
       <Route path="/admin/productos">{() => <Suspense fallback={<AdminLoadingFallback />}><ExperiencesManager /></Suspense>}</Route>
