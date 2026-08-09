@@ -66,7 +66,7 @@ export function SegolifeAppShell({
 
   if (loading || (requireAuth && authLoading)) {
     return (
-      <div className="segolife-theme flex min-h-dvh items-center justify-center">
+      <div className="segolife-theme flex min-h-dvh items-center justify-center bg-background">
         <Loader2 className="size-6 animate-spin text-primary" aria-hidden="true" />
       </div>
     );
@@ -75,7 +75,7 @@ export function SegolifeAppShell({
   // Slug candidato sin comunidad real detrás (o sin slug alguno) → 404, nunca caer en IE/UVA por defecto.
   if (!community) {
     return (
-      <div className="segolife-theme flex min-h-dvh flex-col">
+      <div className="segolife-theme flex min-h-dvh flex-col bg-background">
         <div className="flex flex-1 items-center justify-center px-6">
           <SegolifeEmptyState
             icon={<MapPinOff className="size-6" aria-hidden="true" />}
@@ -92,7 +92,7 @@ export function SegolifeAppShell({
   if (requireAuth && !user) {
     // useAuth ya está redirigiendo — evita parpadeo de contenido protegido.
     return (
-      <div className="segolife-theme flex min-h-dvh items-center justify-center">
+      <div className="segolife-theme flex min-h-dvh items-center justify-center bg-background">
         <Loader2 className="size-6 animate-spin text-primary" aria-hidden="true" />
       </div>
     );
@@ -111,7 +111,7 @@ export function SegolifeAppShell({
   // deja de ser un FAB elevado y pasa a ser un ítem más de navegación, sin la
   // restricción de alcance del pulgar que justificaba el diseño mobile.
   return (
-    <div className="segolife-theme flex min-h-dvh flex-col xl:flex-row">
+    <div className="segolife-theme flex min-h-dvh flex-col bg-background xl:flex-row">
       {!hideNav && <SegolifeSidebar slug={slug} benefitsBadge={!!homeSummary?.activeBenefit} />}
       <div className="flex min-w-0 flex-1 flex-col xl:pl-64">
         <div className="xl:hidden">

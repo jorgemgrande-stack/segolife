@@ -635,9 +635,7 @@ html:not(.dark) select {
   --sidebar-border: oklch(0.90 0.015 300);
   --sidebar-ring: oklch(0.52 0.19 296);
   color-scheme: light;
-  background: var(--background);
   color: var(--foreground);
-  min-height: 100dvh;
 }
 
 /* Sombra suave de tarjeta/elevación consistente para toda la superficie Segolife
