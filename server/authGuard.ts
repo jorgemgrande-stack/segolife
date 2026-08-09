@@ -157,6 +157,7 @@ const PUBLIC_TRPC_ROUTES = new Set([
 
   // ── Segolife: venues/eventos (Fase 1D) — /ie, /uva ────────────────────────
   "venues.publicActive",
+  "venues.publicFeatured",
   "venues.publicGetBySlug",
   "events.publicActive",
   "events.publicFeatured",

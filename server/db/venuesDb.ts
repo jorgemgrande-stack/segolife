@@ -37,6 +37,7 @@ export interface VenueListFilters {
   search?: string;
   categoryId?: number;
   status?: "active" | "inactive";
+  isFeatured?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -89,6 +90,7 @@ export async function listVenues(
   if (restrictToVenueIds) conditions.push(inArray(venues.id, restrictToVenueIds));
   if (filters.categoryId) conditions.push(eq(venues.categoryId, filters.categoryId));
   if (filters.status) conditions.push(eq(venues.status, filters.status));
+  if (filters.isFeatured !== undefined) conditions.push(eq(venues.isFeatured, filters.isFeatured));
   if (filters.search) {
     const q = `%${filters.search}%`;
     conditions.push(or(like(venues.name, q), like(venues.description, q))!);
@@ -210,6 +212,13 @@ export async function setVenueActive(id: number, active: boolean, db?: DbHandle)
   return updated ?? null;
 }
 
+export async function setVenueFeatured(id: number, featured: boolean, db?: DbHandle): Promise<Venue | null> {
+  const conn = db ?? (await getDb());
+  await conn.update(venues).set({ isFeatured: featured }).where(eq(venues.id, id));
+  const [updated] = await conn.select().from(venues).where(eq(venues.id, id)).limit(1);
+  return updated ?? null;
+}
+
 /** Reemplaza el conjunto completo de comunidades vinculadas a un venue (idempotente). */
 export async function setVenueCommunities(id: number, communityIds: number[], db?: DbHandle): Promise<void> {
   const conn = db ?? (await getDb());
@@ -248,6 +257,15 @@ export async function listActiveVenues(communityId?: number, db?: DbHandle): Pro
   const conn = db ?? (await getDb());
   const { items } = await listVenues(
     { communityIds: communityId ? [communityId] : "all", status: "active", limit: 200, offset: 0 },
+    conn
+  );
+  return items;
+}
+
+export async function listFeaturedVenues(communityId?: number, db?: DbHandle): Promise<VenueListItem[]> {
+  const conn = db ?? (await getDb());
+  const { items } = await listVenues(
+    { communityIds: communityId ? [communityId] : "all", status: "active", isFeatured: true, limit: 50, offset: 0 },
     conn
   );
   return items;

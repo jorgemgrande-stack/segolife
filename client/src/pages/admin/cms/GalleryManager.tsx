@@ -43,15 +43,14 @@ import {
 } from "lucide-react";
 
 // ── Categorías predefinidas ────────────────────────────────────────────────────
+// "home_hero" es la que consume PublicHome.tsx para las fotos del hero de la
+// Home pública (trpc.gallery.getItems({ category: "home_hero" })) — la
+// primera opción real y a propósito, no una categoría legacy de Náyade.
 const PREDEFINED_CATEGORIES = [
   "Todas",
-  "Acuático",
-  "Nieve & Ski",
-  "Multiaventura",
-  "Premium",
-  "Hotel",
-  "SPA",
-  "Restaurantes",
+  "home_hero",
+  "Eventos",
+  "Locales",
   "General",
 ];
 

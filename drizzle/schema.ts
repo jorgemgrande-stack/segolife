@@ -3849,6 +3849,9 @@ export const venues = mysqlTable("venues", {
   website:      varchar("website", { length: 256 }),
   imageUrl:     varchar("image_url", { length: 512 }),
   status:       mysqlEnum("status", ["active", "inactive"]).notNull().default("active"),
+  // Misma bandera editorial simple que events.isFeatured (Fase 1D) — destacar
+  // en "Esta noche en Segovia" (PublicHome.tsx), no un sistema de ranking.
+  isFeatured:   boolean("is_featured").notNull().default(false),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });

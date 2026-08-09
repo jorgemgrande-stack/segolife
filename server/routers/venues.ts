@@ -9,10 +9,12 @@ import {
   createVenue,
   updateVenue,
   setVenueActive,
+  setVenueFeatured,
   setVenueCommunities,
   listVenueCategories,
   createVenueCategory,
   listActiveVenues,
+  listFeaturedVenues,
 } from "../db/venuesDb";
 
 // Lectura: ver el listado/fichas de venues.
@@ -63,6 +65,7 @@ export const venuesRouter = router({
         search: z.string().max(256).optional(),
         categoryId: z.number().int().positive().optional(),
         status: z.enum(["active", "inactive"]).optional(),
+        isFeatured: z.boolean().optional(),
         limit: z.number().int().min(1).max(200).default(50),
         offset: z.number().int().min(0).default(0),
       })
@@ -120,6 +123,17 @@ export const venuesRouter = router({
       return { success: true, venue: updated };
     }),
 
+  setFeatured: venuesManageProcedure
+    .input(z.object({ id: z.number().int().positive(), featured: z.boolean() }))
+    .mutation(async ({ input, ctx }) => {
+      const detail = await getVenueById(input.id);
+      if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "Venue no encontrado" });
+      const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
+      assertVenueAccessible(access, detail.communities.map(c => c.id));
+      const updated = await setVenueFeatured(input.id, input.featured);
+      return { success: true, venue: updated };
+    }),
+
   setCommunities: venuesManageProcedure
     .input(z.object({ id: z.number().int().positive(), communityIds: z.array(z.number().int().positive()) }))
     .mutation(async ({ input, ctx }) => {
@@ -146,6 +160,10 @@ export const venuesRouter = router({
   publicActive: publicProcedure
     .input(z.object({ communityId: z.number().int().positive().optional() }))
     .query(async ({ input }) => listActiveVenues(input.communityId)),
+
+  publicFeatured: publicProcedure
+    .input(z.object({ communityId: z.number().int().positive().optional() }))
+    .query(async ({ input }) => listFeaturedVenues(input.communityId)),
 
   publicGetBySlug: publicProcedure
     .input(z.object({ slug: z.string().min(1).max(128) }))

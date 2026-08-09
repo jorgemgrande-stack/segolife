@@ -953,6 +953,13 @@
       "when": 1779224822206,
       "tag": "0136_segolife_brand_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "5",
+      "when": 1779224823206,
+      "tag": "0137_venues_featured",
+      "breakpoints": true
     }
   ]
 }

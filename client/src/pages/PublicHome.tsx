@@ -38,12 +38,30 @@ export default function PublicHome() {
   }, []);
 
   const { data: heroPhotos } = trpc.gallery.getItems.useQuery({ category: "home_hero" });
+  const { data: featuredEvents } = trpc.events.publicFeatured.useQuery({});
   const { data: events } = trpc.events.publicActive.useQuery({});
+  const { data: featuredVenues } = trpc.venues.publicFeatured.useQuery({});
   const { data: venues } = trpc.venues.publicActive.useQuery({});
   const { data: communities } = trpc.communities.list.useQuery();
 
-  const upcomingEvents = (events ?? []).slice(0, 6);
-  const tonightVenues = (venues ?? []).slice(0, 6);
+  // "Lo que se cuece" prioriza los eventos que el admin marcó como
+  // destacados (control ya existente en EventsManager, `isFeatured` /
+  // events.publicFeatured) y solo completa con el resto de activos si aún
+  // no hay 6 destacados — nunca al revés, para que marcar un evento como
+  // destacado tenga un efecto real y visible en la Home.
+  const featuredIds = new Set((featuredEvents ?? []).map(e => e.id));
+  const upcomingEvents = [
+    ...(featuredEvents ?? []),
+    ...(events ?? []).filter(e => !featuredIds.has(e.id)),
+  ].slice(0, 6);
+  // Mismo criterio que "Lo que se cuece": prioriza los locales que el admin
+  // marcó como destacados (control "Destacar" en VenuesManager) y solo
+  // completa con el resto de activos si aún no hay 6 destacados.
+  const featuredVenueIds = new Set((featuredVenues ?? []).map(v => v.id));
+  const tonightVenues = [
+    ...(featuredVenues ?? []),
+    ...(venues ?? []).filter(v => !featuredVenueIds.has(v.id)),
+  ].slice(0, 6);
 
   return (
     <div className="segolife-theme min-h-dvh bg-background">

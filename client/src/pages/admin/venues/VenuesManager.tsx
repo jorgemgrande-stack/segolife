@@ -14,7 +14,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Search, Store, Loader2, Plus } from "lucide-react";
+import { Search, Store, Loader2, Plus, Star } from "lucide-react";
 import { useAdminCommunity } from "@/contexts/AdminCommunityContext";
 import { ADMIN_COMMUNITY_FILTER_ALL } from "@shared/segolife/adminCommunityFilter";
 
@@ -40,6 +40,7 @@ export default function VenuesManager() {
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState<string>(ALL);
   const [status, setStatus] = useState<string>(ALL);
+  const [featured, setFeatured] = useState<string>(ALL);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<VenueForm>(emptyForm);
 
@@ -52,6 +53,7 @@ export default function VenuesManager() {
     search: search || undefined,
     categoryId: categoryId !== ALL ? Number(categoryId) : undefined,
     status: status !== ALL ? (status as "active" | "inactive") : undefined,
+    isFeatured: featured !== ALL ? featured === "true" : undefined,
     limit: 100,
     offset: 0,
   });
@@ -63,6 +65,11 @@ export default function VenuesManager() {
       setOpen(false);
       setForm(emptyForm);
     },
+    onError: e => toast.error(e.message),
+  });
+
+  const setFeaturedMut = trpc.venues.setFeatured.useMutation({
+    onSuccess: () => { utils.venues.list.invalidate(); },
     onError: e => toast.error(e.message),
   });
 
@@ -127,6 +134,15 @@ export default function VenuesManager() {
               <SelectItem value="inactive">Inactivo</SelectItem>
             </SelectContent>
           </Select>
+
+          <Select value={featured} onValueChange={setFeatured}>
+            <SelectTrigger className="w-[170px]"><SelectValue placeholder="Destacado" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>Destacado (todos)</SelectItem>
+              <SelectItem value="true">Destacados</SelectItem>
+              <SelectItem value="false">No destacados</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {/* ── Tabla ── */}
@@ -148,6 +164,7 @@ export default function VenuesManager() {
                   <TableHead>Comunidad</TableHead>
                   <TableHead>Ciudad</TableHead>
                   <TableHead>Estado</TableHead>
+                  <TableHead>Destacado</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -172,6 +189,15 @@ export default function VenuesManager() {
                       <Badge variant={v.status === "active" ? "default" : "outline"}>
                         {v.status === "active" ? "Activo" : "Inactivo"}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        onClick={ev => { ev.preventDefault(); ev.stopPropagation(); setFeaturedMut.mutate({ id: v.id, featured: !v.isFeatured }); }}
+                        className="p-1 rounded hover:bg-accent"
+                        title={v.isFeatured ? "Quitar destacado" : "Destacar"}
+                      >
+                        <Star className={`w-4 h-4 ${v.isFeatured ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`} />
+                      </button>
                     </TableCell>
                   </TableRow>
                 ))}
