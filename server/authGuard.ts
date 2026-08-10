@@ -20,6 +20,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { verifySessionToken } from "./localAuth";
 import { sdk } from "./_core/sdk";
+import { UNAUTHED_ERR_MSG } from "@shared/const";
 
 // ─── Rutas tRPC completamente públicas (no requieren sesión) ─────────────────
 // Formato: "router.procedure" tal como aparece en la URL de tRPC
@@ -226,10 +227,18 @@ export function createAuthGuardMiddleware(useLocalAuth: boolean) {
     }
 
     if (!authenticated) {
+      // Mismo mensaje que UNAUTHORIZED de tRPC (server/_core/trpc.ts) — el
+      // cliente (client/src/main.tsx, redirectToLoginIfUnauthorized) hace
+      // match exacto de string contra UNAUTHED_ERR_MSG para redirigir a
+      // /login. Antes este middleware usaba un texto distinto en español,
+      // así que ese redirect nunca se disparaba cuando ESTE guard (y no el
+      // procedure de tRPC) era el que rechazaba la petición — el usuario se
+      // quedaba viendo el shell de admin ya cargado junto a un error suelto,
+      // en vez de ir limpiamente a /login (bug real reportado en producción).
       res.status(401).json({
         error: {
           json: {
-            message: "No autenticado. Inicia sesión para continuar.",
+            message: UNAUTHED_ERR_MSG,
             code: -32001,
             data: { code: "UNAUTHORIZED", httpStatus: 401 },
           },
