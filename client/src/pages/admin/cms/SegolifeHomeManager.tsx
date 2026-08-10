@@ -186,8 +186,8 @@ function FeaturedSection({
   const utils = trpc.useUtils();
 
   const featuredQuery = kind === "events"
-    ? trpc.events.list.useQuery({ communityId: "all", status: "active", isFeatured: true, limit: 50, offset: 0 })
-    : trpc.venues.list.useQuery({ communityId: "all", status: "active", isFeatured: true, limit: 50, offset: 0 });
+    ? trpc.events.list.useQuery({ communityId: "all", status: "active", isFeatured: true, orderBy: "homeSortOrder", limit: 50, offset: 0 })
+    : trpc.venues.list.useQuery({ communityId: "all", status: "active", isFeatured: true, orderBy: "homeSortOrder", limit: 50, offset: 0 });
 
   const searchQuery = kind === "events"
     ? trpc.events.list.useQuery(
@@ -207,6 +207,14 @@ function FeaturedSection({
     onSuccess: () => { utils.venues.list.invalidate(); },
     onError: e => toast.error(e.message),
   });
+  const reorderEvents = trpc.events.reorderFeatured.useMutation({
+    onSuccess: () => utils.events.list.invalidate(),
+    onError: e => toast.error(e.message),
+  });
+  const reorderVenues = trpc.venues.reorderFeatured.useMutation({
+    onSuccess: () => utils.venues.list.invalidate(),
+    onError: e => toast.error(e.message),
+  });
 
   const setFeatured = (id: number, featured: boolean) => {
     if (kind === "events") setFeaturedEvent.mutate({ id, featured });
@@ -215,6 +223,16 @@ function FeaturedSection({
 
   const featuredItems = featuredQuery.data?.items ?? [];
   const searchResults = searchQuery.data?.items ?? [];
+
+  const move = (index: number, dir: -1 | 1) => {
+    const target = index + dir;
+    if (target < 0 || target >= featuredItems.length) return;
+    const reordered = [...featuredItems];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    const orderedIds = reordered.map(i => i.id);
+    if (kind === "events") reorderEvents.mutate({ orderedIds });
+    else reorderVenues.mutate({ orderedIds });
+  };
 
   return (
     <section className="bg-card border border-border rounded-lg p-5 space-y-4">
@@ -237,19 +255,27 @@ function FeaturedSection({
         <p className="text-sm text-muted-foreground">Nada destacado todavía — busca abajo para añadir.</p>
       ) : (
         <div className="space-y-2">
-          {featuredItems.map(item => (
+          {featuredItems.map((item, i) => (
             <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
               <div className="flex items-center gap-2 min-w-0">
                 <Star className="w-4 h-4 fill-yellow-400 text-yellow-400 shrink-0" />
                 <span className="text-sm font-medium text-foreground truncate">{item.name}</span>
               </div>
-              <Button
-                size="sm" variant="ghost" className="h-7 px-2 text-muted-foreground hover:text-destructive"
-                onClick={() => setFeatured(item.id, false)}
-                title="Quitar de destacados"
-              >
-                <X className="w-3.5 h-3.5" />
-              </Button>
+              <div className="flex items-center gap-1 shrink-0">
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => move(i, -1)} disabled={i === 0} title="Mover antes">
+                  <ArrowUp className="w-3.5 h-3.5" />
+                </Button>
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => move(i, 1)} disabled={i === featuredItems.length - 1} title="Mover después">
+                  <ArrowDown className="w-3.5 h-3.5" />
+                </Button>
+                <Button
+                  size="sm" variant="ghost" className="h-7 px-2 text-muted-foreground hover:text-destructive"
+                  onClick={() => setFeatured(item.id, false)}
+                  title="Quitar de destacados"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              </div>
             </div>
           ))}
         </div>

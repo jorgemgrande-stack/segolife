@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { eq, and, or, like, inArray, desc, type SQL } from "drizzle-orm";
+import { eq, and, or, like, inArray, desc, asc, type SQL } from "drizzle-orm";
 import {
   venues,
   venueCategories,
@@ -38,6 +38,8 @@ export interface VenueListFilters {
   categoryId?: number;
   status?: "active" | "inactive";
   isFeatured?: boolean;
+  /** "createdAt" (por defecto) o "homeSortOrder" (orden curado a mano en /admin/cms/inicio). */
+  orderBy?: "createdAt" | "homeSortOrder";
   limit?: number;
   offset?: number;
 }
@@ -102,8 +104,12 @@ export async function listVenues(
     .from(venues)
     .leftJoin(venueCategories, eq(venues.categoryId, venueCategories.id));
 
+  const orderClauses = filters.orderBy === "homeSortOrder"
+    ? [asc(venues.homeSortOrder), desc(venues.createdAt)]
+    : [desc(venues.createdAt)];
+
   const rows = await (whereClause ? baseQuery.where(whereClause) : baseQuery)
-    .orderBy(desc(venues.createdAt))
+    .orderBy(...orderClauses)
     .limit(filters.limit ?? 50)
     .offset(filters.offset ?? 0);
 
@@ -271,8 +277,16 @@ export async function listActiveVenues(communityId?: number, db?: DbHandle): Pro
 export async function listFeaturedVenues(communityId?: number, db?: DbHandle): Promise<VenueListItem[]> {
   const conn = db ?? (await getDb());
   const { items } = await listVenues(
-    { communityIds: communityId ? [communityId] : "all", status: "active", isFeatured: true, limit: 50, offset: 0 },
+    { communityIds: communityId ? [communityId] : "all", status: "active", isFeatured: true, orderBy: "homeSortOrder", limit: 50, offset: 0 },
     conn
   );
   return items;
+}
+
+/** Reordena los venues destacados de la Home — mismo patrón que reorderGalleryItems (index → homeSortOrder). */
+export async function reorderFeaturedVenues(orderedIds: number[], db?: DbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  await Promise.all(
+    orderedIds.map((id, index) => conn.update(venues).set({ homeSortOrder: index }).where(eq(venues.id, id)))
+  );
 }

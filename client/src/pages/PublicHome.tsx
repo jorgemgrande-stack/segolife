@@ -54,14 +54,15 @@ export default function PublicHome() {
     ...(featuredEvents ?? []),
     ...(events ?? []).filter(e => !featuredIds.has(e.id)),
   ].slice(0, 6);
-  // Mismo criterio que "Lo que se cuece": prioriza los locales que el admin
-  // marcó como destacados (control "Destacar" en VenuesManager) y solo
-  // completa con el resto de activos si aún no hay 6 destacados.
+  // A diferencia de "Lo que se cuece": aquí se listan TODOS los locales
+  // activos (sin slice), destacados primero en el orden curado desde
+  // /admin/cms/inicio (homeSortOrder) — los venues son un catálogo estable,
+  // no un flujo de eventos que necesite recortarse.
   const featuredVenueIds = new Set((featuredVenues ?? []).map(v => v.id));
   const tonightVenues = [
     ...(featuredVenues ?? []),
     ...(venues ?? []).filter(v => !featuredVenueIds.has(v.id)),
-  ].slice(0, 6);
+  ];
 
   return (
     <div className="segolife-theme min-h-dvh bg-background">
@@ -151,6 +152,14 @@ interface PublicEvent {
   communities: Array<{ slug: string }>;
 }
 
+/** Elige de forma determinista con qué comunidad enlazar desde la Home
+ * pública (sin comunidad elegida todavía) — antes usaba communities[0]
+ * directamente, dependiente del orden de fila que devuelve la consulta
+ * (no garantizado sin ORDER BY); ordenar por slug lo vuelve estable. */
+function primaryCommunitySlug(communities: Array<{ slug: string }>): string | undefined {
+  return [...communities].sort((a, b) => a.slug.localeCompare(b.slug))[0]?.slug;
+}
+
 function WhatsHappening({ events }: { events: PublicEvent[] }) {
   const { t, i18n } = useTranslation();
 
@@ -163,7 +172,7 @@ function WhatsHappening({ events }: { events: PublicEvent[] }) {
         ) : (
           <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 sm:gap-6 lg:grid-cols-4">
             {events.map((event) => {
-              const slug = event.communities[0]?.slug;
+              const slug = primaryCommunitySlug(event.communities);
               const starts = new Date(event.startsAt);
               const day = starts.toLocaleDateString(i18n.language, { weekday: "short", day: "numeric", month: "short" });
               return (
@@ -217,7 +226,7 @@ function TonightInSegovia({ venues }: { venues: PublicVenue[] }) {
         ) : (
           <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {venues.map((venue) => {
-              const slug = venue.communities[0]?.slug;
+              const slug = primaryCommunitySlug(venue.communities);
               return (
                 <Link key={venue.slug} href={slug ? `/${slug}/venues/${venue.slug}` : "#"} className="group relative block overflow-hidden rounded-3xl">
                   <SegolifeImage src={venue.coverImageUrl ?? venue.imageUrl} alt={venue.name} ratio={16 / 11} rounded="rounded-3xl" className="transition-transform duration-300 group-hover:scale-[1.04]" />
