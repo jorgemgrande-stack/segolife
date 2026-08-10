@@ -29,6 +29,10 @@ function homeForRole(role: string | undefined): string {
   return "/admin";
 }
 
+// Nunca brand_logo_url/brand_name (heredado de Náyade) — mismas claves
+// propias de Segolife que ya usa AdminLayout.tsx, nunca ese fallback.
+const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
+
 export default function Login() {
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
@@ -44,6 +48,16 @@ export default function Login() {
     retry: false,
     refetchOnWindowFocus: false,
   });
+
+  // Mismas claves de marca que AdminLayout.tsx (este login lleva a /admin
+  // para casi todos los roles) — el look and feel es el del panel real, no
+  // una paleta hex aparte heredada de la plantilla original.
+  const { data: publicSettings } = trpc.config.getPublicSettings.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+  const brandLogo = publicSettings?.segolife_brand_logo_url || SEGOLIFE_LOGO_FALLBACK;
+  const brandName = publicSettings?.segolife_brand_name || "SEGOLIFE";
 
   useEffect(() => {
     if (meQuery.data) {
@@ -92,43 +106,42 @@ export default function Login() {
 
   if (meQuery.isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#0d1b2a]">
-        <Loader2 className="w-8 h-8 text-[#7a3ad1] animate-spin" />
+      <div className="dark min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex bg-[#0d1b2a]">
+    <div className="dark min-h-screen flex bg-background">
       {/* Panel izquierdo — imagen / marca */}
-      <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 relative overflow-hidden">
-        {/* Fondo con gradiente */}
-        <div className="absolute inset-0 bg-gradient-to-br from-[#0d1b2a] via-[#1a2f4a] to-[#0d1b2a]" />
+      <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 relative overflow-hidden bg-sidebar">
+        {/* Fondo con gradiente — mismo acento ámbar que el panel de admin real, nunca un morado ajeno al tema. */}
         <div className="absolute inset-0 opacity-10"
           style={{
-            backgroundImage: "radial-gradient(circle at 30% 50%, #7a3ad1 0%, transparent 50%), radial-gradient(circle at 70% 20%, #3b82f6 0%, transparent 40%)"
+            backgroundImage: "radial-gradient(circle at 30% 50%, var(--primary) 0%, transparent 50%), radial-gradient(circle at 70% 20%, var(--sidebar-ring) 0%, transparent 40%)"
           }}
         />
 
         {/* Logo */}
         <div className="relative z-10 flex items-center gap-3">
-          <img src="/icons/segolife-icon.svg" alt="SEGOLIFE" className="w-10 h-10 rounded-xl" />
-          <div className="text-white font-bold text-lg leading-tight">SEGOLIFE</div>
+          <img src={brandLogo} alt={brandName} className="w-10 h-10 rounded-xl object-contain" />
+          <div className="text-sidebar-foreground font-bold text-lg leading-tight">{brandName}</div>
         </div>
 
         {/* Texto central */}
         <div className="relative z-10">
-          <h1 className="text-4xl font-bold text-white leading-tight mb-4">
+          <h1 className="text-4xl font-bold text-sidebar-foreground leading-tight mb-4">
             Panel de<br />
-            <span className="text-[#7a3ad1]">Administración</span>
+            <span className="text-primary">Administración</span>
           </h1>
-          <p className="text-slate-400 text-lg leading-relaxed">
+          <p className="text-muted-foreground text-lg leading-relaxed">
             Gestiona comunidades, eventos y contenido desde un único lugar.
           </p>
         </div>
 
         {/* Footer */}
-        <div className="relative z-10 text-slate-500 text-sm">
+        <div className="relative z-10 text-muted-foreground text-sm">
           Segovia · Vida universitaria
         </div>
       </div>
@@ -138,23 +151,23 @@ export default function Login() {
         <div className="w-full max-w-md">
           {/* Logo móvil */}
           <div className="flex items-center gap-3 mb-8 lg:hidden">
-            <img src="/icons/segolife-icon.svg" alt="SEGOLIFE" className="w-10 h-10 rounded-xl" />
-            <div className="text-white font-bold text-lg leading-tight">SEGOLIFE</div>
+            <img src={brandLogo} alt={brandName} className="w-10 h-10 rounded-xl object-contain" />
+            <div className="text-foreground font-bold text-lg leading-tight">{brandName}</div>
           </div>
 
           <div className="mb-8">
-            <h2 className="text-2xl font-bold text-white mb-2">Iniciar sesión</h2>
-            <p className="text-slate-400">Accede con tu email y contraseña de administrador.</p>
+            <h2 className="text-2xl font-bold text-foreground mb-2">Iniciar sesión</h2>
+            <p className="text-muted-foreground">Accede con tu email y contraseña de administrador.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* Email */}
             <div className="space-y-2">
-              <Label htmlFor="email" className="text-slate-300 text-sm font-medium">
+              <Label htmlFor="email" className="text-foreground/80 text-sm font-medium">
                 Email
               </Label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   id="email"
                   type="email"
@@ -163,18 +176,18 @@ export default function Login() {
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   placeholder="admin@segolife.es"
-                  className="pl-10 bg-[#1a2f4a] border-[#2a4060] text-white placeholder:text-slate-600 focus:border-[#7a3ad1] focus:ring-[#7a3ad1]/20"
+                  className="pl-10 bg-secondary border-border text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:ring-primary/20"
                 />
               </div>
             </div>
 
             {/* Contraseña */}
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-slate-300 text-sm font-medium">
+              <Label htmlFor="password" className="text-foreground/80 text-sm font-medium">
                 Contraseña
               </Label>
               <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   id="password"
                   type={showPassword ? "text" : "password"}
@@ -183,12 +196,12 @@ export default function Login() {
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="pl-10 pr-10 bg-[#1a2f4a] border-[#2a4060] text-white placeholder:text-slate-600 focus:border-[#7a3ad1] focus:ring-[#7a3ad1]/20"
+                  className="pl-10 pr-10 bg-secondary border-border text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:ring-primary/20"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   tabIndex={-1}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -198,7 +211,7 @@ export default function Login() {
 
             {/* Error */}
             {error && (
-              <div className="flex items-start gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+              <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm">
                 <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                 <span>{error}</span>
               </div>
@@ -207,7 +220,7 @@ export default function Login() {
             {/* Enlace de recuperación */}
             <div className="flex justify-end">
               <Link href="/recuperar-contrasena">
-                <span className="text-[#9b6ee0] hover:text-[#b491ea] text-sm transition-colors cursor-pointer">
+                <span className="text-primary hover:text-primary/80 text-sm transition-colors cursor-pointer">
                   ¿Olvidaste tu contraseña?
                 </span>
               </Link>
@@ -217,7 +230,7 @@ export default function Login() {
             <Button
               type="submit"
               disabled={loading || !email || !password}
-              className="w-full bg-[#7a3ad1] hover:bg-[#6a2fb8] text-white font-semibold py-2.5 text-base transition-colors disabled:opacity-50"
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold py-2.5 text-base transition-colors disabled:opacity-50"
             >
               {loading ? (
                 <span className="flex items-center gap-2">
@@ -234,14 +247,14 @@ export default function Login() {
           <div className="mt-8 text-center">
             <a
               href="/"
-              className="text-slate-500 hover:text-slate-300 text-sm transition-colors"
+              className="text-muted-foreground hover:text-foreground text-sm transition-colors"
             >
               ← Volver a la web pública
             </a>
           </div>
 
           {/* Nota de entorno */}
-          <div className="mt-6 p-3 rounded-lg bg-[#1a2f4a]/50 border border-[#2a4060] text-slate-500 text-xs text-center">
+          <div className="mt-6 p-3 rounded-lg bg-secondary/50 border border-border text-muted-foreground text-xs text-center">
             Modo de autenticación local activo
           </div>
         </div>
