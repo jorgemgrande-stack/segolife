@@ -161,6 +161,7 @@ export async function getVenueBySlug(slug: string, db?: DbHandle): Promise<Venue
 export interface CreateVenueInput {
   name: string;
   slug: string;
+  tagline?: string | null;
   description?: string | null;
   categoryId?: number | null;
   address?: string | null;
@@ -168,7 +169,9 @@ export interface CreateVenueInput {
   phone?: string | null;
   email?: string | null;
   website?: string | null;
+  instagramUrl?: string | null;
   imageUrl?: string | null;
+  coverImageUrl?: string | null;
 }
 
 /** communityIds: comunidades a las que se vincula el venue al crearlo (puede ser []). */
@@ -188,6 +191,7 @@ export async function createVenue(
 export interface UpdateVenueFields {
   name?: string;
   slug?: string;
+  tagline?: string | null;
   description?: string | null;
   categoryId?: number | null;
   address?: string | null;
@@ -195,7 +199,9 @@ export interface UpdateVenueFields {
   phone?: string | null;
   email?: string | null;
   website?: string | null;
+  instagramUrl?: string | null;
   imageUrl?: string | null;
+  coverImageUrl?: string | null;
 }
 
 export async function updateVenue(id: number, fields: UpdateVenueFields, db?: DbHandle): Promise<Venue | null> {

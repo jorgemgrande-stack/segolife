@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useLocation, Link } from "wouter";
 import AdminLayout from "@/components/AdminLayout";
 import { trpc } from "@/lib/trpc";
@@ -12,8 +12,9 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { ArrowLeft, Loader2, Store, Sparkles, Clock, Package, Trash2, QrCode } from "lucide-react";
+import { ArrowLeft, Loader2, Store, Sparkles, Clock, Package, Trash2, QrCode, Image as ImageIcon, Upload, Plus, CalendarDays } from "lucide-react";
 import { VenueCommerceTab } from "./VenueCommerceTab";
+import { splitUpcomingPast } from "@shared/segolife/eventTiming";
 
 const NONE = "__none__";
 const WEEKDAYS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
@@ -293,6 +294,115 @@ function VenueBenefitsTab({ venueId }: { venueId: number }) {
   );
 }
 
+/**
+ * Pestaña Media (Fase 8.6, punto 36) — logo/cover/galería del venue.
+ * REUSE: mismo endpoint /api/upload/image + gallery.adminCreate/adminDelete
+ * ya usados en GalleryManager.tsx/SegolifeHomeManager.tsx — sin workflow de
+ * pegar URLs a mano. Logo=venues.imageUrl (object-contain), Cover=
+ * venues.coverImageUrl (object-cover), Galería=gallery_items con este
+ * venueId y category="venue_gallery" (distinta de "home_hero", que es solo
+ * para el hero de PublicHome).
+ */
+function VenueMediaTab({ venueId, imageUrl, coverImageUrl }: { venueId: number; imageUrl: string | null; coverImageUrl: string | null }) {
+  const utils = trpc.useUtils();
+  const logoRef = useRef<HTMLInputElement>(null);
+  const coverRef = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
+  const [uploadingSlot, setUploadingSlot] = useState<"logo" | "cover" | "gallery" | null>(null);
+
+  const { data: allItems, isLoading: loadingGallery } = trpc.gallery.adminGetAll.useQuery();
+  const galleryPhotos = (allItems ?? []).filter(i => i.venueId === venueId && i.category === "venue_gallery");
+
+  const updateVenueMut = trpc.venues.update.useMutation({
+    onSuccess: () => { utils.venues.getById.invalidate({ id: venueId }); toast.success("Imagen actualizada"); },
+    onError: e => toast.error(e.message),
+  });
+  const createGalleryMut = trpc.gallery.adminCreate.useMutation({
+    onSuccess: () => { utils.gallery.adminGetAll.invalidate(); toast.success("Foto añadida a la galería"); },
+    onError: e => toast.error(e.message),
+  });
+  const deleteGalleryMut = trpc.gallery.adminDelete.useMutation({
+    onSuccess: () => utils.gallery.adminGetAll.invalidate(),
+  });
+
+  async function uploadTo(slot: "logo" | "cover" | "gallery", file: File) {
+    setUploadingSlot(slot);
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      const res = await fetch("/api/upload/image", { method: "POST", body: formData, credentials: "include" });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Error al subir la imagen"); return; }
+      if (slot === "logo") updateVenueMut.mutate({ id: venueId, imageUrl: data.url });
+      else if (slot === "cover") updateVenueMut.mutate({ id: venueId, coverImageUrl: data.url });
+      else createGalleryMut.mutate({ imageUrl: data.url, fileKey: data.key, title: file.name, category: "venue_gallery", isActive: true, venueId });
+    } catch {
+      toast.error("Error de conexión al subir la imagen");
+    }
+    setUploadingSlot(null);
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+          <p className="text-sm font-semibold text-foreground">Logo</p>
+          <p className="text-xs text-muted-foreground">object-contain — admite transparencia. Se usa en el hero y en las cards.</p>
+          <div className="flex size-24 items-center justify-center rounded-xl border border-dashed border-border bg-secondary/30 p-2">
+            {imageUrl ? <img src={imageUrl} alt="Logo" className="max-h-full max-w-full object-contain" /> : <ImageIcon className="size-6 text-muted-foreground" />}
+          </div>
+          <Button size="sm" variant="outline" disabled={uploadingSlot === "logo"} onClick={() => logoRef.current?.click()}>
+            <Upload className="w-3.5 h-3.5 mr-1.5" /> {uploadingSlot === "logo" ? "Subiendo…" : "Cambiar logo"}
+          </Button>
+          <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={e => e.target.files?.[0] && uploadTo("logo", e.target.files[0])} />
+        </div>
+
+        <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+          <p className="text-sm font-semibold text-foreground">Cover</p>
+          <p className="text-xs text-muted-foreground">object-cover — fotografía grande del hero de la ficha pública.</p>
+          <div className="aspect-video overflow-hidden rounded-xl border border-dashed border-border bg-secondary/30">
+            {coverImageUrl ? <img src={coverImageUrl} alt="Cover" className="size-full object-cover" /> : <div className="flex size-full items-center justify-center"><ImageIcon className="size-6 text-muted-foreground" /></div>}
+          </div>
+          <Button size="sm" variant="outline" disabled={uploadingSlot === "cover"} onClick={() => coverRef.current?.click()}>
+            <Upload className="w-3.5 h-3.5 mr-1.5" /> {uploadingSlot === "cover" ? "Subiendo…" : "Cambiar cover"}
+          </Button>
+          <input ref={coverRef} type="file" accept="image/*" className="hidden" onChange={e => e.target.files?.[0] && uploadTo("cover", e.target.files[0])} />
+        </div>
+      </div>
+
+      <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-semibold text-foreground">Galería ({galleryPhotos.length})</p>
+          <Button size="sm" disabled={uploadingSlot === "gallery"} onClick={() => galleryRef.current?.click()}>
+            <Plus className="w-3.5 h-3.5 mr-1.5" /> {uploadingSlot === "gallery" ? "Subiendo…" : "Añadir foto"}
+          </Button>
+          <input ref={galleryRef} type="file" accept="image/*" className="hidden" onChange={e => e.target.files?.[0] && uploadTo("gallery", e.target.files[0])} />
+        </div>
+        {loadingGallery ? (
+          <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+        ) : galleryPhotos.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sin fotos de galería todavía.</p>
+        ) : (
+          <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+            {galleryPhotos.map(p => (
+              <div key={p.id} className="group relative aspect-square overflow-hidden rounded-lg border border-border">
+                <img src={p.imageUrl} alt={p.title ?? ""} className="size-full object-cover" />
+                <button
+                  onClick={() => deleteGalleryMut.mutate({ id: p.id })}
+                  className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100"
+                  title="Quitar de la galería"
+                >
+                  <Trash2 className="size-4 text-white" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function VenueDetail() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
@@ -305,8 +415,8 @@ export default function VenueDetail() {
   const { data: events } = trpc.events.publicByVenue.useQuery({ venueId }, { enabled: !!venueId });
 
   const [form, setForm] = useState({
-    name: "", slug: "", description: "", categoryId: NONE,
-    address: "", city: "", phone: "", email: "", website: "", imageUrl: "",
+    name: "", slug: "", tagline: "", description: "", categoryId: NONE,
+    address: "", city: "", phone: "", email: "", website: "", instagramUrl: "", imageUrl: "",
   });
   const [selectedCommunities, setSelectedCommunities] = useState<Set<number>>(new Set());
 
@@ -315,6 +425,7 @@ export default function VenueDetail() {
     setForm({
       name: detail.venue.name,
       slug: detail.venue.slug,
+      tagline: detail.venue.tagline ?? "",
       description: detail.venue.description ?? "",
       categoryId: detail.venue.categoryId ? String(detail.venue.categoryId) : NONE,
       address: detail.venue.address ?? "",
@@ -322,6 +433,7 @@ export default function VenueDetail() {
       phone: detail.venue.phone ?? "",
       email: detail.venue.email ?? "",
       website: detail.venue.website ?? "",
+      instagramUrl: detail.venue.instagramUrl ?? "",
       imageUrl: detail.venue.imageUrl ?? "",
     });
     setSelectedCommunities(new Set(detail.communities.map(c => c.id)));
@@ -369,6 +481,7 @@ export default function VenueDetail() {
       id: venueId,
       name: form.name,
       slug: form.slug,
+      tagline: form.tagline || null,
       description: form.description || null,
       categoryId: form.categoryId !== NONE ? Number(form.categoryId) : null,
       address: form.address || null,
@@ -376,6 +489,7 @@ export default function VenueDetail() {
       phone: form.phone || null,
       email: form.email || null,
       website: form.website || null,
+      instagramUrl: form.instagramUrl || null,
       imageUrl: form.imageUrl || null,
     });
   };
@@ -411,6 +525,7 @@ export default function VenueDetail() {
         <Tabs defaultValue="general">
           <TabsList>
             <TabsTrigger value="general">Datos generales</TabsTrigger>
+            <TabsTrigger value="media">Media</TabsTrigger>
             <TabsTrigger value="comunidades">Comunidades</TabsTrigger>
             <TabsTrigger value="eventos">Eventos</TabsTrigger>
             <TabsTrigger value="segotokens">SegoTokens</TabsTrigger>
@@ -429,6 +544,10 @@ export default function VenueDetail() {
               <div>
                 <Label>Slug</Label>
                 <Input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value }))} />
+              </div>
+              <div className="md:col-span-2">
+                <Label>Tagline</Label>
+                <Input value={form.tagline} onChange={e => setForm(f => ({ ...f, tagline: e.target.value }))} placeholder="Frase corta para el hero — ej: Discoteca · Segovia centro" />
               </div>
               <div>
                 <Label>Categoría</Label>
@@ -463,8 +582,13 @@ export default function VenueDetail() {
                 <Input value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} />
               </div>
               <div>
-                <Label>URL de imagen</Label>
+                <Label>Instagram</Label>
+                <Input value={form.instagramUrl} onChange={e => setForm(f => ({ ...f, instagramUrl: e.target.value }))} placeholder="https://instagram.com/…" />
+              </div>
+              <div>
+                <Label>URL de logo</Label>
                 <Input value={form.imageUrl} onChange={e => setForm(f => ({ ...f, imageUrl: e.target.value }))} placeholder="https://…" />
+                <p className="mt-1 text-xs text-muted-foreground">El cover y la galería se gestionan en la pestaña Media.</p>
               </div>
             </div>
             <div>
@@ -492,19 +616,54 @@ export default function VenueDetail() {
             </Button>
           </TabsContent>
 
-          <TabsContent value="eventos" className="bg-card border border-border rounded-lg p-5">
-            {(events ?? []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">Sin eventos asociados a este venue todavía.</p>
-            ) : (
-              <div className="space-y-2">
-                {(events ?? []).map(e => (
-                  <div key={e.id} className="text-sm bg-accent/40 rounded-md p-3 flex items-center justify-between">
-                    <span className="text-foreground">{e.name}</span>
-                    <span className="text-xs text-muted-foreground">{new Date(e.startsAt).toLocaleDateString("es-ES")}</span>
+          <TabsContent value="media" className="bg-card border border-border rounded-lg p-5">
+            <VenueMediaTab venueId={venueId} imageUrl={detail.venue.imageUrl} coverImageUrl={detail.venue.coverImageUrl} />
+          </TabsContent>
+
+          <TabsContent value="eventos" className="bg-card border border-border rounded-lg p-5 space-y-5">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">Eventos anclados a este venue.</p>
+              <Button size="sm" onClick={() => navigate(`/admin/events/new?venueId=${venueId}`)}>
+                <CalendarDays className="w-3.5 h-3.5 mr-1.5" /> Nuevo evento en este venue
+              </Button>
+            </div>
+            {(() => {
+              const { upcoming, past } = splitUpcomingPast(events ?? []);
+              return (
+                <>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">Próximos ({upcoming.length})</p>
+                    {upcoming.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Sin eventos próximos.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {upcoming.map(e => (
+                          <Link key={e.id} href={`/admin/events/${e.id}`} className="block text-sm bg-accent/40 hover:bg-accent rounded-md p-3 flex items-center justify-between">
+                            <span className="text-foreground">{e.name}</span>
+                            <span className="text-xs text-muted-foreground">{new Date(e.startsAt).toLocaleDateString("es-ES")}</span>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
-            )}
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">Pasados ({past.length})</p>
+                    {past.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Sin eventos pasados todavía.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {past.map(e => (
+                          <Link key={e.id} href={`/admin/events/${e.id}`} className="block text-sm bg-secondary/40 hover:bg-secondary rounded-md p-3 flex items-center justify-between text-muted-foreground">
+                            <span>{e.name}</span>
+                            <span className="text-xs">{new Date(e.startsAt).toLocaleDateString("es-ES")}</span>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </TabsContent>
 
           <TabsContent value="segotokens">

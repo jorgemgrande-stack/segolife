@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import AdminLayout from "@/components/AdminLayout";
 import { trpc } from "@/lib/trpc";
@@ -11,35 +11,20 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Search, CalendarDays, Loader2, Plus, Star } from "lucide-react";
+import { Search, CalendarDays, Loader2, Plus, Star, ImageIcon } from "lucide-react";
 import { useAdminCommunity } from "@/contexts/AdminCommunityContext";
 import { ADMIN_COMMUNITY_FILTER_ALL } from "@shared/segolife/adminCommunityFilter";
+import { getEventTemporalStatus, isEventTonight } from "@shared/segolife/eventTiming";
 
 const ALL = "__all__";
-const NONE = "__none__";
-
-function toSlug(name: string): string {
-  return name.toLowerCase().trim()
-    .normalize("NFD").replace(/[̀-ͯ]/g, "")
-    .replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-}
 
 function fmtDateTime(d: Date | string | null | undefined) {
   if (!d) return "—";
   return new Date(d).toLocaleString("es-ES", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-interface EventForm {
-  name: string;
-  slug: string;
-  venueId: string;
-  startsAt: string;
-}
-
-const emptyForm: EventForm = { name: "", slug: "", venueId: NONE, startsAt: "" };
+type TimeFilter = "all" | "upcoming" | "tonight" | "past";
 
 export default function EventsManager() {
   const { filter: communityFilter, communities } = useAdminCommunity();
@@ -48,10 +33,7 @@ export default function EventsManager() {
   const [venueId, setVenueId] = useState<string>(ALL);
   const [status, setStatus] = useState<string>(ALL);
   const [featured, setFeatured] = useState<string>(ALL);
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<EventForm>(emptyForm);
-
-  const utils = trpc.useUtils();
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
 
   const { data: venuesData } = trpc.venues.publicActive.useQuery({});
 
@@ -65,31 +47,23 @@ export default function EventsManager() {
     offset: 0,
   });
 
-  const createMut = trpc.events.create.useMutation({
-    onSuccess: () => {
-      utils.events.list.invalidate();
-      toast.success("Evento creado");
-      setOpen(false);
-      setForm(emptyForm);
-    },
-    onError: e => toast.error(e.message),
-  });
-
+  const utils = trpc.useUtils();
   const setFeaturedMut = trpc.events.setFeatured.useMutation({
     onSuccess: () => { utils.events.list.invalidate(); },
     onError: e => toast.error(e.message),
   });
 
-  const handleCreate = () => {
-    if (!form.name.trim() || !form.slug.trim() || !form.startsAt) { toast.error("Nombre, slug y fecha de inicio son obligatorios"); return; }
-    createMut.mutate({
-      name: form.name.trim(),
-      slug: form.slug.trim(),
-      venueId: form.venueId !== NONE ? Number(form.venueId) : undefined,
-      startsAt: new Date(form.startsAt),
-      communityIds: communityFilter === ADMIN_COMMUNITY_FILTER_ALL ? [] : [communityFilter],
-    });
-  };
+  // Filtro temporal — client-side sobre lo ya traído por el servidor (spec
+  // punto 26: mismo helper compartido en toda la app, nunca `new Date()`
+  // repetido). No es un filtro de servidor nuevo porque no hace falta: 100
+  // eventos por página es un volumen manejable para calcular en el cliente.
+  const timeFiltered = useMemo(() => {
+    const items = data?.items ?? [];
+    if (timeFilter === "all") return items;
+    if (timeFilter === "tonight") return items.filter(e => isEventTonight(e));
+    if (timeFilter === "upcoming") return items.filter(e => getEventTemporalStatus(e) !== "past");
+    return items.filter(e => getEventTemporalStatus(e) === "past");
+  }, [data, timeFilter]);
 
   return (
     <AdminLayout title="Eventos">
@@ -107,9 +81,26 @@ export default function EventsManager() {
               </p>
             </div>
           </div>
-          <Button onClick={() => { setForm(emptyForm); setOpen(true); }}>
-            <Plus className="w-4 h-4 mr-2" /> Nuevo evento
-          </Button>
+          <Link href="/admin/events/new">
+            <Button><Plus className="w-4 h-4 mr-2" /> Nuevo evento</Button>
+          </Link>
+        </div>
+
+        {/* ── Filtro temporal ── */}
+        <div className="flex gap-2">
+          {([
+            ["all", "Todos"], ["upcoming", "Próximos"], ["tonight", "Esta noche"], ["past", "Pasados"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setTimeFilter(value)}
+              className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+                timeFilter === value ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         {/* ── Filtros ── */}
@@ -161,12 +152,13 @@ export default function EventsManager() {
             </div>
           ) : error ? (
             <div className="py-16 text-center text-sm text-destructive">{error.message}</div>
-          ) : !data || data.items.length === 0 ? (
+          ) : timeFiltered.length === 0 ? (
             <div className="py-16 text-center text-sm text-muted-foreground">Sin eventos que coincidan con los filtros.</div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead></TableHead>
                   <TableHead>Evento</TableHead>
                   <TableHead>Venue</TableHead>
                   <TableHead>Comunidad</TableHead>
@@ -176,8 +168,13 @@ export default function EventsManager() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.items.map(e => (
+                {timeFiltered.map(e => (
                   <TableRow key={e.id} className="cursor-pointer hover:bg-accent/50">
+                    <TableCell>
+                      <div className="w-10 h-10 rounded-md overflow-hidden bg-secondary flex items-center justify-center shrink-0">
+                        {e.imageUrl ? <img src={e.imageUrl} alt="" className="size-full object-cover" /> : <ImageIcon className="w-4 h-4 text-muted-foreground" />}
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Link href={`/admin/events/${e.id}`} className="font-medium text-foreground">
                         {e.name}
@@ -214,51 +211,6 @@ export default function EventsManager() {
           )}
         </div>
       </div>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Nuevo evento</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div>
-              <Label>Nombre *</Label>
-              <Input
-                value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value, slug: toSlug(e.target.value) }))}
-                placeholder="Ej: Fiesta de bienvenida"
-              />
-            </div>
-            <div>
-              <Label>Slug *</Label>
-              <Input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: toSlug(e.target.value) }))} placeholder="fiesta-de-bienvenida" />
-            </div>
-            <div>
-              <Label>Venue</Label>
-              <Select value={form.venueId} onValueChange={v => setForm(f => ({ ...f, venueId: v }))}>
-                <SelectTrigger><SelectValue placeholder="Sin venue fijo" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>Sin venue fijo</SelectItem>
-                  {(venuesData ?? []).map(v => (
-                    <SelectItem key={v.id} value={String(v.id)}>{v.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Fecha y hora de inicio *</Label>
-              <Input type="datetime-local" value={form.startsAt} onChange={e => setForm(f => ({ ...f, startsAt: e.target.value }))} />
-            </div>
-            <p className="text-xs text-muted-foreground">
-              El resto de los datos (descripción, fin, aforo, comunidades) se completan desde la ficha del evento tras crearlo.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
-            <Button onClick={handleCreate} disabled={createMut.isPending}>Crear evento</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </AdminLayout>
   );
 }

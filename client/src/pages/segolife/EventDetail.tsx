@@ -15,6 +15,7 @@ import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isEventPast } from "@shared/segolife/eventTiming";
 
 /**
  * Detalle de un Evento — /:community/events/:slug (Fase 6). Página pública
@@ -103,7 +104,12 @@ export default function EventDetail() {
               )}
             </div>
 
-            <h1 className="text-xl font-bold text-foreground">{data.event.name}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold text-foreground">{data.event.name}</h1>
+              {isEventPast(data.event) && (
+                <Badge variant="outline" className="shrink-0">{t("eventDetail.pastBadge")}</Badge>
+              )}
+            </div>
 
             <div className="segolife-card-shadow space-y-2.5 rounded-2xl bg-card p-4 text-sm">
               <div className="flex items-start justify-between gap-3">
@@ -210,7 +216,8 @@ export default function EventDetail() {
 
             {data.purchaseAction?.type === "unavailable" && (
               <Button variant="outline" disabled className="w-full rounded-full py-6 text-sm font-semibold">
-                <Ticket className="mr-2 size-4" aria-hidden="true" /> {t("eventDetail.ticketsComingSoon")}
+                <Ticket className="mr-2 size-4" aria-hidden="true" />
+                {isEventPast(data.event) ? t("eventDetail.eventEnded") : t("eventDetail.ticketsComingSoon")}
               </Button>
             )}
           </div>

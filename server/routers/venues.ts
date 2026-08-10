@@ -45,6 +45,7 @@ function assertCommunityIdsWithinAccess(access: CommunityAccess, communityIds: n
 const venueInputSchema = z.object({
   name: z.string().min(1).max(256),
   slug: z.string().min(1).max(128).regex(/^[a-z0-9-]+$/),
+  tagline: z.string().max(256).nullish(),
   description: z.string().max(4000).nullish(),
   categoryId: z.number().int().positive().nullish(),
   address: z.string().max(256).nullish(),
@@ -52,7 +53,9 @@ const venueInputSchema = z.object({
   phone: z.string().max(32).nullish(),
   email: z.string().email().max(256).nullish(),
   website: z.string().max(256).nullish(),
+  instagramUrl: z.string().max(256).nullish(),
   imageUrl: z.string().max(512).nullish(),
+  coverImageUrl: z.string().max(512).nullish(),
 });
 
 export const venuesRouter = router({

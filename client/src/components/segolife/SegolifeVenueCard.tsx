@@ -5,6 +5,8 @@ export interface SegolifeVenueCardData {
   slug: string;
   name: string;
   imageUrl: string | null;
+  /** Fase 8.6: foto grande real del venue — `imageUrl` pasó a ser el LOGO. */
+  coverImageUrl?: string | null;
   categoryName?: string | null;
 }
 
@@ -12,7 +14,7 @@ export interface SegolifeVenueCardData {
 export function SegolifeVenueCard({ venue, slug, className }: { venue: SegolifeVenueCardData; slug: string; className?: string }) {
   return (
     <Link href={`/${slug}/venues/${venue.slug}`} className={className}>
-      <SegolifeImage src={venue.imageUrl} alt={venue.name} ratio={1} />
+      <SegolifeImage src={venue.coverImageUrl ?? venue.imageUrl} alt={venue.name} ratio={1} />
       <div className="mt-2 space-y-0.5">
         <p className="line-clamp-1 text-sm font-semibold text-foreground">{venue.name}</p>
         {venue.categoryName && <p className="text-xs text-muted-foreground">{venue.categoryName}</p>}

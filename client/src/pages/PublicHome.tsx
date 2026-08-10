@@ -199,6 +199,8 @@ interface PublicVenue {
   slug: string;
   name: string;
   imageUrl: string | null;
+  /** Fase 8.6: foto grande real del venue — `imageUrl` pasó a ser el LOGO. */
+  coverImageUrl?: string | null;
   category: { name: string } | null;
   communities: Array<{ slug: string }>;
 }
@@ -218,7 +220,7 @@ function TonightInSegovia({ venues }: { venues: PublicVenue[] }) {
               const slug = venue.communities[0]?.slug;
               return (
                 <Link key={venue.slug} href={slug ? `/${slug}/venues/${venue.slug}` : "#"} className="group relative block overflow-hidden rounded-3xl">
-                  <SegolifeImage src={venue.imageUrl} alt={venue.name} ratio={16 / 11} rounded="rounded-3xl" className="transition-transform duration-300 group-hover:scale-[1.04]" />
+                  <SegolifeImage src={venue.coverImageUrl ?? venue.imageUrl} alt={venue.name} ratio={16 / 11} rounded="rounded-3xl" className="transition-transform duration-300 group-hover:scale-[1.04]" />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
                   <div className="absolute inset-x-0 bottom-0 p-5">
                     {venue.category && (

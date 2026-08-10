@@ -17,6 +17,7 @@ import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { salesChannels } from "../../../drizzle/schema";
 import { getTicketTypeInventory, listTicketTypes } from "./ticketingDb";
+import { isEventPast, type EventTimingInput } from "../../../shared/segolife/eventTiming";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -40,8 +41,18 @@ export type PurchaseAction =
   | { type: "native_checkout"; eventId: number; ticketTypes: PurchaseActionTicketType[] }
   | { type: "unavailable" };
 
-/** El canal activo con menor sort_order (o is_primary=true) gana. Sin canales activos → unavailable, nunca un checkout falso. */
-export async function computePurchaseAction(eventId: number, db?: DbHandle): Promise<PurchaseAction> {
+/**
+ * El canal activo con menor sort_order (o is_primary=true) gana. Sin
+ * canales activos → unavailable, nunca un checkout falso.
+ *
+ * Fase 8.6, puntos 25/90: un evento ya terminado (`isEventPast`, ver
+ * shared/segolife/eventTiming.ts) nunca debe mostrar CTA de compra —
+ * comprobación aquí, no en cada pantalla, porque el backend decide (spec
+ * punto 55) y esta es la única función que calcula purchaseAction.
+ */
+export async function computePurchaseAction(eventId: number, eventTiming: EventTimingInput, db?: DbHandle): Promise<PurchaseAction> {
+  if (isEventPast(eventTiming)) return { type: "unavailable" };
+
   const conn = db ?? (await getDb());
   const channels = await conn.select().from(salesChannels)
     .where(and(eq(salesChannels.eventId, eventId), eq(salesChannels.status, "active")))

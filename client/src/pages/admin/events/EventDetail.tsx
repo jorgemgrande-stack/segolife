@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useLocation } from "wouter";
 import AdminLayout from "@/components/AdminLayout";
 import { trpc } from "@/lib/trpc";
@@ -12,16 +12,111 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { ArrowLeft, Loader2, CalendarDays, Sparkles, Star } from "lucide-react";
+import { ArrowLeft, Loader2, CalendarDays, Star, Upload, ImageIcon, Plug } from "lucide-react";
 import { EventTicketingTab } from "./EventTicketingTab";
 
 const NONE = "__none__";
 
-function FutureModulePlaceholder({ label }: { label: string }) {
+/** Pestaña Media — flyer del evento (Fase 8.6, punto 49). REUSE: mismo /api/upload/image. */
+function EventMediaTab({ eventId, imageUrl }: { eventId: number; imageUrl: string | null }) {
+  const utils = trpc.useUtils();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const updateMut = trpc.events.update.useMutation({
+    onSuccess: () => { utils.events.getById.invalidate({ id: eventId }); toast.success("Flyer actualizado"); },
+    onError: e => toast.error(e.message),
+  });
+
+  const uploadFlyer = async (file: File) => {
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      const res = await fetch("/api/upload/image", { method: "POST", body: formData, credentials: "include" });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Error al subir la imagen"); return; }
+      updateMut.mutate({ id: eventId, imageUrl: data.url });
+    } catch {
+      toast.error("Error de conexión al subir la imagen");
+    }
+    setUploading(false);
+  };
+
   return (
-    <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground border border-dashed border-border rounded-lg justify-center">
-      <Sparkles className="w-4 h-4" />
-      {label} — todavía no implementado en esta fase
+    <div className="bg-card border border-border rounded-lg p-5 space-y-3">
+      <p className="text-sm font-semibold text-foreground">Flyer</p>
+      <div className="flex items-center gap-4">
+        <div className="w-32 h-32 rounded-lg overflow-hidden bg-secondary/40 border border-dashed border-border flex items-center justify-center shrink-0">
+          {imageUrl ? <img src={imageUrl} alt="" className="size-full object-cover" /> : <ImageIcon className="w-6 h-6 text-muted-foreground" />}
+        </div>
+        <Button type="button" size="sm" variant="outline" disabled={uploading} onClick={() => fileRef.current?.click()}>
+          <Upload className="w-3.5 h-3.5 mr-1.5" /> {uploading ? "Subiendo…" : "Cambiar flyer"}
+        </Button>
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => e.target.files?.[0] && uploadFlyer(e.target.files[0])} />
+      </div>
+    </div>
+  );
+}
+
+/** Pestaña Attendance — REUSE: eventTicketing.listEventAttendance ya existe (Fase 8). */
+function EventAttendanceTab({ eventId }: { eventId: number }) {
+  const { data, isLoading } = trpc.eventTicketing.listEventAttendance.useQuery({ eventId });
+
+  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-card border border-border rounded-lg p-4">
+        <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Asistencias registradas</p>
+        <p className="text-2xl font-semibold text-foreground">{data?.length ?? 0}</p>
+      </div>
+      <div className="bg-card border border-border rounded-lg p-4">
+        {!data?.length ? (
+          <p className="text-sm text-muted-foreground border border-dashed border-border rounded-lg py-4 text-center">
+            Sin asistencias registradas todavía para este evento.
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {data.slice(0, 50).map(a => (
+              <div key={a.id} className="flex items-center justify-between text-sm bg-accent/40 rounded-md px-2.5 py-1.5">
+                <span className="text-foreground">Usuario #{a.userId} · {a.provider}</span>
+                <span className="text-xs text-muted-foreground">{new Date(a.occurredAt).toLocaleString("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Pestaña Integrations — REUSE: integrations.listEventIntegrations ya existe (Fase 5). Weezevent, nunca activado aquí. */
+function EventIntegrationsTab({ eventId }: { eventId: number }) {
+  const { data, isLoading } = trpc.integrations.listEventIntegrations.useQuery({ eventId });
+
+  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+
+  return (
+    <div className="bg-card border border-border rounded-lg p-5">
+      <h3 className="text-sm font-semibold flex items-center gap-1.5 mb-3"><Plug className="w-4 h-4" /> Integraciones (Weezevent)</h3>
+      {!data?.length ? (
+        <p className="text-sm text-muted-foreground border border-dashed border-border rounded-lg py-4 text-center">
+          Sin integración configurada para este evento — dar de alta desde /admin/integrations.
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {data.map(i => (
+            <div key={i.id} className="flex items-center justify-between text-sm border border-border rounded-lg px-3 py-2">
+              <span>{i.providerKey} · {i.environment}</span>
+              <div className="flex items-center gap-2">
+                {!i.credentialsConfigured && <Badge variant="outline">Awaiting credentials</Badge>}
+                <Badge variant={i.status === "connected" ? "default" : i.status === "error" ? "destructive" : "secondary"}>{i.status}</Badge>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -164,9 +259,11 @@ export default function EventDetail() {
         <Tabs defaultValue="general">
           <TabsList>
             <TabsTrigger value="general">Datos generales</TabsTrigger>
+            <TabsTrigger value="media">Media</TabsTrigger>
             <TabsTrigger value="comunidades">Comunidades</TabsTrigger>
             <TabsTrigger value="ticketing">Ticketing / Sales</TabsTrigger>
-            <TabsTrigger value="futuro">Próximamente</TabsTrigger>
+            <TabsTrigger value="attendance">Attendance</TabsTrigger>
+            <TabsTrigger value="integrations">Integrations</TabsTrigger>
           </TabsList>
 
           <TabsContent value="general" className="bg-card border border-border rounded-lg p-5 space-y-4">
@@ -203,16 +300,16 @@ export default function EventDetail() {
                 <Label>Fin</Label>
                 <Input type="datetime-local" value={form.endsAt} onChange={e => setForm(f => ({ ...f, endsAt: e.target.value }))} />
               </div>
-              <div className="md:col-span-2">
-                <Label>URL de imagen</Label>
-                <Input value={form.imageUrl} onChange={e => setForm(f => ({ ...f, imageUrl: e.target.value }))} placeholder="https://…" />
-              </div>
             </div>
             <div>
               <Label>Descripción</Label>
               <Textarea rows={4} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
             </div>
             <Button onClick={saveGeneral} disabled={updateMut.isPending}>Guardar cambios</Button>
+          </TabsContent>
+
+          <TabsContent value="media">
+            <EventMediaTab eventId={eventId} imageUrl={detail.event.imageUrl} />
           </TabsContent>
 
           <TabsContent value="comunidades" className="bg-card border border-border rounded-lg p-5 space-y-4">
@@ -237,9 +334,12 @@ export default function EventDetail() {
             <EventTicketingTab eventId={eventId} />
           </TabsContent>
 
-          <TabsContent value="futuro" className="space-y-3">
-            <FutureModulePlaceholder label="SegoTokens / recompensas" />
-            <FutureModulePlaceholder label="QR / control de acceso" />
+          <TabsContent value="attendance">
+            <EventAttendanceTab eventId={eventId} />
+          </TabsContent>
+
+          <TabsContent value="integrations">
+            <EventIntegrationsTab eventId={eventId} />
           </TabsContent>
         </Tabs>
       </div>

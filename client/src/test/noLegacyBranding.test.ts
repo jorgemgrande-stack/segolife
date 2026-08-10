@@ -47,6 +47,13 @@ const SEGOLIFE_SINGLE_FILES = [
 const NAYADE_ONLY_FILES = [
   join(__dirname, "..", "components", "AdminLayout.tsx"),
   join(__dirname, "..", "pages", "admin", "AdminDashboard.tsx"),
+  // Fase 8.6 — admin de Venues/Events es SEGOLIFE puro (sin secciones legacy
+  // compartidas), así que se cubre igual que el resto de páginas admin
+  // nuevas de esta fase: nunca debería mencionar Náyade.
+  join(__dirname, "..", "pages", "admin", "venues", "VenueDetail.tsx"),
+  join(__dirname, "..", "pages", "admin", "events", "EventsManager.tsx"),
+  join(__dirname, "..", "pages", "admin", "events", "EventDetail.tsx"),
+  join(__dirname, "..", "pages", "admin", "events", "EventCreate.tsx"),
 ];
 
 const FORBIDDEN_PATTERNS = [

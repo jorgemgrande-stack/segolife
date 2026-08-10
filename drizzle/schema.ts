@@ -3840,6 +3840,10 @@ export const venues = mysqlTable("venues", {
   id:           int("id").autoincrement().primaryKey(),
   name:         varchar("name", { length: 256 }).notNull(),
   slug:         varchar("slug", { length: 128 }).notNull().unique(),
+  // Frase corta para el hero editorial (p.ej. "Discoteca · Segovia centro") —
+  // distinta de `description` (texto largo de la sección About). Nullable:
+  // sin ella, la ficha usa solo categoría/ciudad como subtítulo.
+  tagline:      varchar("tagline", { length: 256 }),
   description:  text("description"),
   categoryId:   int("category_id"),
   address:      varchar("address", { length: 256 }),
@@ -3847,7 +3851,16 @@ export const venues = mysqlTable("venues", {
   phone:        varchar("phone", { length: 32 }),
   email:        varchar("email", { length: 256 }),
   website:      varchar("website", { length: 256 }),
+  // Fase 8.6 — distinción real LOGO vs COVER pedida en el dominio de Venue:
+  // `imageUrl` (heredado) pasa a representar el LOGO (object-contain, puede
+  // tener transparencia); `coverImageUrl` es la fotografía grande del hero
+  // (object-cover). Ambos nullable — sin cover, el hero cae al mismo
+  // fallback de gradiente que ya usa PublicHome sin fotos.
+  coverImageUrl: varchar("cover_image_url", { length: 512 }),
   imageUrl:     varchar("image_url", { length: 512 }),
+  // Único campo social añadido — necesidad real y explícita del dominio
+  // Venue (nightlife/hospitality), no copiado de Fourvenues por comodidad.
+  instagramUrl: varchar("instagram_url", { length: 256 }),
   status:       mysqlEnum("status", ["active", "inactive"]).notNull().default("active"),
   // Misma bandera editorial simple que events.isFeatured (Fase 1D) — destacar
   // en "Esta noche en Segovia" (PublicHome.tsx), no un sistema de ranking.

@@ -960,6 +960,13 @@
       "when": 1779224823206,
       "tag": "0137_venues_featured",
       "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "5",
+      "when": 1779224824206,
+      "tag": "0138_venue_editorial_fields",
+      "breakpoints": true
     }
   ]
 }

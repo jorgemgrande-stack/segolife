@@ -171,6 +171,7 @@ const StudentDetail = lazy(() => import("./pages/admin/students/StudentDetail"))
 const VenuesManager = lazy(() => import("./pages/admin/venues/VenuesManager"));
 const VenueDetail = lazy(() => import("./pages/admin/venues/VenueDetail"));
 const EventsManager = lazy(() => import("./pages/admin/events/EventsManager"));
+const EventCreate = lazy(() => import("./pages/admin/events/EventCreate"));
 const EventDetail = lazy(() => import("./pages/admin/events/EventDetail"));
 
 // Segolife: Motor de SegoTokens (Fase 2)
@@ -483,6 +484,7 @@ function Router() {
       <Route path="/admin/venues">{() => <Suspense fallback={<AdminLoadingFallback />}><VenuesManager /></Suspense>}</Route>
       <Route path="/admin/venues/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><VenueDetail /></Suspense>}</Route>
       <Route path="/admin/events">{() => <Suspense fallback={<AdminLoadingFallback />}><EventsManager /></Suspense>}</Route>
+      <Route path="/admin/events/new">{() => <Suspense fallback={<AdminLoadingFallback />}><EventCreate /></Suspense>}</Route>
       <Route path="/admin/events/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><EventDetail /></Suspense>}</Route>
       <Route path="/admin/tokens">{() => <Suspense fallback={<AdminLoadingFallback />}><TokensDashboard /></Suspense>}</Route>
       <Route path="/admin/tokens/rules">{() => <Suspense fallback={<AdminLoadingFallback />}><TokensRulesManager /></Suspense>}</Route>

@@ -48,19 +48,12 @@ const navItems = [
       { label: "Multimedia", href: "/admin/cms/multimedia" },
     ],
   },
-  {
-    label: "Productos",
-    href: "/admin/productos",
-    icon: Package,
-    roles: ["admin"],
-    children: [
-      { label: "Experiencias", href: "/admin/productos/experiencias" },
-      { label: "Categorías", href: "/admin/productos/categorias" },
-      { label: "Ubicaciones", href: "/admin/productos/ubicaciones" },
-      { label: "Variantes", href: "/admin/productos/variantes" },
-      { label: "Lego Packs", href: "/admin/productos/lego-packs" },
-    ],
-  },
+  // "Productos" (Experiencias/Categorías/Ubicaciones/Variantes/Lego Packs)
+  // oculto del nav (Fase 8.6, spec punto 65): catálogo legacy de Náyade,
+  // ninguna superficie activa de SEGOLIFE lo consume (PublicHome/Explore/
+  // Venue/Event usan venues/events, no products/experiences). Código,
+  // rutas y tablas de BD intactos — solo se quita esta entrada del array
+  // de navegación, mismo patrón que las 5 secciones de CMS ya ocultadas.
   {
     label: "Estudiantes",
     href: "/admin/students",

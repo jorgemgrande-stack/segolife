@@ -169,7 +169,7 @@ export const eventsRouter = router({
     .query(async ({ input }) => {
       const detail = await getEventBySlug(input.slug);
       if (!detail || detail.event.status !== "active") return null;
-      const purchaseAction = await computePurchaseAction(detail.event.id);
+      const purchaseAction = await computePurchaseAction(detail.event.id, detail.event);
       return { ...detail, purchaseAction };
     }),
 });
