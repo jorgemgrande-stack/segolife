@@ -126,7 +126,13 @@ const SECTIONS: SectionDef[] = [
     label: "Branding",
     icon: Palette,
     description: "Logotipo, colores, imagen destacada y redes sociales.",
-    settingKeys: ["brand_logo_url", "brand_hero_image_url", "brand_primary_color", "brand_accent_color", "brand_instagram"],
+    // segolife_brand_name/segolife_brand_logo_url: sembrados en la migración
+    // 0136_segolife_brand_settings.sql (los lee AdminLayout para el propio
+    // panel SEGOLIFE) pero nunca se habían añadido aquí, así que no existía
+    // ningún formulario para editarlos — brand_logo_url/brand_name siguen
+    // siendo los de Náyade (email/facturas/portales legacy), separados a
+    // propósito, no se tocan.
+    settingKeys: ["segolife_brand_name", "segolife_brand_logo_url", "brand_logo_url", "brand_hero_image_url", "brand_primary_color", "brand_accent_color", "brand_instagram"],
     flagModules: [],
     requiredKeys: [],
   },
