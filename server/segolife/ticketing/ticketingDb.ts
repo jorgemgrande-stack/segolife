@@ -16,7 +16,12 @@ import {
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 3 });
 const _db = drizzle(_pool);
 
-type DbHandle = typeof _db;
+export type DbHandle = typeof _db;
+// El callback de `.transaction()` recibe un tipo distinto (MySqlTransaction),
+// incompatible en TypeScript con MySql2Database aunque comparten la misma
+// API en tiempo de ejecución — mismo workaround que inventoryHoldService.ts.
+export type TxHandle = Parameters<Parameters<DbHandle["transaction"]>[0]>[0];
+export type AnyDbHandle = DbHandle | TxHandle;
 
 async function getDb(): Promise<DbHandle> {
   return _db;
@@ -24,12 +29,12 @@ async function getDb(): Promise<DbHandle> {
 
 // ─── SALES CHANNELS ──────────────────────────────────────────────────────────
 
-export async function listSalesChannels(eventId: number, db?: DbHandle): Promise<SalesChannel[]> {
+export async function listSalesChannels(eventId: number, db?: AnyDbHandle): Promise<SalesChannel[]> {
   const conn = db ?? (await getDb());
   return conn.select().from(salesChannels).where(eq(salesChannels.eventId, eventId)).orderBy(salesChannels.sortOrder);
 }
 
-export async function createSalesChannel(input: InsertSalesChannel, db?: DbHandle): Promise<SalesChannel> {
+export async function createSalesChannel(input: InsertSalesChannel, db?: AnyDbHandle): Promise<SalesChannel> {
   const conn = db ?? (await getDb());
   const [result] = await conn.insert(salesChannels).values(input);
   const insertId = (result as unknown as { insertId: number }).insertId;
@@ -37,39 +42,115 @@ export async function createSalesChannel(input: InsertSalesChannel, db?: DbHandl
   return row;
 }
 
-export async function setSalesChannelStatus(id: number, status: "active" | "inactive", db?: DbHandle): Promise<void> {
+export async function setSalesChannelStatus(id: number, status: "active" | "inactive", db?: AnyDbHandle): Promise<void> {
   const conn = db ?? (await getDb());
   await conn.update(salesChannels).set({ status }).where(eq(salesChannels.id, id));
 }
 
 export async function updateSalesChannel(
   id: number,
-  fields: Partial<Pick<InsertSalesChannel, "externalUrl" | "isPrimary" | "sortOrder" | "status" | "metadata">>,
-  db?: DbHandle
+  fields: Partial<Pick<InsertSalesChannel, "externalUrl" | "isPrimary" | "sortOrder" | "status" | "metadata" | "channelType">>,
+  db?: AnyDbHandle
 ): Promise<void> {
   const conn = db ?? (await getDb());
   await conn.update(salesChannels).set(fields).where(eq(salesChannels.id, id));
 }
 
+export async function getSalesChannelById(id: number, db?: AnyDbHandle): Promise<SalesChannel | null> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select().from(salesChannels).where(eq(salesChannels.id, id)).limit(1);
+  return row ?? null;
+}
+
+/**
+ * Borrado seguro: si algún ticket_order ya referencia este canal (venta
+ * real, aunque sea de prueba), NUNCA se borra — el admin debe desactivarlo
+ * en su lugar (spec punto 22, "nunca destruir orders/payments/tickets por
+ * borrar una configuración de venta").
+ */
+export async function deleteSalesChannelSafe(id: number, db?: AnyDbHandle): Promise<{ deleted: boolean; reason?: string }> {
+  const conn = db ?? (await getDb());
+  const [orderRow] = await conn.select({ id: ticketOrders.id }).from(ticketOrders).where(eq(ticketOrders.salesChannelId, id)).limit(1);
+  if (orderRow) {
+    return { deleted: false, reason: "Existen pedidos asociados a este canal — desactívalo en vez de eliminarlo." };
+  }
+  await conn.delete(salesChannels).where(eq(salesChannels.id, id));
+  return { deleted: true };
+}
+
 /** "hybrid" nunca se guarda — se deriva aquí contando canales activos (ver ticketing-commerce-architecture.md). */
-export async function isEventHybrid(eventId: number, db?: DbHandle): Promise<boolean> {
+export async function isEventHybrid(eventId: number, db?: AnyDbHandle): Promise<boolean> {
   const channels = await listSalesChannels(eventId, db);
   return channels.filter(c => c.status === "active").length > 1;
 }
 
 // ─── TICKET TYPES ─────────────────────────────────────────────────────────────
 
-export async function listTicketTypes(eventId: number, db?: DbHandle): Promise<EventTicketType[]> {
+export async function listTicketTypes(eventId: number, db?: AnyDbHandle): Promise<EventTicketType[]> {
   const conn = db ?? (await getDb());
   return conn.select().from(eventTicketTypes).where(eq(eventTicketTypes.eventId, eventId));
 }
 
-export async function createTicketType(input: InsertEventTicketType, db?: DbHandle): Promise<EventTicketType> {
+export async function createTicketType(input: InsertEventTicketType, db?: AnyDbHandle): Promise<EventTicketType> {
   const conn = db ?? (await getDb());
   const [result] = await conn.insert(eventTicketTypes).values(input);
   const insertId = (result as unknown as { insertId: number }).insertId;
   const [row] = await conn.select().from(eventTicketTypes).where(eq(eventTicketTypes.id, insertId)).limit(1);
   return row;
+}
+
+export async function getTicketTypeById(id: number, db?: AnyDbHandle): Promise<EventTicketType | null> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select().from(eventTicketTypes).where(eq(eventTicketTypes.id, id)).limit(1);
+  return row ?? null;
+}
+
+export async function updateTicketType(
+  id: number,
+  fields: Partial<Pick<InsertEventTicketType, "name" | "description" | "priceCents" | "currency" | "capacity" | "salesStart" | "salesEnd" | "status" | "metadata">>,
+  db?: AnyDbHandle
+): Promise<EventTicketType | null> {
+  const conn = db ?? (await getDb());
+  await conn.update(eventTicketTypes).set(fields).where(eq(eventTicketTypes.id, id));
+  return getTicketTypeById(id, conn);
+}
+
+export async function duplicateTicketType(id: number, db?: AnyDbHandle): Promise<EventTicketType | null> {
+  const conn = db ?? (await getDb());
+  const original = await getTicketTypeById(id, conn);
+  if (!original) return null;
+  return createTicketType(
+    {
+      eventId: original.eventId,
+      name: `${original.name} (copia)`,
+      description: original.description,
+      priceCents: original.priceCents,
+      currency: original.currency,
+      capacity: original.capacity,
+      salesStart: original.salesStart,
+      salesEnd: original.salesEnd,
+      status: original.status,
+      metadata: original.metadata,
+    },
+    conn
+  );
+}
+
+/**
+ * Borrado seguro: si ya existen ticket_order_items o event_tickets emitidos
+ * para este tipo, NUNCA se borra — se desactiva (spec punto 10/22).
+ */
+export async function deleteTicketTypeSafe(id: number, db?: AnyDbHandle): Promise<{ deleted: boolean; reason?: string }> {
+  const conn = db ?? (await getDb());
+  const [[orderItemRow], [ticketRow]] = await Promise.all([
+    conn.select({ id: ticketOrderItems.id }).from(ticketOrderItems).where(eq(ticketOrderItems.ticketTypeId, id)).limit(1),
+    conn.select({ id: eventTickets.id }).from(eventTickets).where(eq(eventTickets.ticketTypeId, id)).limit(1),
+  ]);
+  if (orderItemRow || ticketRow) {
+    return { deleted: false, reason: "Existen pedidos o entradas emitidas de este tipo — desactívalo en vez de eliminarlo." };
+  }
+  await conn.delete(eventTicketTypes).where(eq(eventTicketTypes.id, id));
+  return { deleted: true };
 }
 
 export interface TicketTypeInventory {
