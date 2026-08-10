@@ -20,10 +20,20 @@ import { trpc } from "@/lib/trpc";
  * escritorio no tiene la restricción de alcance del pulgar que justificaba
  * el FAB elevado en mobile.
  */
+// Nunca brand_logo_url/brand_name (heredado de Náyade) — mismas claves
+// propias de Segolife que ya usa AdminLayout.tsx, nunca ese fallback.
+const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
+
 export function SegolifeSidebar({ slug, benefitsBadge }: { slug: string; benefitsBadge?: boolean }) {
   const { t } = useTranslation();
   const [location] = useLocation();
   const { data: availableCommunities } = trpc.communities.list.useQuery();
+  const { data: publicSettings } = trpc.config.getPublicSettings.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+  const brandLogo = publicSettings?.segolife_brand_logo_url || SEGOLIFE_LOGO_FALLBACK;
+  const brandName = publicSettings?.segolife_brand_name || "SEGOLIFE";
   const [switcherOpen, setSwitcherOpen] = useState(false);
 
   const items = [
@@ -40,8 +50,9 @@ export function SegolifeSidebar({ slug, benefitsBadge }: { slug: string; benefit
 
   return (
     <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-sidebar-border bg-sidebar xl:flex">
-      <Link href={`/${slug}`} className="flex h-16 items-center px-6 text-xl font-bold tracking-tight text-sidebar-foreground">
-        SEGOLIFE
+      <Link href={`/${slug}`} className="flex h-16 items-center gap-2.5 px-6 text-xl font-bold tracking-tight text-sidebar-foreground">
+        <img src={brandLogo} alt={brandName} className="size-8 shrink-0 rounded-full object-contain" />
+        {brandName}
       </Link>
       <nav className="flex-1 space-y-1 px-3 py-2" aria-label={t("nav.home")}>
         {items.map((item) => {

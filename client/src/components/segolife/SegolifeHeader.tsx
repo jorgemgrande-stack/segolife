@@ -2,6 +2,11 @@ import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import { Bell, User } from "lucide-react";
 import { isSupportedLocale, type SupportedLocale } from "@/lib/i18n";
+import { trpc } from "@/lib/trpc";
+
+// Nunca brand_logo_url/brand_name (heredado de Náyade) — mismas claves
+// propias de Segolife que ya usa AdminLayout.tsx, nunca ese fallback.
+const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
 
 /**
  * Header móvil minimalista de Segolife (Fase 6, + campana Fase 7) — logo +
@@ -22,12 +27,19 @@ export function SegolifeHeader({
 }) {
   const { t, i18n } = useTranslation();
   const showLanguageSwitcher = availableLocales.length > 1;
+  const { data: publicSettings } = trpc.config.getPublicSettings.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+  const brandLogo = publicSettings?.segolife_brand_logo_url || SEGOLIFE_LOGO_FALLBACK;
+  const brandName = publicSettings?.segolife_brand_name || "Segolife";
 
   return (
     <header className="segolife-safe-top sticky top-0 z-30 border-b border-border bg-background/95 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-md items-center justify-between px-4">
-        <Link href={`/${slug}`} className="text-lg font-semibold tracking-tight text-foreground">
-          Segolife
+        <Link href={`/${slug}`} className="flex items-center gap-2 text-lg font-semibold tracking-tight text-foreground">
+          <img src={brandLogo} alt={brandName} className="size-7 shrink-0 rounded-full object-contain" />
+          {brandName}
         </Link>
         <div className="flex items-center gap-3">
           {showLanguageSwitcher && (

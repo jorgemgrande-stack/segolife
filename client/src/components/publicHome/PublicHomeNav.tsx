@@ -1,6 +1,11 @@
 import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import { getLoginUrl } from "@/const";
+import { trpc } from "@/lib/trpc";
+
+// Nunca brand_logo_url/brand_name (heredado de Náyade) — mismas claves
+// propias de Segolife que ya usa AdminLayout.tsx, nunca ese fallback.
+const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
 
 /**
  * Nav pública de la nueva Home SEGOLIFE (Fase 8.5) — deliberadamente propia,
@@ -10,6 +15,12 @@ import { getLoginUrl } from "@/const";
 export function PublicHomeNav({ variant = "overlay" }: { variant?: "overlay" | "solid" }) {
   const { t, i18n } = useTranslation();
   const loginUrl = getLoginUrl();
+  const { data: publicSettings } = trpc.config.getPublicSettings.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+  const brandLogo = publicSettings?.segolife_brand_logo_url || SEGOLIFE_LOGO_FALLBACK;
+  const brandName = publicSettings?.segolife_brand_name || "SEGOLIFE";
 
   return (
     <header
@@ -20,8 +31,9 @@ export function PublicHomeNav({ variant = "overlay" }: { variant?: "overlay" | "
       }
     >
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        <Link href="/" className={`text-lg font-bold tracking-tight ${variant === "overlay" ? "text-white" : "text-foreground"}`}>
-          SEGOLIFE
+        <Link href="/" className={`flex items-center gap-2 text-lg font-bold tracking-tight ${variant === "overlay" ? "text-white" : "text-foreground"}`}>
+          <img src={brandLogo} alt={brandName} className="size-8 shrink-0 rounded-full object-contain" />
+          {brandName}
         </Link>
         <div className="flex items-center gap-2">
           <div className={`hidden sm:flex items-center gap-1 rounded-full border p-0.5 ${variant === "overlay" ? "border-white/25" : "border-border"}`}>
