@@ -331,7 +331,7 @@ export default function EventDetail() {
           </TabsContent>
 
           <TabsContent value="ticketing" className="bg-card border border-border rounded-lg p-5">
-            <EventTicketingTab eventId={eventId} />
+            <EventTicketingTab eventId={eventId} eventStartsAt={detail.event.startsAt} eventEndsAt={detail.event.endsAt} />
           </TabsContent>
 
           <TabsContent value="attendance">
