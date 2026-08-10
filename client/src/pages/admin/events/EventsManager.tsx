@@ -25,6 +25,18 @@ function fmtDateTime(d: Date | string | null | undefined) {
 }
 
 type TimeFilter = "all" | "upcoming" | "tonight" | "past";
+type SalesFilter = "all" | "external_redirect" | "native" | "none";
+
+const SALES_MODE_LABEL: Record<string, string> = {
+  external_redirect: "Externo (redirect)",
+  external_checkout: "Externo (checkout)",
+  native: "Nativo",
+};
+
+function salesModeBadge(item: { primarySalesChannel: { salesMode: string } | null }) {
+  if (!item.primarySalesChannel) return <Badge variant="outline">Sin canal</Badge>;
+  return <Badge variant="secondary">{SALES_MODE_LABEL[item.primarySalesChannel.salesMode] ?? item.primarySalesChannel.salesMode}</Badge>;
+}
 
 export default function EventsManager() {
   const { filter: communityFilter, communities } = useAdminCommunity();
@@ -34,6 +46,7 @@ export default function EventsManager() {
   const [status, setStatus] = useState<string>(ALL);
   const [featured, setFeatured] = useState<string>(ALL);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
+  const [salesFilter, setSalesFilter] = useState<SalesFilter>("all");
 
   const { data: venuesData } = trpc.venues.publicActive.useQuery({});
 
@@ -53,17 +66,21 @@ export default function EventsManager() {
     onError: e => toast.error(e.message),
   });
 
-  // Filtro temporal — client-side sobre lo ya traído por el servidor (spec
-  // punto 26: mismo helper compartido en toda la app, nunca `new Date()`
-  // repetido). No es un filtro de servidor nuevo porque no hace falta: 100
-  // eventos por página es un volumen manejable para calcular en el cliente.
+  // Filtro temporal + canal de venta — client-side sobre lo ya traído por el
+  // servidor (spec punto 26: mismo helper compartido en toda la app, nunca
+  // `new Date()` repetido). No son filtros de servidor nuevos porque no hace
+  // falta: 100 eventos por página es un volumen manejable para calcular en
+  // el cliente (mismo criterio ya aplicado al filtro temporal existente).
   const timeFiltered = useMemo(() => {
     const items = data?.items ?? [];
-    if (timeFilter === "all") return items;
-    if (timeFilter === "tonight") return items.filter(e => isEventTonight(e));
-    if (timeFilter === "upcoming") return items.filter(e => getEventTemporalStatus(e) !== "past");
-    return items.filter(e => getEventTemporalStatus(e) === "past");
-  }, [data, timeFilter]);
+    const byTime = timeFilter === "all" ? items
+      : timeFilter === "tonight" ? items.filter(e => isEventTonight(e))
+      : timeFilter === "upcoming" ? items.filter(e => getEventTemporalStatus(e) !== "past")
+      : items.filter(e => getEventTemporalStatus(e) === "past");
+    if (salesFilter === "all") return byTime;
+    if (salesFilter === "none") return byTime.filter(e => !e.primarySalesChannel);
+    return byTime.filter(e => e.primarySalesChannel?.salesMode === salesFilter);
+  }, [data, timeFilter, salesFilter]);
 
   return (
     <AdminLayout title="Eventos">
@@ -142,6 +159,16 @@ export default function EventsManager() {
               <SelectItem value="false">No destacados</SelectItem>
             </SelectContent>
           </Select>
+
+          <Select value={salesFilter} onValueChange={v => setSalesFilter(v as SalesFilter)}>
+            <SelectTrigger className="w-[190px]"><SelectValue placeholder="Canal de venta" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Canal de venta (todos)</SelectItem>
+              <SelectItem value="external_redirect">Externo (redirect)</SelectItem>
+              <SelectItem value="native">Nativo</SelectItem>
+              <SelectItem value="none">Sin canal</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {/* ── Tabla ── */}
@@ -163,6 +190,7 @@ export default function EventsManager() {
                   <TableHead>Venue</TableHead>
                   <TableHead>Comunidad</TableHead>
                   <TableHead>Fecha</TableHead>
+                  <TableHead>Canal de venta</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>Destacado</TableHead>
                 </TableRow>
@@ -190,6 +218,7 @@ export default function EventsManager() {
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">{fmtDateTime(e.startsAt)}</TableCell>
+                    <TableCell>{salesModeBadge(e)}</TableCell>
                     <TableCell>
                       <Badge variant={e.status === "active" ? "default" : "outline"}>
                         {e.status === "active" ? "Activo" : "Inactivo"}

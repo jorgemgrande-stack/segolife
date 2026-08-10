@@ -1,0 +1,92 @@
+[
+  {
+    "eventId": 1,
+    "slug": "casanova-graduacion-2526-viernes",
+    "name": "Graduación 25/26 — Viernes",
+    "venueSlug": "casanova",
+    "qaFixture": true,
+    "qaSource": "historical_event_replay_2026",
+    "createdAt": "2026-08-10T10:49:38.210Z"
+  },
+  {
+    "eventId": 2,
+    "slug": "casanova-fck-pau",
+    "name": "F*CK PAU",
+    "venueSlug": "casanova",
+    "qaFixture": true,
+    "qaSource": "historical_event_replay_2026",
+    "createdAt": "2026-08-10T10:49:39.924Z"
+  },
+  {
+    "eventId": 3,
+    "slug": "casanova-graduacion-2526-jueves",
+    "name": "Graduación 25/26 — Jueves",
+    "venueSlug": "casanova",
+    "qaFixture": true,
+    "qaSource": "historical_event_replay_2026",
+    "createdAt": "2026-08-10T10:49:42.179Z"
+  },
+  {
+    "eventId": 4,
+    "slug": "casanova-fomo-san-juan",
+    "name": "FOMO — San Juan",
+    "venueSlug": "casanova",
+    "qaFixture": true,
+    "qaSource": "historical_event_replay_2026",
+    "createdAt": "2026-08-10T10:49:44.753Z"
+  },
+  {
+    "eventId": 5,
+    "slug": "casanova-fomo-san-pedro",
+    "name": "FOMO — San Pedro",
+    "venueSlug": "casanova",
+    "qaFixture": true,
+    "qaSource": "historical_event_replay_2026",
+    "createdAt": "2026-08-10T10:49:46.461Z"
+  },
+  {
+    "eventId": 6,
+    "slug": "tia-felisa-one-more-felisa-before-exams",
+    "name": "One More Felisa Before Exams",
+    "venueSlug": "tia-felisa",
+    "qaFixture": true,
+    "qaSource": "historical_event_replay_2026",
+    "createdAt": "2026-08-10T10:49:48.188Z"
+  },
+  {
+    "eventId": 7,
+    "slug": "tia-felisa-fck-exams",
+    "name": "F*ck Exams",
+    "venueSlug": "tia-felisa",
+    "qaFixture": true,
+    "qaSource": "historical_event_replay_2026",
+    "createdAt": "2026-08-10T10:49:50.482Z"
+  },
+  {
+    "eventId": 8,
+    "slug": "tia-felisa-se-gradua",
+    "name": "Tía Felisa Se Gradúa",
+    "venueSlug": "tia-felisa",
+    "qaFixture": true,
+    "qaSource": "historical_event_replay_2026",
+    "createdAt": "2026-08-10T10:49:52.182Z"
+  },
+  {
+    "eventId": 9,
+    "slug": "tia-felisa-graduates",
+    "name": "Tía Felisa Graduates",
+    "venueSlug": "tia-felisa",
+    "qaFixture": true,
+    "qaSource": "historical_event_replay_2026",
+    "createdAt": "2026-08-10T10:49:54.663Z"
+  },
+  {
+    "eventId": 10,
+    "slug": "limoncello-eclipse-x-confesion",
+    "name": "El Eclipse x Confes1on",
+    "venueSlug": "limoncello",
+    "qaFixture": true,
+    "qaSource": "historical_event_replay_2026",
+    "createdAt": "2026-08-10T10:49:56.560Z"
+  }
+]

@@ -6,8 +6,10 @@ import {
   venues,
   communityEvents,
   communities,
+  salesChannels,
   type SegolifeEvent,
   type Venue,
+  type SalesChannel,
 } from "../../drizzle/schema";
 
 // Pool persistente top-level — mismo patrón que server/db/studentsDb.ts / venuesDb.ts.
@@ -26,9 +28,16 @@ export interface EventCommunitySummary {
   slug: string;
 }
 
+export interface EventPrimarySalesChannel {
+  channelType: SalesChannel["channelType"];
+  salesMode: SalesChannel["salesMode"];
+}
+
 export interface EventListItem extends SegolifeEvent {
   venue: Venue | null;
   communities: EventCommunitySummary[];
+  /** Canal de venta activo con prioridad (isPrimary, si no el de menor sortOrder) — mismo criterio que computePurchaseAction. null = sin canal configurado. */
+  primarySalesChannel: EventPrimarySalesChannel | null;
 }
 
 export interface EventListFilters {
@@ -68,6 +77,35 @@ async function getCommunitiesByEventId(eventIds: number[], db: DbHandle): Promis
     list.push({ id: row.community.id, name: row.community.name, slug: row.community.slug });
     map.set(row.eventId, list);
   }
+  return map;
+}
+
+/** Canal de venta primario de cada evento — mismo criterio de selección que computePurchaseAction (isPrimary, si no el de menor sortOrder, entre los activos). */
+async function getPrimarySalesChannelByEventId(eventIds: number[], db: DbHandle): Promise<Map<number, EventPrimarySalesChannel>> {
+  const map = new Map<number, EventPrimarySalesChannel>();
+  if (eventIds.length === 0) return map;
+  const rows = await db
+    .select({
+      eventId: salesChannels.eventId,
+      channelType: salesChannels.channelType,
+      salesMode: salesChannels.salesMode,
+      isPrimary: salesChannels.isPrimary,
+      sortOrder: salesChannels.sortOrder,
+    })
+    .from(salesChannels)
+    .where(and(inArray(salesChannels.eventId, eventIds), eq(salesChannels.status, "active")));
+
+  const byEvent = new Map<number, typeof rows>();
+  for (const row of rows) {
+    const list = byEvent.get(row.eventId) ?? [];
+    list.push(row);
+    byEvent.set(row.eventId, list);
+  }
+  byEvent.forEach((channels, eventId) => {
+    channels.sort((a, b) => a.sortOrder - b.sortOrder);
+    const primary = channels.find(c => c.isPrimary) ?? channels[0];
+    map.set(eventId, { channelType: primary.channelType, salesMode: primary.salesMode });
+  });
   return map;
 }
 
@@ -115,12 +153,16 @@ export async function listEvents(
   const total = countRows.length;
 
   const eventIds = rows.map(r => r.event.id);
-  const communitiesByEvent = await getCommunitiesByEventId(eventIds, conn);
+  const [communitiesByEvent, salesChannelByEvent] = await Promise.all([
+    getCommunitiesByEventId(eventIds, conn),
+    getPrimarySalesChannelByEventId(eventIds, conn),
+  ]);
 
   const items: EventListItem[] = rows.map(r => ({
     ...r.event,
     venue: r.venue,
     communities: communitiesByEvent.get(r.event.id) ?? [],
+    primarySalesChannel: salesChannelByEvent.get(r.event.id) ?? null,
   }));
 
   return { items, total };
