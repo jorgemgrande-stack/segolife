@@ -3865,6 +3865,11 @@ export const venues = mysqlTable("venues", {
   // Misma bandera editorial simple que events.isFeatured (Fase 1D) — destacar
   // en "Esta noche en Segovia" (PublicHome.tsx), no un sistema de ranking.
   isFeatured:   boolean("is_featured").notNull().default(false),
+  // Orden explícito curado a mano desde /admin/cms/inicio (menor = primero)
+  // — sustituye el orden implícito por created_at que dejaba el venue más
+  // antiguo (Casanova) fuera del slice(0,6) de la Home. Todos arrancan en 0
+  // (empate → createdAt desc como desempate, ver listVenues).
+  homeSortOrder: int("home_sort_order").notNull().default(0),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });
@@ -3907,6 +3912,8 @@ export const events = mysqlTable("events", {
   imageUrl:     varchar("image_url", { length: 512 }),
   status:       mysqlEnum("status", ["active", "inactive"]).notNull().default("active"),
   isFeatured:   boolean("is_featured").notNull().default(false),
+  // Mismo criterio que venues.homeSortOrder — orden curado a mano en la Home.
+  homeSortOrder: int("home_sort_order").notNull().default(0),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });

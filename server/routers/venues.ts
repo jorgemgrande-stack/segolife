@@ -15,6 +15,7 @@ import {
   createVenueCategory,
   listActiveVenues,
   listFeaturedVenues,
+  reorderFeaturedVenues,
 } from "../db/venuesDb";
 
 // Lectura: ver el listado/fichas de venues.
@@ -69,6 +70,7 @@ export const venuesRouter = router({
         categoryId: z.number().int().positive().optional(),
         status: z.enum(["active", "inactive"]).optional(),
         isFeatured: z.boolean().optional(),
+        orderBy: z.enum(["createdAt", "homeSortOrder"]).optional(),
         limit: z.number().int().min(1).max(200).default(50),
         offset: z.number().int().min(0).default(0),
       })
@@ -146,6 +148,14 @@ export const venuesRouter = router({
       assertVenueAccessible(access, detail.communities.map(c => c.id));
       assertCommunityIdsWithinAccess(access, input.communityIds);
       await setVenueCommunities(input.id, input.communityIds);
+      return { success: true };
+    }),
+
+  /** Orden de aparición de los venues destacados en la Home — /admin/cms/inicio. */
+  reorderFeatured: venuesManageProcedure
+    .input(z.object({ orderedIds: z.array(z.number().int().positive()) }))
+    .mutation(async ({ input }) => {
+      await reorderFeaturedVenues(input.orderedIds);
       return { success: true };
     }),
 

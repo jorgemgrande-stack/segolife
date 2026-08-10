@@ -14,6 +14,7 @@ import {
   listActiveEvents,
   listFeaturedEvents,
   listEventsByVenue,
+  reorderFeaturedEvents,
 } from "../db/eventsDb";
 import { computePurchaseAction } from "../segolife/ticketing/purchaseAction";
 
@@ -64,6 +65,7 @@ export const eventsRouter = router({
         venueId: z.number().int().positive().optional(),
         status: z.enum(["active", "inactive"]).optional(),
         isFeatured: z.boolean().optional(),
+        orderBy: z.enum(["startsAt", "homeSortOrder"]).optional(),
         limit: z.number().int().min(1).max(200).default(50),
         offset: z.number().int().min(0).default(0),
       })
@@ -139,6 +141,14 @@ export const eventsRouter = router({
       assertEventAccessible(access, detail.communities.map(c => c.id));
       assertCommunityIdsWithinAccess(access, input.communityIds);
       await setEventCommunities(input.id, input.communityIds);
+      return { success: true };
+    }),
+
+  /** Orden de aparición de los eventos destacados en la Home — /admin/cms/inicio. */
+  reorderFeatured: eventsManageProcedure
+    .input(z.object({ orderedIds: z.array(z.number().int().positive()) }))
+    .mutation(async ({ input }) => {
+      await reorderFeaturedEvents(input.orderedIds);
       return { success: true };
     }),
 

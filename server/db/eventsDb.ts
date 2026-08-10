@@ -49,6 +49,8 @@ export interface EventListFilters {
   isFeatured?: boolean;
   /** Solo eventos cuyo starts_at sea >= esta fecha (próximos). */
   fromDate?: Date;
+  /** "startsAt" (por defecto, cronológico) o "homeSortOrder" (orden curado a mano en /admin/cms/inicio). */
+  orderBy?: "startsAt" | "homeSortOrder";
   limit?: number;
   offset?: number;
 }
@@ -143,8 +145,12 @@ export async function listEvents(
     .from(events)
     .leftJoin(venues, eq(events.venueId, venues.id));
 
+  const orderClauses = filters.orderBy === "homeSortOrder"
+    ? [asc(events.homeSortOrder), asc(events.startsAt)]
+    : [asc(events.startsAt)];
+
   const rows = await (whereClause ? baseQuery.where(whereClause) : baseQuery)
-    .orderBy(asc(events.startsAt))
+    .orderBy(...orderClauses)
     .limit(filters.limit ?? 50)
     .offset(filters.offset ?? 0);
 
@@ -290,10 +296,18 @@ export async function listActiveEvents(communityId?: number, db?: DbHandle): Pro
 export async function listFeaturedEvents(communityId?: number, db?: DbHandle): Promise<EventListItem[]> {
   const conn = db ?? (await getDb());
   const { items } = await listEvents(
-    { communityIds: communityId ? [communityId] : "all", status: "active", isFeatured: true, limit: 50, offset: 0 },
+    { communityIds: communityId ? [communityId] : "all", status: "active", isFeatured: true, orderBy: "homeSortOrder", limit: 50, offset: 0 },
     conn
   );
   return items;
+}
+
+/** Reordena los eventos destacados de la Home — mismo patrón que reorderGalleryItems (index → homeSortOrder). */
+export async function reorderFeaturedEvents(orderedIds: number[], db?: DbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  await Promise.all(
+    orderedIds.map((id, index) => conn.update(events).set({ homeSortOrder: index }).where(eq(events.id, id)))
+  );
 }
 
 export async function listEventsByVenue(venueId: number, db?: DbHandle): Promise<EventListItem[]> {
