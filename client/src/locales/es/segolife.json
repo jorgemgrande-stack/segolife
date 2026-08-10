@@ -245,7 +245,8 @@
     "seeMore": "Ver más",
     "back": "Volver",
     "today": "Hoy",
-    "tomorrow": "Mañana"
+    "tomorrow": "Mañana",
+    "close": "Cerrar"
   },
   "nav": {
     "home": "Inicio",
@@ -335,8 +336,13 @@
     "galleryLabel": "Galería",
     "upcomingEventsLabel": "Próximos eventos",
     "noUpcomingEvents": "Sin eventos próximos en este local",
+    "upcomingEmptyTitle": "Todavía no hay nada anunciado",
+    "upcomingEmptyDescription": "Sigue este local de cerca — los próximos planes aparecerán aquí en cuanto se anuncien.",
     "pastEventsLabel": "Eventos anteriores",
     "noPastEvents": "Sin eventos anteriores todavía",
+    "directionsLabel": "Cómo llegar",
+    "shareLabel": "Compartir",
+    "shareCopied": "Enlace copiado",
     "instagramLabel": "Instagram",
     "activeCampaignsLabel": "Campañas activas",
     "earnInfoLabel": "Gana SegoTokens aquí",
