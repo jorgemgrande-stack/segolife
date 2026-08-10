@@ -187,6 +187,7 @@ export default function EventDetail() {
                       <div key={tt.id} className="segolife-card-shadow flex items-center justify-between gap-3 rounded-2xl bg-card p-3">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold text-foreground">{tt.name}</p>
+                          {tt.description && <p className="truncate text-xs text-muted-foreground">{tt.description}</p>}
                           <p className="text-xs text-muted-foreground">
                             {(tt.priceCents / 100).toFixed(2)} {tt.currency}
                             {tt.available != null && <> · {soldOut ? t("ticketing.soldOut") : t("ticketing.available", { count: tt.available })}</>}

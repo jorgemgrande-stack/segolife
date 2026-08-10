@@ -31,6 +31,7 @@ async function getDb(): Promise<DbHandle> {
 export interface PurchaseActionTicketType {
   id: number;
   name: string;
+  description: string | null;
   priceCents: number;
   currency: string;
   available: number | null;
@@ -81,6 +82,7 @@ export async function computePurchaseAction(eventId: number, eventTiming: EventT
       ticketTypes: onSale.map(t => ({
         id: t.id,
         name: t.name,
+        description: t.description,
         priceCents: t.priceCents,
         currency: t.currency,
         available: inventory.find(i => i.ticketTypeId === t.id)?.available ?? null,

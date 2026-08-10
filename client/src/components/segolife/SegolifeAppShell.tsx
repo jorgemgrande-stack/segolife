@@ -113,7 +113,11 @@ export function SegolifeAppShell({
   return (
     <div className="segolife-theme flex min-h-dvh flex-col bg-background xl:flex-row">
       {!hideNav && <SegolifeSidebar slug={slug} benefitsBadge={!!homeSummary?.activeBenefit} />}
-      <div className="flex min-w-0 flex-1 flex-col xl:pl-64">
+      {/* xl:pl-64 reserva sitio para el sidebar fijo — sin sidebar (hideNav)
+          no debe aplicarse, o el contenido queda descentrado con un hueco
+          fantasma a la izquierda en desktop (bug real, reportado con
+          captura en Event Detail — las 8 páginas hideNav lo heredaban). */}
+      <div className={`flex min-w-0 flex-1 flex-col ${hideNav ? "" : "xl:pl-64"}`}>
         <div className="xl:hidden">
           <SegolifeHeader slug={slug} availableLocales={availableLocales} unreadCount={unreadCount ?? 0} />
         </div>

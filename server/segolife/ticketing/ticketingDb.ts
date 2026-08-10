@@ -42,6 +42,15 @@ export async function setSalesChannelStatus(id: number, status: "active" | "inac
   await conn.update(salesChannels).set({ status }).where(eq(salesChannels.id, id));
 }
 
+export async function updateSalesChannel(
+  id: number,
+  fields: Partial<Pick<InsertSalesChannel, "externalUrl" | "isPrimary" | "sortOrder" | "status" | "metadata">>,
+  db?: DbHandle
+): Promise<void> {
+  const conn = db ?? (await getDb());
+  await conn.update(salesChannels).set(fields).where(eq(salesChannels.id, id));
+}
+
 /** "hybrid" nunca se guarda — se deriva aquí contando canales activos (ver ticketing-commerce-architecture.md). */
 export async function isEventHybrid(eventId: number, db?: DbHandle): Promise<boolean> {
   const channels = await listSalesChannels(eventId, db);
