@@ -2,9 +2,15 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import "@/lib/i18n";
 
-const { mockUseQuery } = vi.hoisted(() => ({ mockUseQuery: vi.fn() }));
+const { mockUseQuery, noopQuery } = vi.hoisted(() => ({
+  mockUseQuery: vi.fn(),
+  noopQuery: () => ({ data: undefined, isLoading: false }),
+}));
 vi.mock("@/lib/trpc", () => ({
-  trpc: { communities: { list: { useQuery: mockUseQuery } } },
+  trpc: {
+    communities: { list: { useQuery: mockUseQuery } },
+    config: { getPublicSettings: { useQuery: noopQuery } },
+  },
 }));
 
 import { SegolifeSidebar } from "./SegolifeSidebar";
