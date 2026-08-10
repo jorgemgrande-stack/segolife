@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, useLocation, Link } from "wouter";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, CalendarDays, Clock, MapPin, Users, Ticket, Minus, Plus, Loader2 } from "lucide-react";
+import { ChevronLeft, CalendarDays, Clock, MapPin, Users, Ticket, Minus, Plus, Loader2, ImageOff } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
@@ -9,7 +9,6 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
 import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
-import { SegolifeImage } from "@/components/segolife/SegolifeImage";
 import { SegolifeErrorState } from "@/components/segolife/SegolifeErrorState";
 import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
 import { Button } from "@/components/ui/button";
@@ -37,6 +36,7 @@ export default function EventDetail() {
     { enabled: !!eventSlug }
   );
 
+  const [posterFailed, setPosterFailed] = useState(false);
   const [quantities, setQuantities] = useState<Record<number, number>>({});
   const startCheckoutMut = trpc.ticketPurchase.startCheckout.useMutation({
     onSuccess: res => navigate(`/${slug}/checkout/${res.order.id}`),
@@ -105,8 +105,29 @@ export default function EventDetail() {
           // exactamente igual que antes (mismo space-y-5 en flujo normal,
           // sin grid) — no se toca su salida visual.
           <div className="space-y-5 xl:grid xl:grid-cols-[minmax(320px,420px)_1fr] xl:items-start xl:gap-x-10 xl:gap-y-6 xl:space-y-0">
-            <div className="relative xl:col-start-1 xl:row-start-1 xl:row-span-3">
-              <SegolifeImage src={data.event.imageUrl} alt={data.event.name} ratio={16 / 10} rounded="rounded-3xl" />
+            {/* xl:self-stretch + xl:h-full en vez de SegolifeImage (ratio 16:10
+                fijo vía estilo inline de Radix AspectRatio, no sobreescribible
+                por breakpoint): en desktop el poster debe llenar el alto real
+                de las 3 filas de al lado (título+datos+entradas), no quedarse
+                corto con hueco vacío debajo — reportado con captura real. En
+                móvil se mantiene el mismo aspect-[16/10] de siempre. */}
+            <div className="relative overflow-hidden rounded-3xl bg-muted xl:col-start-1 xl:row-start-1 xl:row-span-3 xl:self-stretch">
+              <div className="aspect-[16/10] w-full xl:aspect-auto xl:h-full">
+                {posterFailed || !data.event.imageUrl ? (
+                  <div className="flex h-full w-full items-center justify-center bg-secondary/60">
+                    <ImageOff className="size-6 text-muted-foreground" aria-hidden="true" />
+                  </div>
+                ) : (
+                  <img
+                    src={data.event.imageUrl}
+                    alt={data.event.name}
+                    loading="lazy"
+                    decoding="async"
+                    onError={() => setPosterFailed(true)}
+                    className="h-full w-full object-cover"
+                  />
+                )}
+              </div>
               {data.event.isFeatured && (
                 <Badge className="absolute left-3 top-3 border-none bg-accent text-accent-foreground">
                   {t("eventDetail.featuredBadge")}
