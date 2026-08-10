@@ -68,7 +68,7 @@ export default function EventDetail() {
 
   return (
     <SegolifeAppShell hideNav title={data?.event.name}>
-      <SegolifePageContainer>
+      <SegolifePageContainer wide>
         <Button variant="ghost" size="sm" className="-ml-2 mb-2" onClick={() => navigate(`/${slug}/explore`)}>
           <ChevronLeft className="mr-1 size-4" aria-hidden="true" /> {t("eventDetail.backToExplore")}
         </Button>
@@ -94,8 +94,14 @@ export default function EventDetail() {
         )}
 
         {data && !isLoading && (
-          <div className="space-y-5">
-            <div className="relative">
+          // Desktop (xl+, mismo umbral que SegolifePageContainer wide): grid
+          // de 2 columnas — poster a la izquierda (ocupa las 3 filas de
+          // título/datos/compra) e info a la derecha, con la descripción a
+          // ancho completo debajo. Sin ninguna clase `xl:` el móvil queda
+          // exactamente igual que antes (mismo space-y-5 en flujo normal,
+          // sin grid) — no se toca su salida visual.
+          <div className="space-y-5 xl:grid xl:grid-cols-[minmax(320px,420px)_1fr] xl:items-start xl:gap-x-10 xl:gap-y-6 xl:space-y-0">
+            <div className="relative xl:col-start-1 xl:row-start-1 xl:row-span-3">
               <SegolifeImage src={data.event.imageUrl} alt={data.event.name} ratio={16 / 10} rounded="rounded-3xl" />
               {data.event.isFeatured && (
                 <Badge className="absolute left-3 top-3 border-none bg-accent text-accent-foreground">
@@ -104,14 +110,14 @@ export default function EventDetail() {
               )}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 xl:col-start-2 xl:row-start-1">
               <h1 className="text-xl font-bold text-foreground">{data.event.name}</h1>
               {isEventPast(data.event) && (
                 <Badge variant="outline" className="shrink-0">{t("eventDetail.pastBadge")}</Badge>
               )}
             </div>
 
-            <div className="segolife-card-shadow space-y-2.5 rounded-2xl bg-card p-4 text-sm">
+            <div className="segolife-card-shadow space-y-2.5 rounded-2xl bg-card p-4 text-sm xl:col-start-2 xl:row-start-2">
               <div className="flex items-start justify-between gap-3">
                 <span className="flex items-center gap-1.5 text-muted-foreground">
                   <CalendarDays className="size-4" aria-hidden="true" /> {t("eventDetail.dateLabel")}
@@ -154,7 +160,7 @@ export default function EventDetail() {
             </div>
 
             {!!data.event.description && (
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 xl:col-span-2 xl:row-start-4">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                   {t("eventDetail.descriptionLabel")}
                 </h2>
@@ -163,7 +169,7 @@ export default function EventDetail() {
             )}
 
             {data.purchaseAction?.type === "external_url" && (
-              <Button asChild className="w-full rounded-full py-6 text-sm font-semibold">
+              <Button asChild className="w-full rounded-full py-6 text-sm font-semibold xl:col-start-2 xl:row-start-3">
                 <a href={data.purchaseAction.url} target="_blank" rel="noopener noreferrer">
                   <Ticket className="mr-2 size-4" aria-hidden="true" /> {t("eventDetail.buyTickets")}
                 </a>
@@ -171,7 +177,7 @@ export default function EventDetail() {
             )}
 
             {data.purchaseAction?.type === "native_checkout" && (
-              <div className="space-y-3">
+              <div className="space-y-3 xl:col-start-2 xl:row-start-3">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{t("ticketing.selectTickets")}</h2>
                 <div className="space-y-2">
                   {data.purchaseAction.ticketTypes.map(tt => {
@@ -215,7 +221,7 @@ export default function EventDetail() {
             )}
 
             {data.purchaseAction?.type === "unavailable" && (
-              <Button variant="outline" disabled className="w-full rounded-full py-6 text-sm font-semibold">
+              <Button variant="outline" disabled className="w-full rounded-full py-6 text-sm font-semibold xl:col-start-2 xl:row-start-3">
                 <Ticket className="mr-2 size-4" aria-hidden="true" />
                 {isEventPast(data.event) ? t("eventDetail.eventEnded") : t("eventDetail.ticketsComingSoon")}
               </Button>
