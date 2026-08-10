@@ -68,7 +68,11 @@ export default function EventDetail() {
 
   return (
     <SegolifeAppShell hideNav title={data?.event.name}>
-      <SegolifePageContainer wide>
+      {/* xl:max-w-[1400px] sustituye el xl:max-w-5xl (1024px) de `wide` —
+          en desktop grande esta ficha necesita más superficie real (grid de
+          2 columnas con poster + selector de entradas) que el resto de
+          páginas hideNav; ver referencia visual aportada por el usuario. */}
+      <SegolifePageContainer wide className="xl:max-w-[1400px]">
         <Button variant="ghost" size="sm" className="-ml-2 mb-2" onClick={() => navigate(`/${slug}/explore`)}>
           <ChevronLeft className="mr-1 size-4" aria-hidden="true" /> {t("eventDetail.backToExplore")}
         </Button>
