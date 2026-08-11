@@ -8,7 +8,7 @@ const { mockUseQuery, noopQuery } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/trpc", () => ({
   trpc: {
-    communities: { list: { useQuery: mockUseQuery } },
+    communities: { myMemberships: { useQuery: mockUseQuery } },
     config: { getPublicSettings: { useQuery: noopQuery } },
   },
 }));
@@ -44,14 +44,22 @@ describe("SegolifeSidebar", () => {
     expect(screen.getByRole("link", { name: /Explore|Explorar/ })).toHaveAttribute("aria-current", "page");
   });
 
-  it("no muestra el selector de comunidad si trpc.communities.list todavía no ha resuelto (undefined)", () => {
+  it("no muestra el selector de comunidad si trpc.communities.myMemberships todavía no ha resuelto (undefined)", () => {
     mockUseQuery.mockReturnValue({ data: undefined });
     window.history.pushState({}, "", "/ie");
     render(<SegolifeSidebar slug="ie" />);
     expect(screen.queryByRole("button", { expanded: false })).not.toBeInTheDocument();
   });
 
-  it("muestra el selector de comunidad con las comunidades reales devueltas por communities.list (nunca una lista hardcodeada)", () => {
+  it("no muestra el selector si el estudiante solo pertenece a una comunidad — bug real corregido: antes listaba TODAS las comunidades globales (communities.list), dejando 'cambiar' a una a la que no pertenecía", () => {
+    mockUseQuery.mockReturnValue({ data: [{ id: 1, slug: "ie", name: "Segolife IE" }] });
+    window.history.pushState({}, "", "/ie");
+    render(<SegolifeSidebar slug="ie" />);
+    expect(screen.queryByRole("button", { expanded: false })).not.toBeInTheDocument();
+    expect(screen.queryByText("Segolife IE")).not.toBeInTheDocument();
+  });
+
+  it("muestra el selector con las comunidades REALES del usuario (myMemberships) cuando pertenece a más de una", () => {
     mockUseQuery.mockReturnValue({
       data: [
         { id: 1, slug: "ie", name: "Segolife IE" },

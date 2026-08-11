@@ -20,7 +20,7 @@ vi.mock("@/lib/trpc", () => ({
     venues: { publicGetBySlug: { useQuery: mockVenueQuery } },
     events: { publicByVenue: { useQuery: mockEventsQuery } },
     gallery: { getItems: { useQuery: mockGalleryQuery } },
-    communities: { list: { useQuery: noopQuery } },
+    communities: { list: { useQuery: noopQuery }, myMemberships: { useQuery: noopQuery } },
     home: { getSummary: { useQuery: noopQuery } },
     studentNotifications: { unreadCount: { useQuery: noopQuery } },
     config: { getPublicSettings: { useQuery: noopQuery } },

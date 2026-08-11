@@ -19,6 +19,14 @@ import { trpc } from "@/lib/trpc";
  * NO debe convertirse en un botón gigante en desktop", la superficie de
  * escritorio no tiene la restricción de alcance del pulgar que justificaba
  * el FAB elevado en mobile.
+ *
+ * El selector de comunidad usa myMemberships (comunidades REALES del
+ * usuario), nunca communities.list (catálogo global) — bug real corregido:
+ * antes ofrecía cambiar a CUALQUIER comunidad existente aunque el
+ * estudiante no perteneciera a ella (p.ej. un estudiante solo de IE podía
+ * "cambiar" a UVA sin ser miembro). Con myMemberships, un estudiante con
+ * una sola comunidad simplemente no ve selector — la condición
+ * `.length > 1` ya existente hace el resto sin lógica nueva.
  */
 // Nunca brand_logo_url/brand_name (heredado de Náyade) — mismas claves
 // propias de Segolife que ya usa AdminLayout.tsx, nunca ese fallback.
@@ -27,7 +35,7 @@ const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
 export function SegolifeSidebar({ slug, benefitsBadge }: { slug: string; benefitsBadge?: boolean }) {
   const { t } = useTranslation();
   const [location] = useLocation();
-  const { data: availableCommunities } = trpc.communities.list.useQuery();
+  const { data: availableCommunities } = trpc.communities.myMemberships.useQuery();
   const { data: publicSettings } = trpc.config.getPublicSettings.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
