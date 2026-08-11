@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { eq, and, or, like, inArray, desc, type SQL } from "drizzle-orm";
+import { eq, and, or, like, inArray, desc, asc, type SQL } from "drizzle-orm";
 import {
   studentProfiles,
   studentTags,
@@ -10,6 +10,7 @@ import {
   communities,
   universities,
   users,
+  tokenWallets,
   type StudentProfile,
   type StudentTag,
   type StudentNote,
@@ -63,6 +64,14 @@ export interface StudentListItem {
   profileCompleted: boolean;
   createdAt: Date;
   communities: StudentCommunitySummary[];
+  /**
+   * Barato de mostrar (join simple a token_wallets, ya materializado) — a
+   * diferencia de Score/Segmento/Última actividad/Gasto, que requieren
+   * agregación cross-fuente y se dejan fuera del listado deliberadamente
+   * (ver docs/students/student-360-audit-and-architecture.md §6, "columnas
+   * caras" — no añadirlas sin perfilar antes el coste real).
+   */
+  tokensBalance: number;
 }
 
 export interface StudentListFilters {
@@ -75,6 +84,9 @@ export interface StudentListFilters {
   profileCompleted?: boolean;
   limit?: number;
   offset?: number;
+  /** Server-side — solo columnas ya materializadas y baratas de ordenar. */
+  sortBy?: "createdAt" | "name";
+  sortDir?: "asc" | "desc";
 }
 
 /** userIds que pertenecen a alguna de las comunidades dadas (sin duplicados). */
@@ -146,8 +158,11 @@ export async function listStudents(
     .innerJoin(users, eq(studentProfiles.userId, users.id))
     .leftJoin(universities, eq(studentProfiles.universityId, universities.id));
 
+  const sortColumn = filters.sortBy === "name" ? users.name : studentProfiles.createdAt;
+  const sortFn = filters.sortDir === "asc" ? asc : desc;
+
   const rows = await (whereClause ? baseQuery.where(whereClause) : baseQuery)
-    .orderBy(desc(studentProfiles.createdAt))
+    .orderBy(sortFn(sortColumn))
     .limit(filters.limit ?? 50)
     .offset(filters.offset ?? 0);
 
@@ -159,7 +174,10 @@ export async function listStudents(
   const total = countRows.length;
 
   const userIds = rows.map(r => r.profile.userId);
-  const communitiesByUser = await getCommunitiesByUserId(userIds, conn);
+  const [communitiesByUser, walletsByUser] = await Promise.all([
+    getCommunitiesByUserId(userIds, conn),
+    getWalletBalancesByUserId(userIds, conn),
+  ]);
 
   const items: StudentListItem[] = rows.map(r => ({
     studentProfileId: r.profile.id,
@@ -176,14 +194,25 @@ export async function listStudents(
     profileCompleted: r.profile.profileCompleted,
     createdAt: r.profile.createdAt,
     communities: communitiesByUser.get(r.profile.userId) ?? [],
+    tokensBalance: walletsByUser.get(r.profile.userId) ?? 0,
   }));
 
   return { items, total };
 }
 
+/** Batch de saldos por userId — mismo patrón que getCommunitiesByUserId, un único IN() para toda la página en vez de N queries. */
+async function getWalletBalancesByUserId(userIds: number[], conn: DbHandle): Promise<Map<number, number>> {
+  const map = new Map<number, number>();
+  if (userIds.length === 0) return map;
+  const rows = await conn.select({ userId: tokenWallets.userId, balance: tokenWallets.balance })
+    .from(tokenWallets).where(inArray(tokenWallets.userId, userIds));
+  for (const row of rows) map.set(row.userId, row.balance);
+  return map;
+}
+
 export interface StudentDetail {
   profile: StudentProfile;
-  user: { id: number; name: string | null; email: string | null; phone: string | null; avatarUrl: string | null };
+  user: { id: number; name: string | null; email: string | null; phone: string | null; avatarUrl: string | null; lastSignedIn: Date | null };
   university: University | null;
   communities: StudentCommunitySummary[];
   tags: StudentTag[];
@@ -194,7 +223,7 @@ async function buildStudentDetail(
   conn: DbHandle
 ): Promise<StudentDetail> {
   const [[userRow], [universityRow], communitiesByUser, tagRows] = await Promise.all([
-    conn.select({ id: users.id, name: users.name, email: users.email, phone: users.phone, avatarUrl: users.avatarUrl })
+    conn.select({ id: users.id, name: users.name, email: users.email, phone: users.phone, avatarUrl: users.avatarUrl, lastSignedIn: users.lastSignedIn })
       .from(users).where(eq(users.id, profile.userId)).limit(1),
     profile.universityId
       ? conn.select().from(universities).where(eq(universities.id, profile.universityId)).limit(1)
@@ -208,7 +237,7 @@ async function buildStudentDetail(
 
   return {
     profile,
-    user: userRow ?? { id: profile.userId, name: null, email: null, phone: null, avatarUrl: null },
+    user: userRow ?? { id: profile.userId, name: null, email: null, phone: null, avatarUrl: null, lastSignedIn: null },
     university: universityRow ?? null,
     communities: communitiesByUser.get(profile.userId) ?? [],
     tags: tagRows.map(t => t.tag),
@@ -313,6 +342,36 @@ export async function addStudentNote(
   return created;
 }
 
+/**
+ * Editar una nota — ADAPT identificado en la auditoría (no existía, y su
+ * precedente heredado quote_internal_notes tampoco lo resolvió nunca, así
+ * que no hay patrón previo que copiar). Solo el propio autor puede editar
+ * su nota — comprobación de ownership aquí porque studentNotes no expone
+ * quién es el "dueño" de otra forma.
+ */
+export async function updateStudentNote(
+  noteId: number,
+  authorUserId: number,
+  note: string,
+  db?: DbHandle
+): Promise<StudentNote | null> {
+  const conn = db ?? (await getDb());
+  const [existing] = await conn.select().from(studentNotes).where(eq(studentNotes.id, noteId)).limit(1);
+  if (!existing || existing.authorUserId !== authorUserId) return null;
+  await conn.update(studentNotes).set({ note }).where(eq(studentNotes.id, noteId));
+  const [updated] = await conn.select().from(studentNotes).where(eq(studentNotes.id, noteId)).limit(1);
+  return updated ?? null;
+}
+
+/** Borrado físico simple — mismo criterio de ownership que updateStudentNote. */
+export async function deleteStudentNote(noteId: number, authorUserId: number, db?: DbHandle): Promise<boolean> {
+  const conn = db ?? (await getDb());
+  const [existing] = await conn.select().from(studentNotes).where(eq(studentNotes.id, noteId)).limit(1);
+  if (!existing || existing.authorUserId !== authorUserId) return false;
+  await conn.delete(studentNotes).where(eq(studentNotes.id, noteId));
+  return true;
+}
+
 // ─── ETIQUETAS ──────────────────────────────────────────────────────────────
 // Catálogo configurable — nunca hardcodeado (ver drizzle/schema.ts).
 
@@ -344,4 +403,24 @@ export async function unassignStudentTag(studentProfileId: number, tagId: number
   const conn = db ?? (await getDb());
   await conn.delete(studentTagAssignments)
     .where(and(eq(studentTagAssignments.studentProfileId, studentProfileId), eq(studentTagAssignments.tagId, tagId)));
+}
+
+/** Con timestamp/actor — usado por el Activity Aggregator (Student 360), a diferencia de getStudentById que solo devuelve las tags actuales sin fecha. */
+export interface StudentTagAssignmentEvent {
+  tagId: number;
+  tagName: string;
+  assignedAt: Date;
+  assignedByUserId: number | null;
+}
+
+export async function listStudentTagAssignmentEvents(studentProfileId: number, db?: DbHandle): Promise<StudentTagAssignmentEvent[]> {
+  const conn = db ?? (await getDb());
+  return conn.select({
+    tagId: studentTagAssignments.tagId,
+    tagName: studentTags.name,
+    assignedAt: studentTagAssignments.assignedAt,
+    assignedByUserId: studentTagAssignments.assignedByUserId,
+  }).from(studentTagAssignments)
+    .innerJoin(studentTags, eq(studentTagAssignments.tagId, studentTags.id))
+    .where(eq(studentTagAssignments.studentProfileId, studentProfileId));
 }

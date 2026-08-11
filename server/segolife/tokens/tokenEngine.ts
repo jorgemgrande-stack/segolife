@@ -90,6 +90,14 @@ export interface EarnTokensInput {
   productId?: number | null;
   amountSpent?: number;
   origin: TokenRule["origin"];
+  /**
+   * Id de la fila de origen (p.ej. commerce_transactions.id o
+   * consumption_qr_codes.id) — antes se perdía siempre (token_ledger.source_id
+   * nunca se rellenaba pese a existir la columna), lo que hacía indistinguible
+   * en el ledger un consumo QR de un consumo POS (mismo sourceType, ver
+   * auditoría Student 360 §C/D). Opcional para no romper callers existentes.
+   */
+  sourceId?: number | null;
   idempotencyKey?: string | null;
   createdByUserId?: number | null;
   at?: Date;
@@ -156,6 +164,7 @@ export async function earnTokens(input: EarnTokensInput, db?: AnyDbHandle): Prom
     amount: final,
     reason: rule.name,
     sourceType: input.origin,
+    sourceId: input.sourceId ?? null,
     venueId: input.venueId ?? null,
     eventId: input.eventId ?? null,
     ruleId: rule.id,

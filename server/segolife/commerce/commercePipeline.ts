@@ -65,6 +65,7 @@ export async function processCommerceLoyalty(transaction: CommerceTransaction, d
     eventId: transaction.eventId,
     amountSpent: transaction.totalCents / 100,
     origin: "consumption",
+    sourceId: transaction.id,
     idempotencyKey: `commerce_transaction:${transaction.idempotencyKey}`,
     at: transaction.occurredAt,
   }, conn).catch(() => null);
@@ -127,6 +128,7 @@ export async function ingestCommerceTransaction(input: IngestCommerceTransaction
     await conn.insert(commerceTransactionItems).values(
       input.transaction.items.map(item => ({
         transactionId: insertId,
+        venueProductId: item.venueProductId ?? null,
         externalProductId: item.externalProductId ?? null,
         description: item.description,
         quantity: item.quantity,

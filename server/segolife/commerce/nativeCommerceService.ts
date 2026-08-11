@@ -77,6 +77,10 @@ export async function recordNativeSale(input: RecordNativeSaleInput, db?: DbHand
     const unitAmountCents = Math.round(Number(product.price ?? "0") * 100);
     totalCents += unitAmountCents * item.quantity;
     return {
+      // venueProductId real además de externalProductId — antes se perdía
+      // (columna commerce_transaction_items.venue_product_id nunca se
+      // rellenaba pese a existir, ver auditoría Student 360 §C).
+      venueProductId: product.id,
       externalProductId: String(product.id),
       description: product.name,
       quantity: item.quantity,

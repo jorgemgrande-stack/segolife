@@ -3,6 +3,7 @@ import {
   boolean,
   date,
   decimal,
+  index,
   int,
   json,
   mediumtext,
@@ -3813,6 +3814,55 @@ export const studentNotes = mysqlTable("student_notes", {
 export type StudentNote = typeof studentNotes.$inferSelect;
 export type InsertStudentNote = typeof studentNotes.$inferInsert;
 
+// ─── SEGOLIFE: STUDENT_LOGIN_EVENTS (Student 360) ──────────────────────────────
+// Auditado antes de crearse (docs/students/student-360-audit-and-architecture.md
+// §G): no existe ningún histórico de login en el repo, solo users.lastSignedIn
+// (timestamp único, se sobreescribe). Tabla mínima, sin IP/user-agent/device
+// fingerprint (nada de eso existe hoy en server/localAuth.ts, así que añadirlo
+// sería tracking nuevo, no reutilización). Empieza a registrar SOLO desde el
+// login exitoso a partir de esta fase — nunca se fabrica histórico retroactivo.
+
+export const studentLoginEvents = mysqlTable("student_login_events", {
+  id:           int("id").autoincrement().primaryKey(),
+  userId:       int("user_id").notNull(),
+  occurredAt:   timestamp("occurred_at").defaultNow().notNull(),
+  method:       varchar("method", { length: 32 }).notNull().default("password"),
+}, (table) => ({
+  userIdIdx: index("student_login_events_user_id_idx").on(table.userId),
+}));
+export type StudentLoginEvent = typeof studentLoginEvents.$inferSelect;
+export type InsertStudentLoginEvent = typeof studentLoginEvents.$inferInsert;
+
+// ─── SEGOLIFE: STUDENT_ADMIN_ACTIONS (Student 360) ─────────────────────────────
+// Auditado antes de crearse (docs/students/student-360-audit-and-architecture.md
+// §7): para ajustes de SegoTokens y Benefits la trazabilidad YA existe
+// (token_ledger.createdByUserId/reason, user_benefits.grantedByUserId/
+// cancelledByUserId/cancellationReason) — esta tabla NO los duplica. El único
+// hueco real confirmado es el cambio de student_profiles.status (activo/
+// inactivo), que hoy es un UPDATE sin actor ni motivo ni histórico.
+// Se prefiere una tabla dedicada mínima en vez de extender crm_activity_log
+// porque ese log es semánticamente CRM comercial (lead/quote/reservation/
+// invoice) y su entityId es un int genérico sin FK — mezclar el dominio
+// estudiante ahí cruzaría la frontera de aislamiento por dominio que el resto
+// del repo respeta sin excepción (ver auditoría). beforeValue/afterValue
+// guardan el valor plano (string) para no obligar a un shape JSON por acción.
+
+export const studentAdminActions = mysqlTable("student_admin_actions", {
+  id:                 int("id").autoincrement().primaryKey(),
+  studentProfileId:   int("student_profile_id").notNull(),
+  actorUserId:         int("actor_user_id").notNull(),
+  action:             varchar("action", { length: 64 }).notNull(),
+  beforeValue:        varchar("before_value", { length: 256 }),
+  afterValue:         varchar("after_value", { length: 256 }),
+  reason:             varchar("reason", { length: 512 }),
+  metadata:           json("metadata").$type<Record<string, unknown>>(),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  studentProfileIdIdx: index("student_admin_actions_student_profile_id_idx").on(table.studentProfileId),
+}));
+export type StudentAdminAction = typeof studentAdminActions.$inferSelect;
+export type InsertStudentAdminAction = typeof studentAdminActions.$inferInsert;
+
 // ─── SEGOLIFE: VENUE_CATEGORIES (Fase 1D) ──────────────────────────────────────
 // Catálogo configurable de categorías de venue (bar, coworking, tienda,
 // alojamiento...) — mismo patrón que student_tags: nunca se hardcodea un
@@ -4733,6 +4783,7 @@ export const ticketOrders = mysqlTable("ticket_orders", {
 }, (table) => ({
   idempotencyKeyUnique: unique("ticket_orders_idempotency_key_unique").on(table.idempotencyKey),
   providerExternalOrderUnique: unique("ticket_orders_provider_external_unique").on(table.provider, table.externalOrderId),
+  userIdIdx: index("ticket_orders_user_id_idx").on(table.userId),
 }));
 export type TicketOrder = typeof ticketOrders.$inferSelect;
 export type InsertTicketOrder = typeof ticketOrders.$inferInsert;
@@ -4803,6 +4854,7 @@ export const eventTickets = mysqlTable("event_tickets", {
   updatedAt:              timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
   providerExternalTicketUnique: unique("event_tickets_provider_external_unique").on(table.provider, table.externalTicketId),
+  userIdIdx: index("event_tickets_user_id_idx").on(table.userId),
 }));
 export type EventTicket = typeof eventTickets.$inferSelect;
 export type InsertEventTicket = typeof eventTickets.$inferInsert;
@@ -4832,6 +4884,7 @@ export const eventAttendance = mysqlTable("event_attendance", {
   createdAt:              timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({
   idempotencyKeyUnique: unique("event_attendance_idempotency_key_unique").on(table.idempotencyKey),
+  userIdIdx: index("event_attendance_user_id_idx").on(table.userId),
 }));
 export type EventAttendance = typeof eventAttendance.$inferSelect;
 export type InsertEventAttendance = typeof eventAttendance.$inferInsert;
@@ -5063,6 +5116,7 @@ export const commerceTransactions = mysqlTable("commerce_transactions", {
   updatedAt:              timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
   idempotencyKeyUnique: unique("commerce_transactions_idempotency_key_unique").on(table.idempotencyKey),
+  userIdIdx: index("commerce_transactions_user_id_idx").on(table.userId),
 }));
 export type CommerceTransaction = typeof commerceTransactions.$inferSelect;
 export type InsertCommerceTransaction = typeof commerceTransactions.$inferInsert;

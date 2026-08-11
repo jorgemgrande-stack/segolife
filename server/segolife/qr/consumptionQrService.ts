@@ -346,6 +346,7 @@ export async function redeemConsumptionQr(input: RedeemQrInput, db?: DbHandle): 
         productId: qr.productId,
         amountSpent: qr.amountCents != null ? qr.amountCents / 100 : undefined,
         origin: "consumption",
+        sourceId: qr.id,
         idempotencyKey: `consumption_qr:${qr.id}`,
         createdByUserId: input.userId,
       }, tx);

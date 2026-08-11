@@ -148,12 +148,26 @@ function omitQrSecret(row: UserBenefit): UserBenefitSafeFields {
   return safe;
 }
 
+function extractGrantReason(metadata: Record<string, unknown> | null): string | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const reason = (metadata as { reason?: unknown }).reason;
+  return typeof reason === "string" && reason.trim() ? reason : null;
+}
+
 export interface GrantedBenefitListItem extends UserBenefitSafeFields {
   definitionName: string;
   benefitType: string;
   studentName: string | null;
   sourceVenueName: string | null;
   destinationVenueName: string | null;
+  /**
+   * Motivo del grant manual — antes vivía sin tipar dentro de metadata.reason
+   * (asimétrico respecto a cancellationReason, que sí es columna dedicada;
+   * ver auditoría Student 360 §E). Se expone aquí ya extraído, null si no es
+   * un grant manual o no tiene motivo registrado — el dato de origen (JSON)
+   * no cambia, solo se deja de obligar al caller a parsearlo.
+   */
+  grantReason: string | null;
 }
 
 export interface GrantedBenefitFilters {
@@ -220,6 +234,7 @@ export async function listGrantedBenefits(filters: GrantedBenefitFilters, db?: D
     studentName: r.student?.name ?? null,
     sourceVenueName: r.ub.sourceVenueId != null ? (venueNameById.get(r.ub.sourceVenueId) ?? null) : null,
     destinationVenueName: r.def.destinationVenueId != null ? (venueNameById.get(r.def.destinationVenueId) ?? null) : null,
+    grantReason: extractGrantReason(r.ub.metadata),
   }));
 
   return { items, total: countRows.length };

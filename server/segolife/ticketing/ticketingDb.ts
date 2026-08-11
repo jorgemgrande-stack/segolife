@@ -8,7 +8,7 @@ import { eq, and, inArray, sql, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import {
-  salesChannels, eventTicketTypes, ticketOrders, ticketOrderItems, eventTickets, eventAttendance, events,
+  salesChannels, eventTicketTypes, ticketOrders, ticketOrderItems, eventTickets, eventAttendance, events, venues,
   type SalesChannel, type EventTicketType, type InsertSalesChannel, type InsertEventTicketType,
   type TicketOrder, type EventTicket, type EventAttendance,
 } from "../../../drizzle/schema";
@@ -264,4 +264,52 @@ export async function getMyTicketById(ticketId: number, userId: number, db?: DbH
     .where(and(eq(eventTickets.id, ticketId), eq(eventTickets.userId, userId)))
     .limit(1);
   return row ?? null;
+}
+
+// ─── ADMIN (Student 360) — histórico por usuario arbitrario ────────────────
+// A diferencia de listMyOrders/listMyTickets (autoservicio, atado a
+// ctx.user.id), estas mismas consultas parametrizadas por un userId
+// arbitrario para que un admin pueda verlas desde la ficha de un estudiante.
+// La autorización (community-scoping) vive en el router que las invoque,
+// nunca aquí — mismo contrato que server/db/studentsDb.ts.
+// Auditoría previa (docs/students/student-360-audit-and-architecture.md §B):
+// listAttendanceByUserId NO existía — solo listEventAttendance(eventId).
+
+export interface StudentAttendanceItem {
+  attendance: EventAttendance;
+  event: { id: number; name: string; slug: string; startsAt: Date } | null;
+  venueName: string | null;
+}
+
+export async function listAttendanceByUserId(userId: number, db?: DbHandle): Promise<StudentAttendanceItem[]> {
+  const conn = db ?? (await getDb());
+  return conn.select({
+    attendance: eventAttendance,
+    event: { id: events.id, name: events.name, slug: events.slug, startsAt: events.startsAt },
+    venueName: venues.name,
+  }).from(eventAttendance)
+    .leftJoin(events, eq(eventAttendance.eventId, events.id))
+    .leftJoin(venues, eq(eventAttendance.venueId, venues.id))
+    .where(eq(eventAttendance.userId, userId))
+    .orderBy(desc(eventAttendance.occurredAt));
+}
+
+export interface StudentTicketSpendSummary {
+  ticketCount: number;
+  totalPaidCents: number;
+}
+
+/**
+ * SUM agregado en SQL — nunca traer todas las filas a Node para sumar (ver
+ * docs/students/student-360-audit-and-architecture.md §5, "evitar query
+ * monstruosa por estudiante"). Solo cuenta orders 'paid' — coherente con
+ * cómo se interpreta "importe pagado" en el resto del módulo.
+ */
+export async function getTicketSpendSummaryByUserId(userId: number, db?: DbHandle): Promise<StudentTicketSpendSummary> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select({
+    ticketCount: sql<number>`COUNT(*)`,
+    totalPaidCents: sql<string>`COALESCE(SUM(${ticketOrders.totalCents}), 0)`,
+  }).from(ticketOrders).where(and(eq(ticketOrders.userId, userId), eq(ticketOrders.status, "paid")));
+  return { ticketCount: Number(row?.ticketCount ?? 0), totalPaidCents: Number(row?.totalPaidCents ?? 0) };
 }
