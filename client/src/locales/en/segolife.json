@@ -438,5 +438,59 @@
     "channelUnavailable": "Not available yet",
     "transactionalNote": "Essential account notifications are always delivered in the app and can't be turned off.",
     "saved": "Preferences updated"
+  },
+  "register": {
+    "meta": { "title": "Create account — SEGOLIFE" },
+    "eyebrow": "Segovia · Student life",
+    "title": "Your student life starts here",
+    "subtitle": "Events, venues and perks from your community, all in one place.",
+    "steps": { "account": "Account", "community": "Community" },
+    "account": {
+      "firstName": "First name",
+      "lastName": "Last name",
+      "email": "Email",
+      "password": "Password",
+      "passwordConfirm": "Confirm password",
+      "passwordHint": "At least 8 characters.",
+      "showPassword": "Show password",
+      "hidePassword": "Hide password",
+      "continue": "Continue"
+    },
+    "community": {
+      "title": "What's your community?",
+      "subtitle": "You'll be able to join more communities later.",
+      "empty": "No communities available yet.",
+      "academicYear": "Academic year (optional)",
+      "back": "Back"
+    },
+    "consent": {
+      "termsPrefix": "I have read and accept the",
+      "termsPrivacy": "Privacy Policy",
+      "termsAnd": "and the",
+      "termsUsage": "Terms of Use",
+      "marketing": "I want to receive news, events and promotions from SEGOLIFE.",
+      "submit": "Create my account",
+      "submitting": "Creating account…"
+    },
+    "success": {
+      "title": "Welcome to SEGOLIFE!",
+      "subtitle": "Your account is ready. Taking you to your community…"
+    },
+    "footer": {
+      "hasAccount": "Already have an account?",
+      "login": "Log in"
+    },
+    "errors": {
+      "INVALID_INPUT": "Please check the form fields.",
+      "INVALID_EMAIL": "The email address you entered isn't valid.",
+      "WEAK_PASSWORD": "Password must be at least 8 characters long.",
+      "PASSWORD_MISMATCH": "Passwords don't match.",
+      "EMAIL_EXISTS": "An account with this email already exists.",
+      "COMMUNITY_NOT_FOUND": "The selected community isn't available.",
+      "RATE_LIMITED": "Too many attempts. Wait a minute before trying again.",
+      "GENERIC": "We couldn't complete your registration. Please try again.",
+      "NETWORK": "Connection error. Check that the server is running.",
+      "loginCta": "Log in"
+    }
   }
 }

@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { MapPin, Compass, Ticket, Gift, Building2, Percent, Users, Sparkles, ArrowRight } from "lucide-react";
 import "@/lib/i18n";
 import { trpc } from "@/lib/trpc";
-import { getLoginUrl } from "@/const";
+import { getLoginUrl, getRegisterUrl } from "@/const";
 import { SegolifeImage } from "@/components/segolife/SegolifeImage";
 import { PublicHomeNav } from "@/components/publicHome/PublicHomeNav";
 import { PublicHomeFooter } from "@/components/publicHome/PublicHomeFooter";
@@ -84,6 +84,7 @@ function Hero({ heroPhotos }: { heroPhotos?: Array<{ id: number; imageUrl: strin
   const { t } = useTranslation();
   const photos = (heroPhotos ?? []).slice(0, 5);
   const loginUrl = getLoginUrl();
+  const registerUrl = getRegisterUrl();
 
   return (
     <section className="relative flex min-h-[92dvh] flex-col overflow-hidden bg-[#150a28] text-white">
@@ -123,7 +124,7 @@ function Hero({ heroPhotos }: { heroPhotos?: Array<{ id: number; imageUrl: strin
         <p className="mt-6 max-w-lg text-lg text-white/75 sm:text-xl">{t("publicHome.hero.subtitle")}</p>
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
           <a
-            href={loginUrl}
+            href={registerUrl}
             className="inline-flex items-center justify-center rounded-full bg-white px-7 py-3.5 text-base font-semibold text-[#150a28] shadow-xl transition-transform active:scale-95"
           >
             {t("publicHome.hero.ctaPrimary")}
@@ -346,7 +347,7 @@ function FinalCta() {
       <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
         <h2 className="text-3xl font-bold tracking-tight sm:text-5xl">{t("publicHome.finalCta.title")}</h2>
         <a
-          href={getLoginUrl()}
+          href={getRegisterUrl()}
           className="mt-8 inline-flex items-center justify-center rounded-full bg-white px-8 py-4 text-base font-semibold text-[#150a28] shadow-xl transition-transform active:scale-95"
         >
           {t("publicHome.finalCta.cta")}

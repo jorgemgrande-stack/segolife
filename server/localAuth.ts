@@ -2,9 +2,10 @@
  * localAuth.ts — Autenticación local email+contraseña que reemplaza Manus OAuth.
  *
  * Flujo:
- *  POST /api/auth/login   → valida credenciales, emite cookie JWT
- *  POST /api/auth/logout  → borra la cookie
- *  GET  /api/auth/me      → devuelve el usuario de la sesión (usado por tRPC context)
+ *  POST /api/auth/login    → valida credenciales, emite cookie JWT
+ *  POST /api/auth/register → alta de estudiante (registrationService.ts), emite cookie JWT
+ *  POST /api/auth/logout   → borra la cookie
+ *  GET  /api/auth/me       → devuelve el usuario de la sesión (usado por tRPC context)
  *
  * Compatible con el contexto tRPC existente: lee la misma cookie SESSION_COOKIE_NAME
  * y produce el mismo tipo { User } que el flujo OAuth anterior.
@@ -16,6 +17,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { getDb } from "./db";
 import { users } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
+import { registerStudent, RegistrationError, type RegistrationErrorCode } from "./segolife/students/registrationService";
 
 // ─── Configuración ────────────────────────────────────────────────────────────
 const COOKIE_NAME = "nayade_session";
@@ -130,6 +132,80 @@ export function createLocalAuthRouter(): Router {
       role: user.role,
       avatarUrl: user.avatarUrl,
     });
+  });
+
+  /**
+   * POST /api/auth/register — alta de estudiante (SEGOLIFE — STUDENT
+   * REGISTRATION & ONBOARDING). Público por definición (no requiere sesión
+   * previa) — mismo router REST que login/logout/me, ver CLAUDE.md ("la
+   * única excepción [a usar tRPC] son los endpoints de autenticación local").
+   * Al igual que login, abre sesión automáticamente al terminar (spec punto
+   * 19: no forzar un login aparte tras registrarse) reutilizando exactamente
+   * el mismo signSessionToken/cookie que el login real.
+   */
+  router.post("/api/auth/register", async (req: Request, res: Response) => {
+    const { firstName, lastName, email, password, communitySlug, academicYear, marketingConsent, website } = req.body ?? {};
+
+    // Honeypot anti-bot (spec punto 30): campo oculto que un humano nunca
+    // rellena. Presencia de valor → responder OK sin crear nada (no delatar
+    // al bot con un error distinto).
+    if (typeof website === "string" && website.trim() !== "") {
+      res.status(201).json({ id: 0, name: "", email: "", role: "user" });
+      return;
+    }
+
+    if (!firstName || !lastName || !email || !password || !communitySlug) {
+      res.status(400).json({ error: "Faltan campos obligatorios.", code: "INVALID_INPUT" });
+      return;
+    }
+
+    const db = await getDb();
+    if (!db) {
+      res.status(503).json({ error: "Base de datos no disponible." });
+      return;
+    }
+
+    try {
+      const result = await registerStudent({
+        firstName: String(firstName),
+        lastName: String(lastName),
+        email: String(email),
+        password: String(password),
+        communitySlug: String(communitySlug),
+        academicYear: academicYear ? String(academicYear) : undefined,
+        marketingConsent: marketingConsent === true,
+      });
+
+      const token = await signSessionToken(result.userId);
+      res.cookie(COOKIE_NAME, token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: COOKIE_MAX_AGE * 1000,
+        path: "/",
+      });
+
+      res.status(201).json({
+        id: result.userId,
+        name: result.name,
+        email: result.email,
+        role: result.role,
+        communitySlug: result.communitySlug,
+      });
+    } catch (err) {
+      if (err instanceof RegistrationError) {
+        const status: Record<RegistrationErrorCode, number> = {
+          INVALID_EMAIL: 400,
+          WEAK_PASSWORD: 400,
+          EMAIL_EXISTS: 409,
+          COMMUNITY_NOT_FOUND: 400,
+        };
+        res.status(status[err.code]).json({ error: err.message, code: err.code });
+        return;
+      }
+      console.error("[register] Error inesperado:", err);
+      res.status(500).json({ error: "No se ha podido completar el registro. Inténtalo de nuevo." });
+    }
   });
 
   /** POST /api/auth/logout */

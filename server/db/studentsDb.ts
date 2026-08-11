@@ -22,6 +22,12 @@ const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit
 const _db = drizzle(_pool);
 
 type DbHandle = typeof _db;
+// Una transacción abierta (tx) es incompatible en TypeScript con DbHandle
+// aunque comparten la misma API en tiempo de ejecución — mismo workaround
+// que server/segolife/ticketing/ticketingDb.ts (AnyDbHandle). Permite pasar
+// un `tx` de otro módulo (p.ej. registrationService.ts) a estas funciones.
+type TxHandle = Parameters<Parameters<DbHandle["transaction"]>[0]>[0];
+type AnyDbHandle = DbHandle | TxHandle;
 
 async function getDb(): Promise<DbHandle> {
   return _db;
@@ -224,7 +230,7 @@ export async function getStudentByUserId(userId: number, db?: DbHandle): Promise
 }
 
 /** Devuelve el perfil del usuario, creándolo vacío si es su primer acceso (onboarding). */
-export async function ensureStudentProfile(userId: number, db?: DbHandle): Promise<StudentProfile> {
+export async function ensureStudentProfile(userId: number, db?: AnyDbHandle): Promise<StudentProfile> {
   const conn = db ?? (await getDb());
   const [existing] = await conn.select().from(studentProfiles).where(eq(studentProfiles.userId, userId)).limit(1);
   if (existing) return existing;
@@ -261,7 +267,7 @@ function computeProfileCompleted(merged: Record<string, unknown>): boolean {
 export async function updateStudentProfile(
   userId: number,
   fields: EditableProfileFields,
-  db?: DbHandle
+  db?: AnyDbHandle
 ): Promise<StudentProfile> {
   const conn = db ?? (await getDb());
   const current = await ensureStudentProfile(userId, conn);

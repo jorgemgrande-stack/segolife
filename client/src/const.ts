@@ -1,4 +1,4 @@
-export { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+export { COOKIE_NAME, ONE_YEAR_MS, isSafeInternalPath } from "@shared/const";
 
 /**
  * Devuelve la URL de login según el modo de autenticación:
@@ -32,4 +32,15 @@ export const getLoginUrl = (returnPath = "/") => {
   url.searchParams.set("type", "signIn");
 
   return url.toString();
+};
+
+/**
+ * Devuelve la URL de registro de estudiante (/register). Solo tiene sentido
+ * en modo LOCAL_AUTH (el registro propio de SEGOLIFE es REST local — ver
+ * server/localAuth.ts); en modo Manus OAuth no existe un flujo de registro
+ * propio, así que cae a getLoginUrl (el portal OAuth gestiona alta de cuenta).
+ */
+export const getRegisterUrl = (returnPath = "/") => {
+  if (!isLocalAuth()) return getLoginUrl(returnPath);
+  return `/register${returnPath !== "/" ? `?returnTo=${encodeURIComponent(returnPath)}` : ""}`;
 };

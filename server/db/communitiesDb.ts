@@ -18,6 +18,12 @@ const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit
 const _db = drizzle(_pool);
 
 type DbHandle = typeof _db;
+// Una transacción abierta (tx) es incompatible en TypeScript con DbHandle
+// aunque comparten la misma API en tiempo de ejecución — mismo workaround
+// que server/segolife/ticketing/ticketingDb.ts (AnyDbHandle). Permite pasar
+// un `tx` de otro módulo (p.ej. registrationService.ts) a estas funciones.
+type TxHandle = Parameters<Parameters<DbHandle["transaction"]>[0]>[0];
+type AnyDbHandle = DbHandle | TxHandle;
 
 async function getDb(): Promise<DbHandle> {
   return _db;
@@ -41,7 +47,7 @@ export async function listCommunities(db?: DbHandle): Promise<Community[]> {
 }
 
 /** Resuelve una comunidad por su slug (usado para /ie, /uva, futuros campus). */
-export async function getCommunityBySlug(slug: string, db?: DbHandle): Promise<Community | null> {
+export async function getCommunityBySlug(slug: string, db?: AnyDbHandle): Promise<Community | null> {
   const conn = db ?? (await getDb());
   const [row] = await conn.select().from(communities).where(eq(communities.slug, slug)).limit(1);
   return row ?? null;
@@ -103,7 +109,7 @@ export async function addUserToCommunity(
   userId: number,
   communityId: number,
   roleInCommunity?: string,
-  db?: DbHandle
+  db?: AnyDbHandle
 ): Promise<void> {
   const conn = db ?? (await getDb());
   const existing = await conn

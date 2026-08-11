@@ -65,6 +65,7 @@ import ReservaOk from "./pages/ReservaOk";
 import ReservaError from "./pages/ReservaError";
 import SetPassword from "./pages/SetPassword";
 import Login from "./pages/Login";
+import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import DynamicPage from "./pages/DynamicPage";
@@ -305,6 +306,7 @@ function Router() {
       <Route path="/reserva/error" component={ReservaError} />
       {/* ── AUTH ROUTES ── */}
       <Route path="/login" component={Login} />
+      <Route path="/register" component={Register} />
       <Route path="/recuperar-contrasena" component={ForgotPassword} />
       <Route path="/nueva-contrasena" component={ResetPassword} />
       <Route path="/establecer-contrasena" component={SetPassword} />

@@ -21,6 +21,12 @@ const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit
 const _db = drizzle(_pool);
 
 type DbHandle = typeof _db;
+// Una transacción abierta (tx) es incompatible en TypeScript con DbHandle
+// aunque comparten la misma API en tiempo de ejecución — mismo workaround
+// que server/segolife/ticketing/ticketingDb.ts (AnyDbHandle). Permite pasar
+// un `tx` de otro módulo (p.ej. registrationService.ts) a updatePreference.
+type TxHandle = Parameters<Parameters<DbHandle["transaction"]>[0]>[0];
+type AnyDbHandle = DbHandle | TxHandle;
 
 async function getDb(): Promise<DbHandle> {
   return _db;
@@ -54,7 +60,7 @@ export async function listMyPreferences(userId: number, db?: DbHandle): Promise<
 
 export async function updatePreference(
   input: { userId: number; category: NotificationCategory; channel: NotificationChannel; enabled: boolean },
-  db?: DbHandle
+  db?: AnyDbHandle
 ): Promise<void> {
   const conn = db ?? (await getDb());
   await conn.insert(notificationPreferences)

@@ -20,7 +20,13 @@ export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
-  email: varchar("email", { length: 320 }),
+  // unique (no notNull: OAuth heredado permite usuarios sin email) — añadido
+  // para el registro de estudiantes (SEGOLIFE — STUDENT REGISTRATION): antes
+  // de esto la unicidad de email solo se comprobaba a nivel de aplicación,
+  // sin ninguna garantía real ante una carrera de dos registros simultáneos
+  // con el mismo email. Verificado sin duplicados existentes en local antes
+  // de añadir esta restricción (ver migración 0140).
+  email: varchar("email", { length: 320 }).unique(),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin", "monitor", "agente", "adminrest", "controler", "partner_admin", "partner_user", "supplier", "employee", "gestoria"]).default("user").notNull(),
   partnerId: int("partnerId"),

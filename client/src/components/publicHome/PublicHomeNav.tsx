@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
-import { getLoginUrl } from "@/const";
+import { getLoginUrl, getRegisterUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 
 // Nunca brand_logo_url/brand_name (heredado de Náyade) — mismas claves
@@ -15,6 +15,7 @@ const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
 export function PublicHomeNav({ variant = "overlay" }: { variant?: "overlay" | "solid" }) {
   const { t, i18n } = useTranslation();
   const loginUrl = getLoginUrl();
+  const registerUrl = getRegisterUrl();
   const { data: publicSettings } = trpc.config.getPublicSettings.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -62,7 +63,7 @@ export function PublicHomeNav({ variant = "overlay" }: { variant?: "overlay" | "
             {t("publicHome.nav.login")}
           </a>
           <a
-            href={loginUrl}
+            href={registerUrl}
             className="inline-flex rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition-transform active:scale-95"
           >
             {t("publicHome.nav.join")}

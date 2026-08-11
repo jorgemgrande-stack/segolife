@@ -438,5 +438,59 @@
     "channelUnavailable": "Todavía no disponible",
     "transactionalNote": "Las notificaciones esenciales de cuenta siempre se entregan en la app y no se pueden desactivar.",
     "saved": "Preferencias actualizadas"
+  },
+  "register": {
+    "meta": { "title": "Crear cuenta — SEGOLIFE" },
+    "eyebrow": "Segovia · Vida universitaria",
+    "title": "Tu vida universitaria empieza aquí",
+    "subtitle": "Eventos, locales y beneficios de tu comunidad, en un solo sitio.",
+    "steps": { "account": "Cuenta", "community": "Comunidad" },
+    "account": {
+      "firstName": "Nombre",
+      "lastName": "Apellidos",
+      "email": "Email",
+      "password": "Contraseña",
+      "passwordConfirm": "Confirmar contraseña",
+      "passwordHint": "Mínimo 8 caracteres.",
+      "showPassword": "Mostrar contraseña",
+      "hidePassword": "Ocultar contraseña",
+      "continue": "Continuar"
+    },
+    "community": {
+      "title": "¿Cuál es tu comunidad?",
+      "subtitle": "Podrás unirte a más comunidades más adelante.",
+      "empty": "Todavía no hay comunidades disponibles.",
+      "academicYear": "Año académico (opcional)",
+      "back": "Atrás"
+    },
+    "consent": {
+      "termsPrefix": "He leído y acepto la",
+      "termsPrivacy": "Política de Privacidad",
+      "termsAnd": "y las",
+      "termsUsage": "Condiciones de uso",
+      "marketing": "Quiero recibir novedades, eventos y promociones de SEGOLIFE.",
+      "submit": "Crear mi cuenta",
+      "submitting": "Creando cuenta…"
+    },
+    "success": {
+      "title": "¡Bienvenido/a a SEGOLIFE!",
+      "subtitle": "Tu cuenta está lista. Te llevamos a tu comunidad…"
+    },
+    "footer": {
+      "hasAccount": "¿Ya tienes cuenta?",
+      "login": "Inicia sesión"
+    },
+    "errors": {
+      "INVALID_INPUT": "Revisa los campos del formulario.",
+      "INVALID_EMAIL": "El email introducido no es válido.",
+      "WEAK_PASSWORD": "La contraseña debe tener al menos 8 caracteres.",
+      "PASSWORD_MISMATCH": "Las contraseñas no coinciden.",
+      "EMAIL_EXISTS": "Ya existe una cuenta con este email.",
+      "COMMUNITY_NOT_FOUND": "La comunidad seleccionada no está disponible.",
+      "RATE_LIMITED": "Demasiados intentos. Espera un minuto antes de volver a intentarlo.",
+      "GENERIC": "No se ha podido completar el registro. Inténtalo de nuevo.",
+      "NETWORK": "Error de conexión. Comprueba que el servidor está en marcha.",
+      "loginCta": "Iniciar sesión"
+    }
   }
 }

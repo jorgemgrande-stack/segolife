@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Eye, EyeOff, Lock, Mail, AlertCircle, Loader2 } from "lucide-react";
 import { Link } from "wouter";
+import { isSafeInternalPath } from "@/const";
 
 /**
  * Página de inicio según el rol del usuario. Los partners van a su panel,
@@ -32,6 +33,12 @@ function homeForRole(role: string | undefined): string {
 // Nunca brand_logo_url/brand_name (heredado de Náyade) — mismas claves
 // propias de Segolife que ya usa AdminLayout.tsx, nunca ese fallback.
 const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
+
+/** returnTo saneado — misma política que Register.tsx (isSafeInternalPath), un único sistema. */
+function getSafeReturnTo(): string | null {
+  const raw = new URLSearchParams(window.location.search).get("returnTo");
+  return isSafeInternalPath(raw) ? raw : null;
+}
 
 export default function Login() {
   const [, navigate] = useLocation();
@@ -61,10 +68,8 @@ export default function Login() {
 
   useEffect(() => {
     if (meQuery.data) {
-      const params = new URLSearchParams(window.location.search);
-      const returnTo = params.get("returnTo");
       const role = (meQuery.data as any)?.role as string | undefined;
-      navigate(returnTo ?? homeForRole(role));
+      navigate(getSafeReturnTo() ?? homeForRole(role));
     }
   }, [meQuery.data, navigate]);
 
@@ -93,10 +98,8 @@ export default function Login() {
       const me = await utils.auth.me.fetch();
 
       // Redirigir al destino según rol
-      const params = new URLSearchParams(window.location.search);
-      const returnTo = params.get("returnTo");
       const role = (me as any)?.role as string | undefined;
-      navigate(returnTo ?? homeForRole(role));
+      navigate(getSafeReturnTo() ?? homeForRole(role));
     } catch {
       setError("Error de conexión. Comprueba que el servidor está en marcha.");
     } finally {
@@ -243,8 +246,17 @@ export default function Login() {
             </Button>
           </form>
 
+          {/* Alta de estudiante (spec: registro de estudiante vive en /register,
+              nunca duplicando este formulario de admin) */}
+          <div className="mt-6 text-center text-sm text-muted-foreground">
+            ¿No tienes cuenta?{" "}
+            <Link href={`/register${getSafeReturnTo() ? `?returnTo=${encodeURIComponent(getSafeReturnTo()!)}` : ""}`}>
+              <span className="text-primary hover:text-primary/80 font-medium cursor-pointer">Crear cuenta</span>
+            </Link>
+          </div>
+
           {/* Enlace a la web pública */}
-          <div className="mt-8 text-center">
+          <div className="mt-4 text-center">
             <a
               href="/"
               className="text-muted-foreground hover:text-foreground text-sm transition-colors"

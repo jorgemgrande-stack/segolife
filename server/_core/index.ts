@@ -221,6 +221,7 @@ async function startServer() {
   if (USE_LOCAL_AUTH) {
     // Rate limiting en endpoints de autenticación (5 req/min por IP)
     app.use("/api/auth/login", authRateLimit);
+    app.use("/api/auth/register", authRateLimit);
     app.use("/api/auth/forgot-password", authRateLimit);
     // Modo local: rutas de auth propias (login/logout/me) en lugar de Manus OAuth
     app.use(createLocalAuthRouter());
