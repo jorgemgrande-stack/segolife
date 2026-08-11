@@ -35,12 +35,14 @@ PublicHome (CTA "Únete") → /register (Cuenta → Comunidad+consentimientos)
 `POST /api/auth/register` (REST, `server/localAuth.ts`) — público por definición, no requiere cambios en `authGuard.ts` (ese middleware solo intercepta `/api/trpc/*`; una ruta REST nunca pasa por él).
 
 ```
-body: { firstName, lastName, email, password, communitySlug, academicYear?, marketingConsent, website? }
+body: { firstName, lastName, email, phone, password, communitySlug, universityId, academicYear?, marketingConsent, website? }
 201 → { id, name, email, role, communitySlug } + Set-Cookie: nayade_session (idéntica a /login)
-400 → { error, code: INVALID_EMAIL | WEAK_PASSWORD | COMMUNITY_NOT_FOUND | INVALID_INPUT }
+400 → { error, code: INVALID_EMAIL | WEAK_PASSWORD | INVALID_PHONE | COMMUNITY_NOT_FOUND | UNIVERSITY_NOT_FOUND | INVALID_INPUT }
 409 → { error, code: EMAIL_EXISTS }
 429 → { error, code: RATE_LIMIT_EXCEEDED } (authRateLimit: 5 req/min/IP)
 ```
+
+`phone` y `universityId` son obligatorios (pedido explícito posterior al cierre inicial de la feature, para poder ubicar al estudiante en el sistema por universidad real, no solo por comunidad). `phone` se persiste en `users.phone` (columna ya existente); `universityId` en `student_profiles.universityId` (columna ya existente) — ninguna de las dos requirió migración. `universityId` se valida server-side contra `communities.getCommunityUniversities({communityId})` (endpoint público nuevo, `server/routers/communities.ts`) — nunca se confía en el id enviado por el cliente, igual que `communitySlug`. El frontend auto-selecciona la universidad cuando la comunidad elegida solo sirve una (caso real hoy de IE/UVA); si sirviera varias, el estudiante debe elegir explícitamente y el envío queda bloqueado hasta entonces.
 
 `website` es un honeypot — un bot que rellena todos los campos cae ahí; la respuesta es un 201 falso sin crear nada (no delata al bot con un código de error distinto).
 
@@ -62,6 +64,10 @@ Verificado en `server/segolife/students/registrationService.test.ts` (mock de `e
 `communitySlug` nunca se confía tal cual: `registerStudent()` resuelve la comunidad real vía `getCommunityBySlug()` y exige `status="active"` (rechaza `"inactive"`/`"onboarding"`, aunque el cliente mande ese slug). El estudiante elige **una** comunidad primaria al registrarse (`addUserToCommunity`, M2M `user_communities`) — no bloquea que el sistema le añada más comunidades en el futuro.
 
 `/register` opcionalmente preselecciona por `?community=<slug>` (si es una comunidad activa real) — el estudiante siempre puede cambiarla, nunca se preselecciona por defecto sin ese parámetro.
+
+## `/login` — i18n y enlace a registro
+
+`Login.tsx` (panel de admin) era 100% texto español hardcodeado hasta esta feature — convertido a i18n propio (`login.*` en `client/src/locales/{es,en}/segolife.json`) con selector ES/EN igual al de `PublicHomeNav.tsx`/`Register.tsx`, a petición explícita del usuario tras el cierre inicial. Incluye el enlace "¿Aún no estás registrado? Regístrate ahora" → `/register` (con `returnTo` propagado si existe).
 
 ## Sesión y `returnTo`
 
@@ -93,5 +99,5 @@ Un estudiante registrado aparece de inmediato en `/admin/students` (misma consul
 
 ## Archivos
 
-**Nuevos**: `server/segolife/students/registrationService.ts` (+ test), `client/src/pages/Register.tsx` (+ test), `drizzle/0140_users_email_unique.sql`, este documento.
-**Modificados**: `drizzle/schema.ts` (`users.email` unique), `server/localAuth.ts` (endpoint), `server/_core/index.ts` (rate limit), `server/db/studentsDb.ts` / `server/db/communitiesDb.ts` / `server/segolife/engagement/notificationPreferencesService.ts` (tipo `AnyDbHandle`), `shared/const.ts` (`isSafeInternalPath`), `client/src/const.ts` (`getRegisterUrl`), `client/src/App.tsx` (ruta), `client/src/pages/Login.tsx` (returnTo saneado + enlace a "Crear cuenta"), `client/src/pages/PublicHome.tsx` / `client/src/components/publicHome/PublicHomeNav.tsx` (CTAs → `/register`), `client/src/locales/{es,en}/segolife.json` (namespace `register`).
+**Nuevos**: `server/segolife/students/registrationService.ts` (+ test), `client/src/pages/Register.tsx` (+ test), `drizzle/0140_users_email_unique.sql`, `shared/const.test.ts`, este documento.
+**Modificados**: `drizzle/schema.ts` (`users.email` unique), `server/localAuth.ts` (endpoint), `server/_core/index.ts` (rate limit), `server/routers/communities.ts` (+ `authGuard.ts`: `getCommunityUniversities` público), `server/db/studentsDb.ts` / `server/db/communitiesDb.ts` / `server/segolife/engagement/notificationPreferencesService.ts` (tipo `AnyDbHandle`), `shared/const.ts` (`isSafeInternalPath`), `client/src/const.ts` (`getRegisterUrl`), `client/src/App.tsx` (ruta), `client/src/components/CookieBanner.tsx` (`/register` añadido a las rutas con tema Segolife — antes mostraba el banner legacy de Náyade y podía tapar el botón de envío en móvil), `client/src/pages/Login.tsx` (returnTo saneado, enlace a registro, conversión completa a i18n + selector ES/EN), `client/src/pages/PublicHome.tsx` / `client/src/components/publicHome/PublicHomeNav.tsx` (CTAs → `/register`), `client/src/locales/{es,en}/segolife.json` (namespaces `register` y `login`).

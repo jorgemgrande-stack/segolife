@@ -7,6 +7,8 @@
 
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
+import { useTranslation } from "react-i18next";
+import "@/lib/i18n";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +43,7 @@ function getSafeReturnTo(): string | null {
 }
 
 export default function Login() {
+  const { t, i18n } = useTranslation();
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
 
@@ -73,6 +76,10 @@ export default function Login() {
     }
   }, [meQuery.data, navigate]);
 
+  useEffect(() => {
+    document.title = t("login.meta.title");
+  }, [t]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -89,7 +96,7 @@ export default function Login() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.error ?? "Credenciales incorrectas. Inténtalo de nuevo.");
+        setError(data.error ?? t("login.errors.invalidCredentials"));
         return;
       }
 
@@ -101,7 +108,7 @@ export default function Login() {
       const role = (me as any)?.role as string | undefined;
       navigate(getSafeReturnTo() ?? homeForRole(role));
     } catch {
-      setError("Error de conexión. Comprueba que el servidor está en marcha.");
+      setError(t("login.errors.network"));
     } finally {
       setLoading(false);
     }
@@ -135,23 +142,40 @@ export default function Login() {
         {/* Texto central */}
         <div className="relative z-10">
           <h1 className="text-4xl font-bold text-sidebar-foreground leading-tight mb-4">
-            Panel de<br />
-            <span className="text-primary">Administración</span>
+            {t("login.panelTitle1")}<br />
+            <span className="text-primary">{t("login.panelTitle2")}</span>
           </h1>
           <p className="text-muted-foreground text-lg leading-relaxed">
-            Gestiona comunidades, eventos y contenido desde un único lugar.
+            {t("login.panelSubtitle")}
           </p>
         </div>
 
         {/* Footer */}
         <div className="relative z-10 text-muted-foreground text-sm">
-          Segovia · Vida universitaria
+          {t("login.footer")}
         </div>
       </div>
 
       {/* Panel derecho — formulario */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-6 lg:p-12">
         <div className="w-full max-w-md">
+          {/* Selector de idioma — mismo patrón que PublicHomeNav.tsx (ES/EN), único sistema de i18n. */}
+          <div className="flex justify-end mb-4">
+            <div className="inline-flex items-center gap-1 rounded-full border border-border p-0.5">
+              {(["es", "en"] as const).map((locale) => (
+                <button
+                  key={locale}
+                  type="button"
+                  onClick={() => i18n.changeLanguage(locale)}
+                  className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                    i18n.language === locale ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {locale.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
           {/* Logo móvil */}
           <div className="flex items-center gap-3 mb-8 lg:hidden">
             <img src={brandLogo} alt={brandName} className="w-10 h-10 rounded-xl object-contain" />
@@ -159,15 +183,15 @@ export default function Login() {
           </div>
 
           <div className="mb-8">
-            <h2 className="text-2xl font-bold text-foreground mb-2">Iniciar sesión</h2>
-            <p className="text-muted-foreground">Accede con tu email y contraseña de administrador.</p>
+            <h2 className="text-2xl font-bold text-foreground mb-2">{t("login.title")}</h2>
+            <p className="text-muted-foreground">{t("login.subtitle")}</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* Email */}
             <div className="space-y-2">
               <Label htmlFor="email" className="text-foreground/80 text-sm font-medium">
-                Email
+                {t("login.email")}
               </Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -187,7 +211,7 @@ export default function Login() {
             {/* Contraseña */}
             <div className="space-y-2">
               <Label htmlFor="password" className="text-foreground/80 text-sm font-medium">
-                Contraseña
+                {t("login.password")}
               </Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -224,7 +248,7 @@ export default function Login() {
             <div className="flex justify-end">
               <Link href="/recuperar-contrasena">
                 <span className="text-primary hover:text-primary/80 text-sm transition-colors cursor-pointer">
-                  ¿Olvidaste tu contraseña?
+                  {t("login.forgotPassword")}
                 </span>
               </Link>
             </div>
@@ -238,10 +262,10 @@ export default function Login() {
               {loading ? (
                 <span className="flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Iniciando sesión…
+                  {t("login.submitting")}
                 </span>
               ) : (
-                "Iniciar sesión"
+                t("login.submit")
               )}
             </Button>
           </form>
@@ -249,9 +273,9 @@ export default function Login() {
           {/* Alta de estudiante (spec: registro de estudiante vive en /register,
               nunca duplicando este formulario de admin) */}
           <div className="mt-6 text-center text-sm text-muted-foreground">
-            ¿No tienes cuenta?{" "}
+            {t("login.noAccount")}{" "}
             <Link href={`/register${getSafeReturnTo() ? `?returnTo=${encodeURIComponent(getSafeReturnTo()!)}` : ""}`}>
-              <span className="text-primary hover:text-primary/80 font-medium cursor-pointer">Crear cuenta</span>
+              <span className="text-primary hover:text-primary/80 font-medium cursor-pointer">{t("login.registerCta")}</span>
             </Link>
           </div>
 
@@ -261,13 +285,13 @@ export default function Login() {
               href="/"
               className="text-muted-foreground hover:text-foreground text-sm transition-colors"
             >
-              ← Volver a la web pública
+              {t("login.backToPublic")}
             </a>
           </div>
 
           {/* Nota de entorno */}
           <div className="mt-6 p-3 rounded-lg bg-secondary/50 border border-border text-muted-foreground text-xs text-center">
-            Modo de autenticación local activo
+            {t("login.localAuthNote")}
           </div>
         </div>
       </div>

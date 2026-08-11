@@ -1,5 +1,27 @@
 {
   "brand": "Segolife",
+  "login": {
+    "meta": { "title": "Log in — SEGOLIFE" },
+    "panelTitle1": "Admin",
+    "panelTitle2": "Dashboard",
+    "panelSubtitle": "Manage communities, events and content from one place.",
+    "footer": "Segovia · Student life",
+    "title": "Log in",
+    "subtitle": "Sign in with your admin email and password.",
+    "email": "Email",
+    "password": "Password",
+    "forgotPassword": "Forgot your password?",
+    "submit": "Log in",
+    "submitting": "Logging in…",
+    "noAccount": "Not registered yet?",
+    "registerCta": "Sign up now",
+    "backToPublic": "← Back to the public site",
+    "localAuthNote": "Local authentication mode active",
+    "errors": {
+      "invalidCredentials": "Incorrect credentials. Please try again.",
+      "network": "Connection error. Check that the server is running."
+    }
+  },
   "publicHome": {
     "nav": {
       "join": "Join SEGOLIFE",
@@ -449,6 +471,7 @@
       "firstName": "First name",
       "lastName": "Last name",
       "email": "Email",
+      "phone": "Phone number",
       "password": "Password",
       "passwordConfirm": "Confirm password",
       "passwordHint": "At least 8 characters.",
@@ -460,6 +483,8 @@
       "title": "What's your community?",
       "subtitle": "You'll be able to join more communities later.",
       "empty": "No communities available yet.",
+      "university": "University",
+      "universityPlaceholder": "Select your university",
       "academicYear": "Academic year (optional)",
       "back": "Back"
     },
@@ -484,9 +509,11 @@
       "INVALID_INPUT": "Please check the form fields.",
       "INVALID_EMAIL": "The email address you entered isn't valid.",
       "WEAK_PASSWORD": "Password must be at least 8 characters long.",
+      "INVALID_PHONE": "The phone number you entered isn't valid.",
       "PASSWORD_MISMATCH": "Passwords don't match.",
       "EMAIL_EXISTS": "An account with this email already exists.",
       "COMMUNITY_NOT_FOUND": "The selected community isn't available.",
+      "UNIVERSITY_NOT_FOUND": "Select your university to continue.",
       "RATE_LIMITED": "Too many attempts. Wait a minute before trying again.",
       "GENERIC": "We couldn't complete your registration. Please try again.",
       "NETWORK": "Connection error. Check that the server is running.",

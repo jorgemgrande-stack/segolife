@@ -144,7 +144,7 @@ export function createLocalAuthRouter(): Router {
    * el mismo signSessionToken/cookie que el login real.
    */
   router.post("/api/auth/register", async (req: Request, res: Response) => {
-    const { firstName, lastName, email, password, communitySlug, academicYear, marketingConsent, website } = req.body ?? {};
+    const { firstName, lastName, email, phone, password, communitySlug, universityId, academicYear, marketingConsent, website } = req.body ?? {};
 
     // Honeypot anti-bot (spec punto 30): campo oculto que un humano nunca
     // rellena. Presencia de valor → responder OK sin crear nada (no delatar
@@ -154,7 +154,7 @@ export function createLocalAuthRouter(): Router {
       return;
     }
 
-    if (!firstName || !lastName || !email || !password || !communitySlug) {
+    if (!firstName || !lastName || !email || !phone || !password || !communitySlug || !universityId) {
       res.status(400).json({ error: "Faltan campos obligatorios.", code: "INVALID_INPUT" });
       return;
     }
@@ -170,8 +170,10 @@ export function createLocalAuthRouter(): Router {
         firstName: String(firstName),
         lastName: String(lastName),
         email: String(email),
+        phone: String(phone),
         password: String(password),
         communitySlug: String(communitySlug),
+        universityId: Number(universityId),
         academicYear: academicYear ? String(academicYear) : undefined,
         marketingConsent: marketingConsent === true,
       });
@@ -197,8 +199,10 @@ export function createLocalAuthRouter(): Router {
         const status: Record<RegistrationErrorCode, number> = {
           INVALID_EMAIL: 400,
           WEAK_PASSWORD: 400,
+          INVALID_PHONE: 400,
           EMAIL_EXISTS: 409,
           COMMUNITY_NOT_FOUND: 400,
+          UNIVERSITY_NOT_FOUND: 400,
         };
         res.status(status[err.code]).json({ error: err.message, code: err.code });
         return;

@@ -13,9 +13,10 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockGetCommunityBySlug, mockAddUserToCommunity, mockEnsureStudentProfile, mockUpdateStudentProfile, mockUpdatePreference } = vi.hoisted(() => ({
+const { mockGetCommunityBySlug, mockAddUserToCommunity, mockGetCommunityUniversities, mockEnsureStudentProfile, mockUpdateStudentProfile, mockUpdatePreference } = vi.hoisted(() => ({
   mockGetCommunityBySlug: vi.fn(),
   mockAddUserToCommunity: vi.fn(),
+  mockGetCommunityUniversities: vi.fn(),
   mockEnsureStudentProfile: vi.fn(),
   mockUpdateStudentProfile: vi.fn(),
   mockUpdatePreference: vi.fn(),
@@ -24,6 +25,7 @@ const { mockGetCommunityBySlug, mockAddUserToCommunity, mockEnsureStudentProfile
 vi.mock("../../db/communitiesDb", () => ({
   getCommunityBySlug: mockGetCommunityBySlug,
   addUserToCommunity: mockAddUserToCommunity,
+  getCommunityUniversities: mockGetCommunityUniversities,
 }));
 vi.mock("../../db/studentsDb", () => ({
   ensureStudentProfile: mockEnsureStudentProfile,
@@ -36,6 +38,7 @@ vi.mock("../engagement/notificationPreferencesService", () => ({
 import { registerStudent, RegistrationError } from "./registrationService";
 
 const ACTIVE_COMMUNITY = { id: 1, slug: "ie", name: "IE University", status: "active" as const };
+const IE_UNIVERSITY = { id: 10, name: "IE University", slug: "ie-university" };
 
 function makeMockDb({ existingUserRow = null as unknown, insertError = null as unknown, insertId = 42 } = {}) {
   const tx = {
@@ -62,14 +65,17 @@ const VALID_INPUT = {
   firstName: "Ada",
   lastName: "Lovelace",
   email: "Ada.Lovelace@Example.com",
+  phone: "+34 600 123 456",
   password: "supersecret123",
   communitySlug: "ie",
+  universityId: IE_UNIVERSITY.id,
   marketingConsent: false,
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetCommunityBySlug.mockResolvedValue(ACTIVE_COMMUNITY);
+  mockGetCommunityUniversities.mockResolvedValue([IE_UNIVERSITY]);
   mockEnsureStudentProfile.mockResolvedValue({});
   mockUpdateStudentProfile.mockResolvedValue({});
   mockAddUserToCommunity.mockResolvedValue(undefined);
@@ -89,7 +95,7 @@ describe("registerStudent — caso exitoso", () => {
       communitySlug: "ie",
     });
     expect(mockEnsureStudentProfile).toHaveBeenCalledWith(77, expect.anything());
-    expect(mockUpdateStudentProfile).toHaveBeenCalledWith(77, { firstName: "Ada", lastName: "Lovelace" }, expect.anything());
+    expect(mockUpdateStudentProfile).toHaveBeenCalledWith(77, { firstName: "Ada", lastName: "Lovelace", universityId: IE_UNIVERSITY.id }, expect.anything());
     expect(mockAddUserToCommunity).toHaveBeenCalledWith(77, ACTIVE_COMMUNITY.id, undefined, expect.anything());
     expect(mockUpdatePreference).toHaveBeenCalledWith(
       { userId: 77, category: "promotions", channel: "email", enabled: false },
@@ -105,7 +111,7 @@ describe("registerStudent — caso exitoso", () => {
       expect.objectContaining({ enabled: true }),
       expect.anything()
     );
-    expect(mockUpdateStudentProfile).toHaveBeenCalledWith(5, { firstName: "Ada", lastName: "Lovelace", academicYear: "2" }, expect.anything());
+    expect(mockUpdateStudentProfile).toHaveBeenCalledWith(5, { firstName: "Ada", lastName: "Lovelace", universityId: IE_UNIVERSITY.id, academicYear: "2" }, expect.anything());
   });
 });
 
@@ -150,6 +156,19 @@ describe("registerStudent — validación", () => {
     const db = makeMockDb() as any;
     await expect(registerStudent({ ...VALID_INPUT, password: "1234567" }, db)).rejects.toMatchObject({ code: "WEAK_PASSWORD" });
     expect(mockGetCommunityBySlug).not.toHaveBeenCalled();
+  });
+
+  it("teléfono con menos de 6 dígitos → INVALID_PHONE, ni siquiera consulta la comunidad", async () => {
+    const db = makeMockDb() as any;
+    await expect(registerStudent({ ...VALID_INPUT, phone: "123" }, db)).rejects.toMatchObject({ code: "INVALID_PHONE" });
+    expect(mockGetCommunityBySlug).not.toHaveBeenCalled();
+  });
+
+  it("universidad que no pertenece a la comunidad elegida → UNIVERSITY_NOT_FOUND (nunca confía en el id enviado por el cliente)", async () => {
+    mockGetCommunityUniversities.mockResolvedValue([IE_UNIVERSITY]);
+    const db = makeMockDb() as any;
+    await expect(registerStudent({ ...VALID_INPUT, universityId: 999 }, db)).rejects.toMatchObject({ code: "UNIVERSITY_NOT_FOUND" });
+    expect(mockEnsureStudentProfile).not.toHaveBeenCalled();
   });
 
   it("email con formato inválido → INVALID_EMAIL", async () => {

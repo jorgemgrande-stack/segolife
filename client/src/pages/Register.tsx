@@ -24,31 +24,35 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import { isSafeInternalPath } from "@/const";
 
 const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
 
 type Community = { id: number; slug: string; name: string; status: string };
+type University = { id: number; name: string; slug: string };
 
 type ErrorCode =
-  | "INVALID_INPUT" | "INVALID_EMAIL" | "WEAK_PASSWORD" | "PASSWORD_MISMATCH"
-  | "EMAIL_EXISTS" | "COMMUNITY_NOT_FOUND" | "RATE_LIMIT_EXCEEDED" | "GENERIC" | "NETWORK";
+  | "INVALID_INPUT" | "INVALID_EMAIL" | "WEAK_PASSWORD" | "INVALID_PHONE" | "PASSWORD_MISMATCH"
+  | "EMAIL_EXISTS" | "COMMUNITY_NOT_FOUND" | "UNIVERSITY_NOT_FOUND" | "RATE_LIMIT_EXCEEDED" | "GENERIC" | "NETWORK";
 
 function mapErrorCode(code: string | undefined): string {
   switch (code) {
     case "INVALID_INPUT": return "register.errors.INVALID_INPUT";
     case "INVALID_EMAIL": return "register.errors.INVALID_EMAIL";
     case "WEAK_PASSWORD": return "register.errors.WEAK_PASSWORD";
+    case "INVALID_PHONE": return "register.errors.INVALID_PHONE";
     case "EMAIL_EXISTS": return "register.errors.EMAIL_EXISTS";
     case "COMMUNITY_NOT_FOUND": return "register.errors.COMMUNITY_NOT_FOUND";
+    case "UNIVERSITY_NOT_FOUND": return "register.errors.UNIVERSITY_NOT_FOUND";
     case "RATE_LIMIT_EXCEEDED": return "register.errors.RATE_LIMITED";
     default: return "register.errors.GENERIC";
   }
 }
 
 export default function Register() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
 
@@ -61,10 +65,12 @@ export default function Register() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [communitySlug, setCommunitySlug] = useState<string | null>(null);
+  const [universityId, setUniversityId] = useState<number | null>(null);
   const [academicYear, setAcademicYear] = useState("");
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [marketingConsent, setMarketingConsent] = useState(false);
@@ -83,6 +89,28 @@ export default function Register() {
   const brandName = publicSettings?.segolife_brand_name || "SEGOLIFE";
 
   const activeCommunities: Community[] = (communities ?? []).filter((c) => c.status === "active");
+  const selectedCommunityId = activeCommunities.find((c) => c.slug === communitySlug)?.id ?? null;
+
+  // Universidades reales de la comunidad elegida (nunca una lista global fija
+  // — si la comunidad sirve a más de una universidad, todas aparecen aquí).
+  const { data: communityUniversities } = trpc.communities.getCommunityUniversities.useQuery(
+    { communityId: selectedCommunityId! },
+    { enabled: selectedCommunityId !== null }
+  );
+  const universities: University[] = communityUniversities ?? [];
+
+  // Cambiar de comunidad invalida la universidad ya elegida (podría no
+  // pertenecer a la nueva). Si la comunidad solo sirve una universidad, se
+  // preselecciona para reducir fricción — el estudiante sigue viendo el
+  // campo y puede cambiarlo si hubiera más de una opción.
+  useEffect(() => {
+    if (universities.length === 1) {
+      setUniversityId(universities[0].id);
+    } else if (!universities.some((u) => u.id === universityId)) {
+      setUniversityId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [communitySlug, communityUniversities]);
 
   // Preseleccionar por ?community=slug (spec punto 77) — solo si es una
   // comunidad activa real, y el estudiante siempre puede cambiarla.
@@ -112,6 +140,10 @@ export default function Register() {
       setError({ messageKey: "register.errors.INVALID_INPUT" });
       return;
     }
+    if (phone.trim().replace(/\D/g, "").length < 6) {
+      setError({ code: "INVALID_PHONE", messageKey: "register.errors.INVALID_PHONE" });
+      return;
+    }
     if (password.length < 8) {
       setError({ code: "WEAK_PASSWORD", messageKey: "register.errors.WEAK_PASSWORD" });
       return;
@@ -131,6 +163,10 @@ export default function Register() {
       setError({ code: "COMMUNITY_NOT_FOUND", messageKey: "register.errors.COMMUNITY_NOT_FOUND" });
       return;
     }
+    if (!universityId) {
+      setError({ code: "UNIVERSITY_NOT_FOUND", messageKey: "register.errors.UNIVERSITY_NOT_FOUND" });
+      return;
+    }
     if (!acceptTerms) {
       setError({ messageKey: "register.errors.INVALID_INPUT" });
       return;
@@ -146,8 +182,10 @@ export default function Register() {
           firstName: firstName.trim(),
           lastName: lastName.trim(),
           email: email.trim().toLowerCase(),
+          phone: phone.trim(),
           password,
           communitySlug,
+          universityId,
           academicYear: academicYear.trim() || undefined,
           marketingConsent,
           website,
@@ -237,6 +275,24 @@ export default function Register() {
           lg:, donde el layout partido de escritorio nunca llega tan abajo. */}
       <div className="w-full lg:w-1/2 flex items-start lg:items-center justify-center p-6 pt-10 pb-40 lg:p-12">
         <div className="w-full max-w-md">
+          {/* Selector de idioma — mismo patrón que PublicHomeNav.tsx/Login.tsx (ES/EN), único sistema de i18n. */}
+          <div className="flex justify-end mb-4">
+            <div className="inline-flex items-center gap-1 rounded-full border border-border p-0.5">
+              {(["es", "en"] as const).map((locale) => (
+                <button
+                  key={locale}
+                  type="button"
+                  onClick={() => i18n.changeLanguage(locale)}
+                  className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                    i18n.language === locale ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {locale.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex items-center gap-3 mb-8 lg:hidden">
             <img src={brandLogo} alt={brandName} className="w-10 h-10 rounded-xl object-contain" />
             <div className="text-foreground font-bold text-lg leading-tight">{brandName}</div>
@@ -265,6 +321,11 @@ export default function Register() {
               <div className="space-y-2">
                 <Label htmlFor="email">{t("register.account.email")}</Label>
                 <Input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="phone">{t("register.account.phone")}</Label>
+                <Input id="phone" type="tel" autoComplete="tel" required value={phone} onChange={(e) => setPhone(e.target.value)} />
               </div>
 
               <div className="space-y-2">
@@ -349,6 +410,22 @@ export default function Register() {
                 </div>
               )}
 
+              {communitySlug && (
+                <div className="space-y-2">
+                  <Label htmlFor="university">{t("register.community.university")}</Label>
+                  <Select value={universityId ? String(universityId) : undefined} onValueChange={(v) => setUniversityId(Number(v))}>
+                    <SelectTrigger id="university" className="w-full">
+                      <SelectValue placeholder={t("register.community.universityPlaceholder")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {universities.map((u) => (
+                        <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label htmlFor="academicYear">{t("register.community.academicYear")}</Label>
                 <Input id="academicYear" value={academicYear} onChange={(e) => setAcademicYear(e.target.value)} />
@@ -390,7 +467,7 @@ export default function Register() {
                 <Button type="button" variant="outline" onClick={() => setStep(1)} disabled={loading}>
                   {t("register.community.back")}
                 </Button>
-                <Button type="submit" className="flex-1" disabled={loading || !acceptTerms || !communitySlug}>
+                <Button type="submit" className="flex-1" disabled={loading || !acceptTerms || !communitySlug || !universityId}>
                   {loading ? (
                     <span className="flex items-center gap-2">
                       <Loader2 className="w-4 h-4 animate-spin" />

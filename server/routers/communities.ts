@@ -5,6 +5,7 @@ import {
   getCommunityBySlug,
   listUniversities,
   getUserCommunities,
+  getCommunityUniversities,
 } from "../db/communitiesDb";
 
 export const communitiesRouter = router({
@@ -29,6 +30,17 @@ export const communitiesRouter = router({
   listUniversities: publicProcedure.query(async () => {
     return listUniversities();
   }),
+
+  /**
+   * Universidades que sirve una comunidad concreta — usado por /register
+   * (spec: pedir la universidad del estudiante para ubicarlo en el sistema).
+   * Público: se consulta antes de tener sesión, durante el registro.
+   */
+  getCommunityUniversities: publicProcedure
+    .input(z.object({ communityId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      return getCommunityUniversities(input.communityId);
+    }),
 
   /** Comunidades a las que pertenece el usuario autenticado actual. */
   myMemberships: protectedProcedure.query(async ({ ctx }) => {

@@ -90,6 +90,7 @@ const PUBLIC_TRPC_ROUTES = new Set([
   "communities.list",
   "communities.getBySlug",
   "communities.listUniversities",
+  "communities.getCommunityUniversities",
 
   // ── Restaurantes — router nuevo (sin 'e') ─────────────────────────────────
   "restaurants.getAll",

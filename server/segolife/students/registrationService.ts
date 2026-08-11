@@ -10,6 +10,11 @@
  *  - comunidad: getCommunityBySlug/addUserToCommunity de
  *    server/db/communitiesDb.ts (M2M user_communities existente, nunca un
  *    users.communityId directo).
+ *  - teléfono: users.phone (columna ya existente, sin tabla nueva).
+ *  - universidad: student_profiles.universityId (columna ya existente),
+ *    validada con getCommunityUniversities — debe pertenecer a las
+ *    universidades reales que sirve la comunidad elegida, igual que la
+ *    propia comunidad nunca se confía tal cual del cliente.
  *  - consentimiento de marketing: updatePreference de
  *    server/segolife/engagement/notificationPreferencesService.ts —
  *    notification_preferences ES la tabla de consent, no se crea ninguna otra.
@@ -32,7 +37,7 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { users } from "../../../drizzle/schema";
-import { getCommunityBySlug, addUserToCommunity } from "../../db/communitiesDb";
+import { getCommunityBySlug, addUserToCommunity, getCommunityUniversities } from "../../db/communitiesDb";
 import { ensureStudentProfile, updateStudentProfile } from "../../db/studentsDb";
 import { updatePreference } from "../engagement/notificationPreferencesService";
 
@@ -53,12 +58,20 @@ const BCRYPT_ROUNDS = 12;
 const MIN_PASSWORD_LENGTH = 8;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Laxo a propósito (spec: "sin validación agresiva") — cuenta dígitos totales
+// tras quitar +/espacios/guiones (los grupos de un número real casi nunca
+// tienen 6 dígitos SEGUIDOS: "+34 600 123 456") y solo exige un mínimo
+// razonable, sin bloquear formatos internacionales (IE University tiene
+// alumnado de fuera de España).
+const MIN_PHONE_DIGITS = 6;
 
 export type RegistrationErrorCode =
   | "INVALID_EMAIL"
   | "WEAK_PASSWORD"
+  | "INVALID_PHONE"
   | "EMAIL_EXISTS"
-  | "COMMUNITY_NOT_FOUND";
+  | "COMMUNITY_NOT_FOUND"
+  | "UNIVERSITY_NOT_FOUND";
 
 export class RegistrationError extends Error {
   code: RegistrationErrorCode;
@@ -90,9 +103,12 @@ export interface RegisterStudentInput {
   firstName: string;
   lastName: string;
   email: string;
+  phone: string;
   password: string;
   /** Slug real de `communities` (spec punto 33: nunca confiar en un id enviado por el cliente). */
   communitySlug: string;
+  /** Debe pertenecer a las universidades servidas por `communitySlug` — se revalida server-side. */
+  universityId: number;
   academicYear?: string;
   marketingConsent: boolean;
 }
@@ -117,8 +133,13 @@ export async function registerStudent(input: RegisterStudentInput, db?: DbHandle
   const lastName = input.lastName.trim();
   const email = input.email.trim().toLowerCase();
 
+  const phone = input.phone.trim();
+
   if (!firstName || !lastName || !EMAIL_RE.test(email)) {
     throw new RegistrationError("INVALID_EMAIL", "El email introducido no es válido.");
+  }
+  if (phone.replace(/\D/g, "").length < MIN_PHONE_DIGITS) {
+    throw new RegistrationError("INVALID_PHONE", "El teléfono introducido no es válido.");
   }
   if (typeof input.password !== "string" || input.password.length < MIN_PASSWORD_LENGTH) {
     throw new RegistrationError("WEAK_PASSWORD", `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`);
@@ -129,6 +150,14 @@ export async function registerStudent(input: RegisterStudentInput, db?: DbHandle
   const community = await getCommunityBySlug(input.communitySlug, conn);
   if (!community || community.status !== "active") {
     throw new RegistrationError("COMMUNITY_NOT_FOUND", "La comunidad seleccionada no está disponible.");
+  }
+
+  // Universidad: igual que la comunidad, nunca confiar en el id del cliente
+  // — debe estar entre las universidades reales que sirve la comunidad elegida.
+  const communityUniversities = await getCommunityUniversities(community.id, conn);
+  const university = communityUniversities.find(u => u.id === input.universityId);
+  if (!university) {
+    throw new RegistrationError("UNIVERSITY_NOT_FOUND", "La universidad seleccionada no está disponible para esta comunidad.");
   }
 
   // Comprobación de aplicación — mensaje limpio en el caso normal. La
@@ -152,6 +181,7 @@ export async function registerStudent(input: RegisterStudentInput, db?: DbHandle
         openId,
         email,
         name,
+        phone,
         passwordHash,
         loginMethod: "local",
         isActive: true,
@@ -167,7 +197,7 @@ export async function registerStudent(input: RegisterStudentInput, db?: DbHandle
     await ensureStudentProfile(insertId, tx);
     await updateStudentProfile(
       insertId,
-      { firstName, lastName, ...(input.academicYear?.trim() ? { academicYear: input.academicYear.trim() } : {}) },
+      { firstName, lastName, universityId: university.id, ...(input.academicYear?.trim() ? { academicYear: input.academicYear.trim() } : {}) },
       tx
     );
 

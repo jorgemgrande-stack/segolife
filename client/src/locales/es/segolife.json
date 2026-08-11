@@ -1,5 +1,27 @@
 {
   "brand": "Segolife",
+  "login": {
+    "meta": { "title": "Iniciar sesión — SEGOLIFE" },
+    "panelTitle1": "Panel de",
+    "panelTitle2": "Administración",
+    "panelSubtitle": "Gestiona comunidades, eventos y contenido desde un único lugar.",
+    "footer": "Segovia · Vida universitaria",
+    "title": "Iniciar sesión",
+    "subtitle": "Accede con tu email y contraseña de administrador.",
+    "email": "Email",
+    "password": "Contraseña",
+    "forgotPassword": "¿Olvidaste tu contraseña?",
+    "submit": "Iniciar sesión",
+    "submitting": "Iniciando sesión…",
+    "noAccount": "¿Aún no estás registrado?",
+    "registerCta": "Regístrate ahora",
+    "backToPublic": "← Volver a la web pública",
+    "localAuthNote": "Modo de autenticación local activo",
+    "errors": {
+      "invalidCredentials": "Credenciales incorrectas. Inténtalo de nuevo.",
+      "network": "Error de conexión. Comprueba que el servidor está en marcha."
+    }
+  },
   "publicHome": {
     "nav": {
       "join": "Únete a SEGOLIFE",
@@ -449,6 +471,7 @@
       "firstName": "Nombre",
       "lastName": "Apellidos",
       "email": "Email",
+      "phone": "Teléfono",
       "password": "Contraseña",
       "passwordConfirm": "Confirmar contraseña",
       "passwordHint": "Mínimo 8 caracteres.",
@@ -460,6 +483,8 @@
       "title": "¿Cuál es tu comunidad?",
       "subtitle": "Podrás unirte a más comunidades más adelante.",
       "empty": "Todavía no hay comunidades disponibles.",
+      "university": "Universidad",
+      "universityPlaceholder": "Selecciona tu universidad",
       "academicYear": "Año académico (opcional)",
       "back": "Atrás"
     },
@@ -484,9 +509,11 @@
       "INVALID_INPUT": "Revisa los campos del formulario.",
       "INVALID_EMAIL": "El email introducido no es válido.",
       "WEAK_PASSWORD": "La contraseña debe tener al menos 8 caracteres.",
+      "INVALID_PHONE": "El teléfono introducido no es válido.",
       "PASSWORD_MISMATCH": "Las contraseñas no coinciden.",
       "EMAIL_EXISTS": "Ya existe una cuenta con este email.",
       "COMMUNITY_NOT_FOUND": "La comunidad seleccionada no está disponible.",
+      "UNIVERSITY_NOT_FOUND": "Selecciona tu universidad para continuar.",
       "RATE_LIMITED": "Demasiados intentos. Espera un minuto antes de volver a intentarlo.",
       "GENERIC": "No se ha podido completar el registro. Inténtalo de nuevo.",
       "NETWORK": "Error de conexión. Comprueba que el servidor está en marcha.",
