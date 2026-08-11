@@ -148,6 +148,22 @@ describe("Register — paso 2 (comunidad)", () => {
     expect(navigateMock).not.toHaveBeenCalled();
   });
 
+  it("respuesta 201 sin id (honeypot) nunca pinta éxito ni redirige — no hay sesión real que mostrar", async () => {
+    const user = userEvent.setup();
+    (global.fetch as any).mockResolvedValue({ ok: true, json: async () => ({ id: 0, name: "", email: "", role: "user" }) });
+
+    render(<Register />);
+    await fillStep1(user);
+    await user.click(await screen.findByText("IE University"));
+    await user.click(document.getElementById("acceptTerms")!);
+    await user.click(await screen.findByRole("button", { name: /crear mi cuenta/i }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /crear mi cuenta/i })).not.toBeDisabled());
+    expect(screen.queryByText(/bienvenido/i)).not.toBeInTheDocument();
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(invalidateMock).not.toHaveBeenCalled();
+  });
+
   it("alta exitosa invalida la sesión cacheada y redirige a la comunidad elegida", async () => {
     const user = userEvent.setup();
     render(<Register />);

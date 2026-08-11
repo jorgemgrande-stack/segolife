@@ -162,6 +162,18 @@ export default function Register() {
         return;
       }
 
+      // El honeypot (server/localAuth.ts) responde 201 sin crear cuenta ni
+      // cookie de sesión para no delatar al bot — pero un 201 sin `id` real
+      // NUNCA debe pintar el estado de éxito (no hay sesión que mostrar).
+      // Un humano real nunca rellena el campo oculto, así que esta rama solo
+      // la alcanza tráfico automatizado — a quien no le afecta la UX, pero
+      // tampoco debe quedar como un estado inconsistente si algún día se
+      // inspecciona manualmente.
+      if (!data.id) {
+        setLoading(false);
+        return;
+      }
+
       await utils.auth.me.invalidate();
       setSuccess(true);
       setTimeout(() => {
@@ -216,8 +228,14 @@ export default function Register() {
         <div className="relative z-10 text-white/50 text-sm">{t("register.eyebrow")}</div>
       </div>
 
-      {/* Panel derecho — formulario */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-6 py-10 lg:p-12">
+      {/* Panel derecho — formulario. items-start (no centrado) + pb-40 en
+          mobile/tablet: con dos tarjetas de comunidad + dos checkboxes de
+          consentimiento, el paso 2 centrado verticalmente alcanzaba el
+          CookieBanner fijo (bottom-0) y tapaba el botón "Crear mi cuenta"
+          — bug real detectado en QA visual (ver
+          register-step2-community-selected-390.png). Centrado solo desde
+          lg:, donde el layout partido de escritorio nunca llega tan abajo. */}
+      <div className="w-full lg:w-1/2 flex items-start lg:items-center justify-center p-6 pt-10 pb-40 lg:p-12">
         <div className="w-full max-w-md">
           <div className="flex items-center gap-3 mb-8 lg:hidden">
             <img src={brandLogo} alt={brandName} className="w-10 h-10 rounded-xl object-contain" />
@@ -345,10 +363,7 @@ export default function Register() {
                       {t("register.consent.termsPrivacy")}
                     </a>{" "}
                     {t("register.consent.termsAnd")}{" "}
-                    <a href="/terminos" target="_blank" rel="noreferrer" className="text-primary underline">
-                      {t("register.consent.termsUsage")}
-                    </a>
-                    .
+                    <a href="/terminos" target="_blank" rel="noreferrer" className="text-primary underline">{t("register.consent.termsUsage")}.</a>
                   </Label>
                 </div>
                 <div className="flex items-start gap-2">

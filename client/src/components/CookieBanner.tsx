@@ -46,7 +46,7 @@ export default function CookieBanner() {
   // — se comprueba aparte, junto con las páginas de login/legales/auth que
   // en el cierre de Fase 8.5 se rebrandearon a SEGOLIFE (antes mostraban
   // marca Náyade y por tanto no importaba que el banner tampoco encajara).
-  const SEGOLIFE_EXTRA_ROUTES = ["/login", "/recuperar-contrasena", "/nueva-contrasena", "/establecer-contrasena", "/privacidad", "/cookies"];
+  const SEGOLIFE_EXTRA_ROUTES = ["/login", "/register", "/recuperar-contrasena", "/nueva-contrasena", "/establecer-contrasena", "/privacidad", "/cookies"];
   const isSegolife = location === "/" || SEGOLIFE_EXTRA_ROUTES.includes(location) || isPotentialCommunityRequest({
     pathname: location,
     hostname: typeof window !== "undefined" ? window.location.hostname : undefined,
