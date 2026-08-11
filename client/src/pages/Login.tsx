@@ -159,22 +159,24 @@ export default function Login() {
       {/* Panel derecho — formulario */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-6 lg:p-12">
         <div className="w-full max-w-md">
-          {/* Selector de idioma — mismo patrón que PublicHomeNav.tsx (ES/EN), único sistema de i18n. */}
-          <div className="flex justify-end mb-4">
-            <div className="inline-flex items-center gap-1 rounded-full border border-border p-0.5">
-              {(["es", "en"] as const).map((locale) => (
-                <button
-                  key={locale}
-                  type="button"
-                  onClick={() => i18n.changeLanguage(locale)}
-                  className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-                    i18n.language === locale ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {locale.toUpperCase()}
-                </button>
-              ))}
-            </div>
+          {/* Selector de idioma — mismo patrón que el real de la comunidad
+              (client/src/pages/segolife/Profile.tsx, sección "Idioma"):
+              dos píldoras a ancho completo con el nombre del idioma, no el
+              código de 2 letras — mismas claves languageSwitcher.en/es, un
+              único componente visual de idioma en toda la app. */}
+          <div className="flex gap-2 mb-6">
+            {(["es", "en"] as const).map((locale) => (
+              <button
+                key={locale}
+                type="button"
+                onClick={() => i18n.changeLanguage(locale)}
+                className={`flex-1 rounded-2xl border px-4 py-3 text-sm font-medium transition-colors ${
+                  i18n.language === locale ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground"
+                }`}
+              >
+                {t(`languageSwitcher.${locale}`)}
+              </button>
+            ))}
           </div>
           {/* Logo móvil */}
           <div className="flex items-center gap-3 mb-8 lg:hidden">

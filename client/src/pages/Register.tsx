@@ -266,31 +266,35 @@ export default function Register() {
         <div className="relative z-10 text-white/50 text-sm">{t("register.eyebrow")}</div>
       </div>
 
-      {/* Panel derecho — formulario. items-start (no centrado) + pb-40 en
-          mobile/tablet: con dos tarjetas de comunidad + dos checkboxes de
+      {/* Panel derecho — formulario. items-start (no centrado) + pb-56 en
+          mobile/tablet: con el selector de idioma (dos píldoras a ancho
+          completo) + dos tarjetas de comunidad + dos checkboxes de
           consentimiento, el paso 2 centrado verticalmente alcanzaba el
           CookieBanner fijo (bottom-0) y tapaba el botón "Crear mi cuenta"
-          — bug real detectado en QA visual (ver
-          register-step2-community-selected-390.png). Centrado solo desde
-          lg:, donde el layout partido de escritorio nunca llega tan abajo. */}
-      <div className="w-full lg:w-1/2 flex items-start lg:items-center justify-center p-6 pt-10 pb-40 lg:p-12">
+          — bug real detectado en QA visual dos veces (antes del selector de
+          idioma real y de nuevo al ampliarlo, ver
+          register-newswitch-390.png). Centrado solo desde lg:, donde el
+          layout partido de escritorio nunca llega tan abajo. */}
+      <div className="w-full lg:w-1/2 flex items-start lg:items-center justify-center p-6 pt-10 pb-56 lg:p-12">
         <div className="w-full max-w-md">
-          {/* Selector de idioma — mismo patrón que PublicHomeNav.tsx/Login.tsx (ES/EN), único sistema de i18n. */}
-          <div className="flex justify-end mb-4">
-            <div className="inline-flex items-center gap-1 rounded-full border border-border p-0.5">
-              {(["es", "en"] as const).map((locale) => (
-                <button
-                  key={locale}
-                  type="button"
-                  onClick={() => i18n.changeLanguage(locale)}
-                  className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-                    i18n.language === locale ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {locale.toUpperCase()}
-                </button>
-              ))}
-            </div>
+          {/* Selector de idioma — mismo patrón que el real de la comunidad
+              (client/src/pages/segolife/Profile.tsx, sección "Idioma"):
+              dos píldoras a ancho completo con el nombre del idioma, no el
+              código de 2 letras — mismas claves languageSwitcher.en/es, un
+              único componente visual de idioma en toda la app. */}
+          <div className="flex gap-2 mb-6">
+            {(["es", "en"] as const).map((locale) => (
+              <button
+                key={locale}
+                type="button"
+                onClick={() => i18n.changeLanguage(locale)}
+                className={`flex-1 rounded-2xl border px-4 py-3 text-sm font-medium transition-colors ${
+                  i18n.language === locale ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground"
+                }`}
+              >
+                {t(`languageSwitcher.${locale}`)}
+              </button>
+            ))}
           </div>
 
           <div className="flex items-center gap-3 mb-8 lg:hidden">
