@@ -18,6 +18,7 @@ import { getDb } from "./db";
 import { users } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { registerStudent, RegistrationError, type RegistrationErrorCode } from "./segolife/students/registrationService";
+import { recordStudentLogin } from "./segolife/students/studentLoginEventsDb";
 
 // ─── Configuración ────────────────────────────────────────────────────────────
 const COOKIE_NAME = "nayade_session";
@@ -114,6 +115,13 @@ export function createLocalAuthRouter(): Router {
       .update(users)
       .set({ lastSignedIn: new Date() })
       .where(eq(users.id, user.id));
+
+    // Histórico de login (Student 360) — best-effort, nunca bloquea el login
+    // si falla (mismo criterio que el resto de efectos secundarios no
+    // críticos del repo, p.ej. earnTokens en attendancePipeline.ts).
+    recordStudentLogin(user.id, "password").catch((err) => {
+      console.error("[login] No se pudo registrar student_login_events:", err);
+    });
 
     const token = await signSessionToken(user.id);
 

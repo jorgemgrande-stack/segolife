@@ -97,7 +97,7 @@ export interface NormalizedCommerceTransaction {
   paymentMethod?: string | null;
   buyer: NormalizedBuyerOrParticipant;
   occurredAt: Date;
-  items: Array<{ externalProductId?: string | null; description: string; quantity: number; unitAmountCents: number; totalAmountCents: number }>;
+  items: Array<{ venueProductId?: number | null; externalProductId?: string | null; description: string; quantity: number; unitAmountCents: number; totalAmountCents: number }>;
 }
 
 /**

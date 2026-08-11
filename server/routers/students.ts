@@ -11,10 +11,13 @@ import {
   updateStudentAdminFields,
   listStudentNotes,
   addStudentNote,
+  updateStudentNote,
+  deleteStudentNote,
   listStudentTags,
   assignStudentTag,
   unassignStudentTag,
 } from "../db/studentsDb";
+import { recordStudentAdminAction } from "../segolife/students/studentAdminActionsDb";
 
 // Lectura del CRM de estudiantes: ver el listado/fichas.
 const studentsViewProcedure = permissionProcedure("students.view", ["admin"]);
@@ -63,6 +66,8 @@ export const studentsRouter = router({
         profileCompleted: z.boolean().optional(),
         limit: z.number().int().min(1).max(200).default(50),
         offset: z.number().int().min(0).default(0),
+        sortBy: z.enum(["createdAt", "name"]).default("createdAt"),
+        sortDir: z.enum(["asc", "desc"]).default("desc"),
       })
     )
     .query(async ({ input, ctx }) => {
@@ -106,13 +111,30 @@ export const studentsRouter = router({
   // ─── CRM ADMIN — escritura ──────────────────────────────────────────────────
 
   updateAdminFields: studentsManageProcedure
-    .input(z.object({ studentProfileId: z.number().int().positive(), status: z.enum(["active", "inactive"]) }))
+    .input(z.object({
+      studentProfileId: z.number().int().positive(),
+      status: z.enum(["active", "inactive"]),
+      // Trazabilidad obligatoria — auditoría Student 360 §7: era el único
+      // cambio administrativo sin actor/motivo/histórico en toda la ficha.
+      reason: z.string().min(1).max(512),
+    }))
     .mutation(async ({ input, ctx }) => {
       const detail = await getStudentById(input.studentProfileId);
       if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "Estudiante no encontrado" });
       const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
       assertStudentAccessible(access, detail.communities.map(c => c.id));
+      const beforeStatus = detail.profile.status;
       const updated = await updateStudentAdminFields(input.studentProfileId, { status: input.status });
+      if (beforeStatus !== input.status) {
+        await recordStudentAdminAction({
+          studentProfileId: input.studentProfileId,
+          actorUserId: ctx.user.id,
+          action: "status_changed",
+          beforeValue: beforeStatus,
+          afterValue: input.status,
+          reason: input.reason,
+        });
+      }
       return { success: true, profile: updated };
     }),
 
@@ -124,6 +146,30 @@ export const studentsRouter = router({
       const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
       assertStudentAccessible(access, detail.communities.map(c => c.id));
       return addStudentNote(input.studentProfileId, ctx.user.id, input.note);
+    }),
+
+  updateNote: studentsManageProcedure
+    .input(z.object({ studentProfileId: z.number().int().positive(), noteId: z.number().int().positive(), note: z.string().min(1).max(4000) }))
+    .mutation(async ({ input, ctx }) => {
+      const detail = await getStudentById(input.studentProfileId);
+      if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "Estudiante no encontrado" });
+      const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
+      assertStudentAccessible(access, detail.communities.map(c => c.id));
+      const updated = await updateStudentNote(input.noteId, ctx.user.id, input.note);
+      if (!updated) throw new TRPCError({ code: "FORBIDDEN", message: "Solo el autor puede editar esta nota" });
+      return updated;
+    }),
+
+  deleteNote: studentsManageProcedure
+    .input(z.object({ studentProfileId: z.number().int().positive(), noteId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const detail = await getStudentById(input.studentProfileId);
+      if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "Estudiante no encontrado" });
+      const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
+      assertStudentAccessible(access, detail.communities.map(c => c.id));
+      const deleted = await deleteStudentNote(input.noteId, ctx.user.id);
+      if (!deleted) throw new TRPCError({ code: "FORBIDDEN", message: "Solo el autor puede borrar esta nota" });
+      return { success: true };
     }),
 
   assignTag: studentsManageProcedure
