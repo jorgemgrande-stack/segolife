@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo } from "react";
+import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { trpc } from "@/lib/trpc";
 import { resolveCommunitySlug } from "@shared/segolife/routing";
@@ -21,6 +22,15 @@ const CommunityContext = createContext<CommunityContextType | undefined>(undefin
 
 export function CommunityProvider({ children }: { children: React.ReactNode }) {
   const { i18n } = useTranslation();
+  // CommunityProvider envuelve TODA la app una única vez (App.tsx) — sin
+  // `location` en las dependencias, este slug se calculaba solo en el
+  // primer montaje y nunca se recalculaba tras una navegación cliente
+  // (wouter navigate()), aunque window.location.pathname ya estuviera
+  // actualizado. Bug real: tras registrarse/iniciar sesión y ser
+  // redirigido a /ie, la página mostraba "Comunidad no encontrada" hasta
+  // recargar a mano (remonta CommunityProvider desde cero). Con
+  // `location` en las deps, cualquier cambio de ruta recalcula el slug.
+  const [location] = useLocation();
 
   const slug = useMemo(() => {
     if (typeof window === "undefined") return null;
@@ -28,7 +38,8 @@ export function CommunityProvider({ children }: { children: React.ReactNode }) {
       pathname: window.location.pathname,
       hostname: window.location.hostname,
     });
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location]);
 
   const { data, isLoading, error } = trpc.communities.getBySlug.useQuery(
     { slug: slug ?? "" },
