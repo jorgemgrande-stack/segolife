@@ -60,8 +60,9 @@ export default function Login() {
   });
 
   // Mismas claves de marca que AdminLayout.tsx (este login lleva a /admin
-  // para casi todos los roles) — el look and feel es el del panel real, no
-  // una paleta hex aparte heredada de la plantilla original.
+  // para casi todos los roles) — el logo/nombre es el real configurado,
+  // nunca un fallback ajeno a la marca (aunque el tema visual de esta
+  // página ya no sea el oscuro de admin, ver segolife-theme más abajo).
   const { data: publicSettings } = trpc.config.getPublicSettings.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -116,42 +117,47 @@ export default function Login() {
 
   if (meQuery.isLoading) {
     return (
-      <div className="dark min-h-screen flex items-center justify-center bg-background">
+      <div className="segolife-theme min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-8 h-8 text-primary animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="dark min-h-screen flex bg-background">
-      {/* Panel izquierdo — imagen / marca */}
-      <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 relative overflow-hidden bg-sidebar">
-        {/* Fondo con gradiente — mismo acento ámbar que el panel de admin real, nunca un morado ajeno al tema. */}
-        <div className="absolute inset-0 opacity-10"
+    <div className="segolife-theme min-h-screen flex bg-background">
+      {/* Panel izquierdo — mismo tratamiento visual que Register.tsx
+          (gradiente violeta/coral sobre fondo oscuro editorial) — look and
+          feel unificado con el resto de la comunidad, a petición explícita
+          del usuario: Login pasa del tema oscuro/ámbar de admin al
+          claro/violeta de la comunidad. */}
+      <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 relative overflow-hidden bg-[#150a28]">
+        <div
+          className="absolute inset-0 opacity-80"
           style={{
-            backgroundImage: "radial-gradient(circle at 30% 50%, var(--primary) 0%, transparent 50%), radial-gradient(circle at 70% 20%, var(--sidebar-ring) 0%, transparent 40%)"
+            backgroundImage:
+              "radial-gradient(circle at 20% 20%, oklch(0.30 0.14 296) 0%, transparent 45%), radial-gradient(circle at 85% 75%, oklch(0.30 0.16 350) 0%, transparent 50%)",
           }}
         />
 
         {/* Logo */}
         <div className="relative z-10 flex items-center gap-3">
           <img src={brandLogo} alt={brandName} className="w-10 h-10 rounded-xl object-contain" />
-          <div className="text-sidebar-foreground font-bold text-lg leading-tight">{brandName}</div>
+          <div className="text-white font-bold text-lg leading-tight">{brandName}</div>
         </div>
 
         {/* Texto central */}
         <div className="relative z-10">
-          <h1 className="text-4xl font-bold text-sidebar-foreground leading-tight mb-4">
+          <h1 className="text-4xl font-bold text-white leading-tight mb-4">
             {t("login.panelTitle1")}<br />
             <span className="text-primary">{t("login.panelTitle2")}</span>
           </h1>
-          <p className="text-muted-foreground text-lg leading-relaxed">
+          <p className="text-white/75 text-lg leading-relaxed">
             {t("login.panelSubtitle")}
           </p>
         </div>
 
         {/* Footer */}
-        <div className="relative z-10 text-muted-foreground text-sm">
+        <div className="relative z-10 text-white/50 text-sm">
           {t("login.footer")}
         </div>
       </div>
