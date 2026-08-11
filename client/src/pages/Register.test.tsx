@@ -30,10 +30,11 @@ if (!Element.prototype.scrollIntoView) {
  * CLAUDE.md — única excepción a "todo por tRPC", igual que /login).
  */
 
-const { mockMeQuery, mockCommunitiesQuery, mockCommunityUniversitiesQuery, navigateMock, invalidateMock } = vi.hoisted(() => ({
+const { mockMeQuery, mockCommunitiesQuery, mockCommunityUniversitiesQuery, mockMyMembershipsQuery, navigateMock, invalidateMock } = vi.hoisted(() => ({
   mockMeQuery: vi.fn(),
   mockCommunitiesQuery: vi.fn(),
   mockCommunityUniversitiesQuery: vi.fn(),
+  mockMyMembershipsQuery: vi.fn(),
   navigateMock: vi.fn(),
   invalidateMock: vi.fn(),
 }));
@@ -48,6 +49,7 @@ vi.mock("@/lib/trpc", () => ({
     communities: {
       list: { useQuery: mockCommunitiesQuery },
       getCommunityUniversities: { useQuery: mockCommunityUniversitiesQuery },
+      myMemberships: { useQuery: mockMyMembershipsQuery },
     },
     config: { getPublicSettings: { useQuery: () => ({ data: undefined }) } },
     useUtils: () => ({ auth: { me: { invalidate: invalidateMock } } }),
@@ -81,6 +83,7 @@ beforeEach(() => {
   mockMeQuery.mockReturnValue({ data: null, isLoading: false });
   mockCommunitiesQuery.mockReturnValue({ data: ACTIVE_COMMUNITIES });
   mockCommunityUniversitiesQuery.mockReturnValue({ data: IE_UNIVERSITIES });
+  mockMyMembershipsQuery.mockReturnValue({ data: undefined });
   vi.stubGlobal(
     "fetch",
     vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 1, name: "Ada Lovelace", email: "ada@example.com", role: "user", communitySlug: "ie" }) })
@@ -242,10 +245,25 @@ describe("Register — paso 2 (comunidad)", () => {
 });
 
 describe("Register — usuario ya autenticado", () => {
-  it("redirige sin mostrar el formulario", () => {
+  it("redirige a su comunidad real (nunca a '/' a secas) — bug real corregido", () => {
     mockMeQuery.mockReturnValue({ data: { id: 1, role: "user" }, isLoading: false });
+    mockMyMembershipsQuery.mockReturnValue({ data: [{ id: 1, slug: "ie", name: "Segolife IE", status: "active" }] });
+    render(<Register />);
+    expect(navigateMock).toHaveBeenCalledWith("/ie");
+    expect(screen.queryByLabelText(/nombre/i)).not.toBeInTheDocument();
+  });
+
+  it("sin comunidad (caso raro) cae a '/' y no se queda colgado esperando", () => {
+    mockMeQuery.mockReturnValue({ data: { id: 1, role: "user" }, isLoading: false });
+    mockMyMembershipsQuery.mockReturnValue({ data: [] });
     render(<Register />);
     expect(navigateMock).toHaveBeenCalledWith("/");
-    expect(screen.queryByLabelText(/nombre/i)).not.toBeInTheDocument();
+  });
+
+  it("mientras myMemberships sigue cargando, no redirige todavía (evita adelantarse a '/')", () => {
+    mockMeQuery.mockReturnValue({ data: { id: 1, role: "user" }, isLoading: false });
+    mockMyMembershipsQuery.mockReturnValue({ data: undefined });
+    render(<Register />);
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 });

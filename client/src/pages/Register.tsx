@@ -80,6 +80,14 @@ export default function Register() {
   const [success, setSuccess] = useState(false);
 
   const meQuery = trpc.auth.me.useQuery(undefined, { retry: false, refetchOnWindowFocus: false });
+  // Comunidad real del usuario ya autenticado — nunca asumir "/" a secas
+  // (bug real: un estudiante que revisitaba /register acababa en la Home
+  // pública en vez de en su propia comunidad). Solo se activa cuando ya
+  // sabemos que hay sesión, para no lanzar la consulta protegida de más.
+  const membershipsQuery = trpc.communities.myMemberships.useQuery(undefined, {
+    enabled: !!meQuery.data,
+    retry: false,
+  });
   const { data: communities } = trpc.communities.list.useQuery();
   const { data: publicSettings } = trpc.config.getPublicSettings.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
@@ -126,12 +134,21 @@ export default function Register() {
   }, [t]);
 
   // Ya autenticado → nunca mostrar el formulario de nuevo (spec punto 21).
+  // Redirige a returnTo si existe; si no, a la comunidad real del usuario
+  // (nunca "/" a secas — un estudiante debe volver a SU comunidad, no a la
+  // Home pública genérica). Espera a que myMemberships resuelva antes de
+  // decidir el fallback, para no adelantarse a "/" mientras aún carga.
   useEffect(() => {
-    if (meQuery.data) {
-      navigate(returnTo ?? "/");
+    if (!meQuery.data) return;
+    if (returnTo) {
+      navigate(returnTo);
+      return;
     }
+    if (membershipsQuery.data === undefined) return;
+    const primaryCommunity = membershipsQuery.data[0];
+    navigate(primaryCommunity ? `/${primaryCommunity.slug}` : "/");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meQuery.data, navigate]);
+  }, [meQuery.data, returnTo, membershipsQuery.data, navigate]);
 
   function goToStep2(e: React.FormEvent) {
     e.preventDefault();

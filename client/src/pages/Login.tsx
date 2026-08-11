@@ -23,12 +23,21 @@ import { isSafeInternalPath } from "@/const";
  * Sin esto, un empleado aterrizaba en /admin y recibía "Sin permisos".
  * Nota: 'monitor' sí tiene acceso al panel de admin (Operaciones), por eso
  * no se redirige al portal — va a /admin como el resto.
+ *
+ * role="user" es el estudiante (spec de registro: sin rol propio, reutiliza
+ * el default heredado) — nunca debe acabar en /admin. Va a su comunidad
+ * real (user_communities), nunca un slug hardcodeado — bug real corregido:
+ * antes de esto, un estudiante que iniciaba sesión en /login (p.ej. desde
+ * el enlace "¿Ya tienes cuenta?" de /register) aterrizaba en /admin y
+ * recibía "Sin permisos", exactamente el mismo bug que ya se había
+ * corregido para empleados.
  */
-function homeForRole(role: string | undefined): string {
+function homeForRole(role: string | undefined, primaryCommunitySlug: string | null | undefined): string {
   if (role === "partner_admin" || role === "partner_user") return "/partner/dashboard";
   if (role === "supplier") return "/supplier/dashboard";
   if (role === "employee") return "/empleado";
   if (role === "gestoria") return "/gestoria";
+  if (role === "user") return primaryCommunitySlug ? `/${primaryCommunitySlug}` : "/";
   return "/admin";
 }
 
@@ -53,10 +62,17 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Si ya hay sesión activa, redirigir al admin
+  // Si ya hay sesión activa, redirigir al admin (o a su comunidad si es estudiante)
   const meQuery = trpc.auth.me.useQuery(undefined, {
     retry: false,
     refetchOnWindowFocus: false,
+  });
+  // Comunidad real del usuario ya autenticado — solo se activa cuando ya
+  // sabemos que hay sesión, mismo patrón que Register.tsx (un único sistema
+  // de resolución de comunidad, no dos implementaciones).
+  const membershipsQuery = trpc.communities.myMemberships.useQuery(undefined, {
+    enabled: !!meQuery.data,
+    retry: false,
   });
 
   // Mismas claves de marca que AdminLayout.tsx (este login lleva a /admin
@@ -71,11 +87,17 @@ export default function Login() {
   const brandName = publicSettings?.segolife_brand_name || "SEGOLIFE";
 
   useEffect(() => {
-    if (meQuery.data) {
-      const role = (meQuery.data as any)?.role as string | undefined;
-      navigate(getSafeReturnTo() ?? homeForRole(role));
+    if (!meQuery.data) return;
+    const returnTo = getSafeReturnTo();
+    if (returnTo) {
+      navigate(returnTo);
+      return;
     }
-  }, [meQuery.data, navigate]);
+    const role = (meQuery.data as any)?.role as string | undefined;
+    if (role === "user" && membershipsQuery.data === undefined) return; // esperar a resolver la comunidad
+    navigate(homeForRole(role, membershipsQuery.data?.[0]?.slug));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meQuery.data, membershipsQuery.data, navigate]);
 
   useEffect(() => {
     document.title = t("login.meta.title");
@@ -105,9 +127,15 @@ export default function Login() {
       await utils.auth.me.invalidate();
       const me = await utils.auth.me.fetch();
 
-      // Redirigir al destino según rol
+      // Redirigir al destino según rol (o a su comunidad real si es estudiante)
       const role = (me as any)?.role as string | undefined;
-      navigate(getSafeReturnTo() ?? homeForRole(role));
+      const returnTo = getSafeReturnTo();
+      if (returnTo) {
+        navigate(returnTo);
+        return;
+      }
+      const primaryCommunitySlug = role === "user" ? (await utils.communities.myMemberships.fetch())?.[0]?.slug : undefined;
+      navigate(homeForRole(role, primaryCommunitySlug));
     } catch {
       setError(t("login.errors.network"));
     } finally {

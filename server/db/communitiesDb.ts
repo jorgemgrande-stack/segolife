@@ -100,6 +100,23 @@ export async function getUserCommunities(userId: number, db?: DbHandle): Promise
 }
 
 /**
+ * Comunidades a las que pertenece un usuario, con los datos reales de cada
+ * comunidad (slug/name/status) — a diferencia de getUserCommunities (solo
+ * filas puente). Usado para saber a qué comunidad redirigir a un estudiante
+ * ya autenticado (/login, /register) sin hardcodear ningún slug: nunca
+ * "ie"/"uva" en código, siempre la comunidad real de user_communities.
+ */
+export async function getUserCommunitiesWithDetails(userId: number, db?: DbHandle): Promise<Community[]> {
+  const conn = db ?? (await getDb());
+  const rows = await conn
+    .select({ community: communities })
+    .from(userCommunities)
+    .innerJoin(communities, eq(userCommunities.communityId, communities.id))
+    .where(eq(userCommunities.userId, userId));
+  return rows.map(r => r.community);
+}
+
+/**
  * Asocia un usuario a una comunidad. Idempotente tanto a nivel de aplicación
  * (comprobación previa, evita una escritura+error en el caso normal) como de
  * motor (unique(user_id, community_id) real en MySQL — ver drizzle/schema.ts

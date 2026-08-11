@@ -4,7 +4,7 @@ import {
   listCommunities,
   getCommunityBySlug,
   listUniversities,
-  getUserCommunities,
+  getUserCommunitiesWithDetails,
   getCommunityUniversities,
 } from "../db/communitiesDb";
 
@@ -42,8 +42,14 @@ export const communitiesRouter = router({
       return getCommunityUniversities(input.communityId);
     }),
 
-  /** Comunidades a las que pertenece el usuario autenticado actual. */
+  /**
+   * Comunidades a las que pertenece el usuario autenticado actual, con datos
+   * reales (slug/name/status) — usado por /login y /register para saber a
+   * qué comunidad redirigir a un estudiante ya autenticado (bug real: antes
+   * un estudiante que revisitaba /register o iniciaba sesión en /login
+   * acababa en "/" o "/admin" en vez de en su propia comunidad).
+   */
   myMemberships: protectedProcedure.query(async ({ ctx }) => {
-    return getUserCommunities(ctx.user.id);
+    return getUserCommunitiesWithDetails(ctx.user.id);
   }),
 });
