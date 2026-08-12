@@ -703,11 +703,17 @@ async function runPersonaStory(ctx: {
       const ticketType = pick(ticketTypes);
       const channel = pick(channels);
 
-      // La compra ocurre ANTES del evento (spec §37 coherencia temporal) —
-      // entre 1 y 21 días antes de startsAt, nunca después.
-      const daysBefore = randInt(1, 21);
-      let purchasedAt = new Date(event.startsAt.getTime() - daysBefore * 24 * 60 * 60 * 1000);
-      if (purchasedAt < persona.registrationBackdateTo) purchasedAt = new Date(persona.registrationBackdateTo.getTime() + 1000 * randInt(3600, 3600 * 24 * 5));
+      // La compra ocurre SIEMPRE antes del evento y SIEMPRE después del alta
+      // (spec §37 coherencia temporal) — ventana entre max(alta, evento-21d)
+      // y evento-1d. Si un evento ya pasó (o está demasiado cerca) respecto
+      // a la fecha de alta del estudiante, no hay ventana válida: se
+      // descarta esta combinación en vez de forzar una fecha incoherente
+      // (bug real detectado en el primer dry-run corregido: el fallback
+      // anterior podía empujar la compra DESPUÉS del propio evento).
+      const latestPurchase = new Date(event.startsAt.getTime() - 1 * 24 * 60 * 60 * 1000);
+      const earliestPurchase = new Date(Math.max(persona.registrationBackdateTo.getTime(), event.startsAt.getTime() - 21 * 24 * 60 * 60 * 1000));
+      if (earliestPurchase >= latestPurchase) continue; // el estudiante se unió después de (o casi a la vez que) este evento — no coherente, se omite
+      const purchasedAt = new Date(earliestPurchase.getTime() + rng() * (latestPurchase.getTime() - earliestPurchase.getTime()));
 
       purchaseIndex++;
       const idempotencyKey = `student360_demo:${persona.key}:order:${purchaseIndex}:${event.id}`;
