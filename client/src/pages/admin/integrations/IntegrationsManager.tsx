@@ -35,6 +35,8 @@ export default function IntegrationsManager() {
   const [fourvenuesProviderId, setFourvenuesProviderId] = useState<string>("");
   const [environment, setEnvironment] = useState<"sandbox" | "production">("sandbox");
   const [apiKey, setApiKey] = useState("");
+  const [editingVenueCredsId, setEditingVenueCredsId] = useState<number | null>(null);
+  const [editVenueApiKey, setEditVenueApiKey] = useState("");
 
   const createVenueMut = trpc.integrations.createVenueIntegration.useMutation({
     onSuccess: () => { toast.success("Integración creada (deshabilitada por defecto)"); utils.integrations.listVenueIntegrations.invalidate(); setShowCreate(null); },
@@ -49,6 +51,10 @@ export default function IntegrationsManager() {
     onSuccess: (r) => toast[r.ok ? "success" : "error"](r.message),
   });
   const setVenueEnabledMut = trpc.integrations.setVenueIntegrationEnabled.useMutation({ onSuccess: () => utils.integrations.listVenueIntegrations.invalidate() });
+  const updateVenueCredsMut = trpc.integrations.updateVenueIntegrationCredentials.useMutation({
+    onSuccess: () => { toast.success("API key actualizada"); utils.integrations.listVenueIntegrations.invalidate(); setEditingVenueCredsId(null); setEditVenueApiKey(""); },
+    onError: e => toast.error(e.message),
+  });
   const setEventEnabledMut = trpc.integrations.setEventIntegrationEnabled.useMutation({ onSuccess: () => utils.integrations.listEventIntegrations.invalidate() });
 
   // Dos APIs distintas de Fourvenues conviven en el catálogo — Integrations
@@ -128,13 +134,30 @@ export default function IntegrationsManager() {
           ) : (
             <div className="space-y-1.5">
               {venueIntegrations.map(i => (
-                <div key={i.id} className="flex items-center justify-between text-sm border border-border rounded-lg px-3 py-2">
-                  <span>venue #{i.venueId} · {i.providerKey === "fourvenues_integrations" ? "Integrations API" : "Channel Manager"} · {i.environment} · {i.credentialsConfigured ? `····${i.credentialsLast4 ?? ""}` : "Awaiting credentials"}</span>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={i.status === "connected" ? "default" : i.status === "error" ? "destructive" : "secondary"}>{i.status}</Badge>
-                    <Button size="sm" variant="outline" onClick={() => testVenueMut.mutate({ id: i.id })} disabled={testVenueMut.isPending}>Test connection</Button>
-                    <Button size="sm" variant={i.enabled ? "default" : "outline"} onClick={() => setVenueEnabledMut.mutate({ id: i.id, enabled: !i.enabled })}>{i.enabled ? "Enabled" : "Disabled"}</Button>
+                <div key={i.id} className="border border-border rounded-lg px-3 py-2 text-sm space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span>venue #{i.venueId} · {i.providerKey === "fourvenues_integrations" ? "Integrations API" : "Channel Manager"} · {i.environment} · {i.credentialsConfigured ? `····${i.credentialsLast4 ?? ""}` : "Awaiting credentials"}</span>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={i.status === "connected" ? "default" : i.status === "error" ? "destructive" : "secondary"}>{i.status}</Badge>
+                      <Button size="sm" variant="outline" onClick={() => setEditingVenueCredsId(editingVenueCredsId === i.id ? null : i.id)}>
+                        {editingVenueCredsId === i.id ? "Cancelar" : "Editar API key"}
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => testVenueMut.mutate({ id: i.id })} disabled={testVenueMut.isPending}>Test connection</Button>
+                      <Button size="sm" variant={i.enabled ? "default" : "outline"} onClick={() => setVenueEnabledMut.mutate({ id: i.id, enabled: !i.enabled })}>{i.enabled ? "Enabled" : "Disabled"}</Button>
+                    </div>
                   </div>
+                  {editingVenueCredsId === i.id && (
+                    <div className="flex items-center gap-2 pt-1 border-t border-border">
+                      <Input type="password" value={editVenueApiKey} onChange={e => setEditVenueApiKey(e.target.value)} placeholder="Nueva API key" className="h-8" />
+                      <Button
+                        size="sm"
+                        disabled={!editVenueApiKey || updateVenueCredsMut.isPending}
+                        onClick={() => updateVenueCredsMut.mutate({ id: i.id, apiKey: editVenueApiKey })}
+                      >
+                        Guardar
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
