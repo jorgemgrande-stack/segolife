@@ -46,6 +46,8 @@ export interface NormalizedTicketType {
   capacity?: number | null;
   salesStart?: Date | null;
   salesEnd?: Date | null;
+  /** Forma original del proveedor cuando aplanar a un único precio pierde información real (p.ej. varias `options[]` de Fourvenues) — se persiste en event_ticket_types.metadata, nunca se descarta. */
+  raw?: Record<string, unknown>;
 }
 
 export interface NormalizedBuyerOrParticipant {
@@ -75,6 +77,10 @@ export interface NormalizedTicket {
   externalOrderId?: string | null;
   participant: NormalizedBuyerOrParticipant;
   status: "issued" | "cancelled" | "refunded" | "used";
+  /** Precio/fecha REALES de esta entrada individual (no el agregado del pedido) — opcional porque no todo proveedor los expone a nivel de ticket (ver ticketPurchasePipeline.ts). */
+  amountPaidCents?: number;
+  feesCents?: number;
+  purchasedAt?: Date | null;
 }
 
 /** Salida del pipeline de asistencia — nunca inventada si individualAttendance no está confirmado. */

@@ -84,7 +84,7 @@ async function collectAllEvents(userId: number, studentProfileId: number): Promi
       tokens: null,
       venueName: null,
       eventName: event?.name ?? null,
-      metadata: { ticketId: ticket.id, salesChannel: ticket.salesChannel, status: ticket.status },
+      metadata: { ticketId: ticket.id, salesChannel: ticket.salesChannel, status: ticket.status, provider: ticket.provider },
     });
     if (ticket.status === "cancelled" && ticket.cancelledAt) {
       events.push({

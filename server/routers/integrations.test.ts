@@ -13,9 +13,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockLinkUnresolvedOperation, mockIngestAttendance } = vi.hoisted(() => ({
+const { mockLinkUnresolvedOperation, mockIngestAttendance, mockDbUpdateSet, mockDbUpdateWhere } = vi.hoisted(() => ({
   mockLinkUnresolvedOperation: vi.fn(),
   mockIngestAttendance: vi.fn(),
+  mockDbUpdateSet: vi.fn(),
+  mockDbUpdateWhere: vi.fn(async () => [{ affectedRows: 1 }]),
 }));
 
 vi.mock("../segolife/integrations/unresolvedOperationsService", async (importOriginal) => {
@@ -23,6 +25,17 @@ vi.mock("../segolife/integrations/unresolvedOperationsService", async (importOri
   return { ...actual, linkUnresolvedOperation: mockLinkUnresolvedOperation };
 });
 vi.mock("../segolife/ticketing/attendancePipeline", () => ({ ingestAttendance: mockIngestAttendance }));
+// El router usa su propio `_db` (drizzle(mysql.createPool(...))) inline, sin
+// exportarlo — se mockea `drizzle-orm/mysql2` para poder aserción sobre el
+// UPDATE de la rama "order" (spec §47) sin una conexión MySQL real. select()
+// se deja como no-op vacío: solo la rama commerce lo usa, y esos tests
+// siguen evitándolo con referenceId=null (mismo criterio que ya tenía este archivo).
+vi.mock("drizzle-orm/mysql2", () => ({
+  drizzle: () => ({
+    select: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }),
+    update: () => ({ set: (values: Record<string, unknown>) => { mockDbUpdateSet(values); return { where: async (...args: unknown[]) => { mockDbUpdateWhere(...args); return [{ affectedRows: 1 }]; } }; } }),
+  }),
+}));
 
 import { integrationsRouter } from "./integrations";
 
@@ -116,5 +129,31 @@ describe("integrationsRouter.linkUnresolved — bloqueador de Fase 5 (attendance
     await caller.linkUnresolved({ id: 12, userId: 77 });
 
     expect(mockIngestAttendance).not.toHaveBeenCalled();
+  });
+});
+
+describe("integrationsRouter.linkUnresolved — operationType='order' (Fourvenues Operational Sync §46-47)", () => {
+  it("order con referenceType='event_ticket' → asocia el Student directamente al ticket ya existente (UPDATE event_tickets.user_id), sin reprocesar pedidos ni volver a llamar a Fourvenues", async () => {
+    mockLinkUnresolvedOperation.mockResolvedValue(unresolvedFixture({
+      operationType: "order", referenceType: "event_ticket", referenceId: 701, eventId: 77,
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+    }));
+    const caller = callerAsAdmin();
+
+    const result = await caller.linkUnresolved({ id: 20, userId: 88 });
+
+    expect(mockDbUpdateSet).toHaveBeenCalledWith({ userId: 88 });
+    expect(mockDbUpdateWhere).toHaveBeenCalledOnce();
+    expect(mockIngestAttendance).not.toHaveBeenCalled(); // "order" nunca reprocesa asistencia — son colas independientes
+    expect(result).toMatchObject({ id: 10 });
+  });
+
+  it("order SIN referenceId (fila incompleta) → nunca actualiza event_tickets (nunca actualiza a ciegas)", async () => {
+    mockLinkUnresolvedOperation.mockResolvedValue(unresolvedFixture({ operationType: "order", referenceType: "event_ticket", referenceId: null }));
+    const caller = callerAsAdmin();
+
+    await caller.linkUnresolved({ id: 21, userId: 88 });
+
+    expect(mockDbUpdateSet).not.toHaveBeenCalled();
   });
 });

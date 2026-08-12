@@ -1,0 +1,211 @@
+/**
+ * eventCatalogSync.test.ts — orquestación de syncEventCatalog/syncTicketTypes
+ * (Fourvenues Operational Sync). Mismo patrón que attendancePipeline.test.ts:
+ * se mockean los límites del módulo (eventsDb.ts) y se usa un fake mínimo de
+ * `conn` que responde en el ORDEN EXACTO en que eventCatalogSync.ts emite
+ * sus queries — se prueba la orquestación (matching/field ownership/
+ * ambigüedad), no la semántica de drizzle-orm en sí.
+ */
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const { mockCreateEvent, mockUpdateEvent, mockGetEventBySlug } = vi.hoisted(() => ({
+  mockCreateEvent: vi.fn(),
+  mockUpdateEvent: vi.fn(),
+  mockGetEventBySlug: vi.fn(),
+}));
+
+vi.mock("../../db/eventsDb", () => ({
+  createEvent: mockCreateEvent,
+  updateEvent: mockUpdateEvent,
+  getEventBySlug: mockGetEventBySlug,
+}));
+
+import { syncEventCatalog, syncTicketTypes } from "./eventCatalogSync";
+
+function awaitableRows(rows: unknown[]) {
+  return {
+    then: (resolve: (v: unknown[]) => void) => Promise.resolve(rows).then(resolve),
+    limit: async (n: number) => rows.slice(0, n),
+  };
+}
+
+/** `selectQueue` — una entrada por cada `conn.select(...).from(...).where(...)` esperado, EN ORDEN. */
+function fakeDb(selectQueue: unknown[][]) {
+  let i = 0;
+  const inserts: Array<{ values: Record<string, unknown>; ignored: boolean }> = [];
+  const updates: Array<{ values: Record<string, unknown> }> = [];
+  const db = {
+    select: () => ({
+      from: () => ({
+        where: () => awaitableRows(selectQueue[i++] ?? []),
+      }),
+    }),
+    insert: () => ({
+      values: async (values: Record<string, unknown>) => {
+        inserts.push({ values, ignored: false });
+        return [{ insertId: 9001 }];
+      },
+      ignore: () => ({
+        values: async (values: Record<string, unknown>) => {
+          inserts.push({ values, ignored: true });
+          return [{ insertId: 0 }];
+        },
+      }),
+    }),
+    update: () => ({
+      set: (values: Record<string, unknown>) => ({
+        where: async () => {
+          updates.push({ values });
+          return [{ affectedRows: 1 }];
+        },
+      }),
+    }),
+  };
+  return { db: db as never, inserts, updates };
+}
+
+function normalizedEvent(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    externalId: "fvi_evt_001",
+    name: "Fixture Night @ Casanova",
+    description: "desc",
+    imageUrl: "https://example.invalid/flyer.jpg",
+    startsAt: new Date("2027-01-10T23:00:00.000Z"),
+    endsAt: new Date("2027-01-11T05:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockGetEventBySlug.mockResolvedValue(null);
+});
+
+describe("syncEventCatalog — matching (spec §12-13)", () => {
+  it("mapping ya confirmado → usa ese evento, SOLO actualiza fecha/hora (nunca nombre/imagen/descripción)", async () => {
+    const { db, updates, inserts } = fakeDb([
+      [{ internalId: 42 }], // existingMapping
+    ]);
+    mockUpdateEvent.mockResolvedValue({ id: 42 });
+
+    const result = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent()],
+    }, db);
+
+    expect(result.items[0]).toMatchObject({ outcome: "mapped_existing", eventId: 42 });
+    expect(mockUpdateEvent).toHaveBeenCalledWith(42, { startsAt: normalizedEvent().startsAt, endsAt: normalizedEvent().endsAt }, db);
+    expect(mockCreateEvent).not.toHaveBeenCalled();
+    expect(inserts.some(i => "externalId" in i.values)).toBe(false); // no crea un mapping nuevo, ya existía
+    expect(updates).toHaveLength(0); // el update pasa por eventsDb (mockeado), no por conn.update directo
+  });
+
+  it("sin mapping y sin candidato → crea un evento nuevo gobernado por Fourvenues + mapping", async () => {
+    const { db, inserts } = fakeDb([
+      [], // existingMapping
+      [], // alreadyMapped (findUnambiguousCandidate)
+      [], // sameVenue
+    ]);
+    mockCreateEvent.mockResolvedValue({ id: 77 });
+
+    const result = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [3], normalizedEvents: [normalizedEvent()],
+    }, db);
+
+    expect(result.items[0]).toMatchObject({ outcome: "created", eventId: 77 });
+    expect(result.createdCount).toBe(1);
+    expect(mockCreateEvent).toHaveBeenCalledOnce();
+    expect(mockCreateEvent.mock.calls[0][0]).toMatchObject({ name: "Fixture Night @ Casanova", venueId: 10, sourceType: "integration:fourvenues_integrations" });
+    expect(inserts.some(i => i.values.externalType === "event" && i.values.internalId === 77)).toBe(true);
+  });
+
+  it("sin mapping, exactamente 1 candidato inequívoco (mismo venue+día+nombre normalizado) → lo ADOPTA sin sobreescribir su contenido editorial", async () => {
+    const candidateEvent = { id: 55, name: "Fixture Night @ Casanova", venueId: 10, startsAt: new Date("2027-01-10T23:00:00.000Z") };
+    const { db, inserts } = fakeDb([
+      [], // existingMapping
+      [], // alreadyMapped
+      [candidateEvent], // sameVenue
+    ]);
+
+    const result = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent()],
+    }, db);
+
+    expect(result.items[0]).toMatchObject({ outcome: "candidate_adopted", eventId: 55 });
+    expect(mockCreateEvent).not.toHaveBeenCalled();
+    expect(mockUpdateEvent).not.toHaveBeenCalled(); // adoptar el mapping NUNCA reescribe el evento existente
+    expect(inserts.some(i => i.values.externalType === "event" && i.values.internalId === 55)).toBe(true);
+  });
+
+  it("sin mapping, ≥2 candidatos ambiguos → NO autovincula NI crea duplicado, se omite del sync", async () => {
+    const candidate1 = { id: 55, name: "Fixture Night @ Casanova", venueId: 10, startsAt: new Date("2027-01-10T23:00:00.000Z") };
+    // normalizedEvent().startsAt = 2027-01-10T23:00:00Z = 2027-01-11T00:00 en Europe/Madrid (CET, UTC+1, sin DST en enero) — candidate2 debe caer en ESE mismo día Madrid para ser un candidato genuinamente ambiguo.
+    const candidate2 = { id: 56, name: "Fixture Night @ Casanova", venueId: 10, startsAt: new Date("2027-01-11T20:00:00.000Z") };
+    const { db, inserts } = fakeDb([
+      [], // existingMapping
+      [], // alreadyMapped
+      [candidate1, candidate2], // sameVenue — 2 candidatos
+    ]);
+
+    const result = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent()],
+    }, db);
+
+    expect(result.ambiguousCount).toBe(1);
+    expect(result.items[0].outcome).toBe("ambiguous");
+    expect(result.items[0].eventId).toBeNull();
+    expect(mockCreateEvent).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0);
+  });
+
+  it("un candidato con nombre distinto (aunque parecido) NUNCA hace match — sin fuzzy", async () => {
+    const almostSame = { id: 55, name: "Fixture Night @ Casanova Vol 2", venueId: 10, startsAt: new Date("2027-01-10T23:00:00.000Z") };
+    const { db } = fakeDb([
+      [], // existingMapping
+      [], // alreadyMapped
+      [almostSame], // sameVenue — nombre distinto, no debería contar como candidato
+    ]);
+    mockCreateEvent.mockResolvedValue({ id: 99 });
+
+    const result = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent()],
+    }, db);
+
+    // findUnambiguousCandidate filtra en memoria por nombre exacto — "Vol 2" no matchea, candidates.length === 0 → crea nuevo.
+    expect(result.items[0].outcome).toBe("created");
+  });
+});
+
+describe("syncTicketTypes", () => {
+  it("rate nueva → crea event_ticket_type + mapping, precio ya en céntimos", async () => {
+    const { db, inserts } = fakeDb([[]]); // sin mapping previo
+
+    const result = await syncTicketTypes({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1, eventId: 77,
+      normalizedTicketTypes: [{ externalId: "fvi_rate_001", externalEventId: "fvi_evt_001", name: "ACCESO GENERAL", priceCents: 800, currency: "EUR", capacity: 100, raw: { options: [{ price: 8 }, { price: 12 }] } }],
+    }, db);
+
+    expect(result.createdCount).toBe(1);
+    expect(result.ticketTypeIdByExternalId.get("fvi_rate_001")).toBe(9001);
+    const ticketTypeInsert = inserts.find(i => "priceCents" in i.values);
+    expect(ticketTypeInsert?.values).toMatchObject({ priceCents: 800, eventId: 77 });
+    expect((ticketTypeInsert?.values.metadata as { options: unknown[] }).options).toHaveLength(2); // las opciones no elegidas NO se pierden
+  });
+
+  it("rate ya mapeada → actualiza precio/capacidad, no duplica", async () => {
+    const { db, updates } = fakeDb([[{ internalId: 500 }]]); // mapping existente
+
+    const result = await syncTicketTypes({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1, eventId: 77,
+      normalizedTicketTypes: [{ externalId: "fvi_rate_001", externalEventId: "fvi_evt_001", name: "ACCESO GENERAL", priceCents: 900, currency: "EUR" }],
+    }, db);
+
+    expect(result.updatedCount).toBe(1);
+    expect(result.ticketTypeIdByExternalId.get("fvi_rate_001")).toBe(500);
+    expect(updates[0].values).toMatchObject({ priceCents: 900 });
+  });
+});

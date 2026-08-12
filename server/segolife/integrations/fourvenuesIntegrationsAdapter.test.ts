@@ -1,12 +1,30 @@
 import { describe, it, expect } from "vitest";
 import { createFourvenuesIntegrationsAdapter } from "./fourvenuesIntegrationsAdapter";
-import { CapabilityNotSupportedError } from "./externalTicketingProvider";
+import { CapabilityNotSupportedError, type IntegrationTransport } from "./externalTicketingProvider";
 import { createMockTransport } from "./mockTransport";
 import {
   fourvenuesIntEventsFixture,
   fourvenuesIntTicketRatesFixture,
   fourvenuesIntTicketsFixture,
+  fourvenuesIntTicketsCaseAFixture,
+  fourvenuesIntTicketsCaseBFixture,
+  fourvenuesIntTicketFreeFixture,
 } from "./fixtures/fourvenuesFixtures";
+
+/** Envuelve un transport contando llamadas por "METHOD path" — para verificar que listOrders/listTickets/listAttendance comparten UNA sola llamada real a /tickets/ por evento (sección 50, ver createTicketsFetcher). */
+function withCallCounts(transport: IntegrationTransport): { transport: IntegrationTransport; counts: Record<string, number> } {
+  const counts: Record<string, number> = {};
+  return {
+    counts,
+    transport: {
+      request: (opts) => {
+        const key = `${opts.method} ${opts.path}`;
+        counts[key] = (counts[key] ?? 0) + 1;
+        return transport.request(opts);
+      },
+    },
+  };
+}
 
 describe("FourvenuesIntegrationsAdapter — contract tests (Integrations API, forma real confirmada 2026-08-12)", () => {
   const transport = createMockTransport({
@@ -32,12 +50,23 @@ describe("FourvenuesIntegrationsAdapter — contract tests (Integrations API, fo
     expect(events[0].imageUrl).toBe("https://example.invalid/flyer.jpg");
   });
 
-  it("listTicketTypes aplana options[] eligiendo la opción más barata, precio en céntimos", async () => {
+  it("listEvents mapea event.url a externalUrl cuando el proveedor lo envía", async () => {
+    const t = createMockTransport({
+      "GET /events/": { success: true, data: [{ ...fourvenuesIntEventsFixture.data[0], url: "https://www.fourvenues.com/casanova/fixture" }] },
+    });
+    const a = createFourvenuesIntegrationsAdapter(t);
+    const events = await a.listEvents(credentials);
+    expect(events[0].externalUrl).toBe("https://www.fourvenues.com/casanova/fixture");
+  });
+
+  it("listTicketTypes aplana options[] eligiendo la opción más barata, precio en céntimos, PERO preserva todas las opciones en raw.options (nunca se pierden)", async () => {
     const types = await adapter.listTicketTypes(credentials, "fvi_evt_001");
     expect(types).toHaveLength(1);
     expect(types[0].priceCents).toBe(800); // 8€ (la opción más barata, no 12€)
     expect(types[0].currency).toBe("EUR");
     expect(Number.isInteger(types[0].priceCents)).toBe(true);
+    expect(types[0].raw?.options).toHaveLength(2);
+    expect((types[0].raw?.options as { price: number }[])[1].price).toBe(12); // la opción de 12€ sigue accesible, no descartada
   });
 
   it("listOrders se deriva agrupando tickets por payment_id, no de un endpoint nativo", async () => {
@@ -63,6 +92,32 @@ describe("FourvenuesIntegrationsAdapter — contract tests (Integrations API, fo
     expect(tickets.find(t => t.externalId === "fvi_tkt_003")!.status).toBe("refunded");
   });
 
+  it("listTickets expone el importe/fecha REALES de cada entrada individual (no el agregado del pedido), en céntimos", async () => {
+    const tickets = await adapter.listTickets(credentials, "fvi_evt_001");
+    const t1 = tickets.find(t => t.externalId === "fvi_tkt_001")!;
+    expect(t1.amountPaidCents).toBe(835); // 8.35€
+    expect(t1.feesCents).toBe(35); // 0.35€
+    expect(t1.purchasedAt).toBeInstanceOf(Date);
+  });
+
+  it("listOrders/listTickets/listAttendance para el MISMO evento comparten una única llamada de red a GET /tickets/ (nunca 3)", async () => {
+    const { transport: counted, counts } = withCallCounts(transport);
+    const a = createFourvenuesIntegrationsAdapter(counted);
+    await a.listOrders(credentials, "fvi_evt_001");
+    await a.listTickets(credentials, "fvi_evt_001");
+    await a.listAttendance(credentials, "fvi_evt_001");
+    expect(counts["GET /tickets/"]).toBe(1);
+  });
+
+  it("una instancia de adapter distinta (otro sync run) NO reutiliza la caché de la anterior", async () => {
+    const { transport: counted, counts } = withCallCounts(transport);
+    const a1 = createFourvenuesIntegrationsAdapter(counted);
+    const a2 = createFourvenuesIntegrationsAdapter(counted);
+    await a1.listTickets(credentials, "fvi_evt_001");
+    await a2.listTickets(credentials, "fvi_evt_001");
+    expect(counts["GET /tickets/"]).toBe(2);
+  });
+
   it("listAttendance solo incluye tickets con enter=1, usa entry_date real", async () => {
     const attendance = await adapter.listAttendance(credentials, "fvi_evt_001");
     expect(attendance).toHaveLength(1);
@@ -72,6 +127,42 @@ describe("FourvenuesIntegrationsAdapter — contract tests (Integrations API, fo
 
   it("listCommerceTransactions lanza CapabilityNotSupportedError — sin POS confirmado", async () => {
     await expect(adapter.listCommerceTransactions(credentials, "fvi_evt_001")).rejects.toThrow(CapabilityNotSupportedError);
+  });
+
+  it("Case A (spec §27/71) — 4 tickets del mismo payment_id con participante individual distinto se normalizan como 1 order de 4 tickets con 4 identidades DIFERENTES, 2 asistencias reales", async () => {
+    const t = createMockTransport({ "GET /tickets/": fourvenuesIntTicketsCaseAFixture });
+    const a = createFourvenuesIntegrationsAdapter(t);
+    const orders = await a.listOrders(credentials, "fvi_evt_001");
+    const tickets = await a.listTickets(credentials, "fvi_evt_001");
+    const attendance = await a.listAttendance(credentials, "fvi_evt_001");
+
+    expect(orders).toHaveLength(1);
+    expect(orders[0].totalCents).toBe(3340); // 4 × 8.35€
+    expect(tickets).toHaveLength(4);
+    expect(new Set(tickets.map(t => t.participant.email)).size).toBe(4); // 4 emails distintos — nunca colapsan al comprador
+    expect(attendance).toHaveLength(2); // solo 2 de los 4 asistieron realmente
+  });
+
+  it("Case B (spec §28/71) — 4 tickets del mismo payment_id con el MISMO participante se normalizan igualmente como 4 tickets (nunca se deduplican a nivel de adapter — la protección vive en attendancePipeline/ticketPurchasePipeline)", async () => {
+    const t = createMockTransport({ "GET /tickets/": fourvenuesIntTicketsCaseBFixture });
+    const a = createFourvenuesIntegrationsAdapter(t);
+    const tickets = await a.listTickets(credentials, "fvi_evt_001");
+    const attendance = await a.listAttendance(credentials, "fvi_evt_001");
+
+    expect(tickets).toHaveLength(4);
+    expect(new Set(tickets.map(t => t.participant.email)).size).toBe(1); // el "problema" es real a nivel de dato — mismo email en los 4
+    expect(attendance).toHaveLength(4); // el adapter normaliza los 4 hechos de asistencia tal cual — la deduplicación de REWARD, no del hecho, vive en el pipeline
+  });
+
+  it("entrada gratuita (0€) se normaliza con amountPaidCents=0, sin error ni división por cero", async () => {
+    const t = createMockTransport({ "GET /tickets/": fourvenuesIntTicketFreeFixture });
+    const a = createFourvenuesIntegrationsAdapter(t);
+    const tickets = await a.listTickets(credentials, "fvi_evt_001");
+    const orders = await a.listOrders(credentials, "fvi_evt_001");
+
+    expect(tickets[0].amountPaidCents).toBe(0);
+    expect(orders[0].totalCents).toBe(0);
+    expect(orders[0].status).toBe("paid"); // gratuita y no reembolsada — sigue siendo un pedido "paid" válido, no un caso especial roto
   });
 
   it("capabilities refleja lo confirmado empíricamente 2026-08-12", () => {
