@@ -6,7 +6,7 @@ import {
   Bell, Search, User, BedDouble, Sparkles, UtensilsCrossed, AlertCircle,
   UserPlus, FileCheck, ChevronRight, Receipt, Truck, Monitor, Tag, Ticket,
   Sun, Moon, ExternalLink, Target, MessageCircle, Bot, Mail, Building2,
-  Briefcase, GraduationCap, Store, CalendarDays, Coins, QrCode, Gift, Vote,
+  Briefcase, GraduationCap, Store, CalendarDays, Coins, QrCode, Gift, Vote, Plug,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -71,6 +71,16 @@ const navItems = [
     href: "/admin/events",
     icon: CalendarDays,
     roles: ["admin"],
+  },
+  {
+    label: "Integrations",
+    href: "/admin/integrations",
+    icon: Plug,
+    roles: ["admin"],
+    children: [
+      { label: "Fourvenues / Weezevent", href: "/admin/integrations" },
+      { label: "Unresolved operations", href: "/admin/integrations/unresolved" },
+    ],
   },
   {
     label: "SegoTokens",
