@@ -34,6 +34,15 @@ async function getDb(): Promise<DbHandle> {
 }
 
 export interface AudienceDefinition {
+  /**
+   * Escape hatch explícito para "TODOS los estudiantes" (usado por COMUNITY,
+   * spec punto 9) — sin esto, un `AudienceDefinition` vacío ya devuelve `[]`
+   * a propósito ("nunca todos los usuarios por accidente"). `allStudents`
+   * exige la misma intención explícita, solo que declarada en vez de
+   * implícita: cualquier usuario con fila en student_profiles, sin más
+   * filtros. Combinable con el resto de filtros (AND) igual que los demás.
+   */
+  allStudents?: boolean;
   communityIds?: number[];
   tagIds?: number[];
   venueActivity?: { venueId: number; kind: "visited" | "benefit_granted" | "benefit_redeemed" };
@@ -55,6 +64,11 @@ async function intersect(sets: Set<number>[]): Promise<Set<number>> {
 export async function resolveAudience(definition: AudienceDefinition, db?: DbHandle): Promise<number[]> {
   const conn = db ?? (await getDb());
   const sets: Set<number>[] = [];
+
+  if (definition.allStudents) {
+    const rows = await conn.select({ userId: studentProfiles.userId }).from(studentProfiles);
+    sets.push(new Set(rows.map(r => r.userId)));
+  }
 
   if (definition.communityIds?.length) {
     const rows = await conn.select({ userId: userCommunities.userId }).from(userCommunities)

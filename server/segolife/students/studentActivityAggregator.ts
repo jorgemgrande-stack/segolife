@@ -26,6 +26,8 @@ import { listGrantedBenefits } from "../../db/benefitsDb";
 import { listStudentNotes, listStudentTagAssignmentEvents } from "../../db/studentsDb";
 import { listLoginEventsByUserId } from "./studentLoginEventsDb";
 import { listAdminActionsByStudentProfileId } from "./studentAdminActionsDb";
+import { listResponsesByUserId } from "../community/communityResponseService";
+import { listSupportsByUserId, listStudentProposalsByUserId } from "../community/communityStudentProposalDb";
 import type { TimelineEventDTO, TimelineFilters, TimelineCursor, TimelinePage } from "../../../shared/segolife/student360";
 
 const SOURCE_FETCH_LIMIT = 300;
@@ -49,7 +51,7 @@ export async function getStudentActivitySnapshot(userId: number, studentProfileI
 }
 
 async function collectAllEvents(userId: number, studentProfileId: number): Promise<TimelineEventDTO[]> {
-  const [tickets, attendance, commerce, qrRedemptions, ledger, benefits, notes, tagEvents, logins, adminActions] =
+  const [tickets, attendance, commerce, qrRedemptions, ledger, benefits, notes, tagEvents, logins, adminActions, communityResponses, communitySupports, communityStudentProposals] =
     await Promise.all([
       listMyTickets(userId),
       listAttendanceByUserId(userId),
@@ -61,6 +63,9 @@ async function collectAllEvents(userId: number, studentProfileId: number): Promi
       listStudentTagAssignmentEvents(studentProfileId),
       listLoginEventsByUserId(userId, SOURCE_FETCH_LIMIT),
       listAdminActionsByStudentProfileId(studentProfileId, SOURCE_FETCH_LIMIT),
+      listResponsesByUserId(userId, SOURCE_FETCH_LIMIT),
+      listSupportsByUserId(userId, SOURCE_FETCH_LIMIT),
+      listStudentProposalsByUserId(userId, SOURCE_FETCH_LIMIT),
     ]);
 
   const events: TimelineEventDTO[] = [];
@@ -293,6 +298,58 @@ async function collectAllEvents(userId: number, studentProfileId: number): Promi
       venueName: null,
       eventName: null,
       metadata: { actorUserId: a.actorUserId, before: a.beforeValue, after: a.afterValue },
+    });
+  }
+
+  // ── COMUNITY: respuestas ────────────────────────────────────────────────
+  for (const { response, proposalTitle } of communityResponses) {
+    events.push({
+      id: `community_response:${response.id}`,
+      occurredAt: toIso(response.respondedAt)!,
+      type: "community_response",
+      title: `Respondió en COMUNITY: ${proposalTitle}`,
+      description: null,
+      source: "community_responses",
+      amountCents: null,
+      // El importe exacto ya aparece como su propio evento token_credit (fuente token_ledger) — no duplicar aquí (spec punto 79).
+      tokens: null,
+      venueName: null,
+      eventName: null,
+      metadata: { proposalId: response.proposalId, rewardGranted: response.rewardGranted },
+    });
+  }
+
+  // ── COMUNITY: apoyos a ideas de otros estudiantes ───────────────────────
+  for (const { support, proposalTitle } of communitySupports) {
+    events.push({
+      id: `community_support:${support.id}`,
+      occurredAt: toIso(support.createdAt)!,
+      type: "community_support",
+      title: `Apoyó una idea: ${proposalTitle}`,
+      description: null,
+      source: "community_supports",
+      amountCents: null,
+      tokens: null,
+      venueName: null,
+      eventName: null,
+      metadata: { studentProposalId: support.studentProposalId },
+    });
+  }
+
+  // ── COMUNITY: ideas propuestas por el propio estudiante ─────────────────
+  for (const p of communityStudentProposals) {
+    events.push({
+      id: `community_proposal_submitted:${p.id}`,
+      occurredAt: toIso(p.createdAt)!,
+      type: "community_proposal_submitted",
+      title: `Propuso una idea: ${p.title}`,
+      description: null,
+      source: "community_student_proposals",
+      amountCents: null,
+      tokens: null,
+      venueName: null,
+      eventName: null,
+      metadata: { status: p.status },
     });
   }
 

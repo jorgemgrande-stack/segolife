@@ -276,7 +276,8 @@
     "scan": "Escanear",
     "tickets": "Entradas",
     "rewards": "Recompensas",
-    "profile": "Perfil"
+    "profile": "Perfil",
+    "comunity": "COMUNITY"
   },
   "community": {
     "notFoundTitle": "Comunidad no encontrada",
@@ -318,7 +319,10 @@
     "venuesTitle": "Locales",
     "upcomingEventsTitle": "Próximos eventos",
     "exploreAll": "Explorar todo",
-    "scanCta": "Escanear y ganar SegoTokens"
+    "scanCta": "Escanear y ganar SegoTokens",
+    "comunityTitle": "COMUNITY",
+    "comunityActiveCount": "{{count}} preguntas activas",
+    "comunityActiveCount_one": "{{count}} pregunta activa"
   },
   "explore": {
     "title": "Explorar",

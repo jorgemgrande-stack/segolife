@@ -18,6 +18,9 @@ const ALLOWED_PATTERNS: RegExp[] = [
   /^\/[a-z0-9-]+\/profile$/,
   /^\/[a-z0-9-]+\/activity$/,
   /^\/[a-z0-9-]+\/notifications$/,
+  // COMUNITY (spec punto 20/45) — hub y detalle de una propuesta.
+  /^\/[a-z0-9-]+\/comunity$/,
+  /^\/[a-z0-9-]+\/comunity\/\d+$/,
 ];
 
 export function sanitizeDeepLink(raw: string | null | undefined): string | null {

@@ -218,6 +218,17 @@ export interface CreateEventInput {
   endsAt?: Date | null;
   capacity?: number | null;
   imageUrl?: string | null;
+  /**
+   * Opcional — antes no existía ningún camino para crear un evento ya
+   * "inactive" (borrador) en la misma operación de alta, solo en dos pasos
+   * no atómicos (create + setActive). Añadido para COMUNITY (docs/comunity/
+   * event-conversion.md, "Convertir en Event DRAFT sin publicar"). Por
+   * defecto sigue siendo "active" (comportamiento previo intacto).
+   */
+  status?: "active" | "inactive";
+  /** Origen del evento (p.ej. "community_proposal") — ver events.sourceType/sourceId. */
+  sourceType?: string | null;
+  sourceId?: number | null;
 }
 
 /** communityIds: comunidades a las que se vincula el evento al crearlo (puede ser []). */

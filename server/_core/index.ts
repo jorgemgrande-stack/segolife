@@ -181,6 +181,39 @@ const posRecordSaleRateLimit = rateLimit({
   },
 });
 
+/**
+ * COMUNITY (spec punto 72, "abuse"): responder a una propuesta ya está
+ * protegido por UNIQUE(proposal,user) — este límite es contra un script que
+ * intente responder a muchas propuestas distintas muy rápido. Mismo
+ * criterio/infraestructura que el resto (no hay rate limiter genérico
+ * reutilizable en el repo, ver auditoría — se replica el bloque).
+ */
+const communityRespondRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiadas respuestas. Espera 1 minuto.", code: "RATE_LIMIT_EXCEEDED" },
+});
+
+/** COMUNITY — proponer un plan: límite bajo, es una acción poco frecuente en uso normal. */
+const communitySubmitProposalRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiadas propuestas enviadas. Espera 1 minuto.", code: "RATE_LIMIT_EXCEEDED" },
+});
+
+/** COMUNITY — apoyar una idea de estudiante: protegido también por UNIQUE(proposal,user), límite generoso porque un estudiante puede apoyar varias ideas seguidas legítimamente. */
+const communitySupportRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados apoyos. Espera 1 minuto.", code: "RATE_LIMIT_EXCEEDED" },
+});
+
 // Modo de autenticación: LOCAL_AUTH=true usa email+password local en lugar de Manus OAuth
 const USE_LOCAL_AUTH = process.env.LOCAL_AUTH === "true";
 
@@ -271,6 +304,11 @@ async function startServer() {
 
   // Rate limiting en POS nativo (Fase 8, 30 req/min por IP)
   app.use("/api/trpc/commerce.posRecordSale", posRecordSaleRateLimit);
+
+  // Rate limiting en COMUNITY (spec punto 72) — responder/proponer/apoyar.
+  app.use("/api/trpc/community.respond", communityRespondRateLimit);
+  app.use("/api/trpc/community.submitProposal", communitySubmitProposalRateLimit);
+  app.use("/api/trpc/community.support", communitySupportRateLimit);
 
   // Middleware de protección: bloquea rutas /api/trpc de procedimientos protegidos
   // si no hay sesión válida. Funciona en ambos modos (local y Manus OAuth).
