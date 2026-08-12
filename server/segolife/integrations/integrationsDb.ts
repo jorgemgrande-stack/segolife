@@ -138,9 +138,16 @@ export async function createVenueIntegration(input: CreateVenueIntegrationInput,
   return toSafeIntegration(row!, provider[0]?.key ?? "unknown", "venue");
 }
 
+// `syncEnabled` se mueve junto con `enabled` — hoy no existe ningún worker/
+// scheduler automático que necesite activarse por separado (spec Fourvenues
+// Operational Sync §82: "confirmar que NO existe worker automático"), así
+// que la única diferencia entre ambos flags sería una UI incompleta sin
+// forma de satisfacer canSync() nunca. El día que exista un scheduler real,
+// syncEnabled debe desacoplarse aquí para controlar ESE automatismo
+// específicamente — no antes.
 export async function setVenueIntegrationEnabled(id: number, enabled: boolean, db?: DbHandle): Promise<void> {
   const conn = db ?? (await getDb());
-  await conn.update(venueIntegrations).set({ enabled }).where(eq(venueIntegrations.id, id));
+  await conn.update(venueIntegrations).set({ enabled, syncEnabled: enabled }).where(eq(venueIntegrations.id, id));
 }
 
 export async function updateVenueIntegrationCredentials(id: number, credentials: Record<string, string | undefined>, displayValue?: string, db?: DbHandle): Promise<void> {
