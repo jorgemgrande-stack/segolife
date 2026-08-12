@@ -13,13 +13,23 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockGetCommunityBySlug, mockAddUserToCommunity, mockGetCommunityUniversities, mockEnsureStudentProfile, mockUpdateStudentProfile, mockUpdatePreference } = vi.hoisted(() => ({
+const {
+  mockGetCommunityBySlug, mockAddUserToCommunity, mockGetCommunityUniversities,
+  mockEnsureStudentProfile, mockUpdateStudentProfile, mockUpdatePreference,
+  mockGetBenefitDefinitionBySlug, mockGetBenefitDefinitionCommunities,
+  mockGrantBenefit, mockEmitBenefitGranted, mockBuildBenefitGrantedPayload,
+} = vi.hoisted(() => ({
   mockGetCommunityBySlug: vi.fn(),
   mockAddUserToCommunity: vi.fn(),
   mockGetCommunityUniversities: vi.fn(),
   mockEnsureStudentProfile: vi.fn(),
   mockUpdateStudentProfile: vi.fn(),
   mockUpdatePreference: vi.fn(),
+  mockGetBenefitDefinitionBySlug: vi.fn(),
+  mockGetBenefitDefinitionCommunities: vi.fn(),
+  mockGrantBenefit: vi.fn(),
+  mockEmitBenefitGranted: vi.fn(),
+  mockBuildBenefitGrantedPayload: vi.fn(),
 }));
 
 vi.mock("../../db/communitiesDb", () => ({
@@ -33,6 +43,17 @@ vi.mock("../../db/studentsDb", () => ({
 }));
 vi.mock("../engagement/notificationPreferencesService", () => ({
   updatePreference: mockUpdatePreference,
+}));
+vi.mock("../../db/benefitsDb", () => ({
+  getBenefitDefinitionBySlug: mockGetBenefitDefinitionBySlug,
+  getBenefitDefinitionCommunities: mockGetBenefitDefinitionCommunities,
+}));
+vi.mock("../benefits/benefitGrantService", () => ({
+  grantBenefit: mockGrantBenefit,
+}));
+vi.mock("../benefits/benefitEvents", () => ({
+  emitBenefitGranted: mockEmitBenefitGranted,
+  buildBenefitGrantedPayload: mockBuildBenefitGrantedPayload,
 }));
 
 import { registerStudent, RegistrationError } from "./registrationService";
@@ -80,6 +101,12 @@ beforeEach(() => {
   mockUpdateStudentProfile.mockResolvedValue({});
   mockAddUserToCommunity.mockResolvedValue(undefined);
   mockUpdatePreference.mockResolvedValue(undefined);
+  // Por defecto, sin beneficio de bienvenida configurado todavía — el alta
+  // debe seguir funcionando igual (comportamiento REUSE de todos los tests
+  // ya existentes, sin tocarlos).
+  mockGetBenefitDefinitionBySlug.mockResolvedValue(null);
+  mockGetBenefitDefinitionCommunities.mockResolvedValue([]);
+  mockGrantBenefit.mockResolvedValue({ benefit: { id: 1 }, qrToken: "", created: true });
 });
 
 describe("registerStudent — caso exitoso", () => {
@@ -179,5 +206,62 @@ describe("registerStudent — validación", () => {
   it("nombre/apellidos en blanco → INVALID_EMAIL (validación conjunta de identidad)", async () => {
     const db = makeMockDb() as any;
     await expect(registerStudent({ ...VALID_INPUT, firstName: "   " }, db)).rejects.toBeInstanceOf(RegistrationError);
+  });
+});
+
+describe("registerStudent — beneficio de bienvenida (grant automático best-effort)", () => {
+  it("sin definición configurada todavía (getBenefitDefinitionBySlug → null): el alta funciona igual y nunca llama a grantBenefit", async () => {
+    const db = makeMockDb({ insertId: 77 }) as any;
+    const result = await registerStudent(VALID_INPUT, db);
+    expect(result.userId).toBe(77);
+    expect(mockGrantBenefit).not.toHaveBeenCalled();
+  });
+
+  it("definición existe pero está inactiva: no concede nada", async () => {
+    mockGetBenefitDefinitionBySlug.mockResolvedValue({ id: 5, active: false });
+    const db = makeMockDb({ insertId: 77 }) as any;
+    await registerStudent(VALID_INPUT, db);
+    expect(mockGrantBenefit).not.toHaveBeenCalled();
+  });
+
+  it("definición activa y universal (sin filas en benefit_communities): concede el beneficio con los datos correctos", async () => {
+    mockGetBenefitDefinitionBySlug.mockResolvedValue({ id: 5, active: true });
+    mockGetBenefitDefinitionCommunities.mockResolvedValue([]);
+    const db = makeMockDb({ insertId: 77 }) as any;
+    await registerStudent(VALID_INPUT, db);
+
+    expect(mockGrantBenefit).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 77,
+      benefitDefinitionId: 5,
+      sourceType: "registration_welcome",
+      communityId: ACTIVE_COMMUNITY.id,
+      grantedByUserId: null,
+      idempotencyKey: "registration_welcome:77",
+    }));
+  });
+
+  it("definición activa pero acotada a OTRA comunidad: no concede el beneficio a un estudiante de una comunidad distinta", async () => {
+    mockGetBenefitDefinitionBySlug.mockResolvedValue({ id: 5, active: true });
+    mockGetBenefitDefinitionCommunities.mockResolvedValue([999]); // comunidad distinta a ACTIVE_COMMUNITY.id (1)
+    const db = makeMockDb({ insertId: 77 }) as any;
+    await registerStudent(VALID_INPUT, db);
+    expect(mockGrantBenefit).not.toHaveBeenCalled();
+  });
+
+  it("definición activa y acotada a la MISMA comunidad del alta: sí concede el beneficio", async () => {
+    mockGetBenefitDefinitionBySlug.mockResolvedValue({ id: 5, active: true });
+    mockGetBenefitDefinitionCommunities.mockResolvedValue([ACTIVE_COMMUNITY.id]);
+    const db = makeMockDb({ insertId: 77 }) as any;
+    await registerStudent(VALID_INPUT, db);
+    expect(mockGrantBenefit).toHaveBeenCalled();
+  });
+
+  it("si grantBenefit falla, el registro sigue devolviendo éxito (nunca bloquea el alta por un side-effect de loyalty)", async () => {
+    mockGetBenefitDefinitionBySlug.mockResolvedValue({ id: 5, active: true });
+    mockGetBenefitDefinitionCommunities.mockResolvedValue([]);
+    mockGrantBenefit.mockRejectedValue(new Error("DB caída"));
+    const db = makeMockDb({ insertId: 77 }) as any;
+    const result = await registerStudent(VALID_INPUT, db);
+    expect(result.userId).toBe(77);
   });
 });
