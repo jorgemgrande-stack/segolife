@@ -113,7 +113,7 @@ const navItems = [
     // Engagement, nunca escondido dentro de CRM") — capa de inteligencia
     // social/sondeos/propuestas, dominio totalmente distinto de las
     // Propuestas comerciales de CRM (Lead→Propuesta→Presupuesto).
-    label: "COMUNITY",
+    label: "Comunity",
     href: "/admin/comunity",
     icon: Vote,
     roles: ["admin"],
