@@ -51,9 +51,17 @@ export default function MyTickets() {
                 onClick={() => navigate(`/${slug}/tickets/${ticket.id}`)}
                 className="segolife-card-shadow flex w-full items-center gap-3 rounded-2xl bg-card p-3 text-left"
               >
-                <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                  <Ticket className="size-5" aria-hidden="true" />
-                </div>
+                {ticket.event?.imageUrl ? (
+                  <img
+                    src={ticket.event.imageUrl}
+                    alt=""
+                    className="size-11 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <Ticket className="size-5" aria-hidden="true" />
+                  </div>
+                )}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-semibold text-foreground">{ticket.event?.name ?? "—"}</p>
                   {ticket.event?.startsAt && (
