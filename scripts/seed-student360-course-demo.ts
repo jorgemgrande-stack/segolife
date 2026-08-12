@@ -212,9 +212,14 @@ function randomDateInMonth(m: string): Date {
 // ============================================================
 
 const VENUE_SLUGS = ["casanova", "chin-chin", "la-finca-club", "limoncello", "selfish-poke", "tanker-events", "tia-felisa"] as const;
-// Los 3 venues con eventos QA ya existentes (spec §7 opción B) — el resto (§7 opción A) necesita eventos históricos nuevos.
-const VENUES_WITH_EXISTING_EVENTS = new Set(["casanova", "tia-felisa", "limoncello"]);
-const EXISTING_QA_EVENT_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+// NOTA (corregido tras el primer dry-run): los 10 eventos QA existentes
+// (scripts/qa-events-manifest.json) NO se reutilizan para la historia — su
+// startsAt real cae fuera de la ventana sept.2025-jul.2026 (cerca de "ahora"/
+// futuro, no en el pasado) y sus event_ticket_types llevan el precio de
+// fixture antiguo 1,11€ que el encargo pide explícitamente evitar (spec
+// §11). Se generan eventos históricos propios para los 7 venues (spec §7
+// opción A) — los 10 QA existentes quedan intactos, sin tocar, por si sirven
+// para otra cosa.
 
 // ============================================================
 // 4. CATÁLOGO DE PRODUCTOS DE CONSUMICIÓN (por venue)
@@ -297,31 +302,50 @@ async function main() {
   // ── FASE E: beneficios (2 definiciones nuevas, históricas) ────
   const benefitDefs = await ensureBenefitDefinitions(venueBySlug, community.id);
 
-  // ── FASE F: pool de eventos por venue (existentes QA + nuevos) ──
-  const existingEventRows = await db.select().from(events).where(inArray(events.id, EXISTING_QA_EVENT_IDS));
+  // ── FASE F: pool de eventos por venue (solo los históricos de la FASE D — ver nota en VENUE_SLUGS) ──
   const eventPoolByVenue = new Map<number, typeof events.$inferSelect[]>();
-  for (const ev of [...existingEventRows, ...newEvents]) {
+  for (const ev of newEvents) {
     if (!ev.venueId) continue;
     const list = eventPoolByVenue.get(ev.venueId) ?? [];
     list.push(ev);
     eventPoolByVenue.set(ev.venueId, list);
   }
-  // ticket types por evento (creados en fase D para los nuevos; para los QA existentes, leer los ya creados por bootstrap-qa-events.ts)
   const ticketTypesByEvent = new Map<number, typeof eventTicketTypes.$inferSelect[]>();
-  const allPoolEventIds = [...existingEventRows.map(e => e.id), ...newEvents.map(e => e.id)];
-  const allTicketTypes = await db.select().from(eventTicketTypes).where(inArray(eventTicketTypes.eventId, allPoolEventIds));
-  for (const tt of allTicketTypes) {
-    const list = ticketTypesByEvent.get(tt.eventId) ?? [];
-    list.push(tt);
-    ticketTypesByEvent.set(tt.eventId, list);
-  }
   const channelsByEvent = new Map<number, typeof salesChannels.$inferSelect[]>();
-  const allChannels = await db.select().from(salesChannels).where(inArray(salesChannels.eventId, allPoolEventIds));
-  for (const ch of allChannels) {
-    if (ch.salesMode !== "native") continue; // spec §33 — nunca usar canales externos para la simulación
-    const list = channelsByEvent.get(ch.eventId) ?? [];
-    list.push(ch);
-    channelsByEvent.set(ch.eventId, list);
+  if (!DRY_RUN) {
+    const realEventIds = newEvents.map(e => e.id);
+    const allTicketTypes = await db.select().from(eventTicketTypes).where(inArray(eventTicketTypes.eventId, realEventIds));
+    for (const tt of allTicketTypes) {
+      const list = ticketTypesByEvent.get(tt.eventId) ?? [];
+      list.push(tt);
+      ticketTypesByEvent.set(tt.eventId, list);
+    }
+    const allChannels = await db.select().from(salesChannels).where(inArray(salesChannels.eventId, realEventIds));
+    for (const ch of allChannels) {
+      if (ch.salesMode !== "native") continue; // spec §33 — nunca usar canales externos para la simulación
+      const list = channelsByEvent.get(ch.eventId) ?? [];
+      list.push(ch);
+      channelsByEvent.set(ch.eventId, list);
+    }
+  } else {
+    // Los eventos de FASE D en dry-run llevan ids negativos sintéticos (no
+    // existen todavía en BD) — se sintetizan también su ticket type y canal
+    // nativo, con la misma forma que crearía la ejecución real, para que el
+    // plan del dry-run sea representativo.
+    for (const ev of newEvents) {
+      const spec = _dryRunEventSpecById.get(ev.id);
+      if (!spec) continue;
+      ticketTypesByEvent.set(ev.id, [{
+        id: nextDryRunId(), eventId: ev.id, name: spec.priceCents === 0 ? "Entrada gratuita" : "Entrada general",
+        description: null, priceCents: spec.priceCents, currency: "EUR", capacity: spec.capacity,
+        salesStart: null, salesEnd: null, status: "active", metadata: null, createdAt: new Date(), updatedAt: new Date(),
+      } as typeof eventTicketTypes.$inferSelect]);
+      channelsByEvent.set(ev.id, [{
+        id: nextDryRunId(), eventId: ev.id, channelType: "segolife_native", salesMode: "native",
+        externalUrl: null, integrationType: null, integrationId: null, status: "active",
+        isPrimary: true, sortOrder: 0, metadata: null, createdAt: new Date(), updatedAt: new Date(),
+      } as typeof salesChannels.$inferSelect]);
+    }
   }
 
   // ── FASE G: por estudiante, generar la historia ───────────────
@@ -425,6 +449,13 @@ async function ensureTokenRules(): Promise<{ attendanceRuleId: number | null; co
 // FASE C — venue_products
 // ============================================================
 
+// Placeholder negativo — SOLO aparece en memoria durante --dry-run (nunca se
+// persiste). Permite que el resto del pipeline calcule un plan realista
+// incluso cuando la fila real todavía no existe. Un id negativo es imposible
+// de confundir con un id real de MySQL (autoincrement empieza en 1).
+let _dryRunFakeId = -1;
+function nextDryRunId(): number { return _dryRunFakeId--; }
+
 async function ensureVenueProducts(venueBySlug: Map<string, typeof venues.$inferSelect>): Promise<Map<number, typeof venueProducts.$inferSelect[]>> {
   log("\n--- FASE C: catálogo de productos por venue ---");
   const result = new Map<number, typeof venueProducts.$inferSelect[]>();
@@ -438,37 +469,68 @@ async function ensureVenueProducts(venueBySlug: Map<string, typeof venues.$infer
     }
     log(`${venue.name}: crear ${PRODUCT_CATALOG.length} productos (${PRODUCT_CATALOG.map(p => p.name).join(", ")})`);
     const created: typeof venueProducts.$inferSelect[] = [];
-    if (!DRY_RUN) {
-      for (const p of PRODUCT_CATALOG) {
+    for (const p of PRODUCT_CATALOG) {
+      if (!DRY_RUN) {
         const row = await createVenueProduct({ venueId: venue.id, name: p.name, slug: p.slug, category: p.category, price: p.price, metadata: withSimTag(null) });
         created.push(row);
         track("venue_products", row.id);
+      } else {
+        created.push({ id: nextDryRunId(), venueId: venue.id, name: p.name, slug: p.slug, category: p.category, price: p.price, isActive: true, metadata: null, createdAt: new Date(), updatedAt: new Date() } as typeof venueProducts.$inferSelect);
       }
-      result.set(venue.id, created);
     }
+    result.set(venue.id, created);
     count("venue_products_created", PRODUCT_CATALOG.length);
   }
   return result;
 }
 
 // ============================================================
-// FASE D — eventos históricos nuevos
+// FASE D — eventos históricos nuevos (los 7 venues, spec §7 opción A)
 // ============================================================
+// Reemplaza por completo la idea inicial de reutilizar los 10 eventos QA
+// existentes (ver nota en VENUE_SLUGS más arriba) — fechas y precios propios,
+// coherentes con la ventana sept.2025→jul.2026 y con precios variados reales
+// (spec §11: nunca 1,11€ en todos lados).
 
 interface NewEventSpec { venueSlug: string; name: string; month: string; priceCents: number; capacity: number }
 const NEW_EVENT_SPECS: NewEventSpec[] = [
-  { venueSlug: "chin-chin", name: "Chin Chin Opening Season", month: "2025-09", priceCents: 0, capacity: 150 },
-  { venueSlug: "chin-chin", name: "Halloween en Chin Chin", month: "2025-10", priceCents: 800, capacity: 200 },
+  // CASANOVA
+  { venueSlug: "casanova", name: "Casanova — Bienvenida 25/26", month: "2025-09", priceCents: 0, capacity: 250 },
+  { venueSlug: "casanova", name: "Casanova — Halloween Night", month: "2025-10", priceCents: 800, capacity: 250 },
+  { venueSlug: "casanova", name: "Casanova — Fiesta de Navidad", month: "2025-12", priceCents: 1200, capacity: 250 },
+  { venueSlug: "casanova", name: "Casanova — Graduación 25/26", month: "2026-05", priceCents: 1500, capacity: 300 },
+  { venueSlug: "casanova", name: "Casanova — Fiesta Fin de Curso", month: "2026-06", priceCents: 1800, capacity: 300 },
+  // CHIN CHIN
+  { venueSlug: "chin-chin", name: "Chin Chin — Opening Season", month: "2025-09", priceCents: 0, capacity: 150 },
+  { venueSlug: "chin-chin", name: "Chin Chin — Halloween", month: "2025-10", priceCents: 800, capacity: 200 },
+  { venueSlug: "chin-chin", name: "Chin Chin — San Valentín", month: "2026-02", priceCents: 700, capacity: 150 },
+  { venueSlug: "chin-chin", name: "Chin Chin — Graduados 25/26", month: "2026-06", priceCents: 1500, capacity: 200 },
+  // LA FINCA CLUB
   { venueSlug: "la-finca-club", name: "La Finca — Otoño Sessions", month: "2025-10", priceCents: 600, capacity: 180 },
   { venueSlug: "la-finca-club", name: "La Finca — Pre-Navidad", month: "2025-12", priceCents: 1000, capacity: 200 },
+  { venueSlug: "la-finca-club", name: "La Finca — Primavera", month: "2026-03", priceCents: 800, capacity: 180 },
+  { venueSlug: "la-finca-club", name: "La Finca — Fin de Curso", month: "2026-06", priceCents: 1500, capacity: 200 },
+  // LIMONCELLO
+  { venueSlug: "limoncello", name: "Limoncello — Vuelta al Cole", month: "2025-09", priceCents: 0, capacity: 150 },
+  { venueSlug: "limoncello", name: "Limoncello — Noche Italiana", month: "2025-11", priceCents: 1000, capacity: 180 },
+  { venueSlug: "limoncello", name: "Limoncello — Primavera", month: "2026-04", priceCents: 800, capacity: 180 },
+  { venueSlug: "limoncello", name: "Limoncello — Graduación", month: "2026-06", priceCents: 1500, capacity: 200 },
+  // SELFISH POKE
   { venueSlug: "selfish-poke", name: "Selfish Poke Night", month: "2025-11", priceCents: 500, capacity: 100 },
+  { venueSlug: "selfish-poke", name: "Selfish Poke — San Valentín", month: "2026-02", priceCents: 500, capacity: 100 },
+  { venueSlug: "selfish-poke", name: "Selfish Poke — Spring Roll", month: "2026-04", priceCents: 500, capacity: 100 },
+  { venueSlug: "selfish-poke", name: "Selfish Poke — Verano Anticipado", month: "2026-06", priceCents: 800, capacity: 120 },
+  // TANKER EVENTS
   { venueSlug: "tanker-events", name: "Tanker — Warehouse Sessions", month: "2025-11", priceCents: 1200, capacity: 300 },
   { venueSlug: "tanker-events", name: "Tanker — Año Nuevo Chino", month: "2026-02", priceCents: 1000, capacity: 300 },
-  { venueSlug: "chin-chin", name: "Chin Chin — San Valentín", month: "2026-02", priceCents: 700, capacity: 150 },
-  { venueSlug: "la-finca-club", name: "La Finca — Primavera", month: "2026-03", priceCents: 800, capacity: 180 },
-  { venueSlug: "selfish-poke", name: "Selfish Poke — Spring Roll", month: "2026-04", priceCents: 500, capacity: 100 },
   { venueSlug: "tanker-events", name: "Tanker — Semana Santa", month: "2026-04", priceCents: 1200, capacity: 300 },
-  { venueSlug: "casanova", name: "Casanova — Vuelta de Semana Santa", month: "2026-04", priceCents: 800, capacity: 250 },
+  { venueSlug: "tanker-events", name: "Tanker — Closing Party", month: "2026-06", priceCents: 1800, capacity: 350 },
+  // TÍA FELISA
+  { venueSlug: "tia-felisa", name: "Tía Felisa — Bienvenida", month: "2025-09", priceCents: 0, capacity: 150 },
+  { venueSlug: "tia-felisa", name: "Tía Felisa — Nochebuena Universitaria", month: "2025-12", priceCents: 1200, capacity: 180 },
+  { venueSlug: "tia-felisa", name: "Tía Felisa — Primavera", month: "2026-03", priceCents: 800, capacity: 180 },
+  { venueSlug: "tia-felisa", name: "Tía Felisa — Pre-Exámenes", month: "2026-05", priceCents: 1000, capacity: 180 },
+  { venueSlug: "tia-felisa", name: "Tía Felisa — Graduados", month: "2026-06", priceCents: 1500, capacity: 200 },
 ];
 
 function slugify(text: string): string {
@@ -476,7 +538,7 @@ function slugify(text: string): string {
 }
 
 async function ensureHistoricalEvents(venueBySlug: Map<string, typeof venues.$inferSelect>, communityId: number): Promise<typeof events.$inferSelect[]> {
-  log("\n--- FASE D: eventos históricos nuevos (venues sin eventos QA) ---");
+  log(`\n--- FASE D: ${NEW_EVENT_SPECS.length} eventos históricos nuevos (los 7 venues) ---`);
   const created: typeof events.$inferSelect[] = [];
   for (const spec of NEW_EVENT_SPECS) {
     const venue = venueBySlug.get(spec.venueSlug)!;
@@ -512,11 +574,22 @@ async function ensureHistoricalEvents(venueBySlug: Map<string, typeof venues.$in
       track("event_ticket_types", ticketTypeId);
 
       created.push(event);
+    } else {
+      const fakeId = nextDryRunId();
+      created.push({
+        id: fakeId, name: spec.name, slug, description: null, venueId: venue.id,
+        startsAt, endsAt, capacity: spec.capacity, imageUrl: null, status: "active",
+        isFeatured: false, homeSortOrder: 0, sourceType: SIMULATION_TAG, sourceId: null,
+        createdAt: new Date(), updatedAt: new Date(),
+      } as typeof events.$inferSelect);
+      // El pool de ticket types/channels del dry-run se rellena aparte (ver runDryRunEventExtras).
+      _dryRunEventSpecById.set(fakeId, spec);
     }
     count("events_created");
   }
   return created;
 }
+const _dryRunEventSpecById = new Map<number, NewEventSpec>();
 
 // ============================================================
 // FASE E — benefit_definitions históricas
@@ -553,6 +626,16 @@ async function ensureBenefitDefinitions(venueBySlug: Map<string, typeof venues.$
       await db.insert(benefitCommunities).values({ benefitDefinitionId: id, communityId });
       const [row] = await db.select().from(benefitDefinitions).where(eq(benefitDefinitions.id, id)).limit(1);
       result[spec.slug] = row;
+    } else {
+      result[spec.slug] = {
+        id: nextDryRunId(), name: spec.nameEs, slug: spec.slug, description: null, benefitType: spec.benefitType,
+        destinationVenueId: venue.id, destinationEventId: null, productId: null,
+        discountType: spec.benefitType === "discount_percentage" ? "percentage" : null,
+        discountValue: spec.benefitType === "discount_percentage" ? 20 : null,
+        valueMetadata: null, active: true, imageUrl: null,
+        nameEn: spec.nameEs, nameEs: spec.nameEs, descriptionEn: null, descriptionEs: null, termsEn: null, termsEs: null,
+        createdAt: new Date(), updatedAt: new Date(),
+      } as typeof benefitDefinitions.$inferSelect;
     }
     count("benefit_definitions_created");
   }
@@ -598,6 +681,7 @@ async function runPersonaStory(ctx: {
   const weightSum = MONTHS.reduce((s, m) => s + persona.monthlyIntensity[m], 0);
 
   const weightedVenueSlugs = Object.entries(persona.venueWeights).map(([value, weight]) => ({ value, weight }));
+  const alreadyPurchasedEventIds = new Set<number>(); // evita comprar el mismo evento varias veces salvo que ya se hayan agotado los del venue (spec §36: irregularidad coherente, no repetición artificial)
 
   let purchaseIndex = 0;
   for (const month of MONTHS) {
@@ -610,7 +694,9 @@ async function runPersonaStory(ctx: {
       const venue = venueBySlug.get(venueSlug)!;
       const pool = eventPoolByVenue.get(venue.id);
       if (!pool || pool.length === 0) continue;
-      const event = pick(pool);
+      const unpurchasedInPool = pool.filter(e => !alreadyPurchasedEventIds.has(e.id));
+      const event = pick(unpurchasedInPool.length > 0 ? unpurchasedInPool : pool);
+      alreadyPurchasedEventIds.add(event.id);
       const ticketTypes = ticketTypesByEvent.get(event.id)?.filter(t => t.status === "active") ?? [];
       const channels = channelsByEvent.get(event.id) ?? [];
       if (ticketTypes.length === 0 || channels.length === 0) continue;
@@ -676,7 +762,7 @@ async function runPersonaStory(ctx: {
       } else {
         summary.ticketsPurchased++;
         summary.ticketSpendCents += ticketType.priceCents;
-        if (rng() < persona.attendanceConversion) summary.attended++;
+        if (rng() < persona.attendanceConversion) { summary.attended++; summary.tokensEarned += 15; } // estimación — misma regla fixed=15 de FASE B
       }
       count("tickets_purchased");
     }
@@ -740,6 +826,7 @@ async function runPersonaStory(ctx: {
       } else {
         summary.consumptions++;
         summary.commerceSpendCents += totalCents;
+        summary.tokensEarned += Math.round(totalCents / 100 * 0.5); // estimación — misma regla per_euro rate=0.5 de FASE B
       }
       count("consumptions");
     }
@@ -796,6 +883,8 @@ async function runPersonaStory(ctx: {
       }
     } else {
       summary.benefitsGranted++;
+      const usesIt = rng() < (persona.profile === "power" ? 0.8 : persona.profile === "selective" ? 0.6 : 0.4);
+      if (usesIt) summary.benefitsUsed++;
     }
     count("benefits_granted");
   }
