@@ -17,7 +17,7 @@ import mysql from "mysql2/promise";
 import { commerceTransactions, commerceTransactionItems, type CommerceTransaction } from "../../../drizzle/schema";
 import { earnTokens } from "../tokens/tokenEngine";
 import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
-import { resolveIdentity, persistIdentityMapping } from "../integrations/identityResolver";
+import { resolveIdentity, persistIdentityMapping, isConfirmedResolutionMethod } from "../integrations/identityResolver";
 import { recordUnresolvedOperation } from "../integrations/unresolvedOperationsService";
 import type { NormalizedCommerceTransaction } from "../integrations/externalTicketingProvider";
 
@@ -160,7 +160,7 @@ export async function ingestCommerceTransaction(input: IngestCommerceTransaction
     return { status: "processed_unresolved", transaction: row };
   }
 
-  if (identity.method && identity.method !== "previous_mapping") {
+  if (isConfirmedResolutionMethod(identity.method) && identity.method !== "previous_mapping") {
     await persistIdentityMapping({
       provider: input.provider,
       externalCustomerId: input.externalCustomerId,
