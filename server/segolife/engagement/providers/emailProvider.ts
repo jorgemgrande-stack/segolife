@@ -45,12 +45,14 @@ export function createEmailProvider(): NotificationProvider {
         return { status: "skipped", error: "Recipient has no email address" };
       }
       try {
+        const html = message.htmlBody ?? `<p>${message.body}</p>${message.deepLink ? `<p><a href="${message.deepLink}">${message.deepLink}</a></p>` : ""}`;
+        const text = message.plainTextBody ?? message.body;
         const ok = await sendEmail({
           to: message.recipient.email,
           from,
           subject: message.title,
-          html: `<p>${message.body}</p>${message.deepLink ? `<p><a href="${message.deepLink}">${message.deepLink}</a></p>` : ""}`,
-          text: message.body,
+          html,
+          text,
         });
         return ok ? { status: "sent" } : { status: "failed", error: "sendEmail() returned false" };
       } catch (err) {

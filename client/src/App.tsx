@@ -254,8 +254,10 @@ const PlatformsManager = lazy(() => import("./pages/admin/marketing/PlatformsMan
 const TpvScreen = lazy(() => import("./pages/admin/tpv/TpvScreen"));
 const TpvBackoffice = lazy(() => import("./pages/admin/tpv/TpvBackoffice"));
 
-// Plantillas Email
-const EmailTemplatesManager = lazy(() => import("./pages/admin/EmailTemplatesManager"));
+// Plantillas Email — legacy Náyade/Skicenter, ARCHIVADO (spec Communication
+// Center): código intacto, sin importar ni enrutar. /admin/plantillas-email
+// ahora renderiza el mismo Communication Center que /admin/engagement/templates
+// (ver client/src/pages/admin/engagement/TemplatesViewer.tsx).
 const PdfTemplatesManager = lazy(() => import("./pages/admin/PdfTemplatesManager"));
 
 // Series de numeración
@@ -477,7 +479,7 @@ function Router() {
 
       {/* CRM */}
       <Route path="/admin/crm">{() => <Suspense fallback={<AdminLoadingFallback />}><CRMDashboard /></Suspense>}</Route>
-      <Route path="/admin/plantillas-email">{() => <Suspense fallback={<AdminLoadingFallback />}><EmailTemplatesManager /></Suspense>}</Route>
+      <Route path="/admin/plantillas-email">{() => <Suspense fallback={<AdminLoadingFallback />}><EngagementTemplatesViewer /></Suspense>}</Route>
       <Route path="/admin/partners">{() => <Suspense fallback={<AdminLoadingFallback />}><PartnersManager /></Suspense>}</Route>
       <Route path="/admin/partners/facturacion">{() => <Suspense fallback={<AdminLoadingFallback />}><PartnerBillingManager /></Suspense>}</Route>
       <Route path="/admin/crm/leads">{() => <Suspense fallback={<AdminLoadingFallback />}><CRMDashboard /></Suspense>}</Route>

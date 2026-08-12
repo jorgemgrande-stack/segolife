@@ -17,6 +17,8 @@ import { notifications, notificationDeliveries, type Notification } from "../../
 import { isChannelAllowed, type NotificationCategory, type NotificationChannel } from "./notificationPreferencesService";
 import { getProvider } from "./providers/providerRegistry";
 import type { RenderedTemplate } from "./templates";
+import { resolveCommunicationLocale, pickByLocale } from "./communicationLocale";
+import type { NotificationEmailMetadata } from "./notificationMetadata";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -47,6 +49,15 @@ export interface CreateNotificationInput {
   additionalChannels?: NotificationChannel[];
   /** Datos de contacto ya resueltos — el servicio nunca consulta la tabla users. */
   recipient?: { email?: string | null; phone?: string | null };
+  /**
+   * Si true, los `additionalChannels` se envían de forma SÍNCRONA ahora
+   * mismo (mismo camino que in_app), en vez de encolarse como 'pending'
+   * para que engagementScheduler.ts los recoja en su próximo tick. Necesario
+   * para comunicaciones de seguridad/urgentes (p.ej. password reset) que no
+   * pueden depender de ENGAGEMENT_DELIVERY_ENABLED estar en true ni esperar
+   * hasta 1 minuto. Por defecto false (comportamiento Fase 7 original).
+   */
+  sendImmediately?: boolean;
 }
 
 export type CreateNotificationResult =
@@ -58,6 +69,12 @@ export async function createNotification(input: CreateNotificationInput, db?: Db
 
   const [existing] = await conn.select().from(notifications).where(eq(notifications.idempotencyKey, input.idempotencyKey)).limit(1);
   if (existing) return { status: "already_exists", notification: existing };
+
+  const metadata: NotificationEmailMetadata = {};
+  if (input.rendered.emailHtmlEn != null || input.rendered.emailHtmlEs != null) {
+    metadata.emailHtml = { en: input.rendered.emailHtmlEn ?? null, es: input.rendered.emailHtmlEs ?? null };
+    metadata.emailText = { en: input.rendered.emailTextEn ?? null, es: input.rendered.emailTextEs ?? null };
+  }
 
   const [insertResult] = await conn.insert(notifications).ignore().values({
     userId: input.userId,
@@ -79,7 +96,7 @@ export async function createNotification(input: CreateNotificationInput, db?: Db
     campaignId: input.campaignId ?? null,
     idempotencyKey: input.idempotencyKey,
     expiresAt: input.expiresAt ?? null,
-    metadata: {},
+    metadata: metadata as Record<string, unknown>,
   });
   const insertId = (insertResult as unknown as { insertId: number }).insertId;
   const [notification] = await conn.select().from(notifications).where(eq(notifications.id, insertId)).limit(1);
@@ -88,12 +105,31 @@ export async function createNotification(input: CreateNotificationInput, db?: Db
   await createAndProcessDelivery(notification, "in_app", input.recipient, conn);
 
   for (const channel of input.additionalChannels ?? []) {
-    await createDeliveryIfAllowed(notification, channel, input.category, input.audienceType, input.recipient, conn);
+    if (channel === "in_app") continue; // ya procesado arriba, nunca duplicar
+    if (input.sendImmediately) {
+      await createAndProcessDelivery(notification, channel, input.recipient, conn);
+    } else {
+      await createDeliveryIfAllowed(notification, channel, input.category, input.audienceType, input.recipient, conn);
+    }
   }
 
   return { status: "created", notification };
 }
 
+/** Título/cuerpo/html/texto en el idioma correcto para ESTE destinatario — nunca hardcodear .titleEn/.bodyEn (ver communicationLocale.ts). */
+async function resolveLocalizedContent(notification: Notification, conn: DbHandle) {
+  const locale = await resolveCommunicationLocale({ userId: notification.userId, communityId: notification.communityId }, conn);
+  const meta = (notification.metadata ?? {}) as NotificationEmailMetadata;
+  return {
+    locale,
+    title: pickByLocale(locale, notification.titleEn, notification.titleEs),
+    body: pickByLocale(locale, notification.bodyEn, notification.bodyEs),
+    htmlBody: meta.emailHtml ? pickByLocale(locale, meta.emailHtml.en, meta.emailHtml.es) : null,
+    plainTextBody: meta.emailText ? pickByLocale(locale, meta.emailText.en, meta.emailText.es) : null,
+  };
+}
+
+/** Envía AHORA, de forma síncrona — usado para in_app (siempre) y para additionalChannels con sendImmediately:true. */
 async function createAndProcessDelivery(
   notification: Notification,
   channel: NotificationChannel,
@@ -112,10 +148,18 @@ async function createAndProcessDelivery(
   const insertId = (insertResult as unknown as { insertId: number }).insertId;
   if (!insertId) return; // ya existía (unique notification+channel) — no reprocesar
 
+  if (channel !== "in_app" && !provider.capabilities.configured) {
+    await conn.update(notificationDeliveries).set({ status: "skipped", lastError: `${channel} provider not configured` }).where(eq(notificationDeliveries.id, insertId));
+    return;
+  }
+
+  const content = await resolveLocalizedContent(notification, conn);
   const result = await provider.send({
     userId: notification.userId,
-    title: notification.titleEn, // el idioma de envío real lo decide el llamador vía i18nResolver — aquí solo se registra el intento
-    body: notification.bodyEn,
+    title: content.title,
+    body: content.body,
+    htmlBody: content.htmlBody,
+    plainTextBody: content.plainTextBody,
     deepLink: notification.deepLink,
     imageUrl: notification.imageUrl,
     recipient: recipient ?? {},
