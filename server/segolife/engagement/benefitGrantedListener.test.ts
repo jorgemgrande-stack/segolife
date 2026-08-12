@@ -12,27 +12,32 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockCreateNotification, tableRows, callState } = vi.hoisted(() => ({
-  mockCreateNotification: vi.fn(),
-  tableRows: { definitions: [] as any[], communities: [] as any[] },
-  callState: { fromCallCount: 0 },
+const { mockCreateNotification, tableRows } = vi.hoisted(() => ({
+  mockCreateNotification: vi.fn().mockResolvedValue({ status: "created", notification: { id: 1 } }),
+  tableRows: { definitions: [] as any[], communities: [] as any[], users: [] as any[] },
 }));
 
 vi.mock("./notificationService", () => ({ createNotification: mockCreateNotification }));
 vi.mock("mysql2/promise", () => ({ default: { createPool: () => ({}) } }));
 vi.mock("drizzle-orm/mysql2", () => ({
-  // handleBenefitGrantedForEngagement siempre consulta benefit_definitions
-  // PRIMERO y, solo si hay communityId, communities DESPUÉS — nunca al
-  // revés ni en paralelo — así que un contador de llamadas a .from() basta
-  // para distinguir ambas consultas sin depender de internals de Drizzle.
-  // El contador vive en `callState` (fuera de esta factory, que Drizzle solo
-  // invoca UNA VEZ al cargar el módulo) para poder resetearlo en beforeEach.
+  // A diferencia de un contador de llamadas (frágil si se reordenan las
+  // queries), esta mock enruta por IDENTIDAD del objeto tabla que
+  // benefitGrantedListener.ts pasa a .from(...) — benefitDefinitions/
+  // communities/users son los objetos REALES importados de drizzle/schema
+  // (no mockeado), así que comparar por referencia es robusto de verdad.
   drizzle: () => {
     const b: any = {};
+    let lastTable: unknown = null;
     b.select = () => b;
-    b.from = () => { callState.fromCallCount++; return b; };
+    b.from = (table: unknown) => { lastTable = table; return b; };
     b.where = () => b;
-    b.limit = () => Promise.resolve(callState.fromCallCount === 1 ? tableRows.definitions : tableRows.communities);
+    b.limit = async () => {
+      const schema = await import("../../../drizzle/schema");
+      if (lastTable === schema.benefitDefinitions) return tableRows.definitions;
+      if (lastTable === schema.communities) return tableRows.communities;
+      if (lastTable === schema.users) return tableRows.users;
+      return [];
+    };
     return b;
   },
 }));
@@ -51,9 +56,10 @@ function payload(overrides: Partial<BenefitGrantedPayload> = {}): BenefitGranted
 
 beforeEach(() => {
   mockCreateNotification.mockReset();
-  callState.fromCallCount = 0;
+  mockCreateNotification.mockResolvedValue({ status: "created", notification: { id: 1 } });
   tableRows.definitions = [{ id: 1, name: "Free Entry Tomorrow", nameEn: "Free Entry Tomorrow", nameEs: "Entrada gratis mañana" }];
   tableRows.communities = [{ id: 1, slug: "ie" }];
+  tableRows.users = [{ email: "student@example.invalid" }];
 });
 
 describe("benefitGrantedListener — handleBenefitGrantedForEngagement", () => {
@@ -91,5 +97,21 @@ describe("benefitGrantedListener — handleBenefitGrantedForEngagement", () => {
     tableRows.definitions = [];
     await expect(handleBenefitGrantedForEngagement(payload())).resolves.toBeUndefined();
     expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  it("v2: añade el canal email (antes solo entregaba in-app pese a que la plantilla lo declaraba), enviado de forma inmediata con el email real del destinatario", async () => {
+    await handleBenefitGrantedForEngagement(payload());
+    const input = mockCreateNotification.mock.calls[0][0];
+    expect(input.additionalChannels).toEqual(["email"]);
+    expect(input.sendImmediately).toBe(true);
+    expect(input.recipient).toEqual({ email: "student@example.invalid" });
+    expect(input.templateVersion).toBe(2);
+  });
+
+  it("si el usuario no tiene email (huérfano/OAuth heredado), recipient.email queda null en vez de lanzar", async () => {
+    tableRows.users = [{ email: null }];
+    await handleBenefitGrantedForEngagement(payload());
+    const input = mockCreateNotification.mock.calls[0][0];
+    expect(input.recipient).toEqual({ email: null });
   });
 });

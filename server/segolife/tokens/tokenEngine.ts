@@ -41,6 +41,7 @@ import {
   applyCampaignToAmount,
 } from "./tokenRuleEngine";
 import type { TokenWallet, TokenLedgerEntry, TokenRule } from "../../../drizzle/schema";
+import { emitEngagementEvent } from "../engagement/engagementEvents";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -173,6 +174,20 @@ export async function earnTokens(input: EarnTokensInput, db?: AnyDbHandle): Prom
     metadata: breakdown as unknown as Record<string, unknown>,
     createdByUserId: input.createdByUserId,
   }, conn);
+
+  // Communication Center: "tokens_earned" ya existía en el catálogo tipado
+  // de engagementEvents.ts pero nunca se emitía (confirmado por auditoría) —
+  // mismo patrón que emitEngagementEvent("ticket_purchased", ...) en
+  // checkoutService.ts. El listener decide si el monto merece email
+  // (política de relevancia), nunca este motor.
+  emitEngagementEvent("tokens_earned", {
+    userId: input.userId,
+    communityId: input.communityId ?? null,
+    amount: final,
+    ledgerId: ledger.id,
+    venueId: input.venueId ?? null,
+    eventId: input.eventId ?? null,
+  });
 
   return { wallet, ledger, breakdown };
 }

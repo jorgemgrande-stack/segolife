@@ -11,6 +11,7 @@ import {
   type Venue,
   type SalesChannel,
 } from "../../drizzle/schema";
+import { emitEngagementEvent } from "../segolife/engagement/engagementEvents";
 
 // Pool persistente top-level — mismo patrón que server/db/studentsDb.ts / venuesDb.ts.
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
@@ -256,17 +257,45 @@ export interface UpdateEventFields {
   imageUrl?: string | null;
 }
 
+/**
+ * Communication Center: dispara `event_updated` SOLO si cambia un campo
+ * material (fecha/hora/venue) — nunca por editar descripción/nombre/imagen
+ * (spec: "no enviar email por editar una coma"). No existía ningún trigger
+ * aquí antes (confirmado por auditoría).
+ */
 export async function updateEvent(id: number, fields: UpdateEventFields, db?: DbHandle): Promise<SegolifeEvent | null> {
   const conn = db ?? (await getDb());
+  const [before] = await conn.select().from(events).where(eq(events.id, id)).limit(1);
+
   await conn.update(events).set(fields).where(eq(events.id, id));
   const [updated] = await conn.select().from(events).where(eq(events.id, id)).limit(1);
-  return updated ?? null;
+  if (!updated) return null;
+
+  if (before) {
+    const changedFields: Array<"startsAt" | "endsAt" | "venueId"> = [];
+    if (fields.startsAt !== undefined && fields.startsAt.getTime() !== before.startsAt.getTime()) changedFields.push("startsAt");
+    if (fields.endsAt !== undefined && (fields.endsAt?.getTime() ?? null) !== (before.endsAt?.getTime() ?? null)) changedFields.push("endsAt");
+    if (fields.venueId !== undefined && fields.venueId !== before.venueId) changedFields.push("venueId");
+    if (changedFields.length > 0 && updated.status === "active") {
+      emitEngagementEvent("event_updated", { eventId: id, changedFields });
+    }
+  }
+
+  return updated;
 }
 
+/** Communication Center: active→inactive de un evento YA activo se trata como cancelación real (no hay un estado "cancelled" propio hoy — ver auditoría). Nunca dispara al revés (reactivar) ni si ya estaba inactive. */
 export async function setEventActive(id: number, active: boolean, db?: DbHandle): Promise<SegolifeEvent | null> {
   const conn = db ?? (await getDb());
+  const [before] = await conn.select().from(events).where(eq(events.id, id)).limit(1);
+
   await conn.update(events).set({ status: active ? "active" : "inactive" }).where(eq(events.id, id));
   const [updated] = await conn.select().from(events).where(eq(events.id, id)).limit(1);
+
+  if (before?.status === "active" && !active) {
+    emitEngagementEvent("event_cancelled", { eventId: id });
+  }
+
   return updated ?? null;
 }
 

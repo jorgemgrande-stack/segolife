@@ -334,7 +334,7 @@ const navItems = [
       { label: "Datos del negocio",   href: "/admin/configuracion/sitio" },
       { label: "Estado del sistema",  href: "/admin/configuracion/estado" },
       { label: "Onboarding",          href: "/admin/onboarding" },
-      { label: "Plantillas de Email", href: "/admin/plantillas-email" },
+      { label: "Communication Center", href: "/admin/plantillas-email" },
       { label: "Cuentas de Email", href: "/admin/configuracion/email", flagKey: "commercial_email_enabled" },
     ],
   },

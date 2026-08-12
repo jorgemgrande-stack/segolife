@@ -12,9 +12,11 @@ import {
 } from "../segolife/engagement/campaignService";
 import { previewAudienceCount, type AudienceDefinition } from "../segolife/engagement/audienceEngine";
 import { listDeliveries, listFailedDeliveries, retryDelivery, cancelDelivery, listAllNotifications } from "../segolife/engagement/notificationsDb";
-import { ENGAGEMENT_TEMPLATES } from "../segolife/engagement/templates";
+import { ENGAGEMENT_TEMPLATES, renderTemplate } from "../segolife/engagement/templates";
 import { getProvider } from "../segolife/engagement/providers/providerRegistry";
 import { createNotification } from "../segolife/engagement/notificationService";
+import { resolveWhatsappPolicy } from "../segolife/engagement/communicationChannelMatrix";
+import { PREVIEW_VARIABLES_EN, PREVIEW_VARIABLES_ES } from "../segolife/engagement/templatePreviewData";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { engagementCampaigns } from "../../drizzle/schema";
@@ -123,7 +125,59 @@ export const engagementRouter = router({
     }),
 
   // ── Templates (solo lectura — gestión real vive en código, spec punto 78) ─
-  listTemplates: engagementTemplatesProcedure.query(() => Object.values(ENGAGEMENT_TEMPLATES)),
+  // Nunca devolver buildEmailBody (función, no serializable por tRPC) — solo
+  // los campos de datos del catálogo.
+  listTemplates: engagementTemplatesProcedure.query(() =>
+    Object.values(ENGAGEMENT_TEMPLATES).map(({ buildEmailBody: _fn, ...rest }) => ({
+      ...rest,
+      whatsappPolicy: resolveWhatsappPolicy(rest.key),
+    }))
+  ),
+
+  /** Preview con datos ficticios (spec punto 34) — nunca toca BD, nunca usa un estudiante real. */
+  previewTemplate: engagementTemplatesProcedure
+    .input(z.object({ templateKey: z.string() }))
+    .query(({ input }) => {
+      const template = ENGAGEMENT_TEMPLATES[input.templateKey];
+      if (!template) throw new TRPCError({ code: "NOT_FOUND", message: "Plantilla no encontrada" });
+      return renderTemplate(input.templateKey, PREVIEW_VARIABLES_EN, "/ie/example", PREVIEW_VARIABLES_ES, "/ie/profile/preferences");
+    }),
+
+  /** Estado de providers (spec punto 63) — nunca falsas luces verdes. */
+  getProviderStatus: engagementTemplatesProcedure.query(() => ({
+    email: { configured: getProvider("email").capabilities.configured, label: getProvider("email").capabilities.configured ? "Configured" : "Not configured" },
+    inApp: { configured: true, label: "Active" },
+    whatsapp: { configured: false, label: "Coming soon (GHL)" },
+    push: { configured: getProvider("push").capabilities.configured, label: getProvider("push").capabilities.configured ? "Configured" : "Not configured" },
+  })),
+
+  /** Enviar prueba de UNA plantilla concreta a un email explícito (spec punto 35) — nunca a estudiantes reales, requiere provider real configurado. */
+  sendTestForTemplate: engagementSendProcedure
+    .input(z.object({ templateKey: z.string(), testEmail: z.string().email() }))
+    .mutation(async ({ ctx, input }) => {
+      const template = ENGAGEMENT_TEMPLATES[input.templateKey];
+      if (!template) throw new TRPCError({ code: "NOT_FOUND", message: "Plantilla no encontrada" });
+      if (!template.channels.includes("email")) return { ok: false, message: "Esta plantilla no soporta el canal email" };
+      const emailProvider = getProvider("email");
+      if (!emailProvider.capabilities.configured) return { ok: false, message: "Email provider not configured (SEGOLIFE_ENGAGEMENT_EMAIL_FROM)" };
+
+      const rendered = renderTemplate(input.templateKey, PREVIEW_VARIABLES_EN, "/ie/example", PREVIEW_VARIABLES_ES, "/ie/profile/preferences");
+      const result = await createNotification({
+        userId: ctx.user.id,
+        communityId: null,
+        type: `test_${template.key}`,
+        category: template.category,
+        audienceType: "transactional",
+        rendered,
+        templateKey: template.key,
+        templateVersion: template.version,
+        idempotencyKey: `test_send:${template.key}:${ctx.user.id}:${Date.now()}`,
+        additionalChannels: ["email"],
+        sendImmediately: true,
+        recipient: { email: input.testEmail },
+      });
+      return { ok: true, notificationId: result.notification.id };
+    }),
 
   // ── Notificaciones creadas (solo lectura, spec punto 33) ───────────────────
   listNotifications: engagementViewProcedure.query(() => listAllNotifications(100)),
@@ -160,6 +214,7 @@ export const engagementRouter = router({
         rendered: { titleEn: input.title, titleEs: input.title, bodyEn: input.body, bodyEs: input.body, deepLink: null },
         idempotencyKey: `test_send:${ctx.user.id}:${Date.now()}`,
         additionalChannels: input.channel === "in_app" ? [] : [input.channel],
+        sendImmediately: true,
         recipient: ctx.user.email ? { email: ctx.user.email } : undefined,
       });
       return { ok: true, notificationId: result.notification.id };

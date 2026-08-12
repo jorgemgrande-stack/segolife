@@ -17,7 +17,7 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { benefitEvents, type BenefitGrantedPayload } from "../benefits/benefitEvents";
-import { benefitDefinitions, communities } from "../../../drizzle/schema";
+import { benefitDefinitions, communities, users } from "../../../drizzle/schema";
 import { createNotification } from "./notificationService";
 import { renderTemplate } from "./templates";
 
@@ -43,6 +43,12 @@ export async function handleBenefitGrantedForEngagement(payload: BenefitGrantedP
     { benefitName: benefitNameEs }
   );
 
+  // v2 (Communication Center): la plantilla ya declaraba email como canal
+  // soportado, pero nunca se pasaba additionalChannels — nunca se intentaba
+  // el envío. sendImmediately:true porque "beneficio desbloqueado" es un
+  // momento puntual, no debe esperar al próximo tick del scheduler.
+  const [recipient] = await _db.select({ email: users.email }).from(users).where(eq(users.id, payload.userId)).limit(1);
+
   await createNotification({
     userId: payload.userId,
     communityId: payload.communityId,
@@ -51,10 +57,13 @@ export async function handleBenefitGrantedForEngagement(payload: BenefitGrantedP
     audienceType: "transactional",
     rendered,
     templateKey: "benefit_granted",
-    templateVersion: 1,
+    templateVersion: 2,
     sourceType: "user_benefit",
     sourceId: payload.userBenefitId,
     idempotencyKey: `benefit_granted:${payload.userBenefitId}`,
+    additionalChannels: ["email"],
+    sendImmediately: true,
+    recipient: { email: recipient?.email ?? null },
   });
 }
 

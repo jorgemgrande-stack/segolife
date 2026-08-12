@@ -160,6 +160,22 @@ export interface OrderRefundedPayload {
   partial: boolean;
 }
 
+// ─── Communication Center — EventUpdated/EventCancelled ───────────────────────
+// No existían ni el tipo de evento ni ningún trigger real (confirmado por
+// auditoría) — `events.ts`/`eventsDb.ts` solo tenían update()/setActive() sin
+// disparar nada. A diferencia del resto del catálogo, estos dos son "fan-out"
+// (N destinatarios: todo comprador con ticket pagado para el evento) — el
+// propio payload NO lleva userId, el listener resuelve la lista.
+
+export interface EventUpdatedPayload {
+  eventId: number;
+  changedFields: Array<"startsAt" | "endsAt" | "venueId">;
+}
+
+export interface EventCancelledPayload {
+  eventId: number;
+}
+
 export interface EngagementDomainEvents {
   benefit_granted: BenefitGrantedPayload;
   benefit_expiring: BenefitExpiringPayload;
@@ -179,6 +195,8 @@ export interface EngagementDomainEvents {
   ticket_issued: TicketIssuedPayload;
   ticket_checked_in: TicketCheckedInPayload;
   order_refunded: OrderRefundedPayload;
+  event_updated: EventUpdatedPayload;
+  event_cancelled: EventCancelledPayload;
 }
 
 export type EngagementEventType = keyof EngagementDomainEvents;

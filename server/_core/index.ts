@@ -26,6 +26,9 @@ import { startCancellationStaleJob } from "../cancellationStaleJob";
 import { startEmailAutomationJob } from "../emailAutomationJob";
 import { startTaxReminderJob } from "../taxReminderJob";
 import { registerBenefitGrantedListener } from "../segolife/engagement/benefitGrantedListener";
+import { registerTicketPurchasedListener } from "../segolife/engagement/ticketPurchasedListener";
+import { registerTokensEarnedListener } from "../segolife/engagement/tokensEarnedListener";
+import { registerEventLifecycleListeners } from "../segolife/engagement/eventLifecycleListener";
 import { startEngagementScheduler, isEngagementDeliveryEnabled } from "../segolife/engagement/engagementScheduler";
 import { startEmailIngestionJob } from "../services/emailTpvIngestionService";
 import { startExpenseEmailIngestionJob } from "../services/expenseEmailIngestionService";
@@ -720,6 +723,13 @@ verifyDatabaseConnectivity()
   // directamente) — se registra siempre. El scheduler de deliveries SÍ
   // requiere el kill switch explícito (spec punto 61-63, nunca default true).
   .then(() => { registerBenefitGrantedListener(); })
+  // Communication Center — TicketPurchased estaba emitido desde Fase 8
+  // (checkoutService.ts) pero sin ningún listener conectado (evento "al
+  // vacío", confirmado por auditoría). Mismo criterio: in-process, siempre
+  // registrado, nunca depende del kill switch del scheduler.
+  .then(() => { registerTicketPurchasedListener(); })
+  .then(() => { registerTokensEarnedListener(); })
+  .then(() => { registerEventLifecycleListeners(); })
   .then(() => {
     if (isEngagementDeliveryEnabled()) {
       startEngagementScheduler();

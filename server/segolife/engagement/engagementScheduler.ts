@@ -10,9 +10,11 @@ import cron, { type ScheduledTask } from "node-cron";
 import { eq, and, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { engagementCampaigns, notificationDeliveries, notifications, type NotificationDelivery } from "../../../drizzle/schema";
+import { engagementCampaigns, notificationDeliveries, notifications, users, type NotificationDelivery } from "../../../drizzle/schema";
 import { sendCampaignNow } from "./campaignService";
 import { getProvider } from "./providers/providerRegistry";
+import { resolveCommunicationLocale, pickByLocale } from "./communicationLocale";
+import type { NotificationEmailMetadata } from "./notificationMetadata";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -37,13 +39,30 @@ export async function processPendingDelivery(delivery: NotificationDelivery): Pr
     return;
   }
 
+  // Idioma correcto para ESTE destinatario — nunca .titleEn/.bodyEn directo
+  // (regla no negociable IE→en/UVA→es, ver communicationLocale.ts). Antes de
+  // este fix, todo envío externo (email/push/whatsapp) salía siempre en
+  // inglés sin mirar la comunidad de origen.
+  const locale = await resolveCommunicationLocale({ userId: notification.userId, communityId: notification.communityId }, _db);
+  const meta = (notification.metadata ?? {}) as NotificationEmailMetadata;
+
+  // Destinatario real resuelto AQUÍ, en el momento de la entrega (nunca
+  // guardado en la notificación) — evita datos de contacto obsoletos en un
+  // envío programado lejano. Antes de este fix, `recipient` llegaba siempre
+  // vacío al provider, así que emailProvider.ts descartaba el envío
+  // ("Recipient has no email address") pese a que el resto de la tubería
+  // funcionaba — ningún email vía scheduler llegaba a intentarse de verdad.
+  const [recipientUser] = await _db.select({ email: users.email, phone: users.phone }).from(users).where(eq(users.id, notification.userId)).limit(1);
+
   const result = await provider.send({
     userId: notification.userId,
-    title: notification.titleEn,
-    body: notification.bodyEn,
+    title: pickByLocale(locale, notification.titleEn, notification.titleEs),
+    body: pickByLocale(locale, notification.bodyEn, notification.bodyEs),
+    htmlBody: meta.emailHtml ? pickByLocale(locale, meta.emailHtml.en, meta.emailHtml.es) : null,
+    plainTextBody: meta.emailText ? pickByLocale(locale, meta.emailText.en, meta.emailText.es) : null,
     deepLink: notification.deepLink,
     imageUrl: notification.imageUrl,
-    recipient: {}, // TODO(Fase 8): resolver email/teléfono real del destinatario en el momento de la entrega — hoy solo in_app/email de test lo necesitan y se resuelven en notificationService.ts al crear
+    recipient: { email: recipientUser?.email ?? null, phone: recipientUser?.phone ?? null },
   });
 
   await _db.update(notificationDeliveries).set({

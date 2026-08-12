@@ -10,27 +10,93 @@
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import express, { type Request, type Response, type Router } from "express";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, asc, eq, gt, isNull } from "drizzle-orm";
 import { getDb } from "./db";
-import { users, passwordResetTokens } from "../drizzle/schema";
-import { buildPasswordResetHtml } from "./emailTemplates";
-import { sendEmail } from "./mailer";
-import { logDirectEmail } from "./emailManager";
-import { getSystemSettingSync } from "./config";
+import { users, passwordResetTokens, userCommunities, notificationDeliveries } from "../drizzle/schema";
+import { createNotification } from "./segolife/engagement/notificationService";
+import { renderTemplate } from "./segolife/engagement/templates";
 
 // ─── Configuración ────────────────────────────────────────────────────────────
 const TOKEN_EXPIRY_MINUTES = 60; // El enlace caduca en 1 hora
 const BCRYPT_ROUNDS = 12;
 
-async function sendResetEmail(to: string, resetUrl: string, name: string) {
-  const html = buildPasswordResetHtml({ name: name ?? "", resetUrl, expiryMinutes: TOKEN_EXPIRY_MINUTES });
-  const resetSubject = `Recuperar contraseña — ${getSystemSettingSync("brand_name", "Skicenter")}`;
-  const sent = await sendEmail({ to, subject: resetSubject, html });
-  logDirectEmail({ templateKey: "password_reset", triggerEvent: "password_reset_requested", recipientEmail: to, subject: resetSubject, sent }).catch(() => {});
-  if (!sent) {
-    // Fallback: imprimir en consola para desarrollo
-    console.log(`\n[PasswordReset] 📧 Enlace de recuperación para ${to}:\n  ${resetUrl}\n`);
+type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
+
+/**
+ * Migrado al Communication Center (Segolife) — antes usaba
+ * server/emailTemplates.ts (branding Náyade/Skicenter heredado, incl. el
+ * fallback de asunto "Recuperar contraseña — Skicenter" si `brand_name` no
+ * estaba sembrado). Nunca se toca aquí la generación/validación del token —
+ * solo qué plantilla/remitente construye el email.
+ */
+async function sendResetEmail(user: { id: number; email: string; name: string | null }, resetUrl: string, tokenId: number, db: Db) {
+  // Comunidad de origen best-effort (para resolver EN/ES) — un usuario de
+  // staff sin comunidad simplemente cae al fallback de plataforma "es".
+  const [membership] = await db.select({ communityId: userCommunities.communityId })
+    .from(userCommunities).where(eq(userCommunities.userId, user.id)).orderBy(asc(userCommunities.joinedAt)).limit(1);
+  const communityId = membership?.communityId ?? null;
+
+  const rendered = renderTemplate("password_reset_requested", { expiryMinutes: String(TOKEN_EXPIRY_MINUTES) }, resetUrl);
+
+  const result = await createNotification({
+    userId: user.id,
+    communityId,
+    type: "password_reset_requested",
+    category: "account",
+    audienceType: "transactional",
+    rendered,
+    templateKey: "password_reset_requested",
+    templateVersion: 1,
+    sourceType: "password_reset_token",
+    sourceId: tokenId,
+    // Único por TOKEN (no por usuario) — cada solicitud de reset genera un
+    // token nuevo y debe poder enviar su propio email, a diferencia de
+    // benefit_granted/ticket_purchased donde el idempotencyKey identifica
+    // una entidad de negocio ya única de por sí.
+    idempotencyKey: `password_reset_requested:${tokenId}`,
+    additionalChannels: ["email"],
+    sendImmediately: true,
+    recipient: { email: user.email },
+  }, db as any);
+
+  // Fallback de desarrollo: si el provider de email no está configurado
+  // (SEGOLIFE_ENGAGEMENT_EMAIL_FROM vacío en local), imprimir el enlace en
+  // consola — mismo comportamiento de antes, ahora leído de la entrega real.
+  if (result.status === "created") {
+    const [delivery] = await db.select({ status: notificationDeliveries.status })
+      .from(notificationDeliveries)
+      .where(and(eq(notificationDeliveries.notificationId, result.notification.id), eq(notificationDeliveries.channel, "email")))
+      .limit(1);
+    if (delivery?.status !== "sent") {
+      console.log(`\n[PasswordReset] 📧 Enlace de recuperación para ${user.email}:\n  ${resetUrl}\n`);
+    }
   }
+}
+
+/** Notificación de seguridad — hueco real detectado en auditoría (PasswordChanged nunca se notificaba). Solo email — el usuario puede no tener sesión activa en este dispositivo para ver un in-app. */
+async function sendPasswordChangedNotification(userId: number, db: Db) {
+  const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!user?.email) return;
+  const [membership] = await db.select({ communityId: userCommunities.communityId })
+    .from(userCommunities).where(eq(userCommunities.userId, userId)).orderBy(asc(userCommunities.joinedAt)).limit(1);
+
+  const rendered = renderTemplate("password_changed", {});
+  await createNotification({
+    userId,
+    communityId: membership?.communityId ?? null,
+    type: "password_changed",
+    category: "account",
+    audienceType: "transactional",
+    rendered,
+    templateKey: "password_changed",
+    templateVersion: 1,
+    sourceType: "user",
+    sourceId: userId,
+    idempotencyKey: `password_changed:${userId}:${Date.now()}`,
+    additionalChannels: ["email"],
+    sendImmediately: true,
+    recipient: { email: user.email },
+  }, db as any);
 }
 
 // ─── Router Express ───────────────────────────────────────────────────────────
@@ -82,11 +148,12 @@ export function createPasswordResetRouter(): Router {
       const rawToken = crypto.randomBytes(48).toString("hex");
       const expiresAt = new Date(Date.now() + TOKEN_EXPIRY_MINUTES * 60 * 1000);
 
-      await db.insert(passwordResetTokens).values({
+      const [tokenInsertResult] = await db.insert(passwordResetTokens).values({
         userId: user.id,
         token: rawToken,
         expiresAt,
       });
+      const tokenId = (tokenInsertResult as unknown as { insertId: number }).insertId;
 
       // Construir URL de reset
       const baseUrl = (origin && typeof origin === "string")
@@ -94,7 +161,7 @@ export function createPasswordResetRouter(): Router {
         : (process.env.APP_URL ?? "http://localhost:3000");
       const resetUrl = `${baseUrl}/nueva-contrasena?token=${rawToken}`;
 
-      await sendResetEmail(user.email ?? email, resetUrl, user.name ?? "");
+      await sendResetEmail({ id: user.id, email: user.email ?? email, name: user.name ?? "" }, resetUrl, tokenId, db);
 
       res.json({ ok: true, message: "Si el email existe, recibirás un enlace en breve." });
     } catch (err) {
@@ -161,6 +228,13 @@ export function createPasswordResetRouter(): Router {
         .update(passwordResetTokens)
         .set({ usedAt: now })
         .where(eq(passwordResetTokens.id, resetToken.id));
+
+      // Hueco real detectado en auditoría: PasswordChanged nunca se
+      // notificaba. Best-effort — un fallo aquí nunca debe impedir responder
+      // 200 (la contraseña ya se cambió correctamente).
+      sendPasswordChangedNotification(resetToken.userId, db).catch(err => {
+        console.error("[PasswordReset] No se pudo enviar la notificación de password_changed:", err);
+      });
 
       res.json({ ok: true, message: "Contraseña actualizada correctamente." });
     } catch (err) {
