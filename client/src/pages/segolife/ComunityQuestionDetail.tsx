@@ -46,7 +46,7 @@ export default function ComunityQuestionDetail() {
 
   if (isLoading || !data) {
     return (
-      <SegolifeAppShell requireAuth title="COMUNITY">
+      <SegolifeAppShell requireAuth title="Comunity">
         <SegolifePageContainer><div className="flex justify-center py-16"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div></SegolifePageContainer>
       </SegolifeAppShell>
     );

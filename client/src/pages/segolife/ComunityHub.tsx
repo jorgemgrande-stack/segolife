@@ -23,11 +23,11 @@ export default function ComunityHub() {
   const { slug } = useCommunity();
 
   return (
-    <SegolifeAppShell requireAuth title="COMUNITY">
+    <SegolifeAppShell requireAuth title="Comunity">
       <SegolifePageContainer className="space-y-4">
         <div className="flex items-center gap-2">
           <Vote className="size-5 text-primary" />
-          <h1 className="text-xl font-semibold text-foreground">COMUNITY</h1>
+          <h1 className="text-xl font-semibold text-foreground">Comunity</h1>
         </div>
 
         <Tabs defaultValue="activas">
