@@ -133,6 +133,17 @@ export interface VenueSyncOptions {
   futureUntilDays?: number;
   /** spec §39-40 — compras/asistencias anteriores a esta fecha se persisten pero NUNCA generan tokens/Benefits. */
   loyaltyEffectiveFrom?: Date | null;
+  /**
+   * Casanova Historical Validation (spec §22/§27): fuerza `suppressLoyalty`
+   * en CADA `ingestTicketPurchase`/`ingestAttendance` de este run, sin
+   * excepción y sin depender de `loyaltyEffectiveFrom` — para una ventana
+   * histórica deliberada no queremos que un `purchasedAt`/`occurredAt` nulo
+   * o mal interpretado deje pasar un reward por accidente. Persistencia de
+   * events/orders/tickets/attendance/Student 360 NUNCA se ve afectada — solo
+   * earnTokens/evaluateBenefitsForOrigin/el domain event "ticket_purchased".
+   * Por defecto `false` — un sync en vivo no cambia de comportamiento.
+   */
+  historicalImport?: boolean;
 }
 
 export interface DryRunEventPreview {
@@ -344,6 +355,7 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
               order, tickets: ticketsByOrder.get(order.externalId) ?? [],
               resolveTicketTypeId: (externalId) => (externalId ? rateResult.ticketTypeIdByExternalId.get(externalId) ?? null : null),
               loyaltyEffectiveFrom: opts.loyaltyEffectiveFrom ?? null,
+              suppressLoyalty: opts.historicalImport ?? false,
             }, conn);
             if (result.status === "created") { ordersCreated++; ticketsUnresolved += result.unresolvedTickets; }
             else if (result.status === "updated") ordersUpdated++;
@@ -358,6 +370,7 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
             const result = await ingestAttendance({
               provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: integration.id,
               eventId: item.eventId, venueId: integration.venueId, attendance: a,
+              suppressLoyalty: opts.historicalImport ?? false,
             }, conn);
             if (result.status === "processed") attendanceProcessed++;
             else if (result.status === "unresolved") attendanceUnresolved++;

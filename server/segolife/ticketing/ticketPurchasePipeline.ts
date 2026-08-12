@@ -37,6 +37,12 @@
  * CUTOFF HISTÓRICO (spec §39-40): `loyaltyEffectiveFrom` (si se pasa) evita
  * conceder tokens/Benefits por compras anteriores a esa fecha — el pedido,
  * los tickets y el Student 360 derivado SIEMPRE se persisten igual.
+ *
+ * `suppressLoyalty` (Casanova Historical Validation, spec §22/§27) es un
+ * override EXPLÍCITO por encima de `loyaltyEffectiveFrom` — para un import
+ * histórico deliberado no queremos depender solo de una comparación de
+ * fechas (que podría tener un bug de zona horaria o un `purchasedAt` nulo);
+ * `suppressLoyalty: true` fuerza el modo histórico sin condiciones.
  */
 import { eq, and } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -47,7 +53,7 @@ import {
 } from "../../../drizzle/schema";
 import { earnTokens } from "../tokens/tokenEngine";
 import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
-import { resolveIdentity, persistIdentityMapping } from "../integrations/identityResolver";
+import { resolveIdentity, persistIdentityMapping, isConfirmedResolutionMethod } from "../integrations/identityResolver";
 import { recordUnresolvedOperation } from "../integrations/unresolvedOperationsService";
 import { transitionOrderStatus, OrderStateError, type TicketOrderStatus } from "./orderStateMachine";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
@@ -79,6 +85,8 @@ export interface IngestTicketPurchaseInput {
   resolveTicketTypeId: (externalTicketTypeId: string | null | undefined) => number | null;
   /** spec §39 — compras anteriores a esta fecha NUNCA generan tokens/Benefits, aunque sí se persisten. */
   loyaltyEffectiveFrom?: Date | null;
+  /** Import histórico — override explícito, ver nota arriba. Nunca concede tokens/Benefits; sí persiste order/tickets. */
+  suppressLoyalty?: boolean;
 }
 
 export type IngestTicketPurchaseResult =
@@ -107,7 +115,7 @@ async function grantPurchaseLoyalty(
   buyerUserId: number,
   conn: AnyDbHandle
 ): Promise<{ ledgerId: number | null; historical: boolean }> {
-  const isHistorical = !!input.loyaltyEffectiveFrom && !!order.purchasedAt && order.purchasedAt < input.loyaltyEffectiveFrom;
+  const isHistorical = !!input.suppressLoyalty || (!!input.loyaltyEffectiveFrom && !!order.purchasedAt && order.purchasedAt < input.loyaltyEffectiveFrom);
   if (isHistorical) return { ledgerId: null, historical: true };
 
   const tokenResult = await earnTokens({
@@ -194,7 +202,7 @@ async function persistTicketsForNewOrder(
         identityHintName: t.participant.name ?? null,
         amountCents: t.amountPaidCents ?? null,
       }, conn as unknown as Parameters<typeof recordUnresolvedOperation>[1]);
-    } else if (identity.method && identity.method !== "previous_mapping") {
+    } else if (isConfirmedResolutionMethod(identity.method) && identity.method !== "previous_mapping") {
       await persistIdentityMapping({
         provider: input.provider,
         participant: t.participant,
@@ -226,7 +234,7 @@ function groupItemsByTicketType(input: IngestTicketPurchaseInput): Array<{ ticke
 
 async function createNewOrder(input: IngestTicketPurchaseInput, db: DbHandle): Promise<IngestTicketPurchaseResult> {
   const buyerIdentity = await resolveIdentity({ provider: input.provider, participant: null, buyer: input.order.buyer }, db);
-  if (buyerIdentity.method && buyerIdentity.method !== "previous_mapping" && buyerIdentity.userId) {
+  if (isConfirmedResolutionMethod(buyerIdentity.method) && buyerIdentity.method !== "previous_mapping" && buyerIdentity.userId) {
     await persistIdentityMapping({ provider: input.provider, participant: null, buyer: input.order.buyer, userId: buyerIdentity.userId, method: buyerIdentity.method }, db);
   }
 

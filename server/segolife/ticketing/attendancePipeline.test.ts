@@ -21,6 +21,7 @@ const { mockResolveIdentity, mockPersistIdentityMapping, mockRecordUnresolvedOpe
 vi.mock("../integrations/identityResolver", () => ({
   resolveIdentity: mockResolveIdentity,
   persistIdentityMapping: mockPersistIdentityMapping,
+  isConfirmedResolutionMethod: (m: unknown) => m != null && m !== "ambiguous_email" && m !== "ambiguous_phone",
 }));
 vi.mock("../integrations/unresolvedOperationsService", () => ({
   recordUnresolvedOperation: mockRecordUnresolvedOperation,
@@ -221,5 +222,44 @@ describe("ingestAttendance", () => {
     expect(result.status).toBe("already_processed");
     expect(mockEarnTokens).not.toHaveBeenCalled();
     expect(mockEvaluateBenefitsForOrigin).not.toHaveBeenCalled();
+  });
+
+  // ─── Import histórico — suppressLoyalty (Casanova Historical Validation, spec §22/§26-27) ──
+  describe("suppressLoyalty — import histórico nunca concede tokens/Benefits, pero SÍ persiste la asistencia", () => {
+    it("suppressLoyalty=true + identidad resuelta → event_attendance se persiste, earnTokens NUNCA se llama, evaluateBenefitsForOrigin NUNCA se llama", async () => {
+      mockResolveIdentity.mockResolvedValue({ userId: 42, method: "participant_email" });
+      // Sin suppressLoyalty, la 2ª select sería la comprobación Case B (priorRewarded);
+      // con suppressLoyalty=true esa consulta NUNCA se emite — la 2ª select real es
+      // el read-back tras el insert. Se reutiliza el slot `priorRewarded` del fake para
+      // representar ESE read-back (misma forma: una fila con `id`).
+      const db = fakeDb({ priorRewarded: { id: 501, provider: "fourvenues_integrations" }, insertId: 501 });
+
+      const result = await ingestAttendance({
+        provider: "fourvenues_integrations",
+        integrationType: "venue_integration",
+        integrationId: 1,
+        eventId: 5,
+        suppressLoyalty: true,
+        attendance: attendanceFixture({ externalAttendanceId: "fvi_historical_tkt_001" }),
+      }, db);
+
+      expect(result.status).toBe("processed");
+      expect(mockEarnTokens).not.toHaveBeenCalled();
+      expect(mockEvaluateBenefitsForOrigin).not.toHaveBeenCalled();
+    });
+
+    it("suppressLoyalty=true — el sync EN VIVO (sin el flag) del mismo escenario SÍ concede tokens, confirmando que el flag es lo único que cambia el comportamiento", async () => {
+      mockResolveIdentity.mockResolvedValue({ userId: 42, method: "participant_email" });
+      const db = fakeDb({ priorRewarded: null });
+
+      await ingestAttendance({
+        provider: "fourvenues_integrations",
+        eventId: 5,
+        attendance: attendanceFixture({ externalAttendanceId: "fvi_live_tkt_001" }),
+      }, db); // suppressLoyalty omitido → false por defecto
+
+      expect(mockEarnTokens).toHaveBeenCalledOnce();
+      expect(mockEvaluateBenefitsForOrigin).toHaveBeenCalledOnce();
+    });
   });
 });

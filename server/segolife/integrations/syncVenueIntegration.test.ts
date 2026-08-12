@@ -155,6 +155,26 @@ describe("syncVenueIntegration — orden EVENTS → RATES → ORDERS/TICKETS →
     expect(mockFinishSyncRun).toHaveBeenCalledWith(900, expect.objectContaining({ failedCount: 0 }), "success");
   });
 
+  it("historicalImport=true (Casanova Historical Validation §22) → propaga suppressLoyalty:true a CADA ingestTicketPurchase/ingestAttendance del run, sin excepción", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+
+    await syncVenueIntegration(1, { historicalImport: true }, fakeConn());
+
+    expect(mockIngestTicketPurchase.mock.calls[0][0]).toMatchObject({ suppressLoyalty: true });
+    expect(mockIngestAttendance.mock.calls[0][0]).toMatchObject({ suppressLoyalty: true });
+  });
+
+  it("sin historicalImport (sync en vivo, por defecto) → suppressLoyalty:false en ambos pipelines", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+
+    await syncVenueIntegration(1, {}, fakeConn());
+
+    expect(mockIngestTicketPurchase.mock.calls[0][0]).toMatchObject({ suppressLoyalty: false });
+    expect(mockIngestAttendance.mock.calls[0][0]).toMatchObject({ suppressLoyalty: false });
+  });
+
   it("evento AMBIGUO (sin eventId resuelto) → se omite del sync, nunca se ingieren sus pedidos/asistencia", async () => {
     mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
     mockSyncEventCatalog.mockResolvedValue({

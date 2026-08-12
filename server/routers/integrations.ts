@@ -167,11 +167,14 @@ export const integrationsRouter = router({
       historyFromDays: z.number().int().positive().max(3650).optional(),
       futureUntilDays: z.number().int().positive().max(3650).optional(),
       loyaltyEffectiveFrom: z.string().datetime().optional(),
+      /** Casanova Historical Validation §22 — import histórico deliberado: nunca concede tokens/Benefits, sea cual sea purchasedAt/occurredAt. */
+      historicalImport: z.boolean().optional(),
     }))
     .mutation(({ input }) => syncVenueIntegration(input.id, {
       historyFromDays: input.historyFromDays,
       futureUntilDays: input.futureUntilDays,
       loyaltyEffectiveFrom: input.loyaltyEffectiveFrom ? new Date(input.loyaltyEffectiveFrom) : null,
+      historicalImport: input.historicalImport,
     })),
 
   // ── Unresolved operations (spec punto 56) ────────────────────────────────

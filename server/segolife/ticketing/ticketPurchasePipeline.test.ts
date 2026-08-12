@@ -23,6 +23,7 @@ const {
 vi.mock("../integrations/identityResolver", () => ({
   resolveIdentity: mockResolveIdentity,
   persistIdentityMapping: mockPersistIdentityMapping,
+  isConfirmedResolutionMethod: (m: unknown) => m != null && m !== "ambiguous_email" && m !== "ambiguous_phone",
 }));
 vi.mock("../integrations/unresolvedOperationsService", () => ({
   recordUnresolvedOperation: mockRecordUnresolvedOperation,
@@ -177,6 +178,32 @@ describe("ingestTicketPurchase — pedido nuevo", () => {
       eventId: 77, order: normalizedOrder({ purchasedAt: new Date("2020-01-01T10:00:00.000Z") }), tickets: [normalizedTicket()],
       resolveTicketTypeId: () => 55,
       loyaltyEffectiveFrom: new Date("2026-01-01T00:00:00.000Z"),
+    }, db);
+
+    expect(result.status).toBe("created");
+    expect(mockEarnTokens).not.toHaveBeenCalled();
+    expect(mockEvaluateBenefitsForOrigin).not.toHaveBeenCalled();
+    expect(mockEmitEngagementEvent).not.toHaveBeenCalled();
+  });
+
+  it("suppressLoyalty=true (Casanova Historical Validation §22/§27) — override explícito, independiente de la fecha: NUNCA concede tokens/Benefits ni emite ticket_purchased, aunque purchasedAt sea reciente", async () => {
+    mockResolveIdentity
+      .mockResolvedValueOnce({ userId: 10, method: "buyer_email" })
+      .mockResolvedValueOnce({ userId: 20, method: "participant_email" });
+
+    const { db } = fakeDb([
+      [],
+      [{ id: 701, externalTicketId: "fvi_tkt_001" }],
+      // purchasedAt de HOY (no histórico por fecha) — solo suppressLoyalty debe bloquear el reward.
+      [{ id: 501, status: "paid", userId: 10, totalCents: 835, purchasedAt: new Date("2026-09-01T10:00:00.000Z"), metadata: {} }],
+      [{ id: 501, status: "paid", userId: 10, metadata: {} }],
+    ], [501, 601, 701]);
+
+    const result = await ingestTicketPurchase({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      eventId: 77, order: normalizedOrder(), tickets: [normalizedTicket()],
+      resolveTicketTypeId: () => 55,
+      suppressLoyalty: true, // sin loyaltyEffectiveFrom — el override explícito basta por sí solo
     }, db);
 
     expect(result.status).toBe("created");

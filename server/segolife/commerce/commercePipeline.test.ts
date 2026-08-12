@@ -18,6 +18,7 @@ const { mockResolveIdentity, mockPersistIdentityMapping, mockRecordUnresolvedOpe
 vi.mock("../integrations/identityResolver", () => ({
   resolveIdentity: mockResolveIdentity,
   persistIdentityMapping: mockPersistIdentityMapping,
+  isConfirmedResolutionMethod: (m: unknown) => m != null && m !== "ambiguous_email" && m !== "ambiguous_phone",
 }));
 vi.mock("../integrations/unresolvedOperationsService", () => ({
   recordUnresolvedOperation: mockRecordUnresolvedOperation,

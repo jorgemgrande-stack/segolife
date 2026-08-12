@@ -17,6 +17,18 @@
  * asistencia, donde un admin ya decidió el userId — saltarse por completo
  * `resolveIdentity()`/`persistIdentityMapping()`. Sin `resolvedUserId`, el
  * comportamiento es IDÉNTICO al de siempre (proveedores externos).
+ *
+ * HISTORICAL VALIDATION (Fourvenues Casanova Historical Validation, spec
+ * §22/§26-27): `suppressLoyalty` (opcional) permite ingerir asistencia real
+ * pasada — Student 360/analítica la necesitan — SIN conceder SegoTokens ni
+ * Benefits por ella. Existe una regla real y ACTIVA de `origin="attendance"`
+ * en producción (15 tokens, scope global) que dispararía en cuanto
+ * `earnTokens` se llamara, así que este flag NUNCA es opcional a la ligera
+ * para un import histórico. Cuando es `true`: se salta por completo
+ * earnTokens/evaluateBenefitsForOrigin (ni se intentan, no solo se
+ * descartan) — pero `event_attendance` se persiste exactamente igual que
+ * siempre. Por defecto `false` — el comportamiento de un sync en vivo no
+ * cambia ni un bit.
  */
 import { eq, and, isNotNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -24,7 +36,7 @@ import mysql from "mysql2/promise";
 import { eventAttendance, type EventAttendance } from "../../../drizzle/schema";
 import { earnTokens } from "../tokens/tokenEngine";
 import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
-import { resolveIdentity, persistIdentityMapping } from "../integrations/identityResolver";
+import { resolveIdentity, persistIdentityMapping, isConfirmedResolutionMethod } from "../integrations/identityResolver";
 import { recordUnresolvedOperation } from "../integrations/unresolvedOperationsService";
 import type { NormalizedAttendance } from "../integrations/externalTicketingProvider";
 
@@ -49,6 +61,8 @@ export interface IngestAttendanceInput {
   externalCustomerId?: string | null;
   /** Identidad ya resuelta con certeza — ver nota de Fase 8 arriba. */
   resolvedUserId?: number | null;
+  /** Import histórico — ver nota arriba. Nunca concede tokens/Benefits; sí persiste event_attendance. */
+  suppressLoyalty?: boolean;
 }
 
 export type IngestAttendanceResult =
@@ -96,7 +110,7 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
       return { status: "unresolved" };
     }
 
-    if (identity.method && identity.method !== "previous_mapping") {
+    if (isConfirmedResolutionMethod(identity.method) && identity.method !== "previous_mapping") {
       await persistIdentityMapping({
         provider: input.provider,
         externalCustomerId: input.externalCustomerId,
@@ -120,21 +134,25 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
   // llamar a earnTokens. No se toca earnTokens/tokenEngine.ts ni el formato
   // de idempotencyKey existente — la protección vive aquí, a nivel de
   // orquestación, igual que el resto de reglas de este pipeline.
-  const [priorRewarded] = await conn.select({ id: eventAttendance.id }).from(eventAttendance)
-    .where(and(eq(eventAttendance.eventId, input.eventId), eq(eventAttendance.userId, userId), isNotNull(eventAttendance.tokensLedgerId)))
-    .limit(1);
+  let tokenResult: Awaited<ReturnType<typeof earnTokens>> | null = null;
+  if (!input.suppressLoyalty) {
+    const [priorRewarded] = await conn.select({ id: eventAttendance.id }).from(eventAttendance)
+      .where(and(eq(eventAttendance.eventId, input.eventId), eq(eventAttendance.userId, userId), isNotNull(eventAttendance.tokensLedgerId)))
+      .limit(1);
 
-  const tokenResult = priorRewarded
-    ? null
-    : await earnTokens({
-        userId,
-        communityId: input.communityId ?? null,
-        venueId: input.venueId ?? null,
-        eventId: input.eventId,
-        origin: "attendance",
-        idempotencyKey: `event_attendance:${idempotencyKey}`,
-        at: input.attendance.occurredAt,
-      }, conn).catch(() => null); // earnTokens puede rechazar por horario/regla — la asistencia se registra igual (ver nota abajo).
+    tokenResult = priorRewarded
+      ? null
+      : await earnTokens({
+          userId,
+          communityId: input.communityId ?? null,
+          venueId: input.venueId ?? null,
+          eventId: input.eventId,
+          origin: "attendance",
+          idempotencyKey: `event_attendance:${idempotencyKey}`,
+          at: input.attendance.occurredAt,
+        }, conn).catch(() => null); // earnTokens puede rechazar por horario/regla — la asistencia se registra igual (ver nota abajo).
+  }
+  // suppressLoyalty=true (import histórico): earnTokens NUNCA se llama — ni siquiera se intenta y falla, se omite por completo (spec §26-27).
 
   const [insertResult] = await conn.insert(eventAttendance).ignore().values({
     eventId: input.eventId,
@@ -153,20 +171,23 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
   const insertId = (insertResult as unknown as { insertId: number }).insertId;
   const [row] = await conn.select().from(eventAttendance).where(eq(eventAttendance.id, insertId)).limit(1);
 
-  // evaluateBenefitsForOrigin se llama SIEMPRE (incluso si earnTokens no
-  // concedió tokens por límite/horario) — un Benefit puede tener sus propias
-  // condiciones independientes de las de SegoTokens (mismo criterio que
-  // consumptionQrService.ts en Fase 3/4).
-  await evaluateBenefitsForOrigin({
-    type: "event_attendance",
-    userId,
-    venueId: input.venueId ?? null,
-    eventId: input.eventId,
-    communityId: input.communityId ?? null,
-    sourceId: row.id,
-    ledgerId: tokenResult?.ledger.id ?? null,
-    occurredAt: input.attendance.occurredAt,
-  }, conn).catch(() => []); // un fallo en Benefits nunca debe revertir la asistencia ya registrada.
+  // evaluateBenefitsForOrigin se llama SIEMPRE que NO sea import histórico
+  // (incluso si earnTokens no concedió tokens por límite/horario — un
+  // Benefit puede tener sus propias condiciones independientes de las de
+  // SegoTokens, mismo criterio que consumptionQrService.ts en Fase 3/4).
+  // suppressLoyalty=true: nunca se intenta, por el mismo motivo que earnTokens arriba.
+  if (!input.suppressLoyalty) {
+    await evaluateBenefitsForOrigin({
+      type: "event_attendance",
+      userId,
+      venueId: input.venueId ?? null,
+      eventId: input.eventId,
+      communityId: input.communityId ?? null,
+      sourceId: row.id,
+      ledgerId: tokenResult?.ledger.id ?? null,
+      occurredAt: input.attendance.occurredAt,
+    }, conn).catch(() => []); // un fallo en Benefits nunca debe revertir la asistencia ya registrada.
+  }
 
   return { status: "processed", attendance: row };
 }

@@ -93,3 +93,55 @@ describe("resolveIdentity — orden estricto de resolución", () => {
     expect(result.userId).toBeNull();
   });
 });
+
+// ─── Ambigüedad (Fourvenues Casanova Historical Validation, spec §16-18) ─────
+// email tiene UNIQUE real en producción, pero phone NO — nunca se debe
+// elegir la primera fila si el paso encuentra 2+ candidatos.
+describe("resolveIdentity — ambigüedad, nunca elige la primera fila", () => {
+  it("2+ Students con el mismo teléfono de participante → NO resuelve por esa vía, prueba el siguiente paso (buyer email) y SÍ puede resolver ahí", async () => {
+    const db = fakeDb([
+      [{ id: 10 }, { id: 11 }], // teléfono de participante — 2 candidatos, ambiguo
+      [{ id: 12 }], // email del comprador — resuelve sin ambigüedad (sin email de participante, el guard del paso 4 se cumple)
+    ]);
+    const result = await resolveIdentity({
+      provider: "fourvenues",
+      participant: { phone: "+34600000005" }, // sin email de participante — el paso 2 no consulta nada
+      buyer: { email: "comprador@example.invalid" },
+    }, db);
+    expect(result).toEqual({ userId: 12, method: "buyer_email" });
+  });
+
+  it("2+ Students con el mismo teléfono, sin ninguna otra señal que resuelva → unresolved, pero method='ambiguous_phone' (distinguible de 'sin ningún indicio')", async () => {
+    const db = fakeDb([
+      [{ id: 20 }, { id: 21 }], // teléfono de participante — 2 candidatos
+    ]);
+    const result = await resolveIdentity({
+      provider: "fourvenues",
+      participant: { phone: "+34600000006" },
+    }, db);
+    expect(result).toEqual({ userId: null, method: "ambiguous_phone" });
+  });
+
+  it("2+ filas para email de participante (defensa en profundidad aunque email tenga UNIQUE real) → ambiguous_email, nunca elige la primera", async () => {
+    const db = fakeDb([
+      [{ id: 30 }, { id: 31 }], // email de participante — 2 filas (no debería poder pasar en producción, pero el código nunca debe asumirlo)
+    ]);
+    const result = await resolveIdentity({
+      provider: "fourvenues",
+      participant: { email: "duplicado@example.invalid" },
+    }, db);
+    expect(result).toEqual({ userId: null, method: "ambiguous_email" });
+  });
+
+  it("email de participante ambiguo, teléfono SÍ resuelve sin ambigüedad → gana el teléfono (señal más fuerte encontrada después)", async () => {
+    const db = fakeDb([
+      [{ id: 40 }, { id: 41 }], // email de participante — ambiguo
+      [{ id: 42 }], // teléfono de participante — resuelve
+    ]);
+    const result = await resolveIdentity({
+      provider: "fourvenues",
+      participant: { email: "duplicado@example.invalid", phone: "+34600000007" },
+    }, db);
+    expect(result).toEqual({ userId: 42, method: "participant_phone" });
+  });
+});
