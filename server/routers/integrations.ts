@@ -6,15 +6,14 @@ import {
   createVenueIntegration, createEventIntegration,
   setVenueIntegrationEnabled, setEventIntegrationEnabled,
   updateVenueIntegrationCredentials,
-  getVenueIntegrationRaw, getEventIntegrationRaw,
+  getVenueIntegrationRaw, getEventIntegrationRaw, getProviderById,
   listSyncRuns,
 } from "../segolife/integrations/integrationsDb";
 import { listUnresolvedOperations, linkUnresolvedOperation, ignoreUnresolvedOperation, UnresolvedOperationError } from "../segolife/integrations/unresolvedOperationsService";
-import { createFourvenuesAdapter } from "../segolife/integrations/fourvenuesAdapter";
-import { createWeezeventAdapter } from "../segolife/integrations/weezeventAdapter";
+import { createFourvenuesAdapter, FOURVENUES_BASE_URL } from "../segolife/integrations/fourvenuesAdapter";
+import { createFourvenuesIntegrationsAdapter, FOURVENUES_INTEGRATIONS_BASE_URL } from "../segolife/integrations/fourvenuesIntegrationsAdapter";
+import { createWeezeventAdapter, WEEZEVENT_BASE_URL } from "../segolife/integrations/weezeventAdapter";
 import { createHttpTransport } from "../segolife/integrations/httpTransport";
-import { FOURVENUES_BASE_URL } from "../segolife/integrations/fourvenuesAdapter";
-import { WEEZEVENT_BASE_URL } from "../segolife/integrations/weezeventAdapter";
 import { decryptCredentials } from "../segolife/integrations/integrationCredentialCrypto";
 import { isExternalIntegrationsGloballyEnabled } from "../segolife/integrations/integrationSyncService";
 import { processCommerceLoyalty } from "../segolife/commerce/commercePipeline";
@@ -117,6 +116,16 @@ export const integrationsRouter = router({
       if (!integration.credentialsEncrypted) return { ok: false, message: "Awaiting credentials" };
       const credentials = decryptCredentials(integration.credentialsEncrypted);
       if (!credentials) return { ok: false, message: "No se pudieron descifrar las credenciales" };
+      const provider = await getProviderById(integration.providerId);
+      // "fourvenues" (Channel Manager) y "fourvenues_integrations" (Integrations
+      // API) son APIs distintas con base URL y endpoints diferentes — ver
+      // docs/integrations/fourvenues.md. El modelo real de Segolife hoy es
+      // Integrations API (credenciales ik_live_... independientes por venue).
+      if (provider?.key === "fourvenues_integrations") {
+        const baseUrl = FOURVENUES_INTEGRATIONS_BASE_URL[integration.environment];
+        const adapter = createFourvenuesIntegrationsAdapter(createHttpTransport(baseUrl));
+        return adapter.testConnection(credentials);
+      }
       const baseUrl = FOURVENUES_BASE_URL[integration.environment];
       const adapter = createFourvenuesAdapter(createHttpTransport(baseUrl));
       return adapter.testConnection(credentials);

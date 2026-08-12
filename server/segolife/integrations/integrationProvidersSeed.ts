@@ -10,13 +10,17 @@
 import mysql from "mysql2/promise";
 import {
   FOURVENUES_CHANNEL_MANAGER_CAPABILITIES,
+  FOURVENUES_INTEGRATIONS_API_CAPABILITIES,
   WEEZEVENT_CAPABILITIES,
   SEGOLIFE_NATIVE_CAPABILITIES,
   type ProviderCapabilities,
 } from "./capabilities";
 
 const PROVIDERS: Array<{ key: string; name: string; capabilities: ProviderCapabilities }> = [
-  { key: "fourvenues", name: "Fourvenues", capabilities: FOURVENUES_CHANNEL_MANAGER_CAPABILITIES },
+  { key: "fourvenues", name: "Fourvenues (Channel Manager)", capabilities: FOURVENUES_CHANNEL_MANAGER_CAPABILITIES },
+  // Modelo real confirmado 2026-08-12 para Casanova/Tía Felisa/Limoncello —
+  // ver docs/integrations/fourvenues.md, sección "resuelto".
+  { key: "fourvenues_integrations", name: "Fourvenues (Integrations API)", capabilities: FOURVENUES_INTEGRATIONS_API_CAPABILITIES },
   { key: "weezevent", name: "Weezevent", capabilities: WEEZEVENT_CAPABILITIES },
   { key: "segolife_native", name: "Segolife Native", capabilities: SEGOLIFE_NATIVE_CAPABILITIES },
 ];

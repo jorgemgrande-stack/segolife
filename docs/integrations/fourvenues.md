@@ -48,24 +48,26 @@ Fourvenues tiene **tres APIs separadas, cada una con su propia autenticación po
 
 UNKNOWN: expiración/rotación exacta, si Reseller comparte rate limits con las otras dos.
 
-## ⚠️ Tensión con el requisito "credenciales independientes por venue"
+## ⚠️ Tensión con el requisito "credenciales independientes por venue" — RESUELTO
 
 El spec de este proyecto asume que cada local (Casanova, Tía Felisa,
 Limoncello) tendrá **credenciales Fourvenues completamente independientes**.
 La documentación oficial confirma que el modelo real de **Channel Manager**
 (la vía principal para que Segolife venda en nombre de varios locales) es
 **UNA sola API key de "channel" que ve N "hosts"** (`GET /auth` →
-`channel.hosts[]`) — no una key por local. El diseño interno de Segolife
-(`venue_integrations`, 1 fila por venue con su propio campo de credenciales)
-se mantiene igualmente porque resuelve lo que realmente importa
-operativamente — habilitar/deshabilitar/trackear estado/error por venue de
-forma independiente — aunque en el escenario Channel Manager el secreto
-subyacente pueda coincidir entre varias filas. Alternativa real: si cada
-local acaba dándole a Segolife su propia key de **Integrations API** (en vez
-de operar Segolife como Channel Manager), sí habría credenciales
-genuinamente distintas por venue. **A confirmar con Fourvenues en el
-onboarding real cuál de los dos modelos aplica** — no se puede decidir desde
-la documentación pública.
+`channel.hosts[]`) — no una key por local.
+
+**Confirmado empíricamente 2026-08-12**: los tres locales reales (Casanova,
+Tía Felisa, Limoncello) entregaron cada uno su propia API key con prefijo
+`ik_live_...`, que autentica contra `https://api.fourvenues.com/integrations`
+(no contra `channels-service.fourvenues.com`). Es decir, **el modelo real es
+Integrations API, no Channel Manager** — cada local es su propia
+organización Fourvenues con su propia key, exactamente la "alternativa real"
+que este documento dejaba como hipótesis. Ver `fourvenuesIntegrationsAdapter.ts`,
+construido específicamente contra este modelo. El adapter `fourvenuesAdapter.ts`
+original (Channel Manager) se mantiene en el código por si algún día Segolife
+opera como marketplace agregador de terceros, pero **no es el que corresponde
+a las credenciales reales actuales**.
 
 ## Entornos
 
@@ -127,6 +129,43 @@ Resultado de la investigación (esto es lo que el spec pedía verificar con cert
   - `PATCH /tickets/supplement-product-quantity-used/{ticketId}` — consumo de un "supplement" ya vendido con el ticket.
 - **Conclusión**: sin evidencia de POS genérico. Lo que existe está acoplado a una reserva/ticket ya existente y vive solo en Integrations API del propio local. `supportsConsumptions` queda como `false`/`unknown` según el modelo de acceso (Channel Manager vs Integrations) — nunca se asume soportado.
 
+## Esquemas reales verificados (Integrations API, 2026-08-12)
+
+Verificado con las tres API keys reales (`ik_live_...`) de Casanova, Tía
+Felisa y Limoncello, mediante llamadas GET de solo lectura. Ningún dato de
+cliente real se ha copiado a este repositorio — solo la FORMA de los campos.
+Esto resuelve varios UNKNOWN de las secciones anteriores.
+
+- `GET /events/?start=YYYY-MM-DD&end=YYYY-MM-DD` — **el filtro de fecha es
+  obligatorio** (sin él, `400 {"error":"Date is empty"}`). Campos reales:
+  `_id`, `name`, `slug`, `url`, `start`/`end`/`date` (unix segundos),
+  `flyer` (URL de imagen), `description`.
+- `GET /tickets-rates/?event_id=` — confirma el modelo por "opciones" ya
+  documentado: `{ _id, slug, name, options: [{ _id, until, max_quantity,
+  price, age, content, additional_info }] }`. **`price` viene en unidades
+  enteras (euros), no en céntimos** — a diferencia de Channel Manager.
+- `GET /tickets/?event_id=` — schema real mucho más rico de lo documentado
+  públicamente: `_id`, `code`, `event_id`, `rate_id`, `status` (visto:
+  `"activated"`), `name`, `email`, `phone`, `price`, `total_paid`,
+  `total_fees`, `refunded` (0/1), `payment_id`, `sale_type`, `channel_id`,
+  `created_at`/`updated_at`, `supplements[]` (perks incluidos en el ticket,
+  con `product_quantity`/`product_quantity_used`), y — el hallazgo
+  importante — **`enter` (0/1) y `entry_date` (unix) SÍ vienen en la
+  respuesta bulk**, no hace falta `GET /tickets/check-in/{code}` por ticket
+  para saber quién ha entrado. Esto resuelve a favor la pregunta abierta
+  nº2 de este documento: el check-in SÍ es legible en bulk vía polling de
+  `/tickets/`.
+- **`orders` pasa de UNKNOWN a CONFIRMADO (derivado)**: no existe un
+  endpoint nativo de "pedido", pero cada ticket trae `payment_id` +
+  `total_paid` + `total_fees` + `refunded` — agrupar tickets por
+  `payment_id` reconstruye el pedido con la misma fidelidad que
+  `GET /payments` en Channel Manager. Implementado así en
+  `fourvenuesIntegrationsAdapter.ts`, documentado como agregación propia
+  (no un endpoint inventado).
+- `consumptions` se mantiene sin implementar: `supplements[]` es un perk YA
+  incluido en el ticket (p.ej. "1 copa"), no una venta de barra nueva —
+  confirma la conclusión previa, no la contradice.
+
 ## Rate limits / fair use
 
 Documentado consistentemente para Channel Manager e Integrations (no encontrado para Reseller):
@@ -163,8 +202,10 @@ Documentado consistentemente para Channel Manager e Integrations (no encontrado 
 | Check-in vía Channel Manager | **NOT SUPPORTED** | doc explícita, 2 citas independientes |
 | Crear/editar eventos desde el channel | **NOT SUPPORTED** | "venue owners manage events through dashboard" |
 | 1 API key ve múltiples locales partner (Channel Manager) | CONFIRMED | `channel.hosts[]` |
-| Credenciales independientes por venue | **UNKNOWN / probablemente NO en modo Channel Manager** — ver sección de tensión arriba | `GET /auth` |
+| Credenciales independientes por venue | **CONFIRMED — vía Integrations API**, ver sección "resuelto" arriba | 3 keys `ik_live_...` reales, 2026-08-12 |
 | Check-in vía Integrations API (solo propio local) | CONFIRMED, no accesible al channel externo | `PUT /tickets/{id}/checkin` |
+| Check-in legible en bulk (sin pedir ticket a ticket) | CONFIRMED | `GET /tickets/` trae `enter`+`entry_date` por ticket |
+| "Pedido" reconstruible sin endpoint nativo | CONFIRMED (derivado) | agrupar `GET /tickets/` por `payment_id` |
 | POS/venta de barra genérica | UNKNOWN, probablemente no existe | `GET /sales/` sin schema |
 | Consumo de botella/mesa VIP | CONFIRMED, solo Integrations API | `PUT /bookings/{id}/products` |
 | Monedero prepago de cliente | UNKNOWN, probablemente no es esto | `wallet-movements` parece contable |

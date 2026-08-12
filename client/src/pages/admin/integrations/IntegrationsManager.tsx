@@ -32,6 +32,7 @@ export default function IntegrationsManager() {
   const [venueId, setVenueId] = useState<string>("");
   const [eventId, setEventId] = useState<string>("");
   const [providerId, setProviderId] = useState<string>("");
+  const [fourvenuesProviderId, setFourvenuesProviderId] = useState<string>("");
   const [environment, setEnvironment] = useState<"sandbox" | "production">("sandbox");
   const [apiKey, setApiKey] = useState("");
 
@@ -50,7 +51,14 @@ export default function IntegrationsManager() {
   const setVenueEnabledMut = trpc.integrations.setVenueIntegrationEnabled.useMutation({ onSuccess: () => utils.integrations.listVenueIntegrations.invalidate() });
   const setEventEnabledMut = trpc.integrations.setEventIntegrationEnabled.useMutation({ onSuccess: () => utils.integrations.listEventIntegrations.invalidate() });
 
-  const fourvenuesProvider = providers?.find(p => p.key === "fourvenues");
+  // Dos APIs distintas de Fourvenues conviven en el catálogo — Integrations
+  // API es el modelo real confirmado para Casanova/Tía Felisa/Limoncello
+  // (credenciales ik_live_... independientes por venue), Channel Manager
+  // queda disponible por si algún día Segolife opera como marketplace.
+  const fourvenuesProviders = providers?.filter(p => p.key === "fourvenues" || p.key === "fourvenues_integrations") ?? [];
+  const selectedFourvenuesProvider = fourvenuesProviders.find(p => String(p.id) === fourvenuesProviderId)
+    ?? fourvenuesProviders.find(p => p.key === "fourvenues_integrations")
+    ?? fourvenuesProviders[0];
   const weezeventProvider = providers?.find(p => p.key === "weezevent");
 
   return (
@@ -88,6 +96,13 @@ export default function IntegrationsManager() {
                 </Select>
               </div>
               <div>
+                <Label>Modo Fourvenues</Label>
+                <Select value={String(selectedFourvenuesProvider?.id ?? "")} onValueChange={setFourvenuesProviderId}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona un modo" /></SelectTrigger>
+                  <SelectContent>{fourvenuesProviders.map(p => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div>
                 <Label>Entorno</Label>
                 <Select value={environment} onValueChange={v => setEnvironment(v as "sandbox" | "production")}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -100,8 +115,8 @@ export default function IntegrationsManager() {
               </div>
               <div className="col-span-2">
                 <Button
-                  disabled={!venueId || !fourvenuesProvider || createVenueMut.isPending}
-                  onClick={() => createVenueMut.mutate({ venueId: Number(venueId), providerId: fourvenuesProvider!.id, environment, apiKey: apiKey || undefined })}
+                  disabled={!venueId || !selectedFourvenuesProvider || createVenueMut.isPending}
+                  onClick={() => createVenueMut.mutate({ venueId: Number(venueId), providerId: selectedFourvenuesProvider!.id, environment, apiKey: apiKey || undefined })}
                 >
                   Crear integración
                 </Button>
@@ -114,7 +129,7 @@ export default function IntegrationsManager() {
             <div className="space-y-1.5">
               {venueIntegrations.map(i => (
                 <div key={i.id} className="flex items-center justify-between text-sm border border-border rounded-lg px-3 py-2">
-                  <span>venue #{i.venueId} · {i.environment} · {i.credentialsConfigured ? `····${i.credentialsLast4 ?? ""}` : "Awaiting credentials"}</span>
+                  <span>venue #{i.venueId} · {i.providerKey === "fourvenues_integrations" ? "Integrations API" : "Channel Manager"} · {i.environment} · {i.credentialsConfigured ? `····${i.credentialsLast4 ?? ""}` : "Awaiting credentials"}</span>
                   <div className="flex items-center gap-2">
                     <Badge variant={i.status === "connected" ? "default" : i.status === "error" ? "destructive" : "secondary"}>{i.status}</Badge>
                     <Button size="sm" variant="outline" onClick={() => testVenueMut.mutate({ id: i.id })} disabled={testVenueMut.isPending}>Test connection</Button>
