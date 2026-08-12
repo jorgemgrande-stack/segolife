@@ -39,8 +39,14 @@ function attendanceFixture(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-/** Fake db mínimo — solo los métodos encadenados que attendancePipeline.ts realmente llama. */
-function fakeDb({ existingAttendance = null as unknown, insertId = 501 } = {}) {
+/**
+ * Fake db mínimo — solo los métodos encadenados que attendancePipeline.ts
+ * realmente llama. Secuencia real de `select()` cuando NO hay idempotencia
+ * previa: 1ª = comprobación de idempotencia (existingAttendance), 2ª =
+ * comprobación de Case B (priorRewarded — ¿este Student ya cobró por este
+ * Event?), 3ª = leer la fila recién insertada.
+ */
+function fakeDb({ existingAttendance = null as unknown, priorRewarded = null as unknown, insertId = 501 } = {}) {
   const inserted: Record<string, unknown>[] = [];
   let selectCallCount = 0;
   const db = {
@@ -49,8 +55,8 @@ function fakeDb({ existingAttendance = null as unknown, insertId = 501 } = {}) {
         where: () => ({
           limit: async () => {
             selectCallCount++;
-            // 1ª select = comprobación de idempotencia; 2ª select = leer la fila insertada.
             if (selectCallCount === 1) return existingAttendance ? [existingAttendance] : [];
+            if (selectCallCount === 2) return priorRewarded ? [priorRewarded] : [];
             return [{ id: insertId, ...inserted[0] }];
           },
         }),
@@ -135,6 +141,39 @@ describe("ingestAttendance", () => {
     expect(result.status).toBe("already_processed");
     expect(mockEarnTokens).not.toHaveBeenCalled();
     expect(mockEvaluateBenefitsForOrigin).not.toHaveBeenCalled();
+  });
+
+  // ─── Multi-ticket Case B (Fourvenues Operational Sync §28-29) ──────────────
+  it("Case B — si este Student YA tiene un reward de asistencia para este Event, NO concede un segundo reward (pero SÍ crea la fila event_attendance de este ticket)", async () => {
+    mockResolveIdentity.mockResolvedValue({ userId: 42, method: "participant_email" });
+    const db = fakeDb({ priorRewarded: { id: 900 } });
+
+    const result = await ingestAttendance({
+      provider: "fourvenues_integrations",
+      integrationType: "venue_integration",
+      integrationId: 1,
+      eventId: 5,
+      attendance: attendanceFixture({ externalAttendanceId: "fvi_tkt_002" }),
+    }, db);
+
+    expect(result.status).toBe("processed");
+    expect(mockEarnTokens).not.toHaveBeenCalled();
+    // Benefits SÍ se sigue evaluando — es un desbloqueo aditivo independiente de tokens (ver benefitRuleEngine.ts).
+    expect(mockEvaluateBenefitsForOrigin).toHaveBeenCalledOnce();
+  });
+
+  it("Case A — Students DISTINTOS para el mismo Event SÍ cobran cada uno su propio reward (Case B no afecta a personas realmente distintas)", async () => {
+    mockResolveIdentity.mockResolvedValue({ userId: 43, method: "participant_email" });
+    const db = fakeDb({ priorRewarded: null }); // sin reward previo para el Student 43 en este evento
+
+    const result = await ingestAttendance({
+      provider: "fourvenues_integrations",
+      eventId: 5,
+      attendance: attendanceFixture({ externalAttendanceId: "fvi_tkt_003" }),
+    }, db);
+
+    expect(result.status).toBe("processed");
+    expect(mockEarnTokens).toHaveBeenCalledOnce();
   });
 
   it("un fallo de evaluateBenefitsForOrigin NUNCA revierte la asistencia ya registrada", async () => {

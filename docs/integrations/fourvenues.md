@@ -231,3 +231,121 @@ Ver sección de tensión arriba. Resumen: Channel Manager = 1 key de channel ↔
 11. Tiempos/SLA reales de aprobación de la solicitud a `integrations@fourvenues.com` — no documentado.
 12. Especificaciones OpenAPI completas no revisadas íntegramente en esta pasada — recomendable antes de implementar el adapter final.
 13. Endpoints de `bookings` (disponibilidad/deposit/minimum-spend/zonas) no revisados en detalle.
+
+## Fourvenues Operational Sync (implementado 2026-08-13)
+
+La auditoría de datos previa (2026-08-12) confirmó que, pese a tener un
+adapter completo y testeado, **cero operaciones reales de Fourvenues habían
+entrado nunca en la base de datos** — no existía ningún disparador de sync.
+Esta fase construye la cadena completa de lectura/normalización/ingesta.
+NUNCA se escribe hacia Fourvenues (sin checkout, sin check-in write, sin
+refunds, sin modificar sus eventos) — solo `FOURVENUES → READ → NORMALIZE →
+SEGOLIFE`.
+
+### Flujo de sync (`syncVenueIntegration()`, `server/segolife/integrations/integrationSyncService.ts`)
+
+Orden obligatorio, nunca alterado: **EVENTS → RATES → ORDERS/TICKETS →
+ATTENDANCE**. Un evento que no puede mapearse sin ambigüedad se omite de ese
+run entero — nunca se ingiere un pedido/asistencia sin `event_id` interno
+resuelto.
+
+1. Kill switch (`EXTERNAL_INTEGRATIONS_ENABLED=true` + `enabled` + `syncEnabled` + credenciales) — igual que `runIntegrationSync()`, que esta función completa sin sustituir.
+2. `adapter.listEvents()` → `eventCatalogSync.syncEventCatalog()`: mapping/candidato/creación (ver "Field ownership" y "Event matching" abajo).
+3. Por cada evento con `eventId` resuelto: `adapter.listTicketTypes()` → `eventCatalogSync.syncTicketTypes()` (1 fila por *rate*, nunca por opción — ver "Rates" abajo).
+4. `adapter.listOrders()` + `adapter.listTickets()` (mismo evento — comparten 1 sola llamada real a `GET /tickets/` gracias a la caché por instancia del adapter, `createTicketsFetcher`) → agrupados por `externalOrderId` → `ticketPurchasePipeline.ingestTicketPurchase()` por pedido.
+5. `adapter.listAttendance()` → `attendancePipeline.ingestAttendance()` por hecho de asistencia (reusado tal cual, sin cambios de contrato).
+6. `integration_sync_runs`/`integration_sync_state` registran counts/errores — nunca PII.
+
+Aislamiento de fallos: un pedido o una asistencia concretos que fallan se
+cuentan (`failedCount`) y el sync continúa con el resto — solo un error
+ANTES de `listEvents()` (auth/red) aborta el run completo con `status:
+"failed"`.
+
+### Order derivation from payment_id
+
+Sin cambios respecto a lo ya documentado arriba: `NormalizedOrder.externalId
+= payment_id`. `ticketPurchasePipeline` reutiliza `ticket_orders` UNIQUE
+`(provider, external_order_id)` como idempotencia real — un mismo pedido
+re-sincronizado nunca duplica `ticket_order_items`/`event_tickets`, solo
+actualiza estado (ver "Refund policy" abajo).
+
+### Identidad — buyer vs participant
+
+`identityResolver.ts` se reutiliza sin cambios (1. mapping previo, 2. email
+participante, 3. teléfono participante, 4. email comprador solo si coincide
+con el participante, 5. unresolved — nunca fuzzy). La novedad es
+arquitectónica, no de resolución: el **comprador** (`order.buyer`) determina
+`ticket_orders.user_id` y quién recibe el reward de COMPRA; cada
+**participante** (`ticket.participant`) se resuelve por separado y determina
+`event_tickets.user_id` y quién recibe el reward de ASISTENCIA. Nunca se
+hereda la identidad del comprador a los participantes salvo que
+`identityResolver` ya lo decida así (mismo email).
+
+### Multi-ticket — Case A vs Case B
+
+Confirmado con datos reales de fixture (`fourvenuesFixtures.ts`,
+`*CaseAFixture`/`*CaseBFixture`): la API SÍ da nombre/email/teléfono por
+ticket individual, no solo del comprador. El adapter normaliza ambos casos
+de forma idéntica y neutral (nunca deduplica a su nivel):
+
+- **Case A** (participantes reales distintos): cada ticket resuelve a un
+  Student distinto → cada uno cobra su propio reward de asistencia si asiste.
+- **Case B** (Fourvenues repite los datos del comprador en los 4 tickets
+  porque el checkout del venue no pidió el dato de cada asistente): los 4
+  tickets/`event_attendance` se siguen creando (el HECHO no se descarta),
+  pero **el reward de asistencia se concede como máximo una vez por
+  Student+Event** — protección en `attendancePipeline.ts` (comprueba si ya
+  existe una fila `event_attendance` de ese evento con `tokens_ledger_id` no
+  nulo para ese usuario antes de llamar a `earnTokens`, sin tocar
+  `tokenEngine.ts` ni el formato de `idempotency_key` existente).
+
+### Rates — precisión real vs precisión falsa
+
+`listTicketTypes()` sigue representando **1 fila por rate** (nunca 1 por
+opción): `tickets[].rate_id` solo referencia la rate, nunca la opción
+concreta comprada (confirmado, sin cambios) — crear una fila por opción
+sería precisión que nunca podríamos atribuir a un ticket real. Las opciones
+completas (`options[]`, con todos sus precios/capacidad/contenido) se
+preservan íntegras en `event_ticket_types.metadata` — nunca se descartan,
+solo se elige la más barata como precio representativo de catálogo.
+
+### Loyalty
+
+- **Asistencia** (`origin="attendance"`): funciona igual que para Weezevent, sin cambios de motor.
+- **Compra** (`origin="ticket"`, nuevo): `ticketPurchasePipeline` puede conceder este reward, pero **solo si existe una regla `token_rules` activa con ese origin** — sin regla, 0 tokens (comportamiento esperado, no un bug). Máximo 1 reward de compra por Student+Event, sin importar cuántos tickets compre (`idempotencyKey` construida sin `externalOrderId`, a propósito).
+- **Corte histórico**: `loyaltyEffectiveFrom` (parámetro de `syncVenueIntegration`) — compras/asistencias anteriores a esa fecha se persisten igual (Student 360, analítica) pero NUNCA generan tokens/Benefits ni el domain event `ticket_purchased`.
+
+### Refund policy
+
+Un pedido que pasa a `refunded` en una resincronización se refleja vía
+`orderStateMachine.transitionOrderStatus` (nunca DELETE). Si ya se había
+concedido un reward de compra antes del reembolso, se marca
+`metadata.loyaltyReconciliationRequired: true` en `ticket_orders` — los
+tokens **nunca se retiran silenciosamente**, queda como decisión manual
+pendiente (sin política de reversión automática definida todavía).
+
+### Manual sync — sin scheduler
+
+`POST` (tRPC) `integrations.previewVenueSync` (dry run, sin persistir nada
+de negocio) y `integrations.syncVenueNow` (escritura real), ambos bajo el
+permiso `integrations.manage` existente, expuestos en
+`/admin/integrations` con un modal de confirmación. **No existe cron ni
+scheduler automático** — cada sync lo dispara un admin explícitamente. La
+arquitectura (kill switches + `integration_sync_state`) ya está preparada
+para un futuro scheduler, pero activarlo es una decisión posterior explícita.
+
+### Ventana de sync configurable
+
+`createFourvenuesIntegrationsAdapter(transport, capabilities, { historyFromDays, futureUntilDays })`
+— antes fija (180 días atrás / 365 adelante), ahora parametrizable por sync
+run. Piloto recomendado (Casanova): 30 días históricos / 90 días futuros.
+
+### Unresolved — operationType "order"
+
+El valor `unresolved_operations.operation_type = "order"` (reservado, nunca
+usado hasta ahora) ya se usa: un ticket cuyo participante no resuelve
+identidad se persiste igual (`event_tickets.user_id = null`) y se encola
+aquí. Vincular manualmente (`integrations.linkUnresolved`) solo actualiza
+`event_tickets.user_id` — no reprocesa el pedido ni vuelve a llamar a
+Fourvenues (el reward de compra es a nivel de comprador, no de participante,
+así que vincular un ticket no lo dispara retroactivamente).

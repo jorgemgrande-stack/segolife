@@ -18,7 +18,7 @@
  * `resolveIdentity()`/`persistIdentityMapping()`. Sin `resolvedUserId`, el
  * comportamiento es IDÉNTICO al de siempre (proveedores externos).
  */
-import { eq } from "drizzle-orm";
+import { eq, and, isNotNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { eventAttendance, type EventAttendance } from "../../../drizzle/schema";
@@ -109,15 +109,32 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
     userId = identity.userId;
   }
 
-  const tokenResult = await earnTokens({
-    userId,
-    communityId: input.communityId ?? null,
-    venueId: input.venueId ?? null,
-    eventId: input.eventId,
-    origin: "attendance",
-    idempotencyKey: `event_attendance:${idempotencyKey}`,
-    at: input.attendance.occurredAt,
-  }, conn).catch(() => null); // earnTokens puede rechazar por horario/regla — la asistencia se registra igual (ver nota abajo).
+  // PROTECCIÓN MULTI-TICKET CASE B (spec Fourvenues Operational Sync §28-29):
+  // un mismo `payment_id` de Fourvenues puede traer varios tickets con el
+  // MISMO email/teléfono (el comprador no pidió el dato de cada asistente) —
+  // eso resolvería a un único Student varias veces para el mismo evento. Los
+  // tickets/event_attendance siguen siendo tantos como llegaron (nunca se
+  // descartan), pero el REWARD de asistencia se concede como máximo una vez
+  // por Student+Event: se comprueba si este Student ya tiene una fila de
+  // event_attendance de este mismo evento con tokens ya concedidos ANTES de
+  // llamar a earnTokens. No se toca earnTokens/tokenEngine.ts ni el formato
+  // de idempotencyKey existente — la protección vive aquí, a nivel de
+  // orquestación, igual que el resto de reglas de este pipeline.
+  const [priorRewarded] = await conn.select({ id: eventAttendance.id }).from(eventAttendance)
+    .where(and(eq(eventAttendance.eventId, input.eventId), eq(eventAttendance.userId, userId), isNotNull(eventAttendance.tokensLedgerId)))
+    .limit(1);
+
+  const tokenResult = priorRewarded
+    ? null
+    : await earnTokens({
+        userId,
+        communityId: input.communityId ?? null,
+        venueId: input.venueId ?? null,
+        eventId: input.eventId,
+        origin: "attendance",
+        idempotencyKey: `event_attendance:${idempotencyKey}`,
+        at: input.attendance.occurredAt,
+      }, conn).catch(() => null); // earnTokens puede rechazar por horario/regla — la asistencia se registra igual (ver nota abajo).
 
   const [insertResult] = await conn.insert(eventAttendance).ignore().values({
     eventId: input.eventId,

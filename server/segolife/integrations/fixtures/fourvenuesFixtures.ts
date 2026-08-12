@@ -162,3 +162,83 @@ export const fourvenuesIntTicketsFixture = {
     },
   ],
 };
+
+/** Entrada gratuita (0€) — comprada Y asistida, para probar que 0€ excluye tokens por importe pero no por asistencia (spec §30). */
+export const fourvenuesIntTicketFreeFixture = {
+  success: true,
+  data: [{
+    _id: "fvi_tkt_free_001",
+    code: "FIXF0001",
+    event_id: "fvi_evt_001",
+    rate_id: "fvi_rate_001",
+    status: "activated",
+    name: "Estudiante Becado",
+    email: "fixture.becado@example.invalid",
+    phone: "+34600000009",
+    total_paid: 0,
+    total_fees: 0,
+    refunded: 0,
+    payment_id: "fvi_pay_free",
+    enter: 1,
+    entry_date: 1799694000,
+    created_at: "2026-09-03T10:00:00.000Z",
+    updated_at: "2026-09-03T10:00:00.000Z",
+  }],
+};
+
+/**
+ * Case B (spec §28, "MULTI-TICKET CASE B — PROTECCIÓN OBLIGATORIA"): 4
+ * tickets del MISMO payment_id, los 4 con el MISMO email/teléfono/nombre —
+ * Fourvenues replicó los datos del comprador porque su checkout no pidió el
+ * nombre de cada asistente. Sin protección, esto resolvería a un único
+ * Student 4 veces para el mismo evento. Ver attendancePipeline.ts (Case B)
+ * y ticketPurchasePipeline.test.ts.
+ */
+export const fourvenuesIntTicketsCaseBFixture = {
+  success: true,
+  data: [1, 2, 3, 4].map(n => ({
+    _id: `fvi_tkt_caseb_${n}`,
+    code: `FIXB000${n}`,
+    event_id: "fvi_evt_001",
+    rate_id: "fvi_rate_001",
+    status: "activated",
+    name: "Comprador Único",
+    email: "comprador.unico@example.invalid",
+    phone: "+34600000099",
+    total_paid: 8.35,
+    total_fees: 0.35,
+    refunded: 0,
+    payment_id: "fvi_pay_caseb",
+    enter: 1,
+    entry_date: 1799694000,
+    created_at: "2026-09-01T10:00:00.000Z",
+    updated_at: "2026-09-01T10:00:00.000Z",
+  })),
+};
+
+/**
+ * Case A: mismo payment_id, 4 tickets con participante INDIVIDUAL distinto
+ * cada uno — el escenario "bien resuelto" que confirma que Fourvenues SÍ
+ * puede dar datos por asistente cuando el venue los pide en su checkout.
+ */
+export const fourvenuesIntTicketsCaseAFixture = {
+  success: true,
+  data: [1, 2, 3, 4].map(n => ({
+    _id: `fvi_tkt_casea_${n}`,
+    code: `FIXA000${n}`,
+    event_id: "fvi_evt_001",
+    rate_id: "fvi_rate_001",
+    status: "activated",
+    name: `Asistente Individual ${n}`,
+    email: `asistente.${n}@example.invalid`,
+    phone: `+3460000010${n}`,
+    total_paid: 8.35,
+    total_fees: 0.35,
+    refunded: 0,
+    payment_id: "fvi_pay_casea",
+    enter: n <= 2 ? 1 : 0, // 2 de los 4 asisten realmente — no todos los tickets pagados implican asistencia
+    entry_date: n <= 2 ? 1799694000 : undefined,
+    created_at: "2026-09-01T10:00:00.000Z",
+    updated_at: "2026-09-01T10:00:00.000Z",
+  })),
+};

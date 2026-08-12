@@ -15,10 +15,10 @@ import { createFourvenuesIntegrationsAdapter, FOURVENUES_INTEGRATIONS_BASE_URL }
 import { createWeezeventAdapter, WEEZEVENT_BASE_URL } from "../segolife/integrations/weezeventAdapter";
 import { createHttpTransport } from "../segolife/integrations/httpTransport";
 import { decryptCredentials } from "../segolife/integrations/integrationCredentialCrypto";
-import { isExternalIntegrationsGloballyEnabled } from "../segolife/integrations/integrationSyncService";
+import { isExternalIntegrationsGloballyEnabled, syncVenueIntegration, dryRunVenueIntegration } from "../segolife/integrations/integrationSyncService";
 import { processCommerceLoyalty } from "../segolife/commerce/commercePipeline";
 import { ingestAttendance } from "../segolife/ticketing/attendancePipeline";
-import { commerceTransactions } from "../../drizzle/schema";
+import { commerceTransactions, eventTickets } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
@@ -147,6 +147,33 @@ export const integrationsRouter = router({
     .input(z.object({ integrationType: z.enum(["venue_integration", "event_integration"]), integrationId: z.number().int().positive() }))
     .query(({ input }) => listSyncRuns(input.integrationType, input.integrationId)),
 
+  // ── Fourvenues Operational Sync (spec §9-10, §67-70) ─────────────────────
+  // Mismo permiso que el resto de este router — "no crear permiso si no
+  // hace falta" (spec §69). NUNCA acepta credenciales del frontend ni un
+  // provider arbitrario — ambos se resuelven server-side a partir de
+  // `venueIntegrationId` (ver syncVenueIntegration, que además exige el
+  // kill switch global + `enabled` + `syncEnabled` de la fila concreta).
+  previewVenueSync: integrationsManageProcedure
+    .input(z.object({
+      id: z.number().int().positive(),
+      historyFromDays: z.number().int().positive().max(3650).optional(),
+      futureUntilDays: z.number().int().positive().max(3650).optional(),
+    }))
+    .mutation(({ input }) => dryRunVenueIntegration(input.id, { historyFromDays: input.historyFromDays, futureUntilDays: input.futureUntilDays })),
+
+  syncVenueNow: integrationsManageProcedure
+    .input(z.object({
+      id: z.number().int().positive(),
+      historyFromDays: z.number().int().positive().max(3650).optional(),
+      futureUntilDays: z.number().int().positive().max(3650).optional(),
+      loyaltyEffectiveFrom: z.string().datetime().optional(),
+    }))
+    .mutation(({ input }) => syncVenueIntegration(input.id, {
+      historyFromDays: input.historyFromDays,
+      futureUntilDays: input.futureUntilDays,
+      loyaltyEffectiveFrom: input.loyaltyEffectiveFrom ? new Date(input.loyaltyEffectiveFrom) : null,
+    })),
+
   // ── Unresolved operations (spec punto 56) ────────────────────────────────
   listUnresolved: integrationsViewProcedure
     .input(z.object({ status: z.enum(["unresolved", "linked", "ignored", "conflict"]).default("unresolved") }))
@@ -192,6 +219,17 @@ export const integrationsRouter = router({
               occurredAt: linked.occurredAt ?? new Date(),
             },
           });
+        }
+        // Fourvenues Operational Sync (spec §46-47): operationType="order" — el
+        // event_tickets YA EXISTE (ticketPurchasePipeline siempre persiste el
+        // ticket aunque no resuelva participante, con userId null) — vincular
+        // manualmente solo necesita asociar el Student, no reprocesar
+        // orders/items ni volver a llamar a Fourvenues. El reward de COMPRA
+        // (origin="ticket") es a nivel de PEDIDO/comprador, no de participante
+        // — vincular un ticket concreto no lo dispara retroactivamente (mismo
+        // criterio que buyer vs participant, ver ticketPurchasePipeline.ts).
+        if (linked.operationType === "order" && linked.referenceType === "event_ticket" && linked.referenceId) {
+          await _db.update(eventTickets).set({ userId: input.userId }).where(eq(eventTickets.id, linked.referenceId));
         }
         return linked;
       } catch (err) {

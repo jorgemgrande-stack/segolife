@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Loader2, Plug, ExternalLink } from "lucide-react";
+import { Loader2, Plug, ExternalLink, RefreshCw, Eye } from "lucide-react";
 
 /**
  * IntegrationsManager — /admin/integrations (Fase 5, spec puntos 52-55).
@@ -38,6 +39,23 @@ export default function IntegrationsManager() {
   const [editingVenueCredsId, setEditingVenueCredsId] = useState<number | null>(null);
   const [editVenueApiKey, setEditVenueApiKey] = useState("");
 
+  // ── Fourvenues Operational Sync — Preview (Dry Run) + Sync now (spec §9-10, §67-68) ──
+  interface VenueDryRunPreview {
+    status: "ok" | "blocked"; message?: string;
+    eventsFound: number; mappedEvents: number; newEvents: number;
+    ratesFound: number; ordersFound: number; ticketsFound: number; attendanceFound: number;
+    identitiesResolvable: number; identitiesUnresolved: number;
+  }
+  interface VenueSyncNowResult {
+    status: "success" | "partial" | "failed" | "skipped_disabled"; message?: string;
+    eventsCreated: number; eventsUpdated: number; eventsAmbiguous: number; ratesSynced: number;
+    ordersCreated: number; ordersUpdated: number; ticketsUnresolved: number;
+    attendanceProcessed: number; attendanceUnresolved: number; failedCount: number;
+  }
+  const [previewById, setPreviewById] = useState<Record<number, VenueDryRunPreview>>({});
+  const [syncResultById, setSyncResultById] = useState<Record<number, VenueSyncNowResult>>({});
+  const [confirmSyncId, setConfirmSyncId] = useState<number | null>(null);
+
   const createVenueMut = trpc.integrations.createVenueIntegration.useMutation({
     onSuccess: () => { toast.success("Integración creada (deshabilitada por defecto)"); utils.integrations.listVenueIntegrations.invalidate(); setShowCreate(null); },
   });
@@ -56,6 +74,23 @@ export default function IntegrationsManager() {
     onError: e => toast.error(e.message),
   });
   const setEventEnabledMut = trpc.integrations.setEventIntegrationEnabled.useMutation({ onSuccess: () => utils.integrations.listEventIntegrations.invalidate() });
+  const previewMut = trpc.integrations.previewVenueSync.useMutation({
+    onSuccess: (r, vars) => {
+      setPreviewById(prev => ({ ...prev, [vars.id]: r }));
+      if (r.status === "blocked") toast.error(r.message ?? "Preview bloqueado");
+    },
+    onError: e => toast.error(e.message),
+  });
+  const syncNowMut = trpc.integrations.syncVenueNow.useMutation({
+    onSuccess: (r, vars) => {
+      setSyncResultById(prev => ({ ...prev, [vars.id]: r }));
+      setConfirmSyncId(null);
+      if (r.status === "skipped_disabled") toast.error(r.message ?? "Sync deshabilitado");
+      else toast[r.status === "failed" ? "error" : "success"](`Sync ${r.status} — ${r.eventsCreated + r.eventsUpdated} eventos, ${r.ordersCreated + r.ordersUpdated} pedidos, ${r.attendanceProcessed} asistencias`);
+      utils.integrations.listVenueIntegrations.invalidate();
+    },
+    onError: e => { toast.error(e.message); setConfirmSyncId(null); },
+  });
 
   // Dos APIs distintas de Fourvenues conviven en el catálogo — Integrations
   // API es el modelo real confirmado para Casanova/Tía Felisa/Limoncello
@@ -158,11 +193,70 @@ export default function IntegrationsManager() {
                       </Button>
                     </div>
                   )}
+                  {i.providerKey === "fourvenues_integrations" && (
+                    <div className="pt-2 border-t border-border space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant="outline" onClick={() => previewMut.mutate({ id: i.id })} disabled={previewMut.isPending || !i.credentialsConfigured}>
+                          {previewMut.isPending && previewMut.variables?.id === i.id ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Eye className="w-3.5 h-3.5 mr-1" />}
+                          Preview (dry run)
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setConfirmSyncId(i.id)} disabled={!i.enabled || !i.credentialsConfigured}>
+                          <RefreshCw className="w-3.5 h-3.5 mr-1" /> Sync now
+                        </Button>
+                      </div>
+                      {previewById[i.id] && (
+                        <p className="text-xs text-muted-foreground bg-muted/40 rounded px-2 py-1.5">
+                          {previewById[i.id].status === "blocked" ? previewById[i.id].message : (
+                            <>Preview: {previewById[i.id].eventsFound} eventos ({previewById[i.id].newEvents} nuevos, {previewById[i.id].mappedEvents} ya mapeados) ·
+                            {" "}{previewById[i.id].ratesFound} tarifas · {previewById[i.id].ordersFound} pedidos · {previewById[i.id].ticketsFound} entradas ·
+                            {" "}{previewById[i.id].attendanceFound} asistencias · identidad resoluble: {previewById[i.id].identitiesResolvable}/{previewById[i.id].identitiesResolvable + previewById[i.id].identitiesUnresolved}</>
+                          )}
+                        </p>
+                      )}
+                      {syncResultById[i.id] && (
+                        <p className="text-xs bg-muted/40 rounded px-2 py-1.5">
+                          Último sync: <Badge variant={syncResultById[i.id].status === "failed" ? "destructive" : syncResultById[i.id].status === "partial" ? "secondary" : "default"} className="mx-1">{syncResultById[i.id].status}</Badge>
+                          eventos +{syncResultById[i.id].eventsCreated}/{syncResultById[i.id].eventsUpdated}{syncResultById[i.id].eventsAmbiguous > 0 ? ` (${syncResultById[i.id].eventsAmbiguous} ambiguos)` : ""} ·
+                          {" "}pedidos +{syncResultById[i.id].ordersCreated}/{syncResultById[i.id].ordersUpdated} · asistencias {syncResultById[i.id].attendanceProcessed} ·
+                          {" "}sin resolver {syncResultById[i.id].ticketsUnresolved + syncResultById[i.id].attendanceUnresolved}
+                          {syncResultById[i.id].failedCount > 0 ? ` · errores: ${syncResultById[i.id].failedCount}` : ""}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
           )}
         </section>
+
+        <Dialog open={confirmSyncId != null} onOpenChange={open => !open && setConfirmSyncId(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Confirmar sincronización</DialogTitle>
+              <DialogDescription>
+                Se hará una llamada real a Fourvenues y se escribirán eventos, tarifas, pedidos, entradas y asistencia en Segolife.
+                SegoTokens solo se conceden si existe una regla activa — sin regla, 0 tokens.
+              </DialogDescription>
+            </DialogHeader>
+            {confirmSyncId != null && (
+              <div className="text-sm space-y-1.5 py-2">
+                <p><span className="text-muted-foreground">Integración:</span> #{confirmSyncId} — Fourvenues Integrations API</p>
+                <p><span className="text-muted-foreground">Venue:</span> {venueIntegrations?.find(v => v.id === confirmSyncId)?.venueId}</p>
+                <p><span className="text-muted-foreground">Ventana:</span> por defecto (180 días atrás / 365 días adelante) — piloto recomendado: 30/90</p>
+                {previewById[confirmSyncId] && previewById[confirmSyncId].status === "ok" && (
+                  <p className="text-muted-foreground">Preview más reciente: {previewById[confirmSyncId].eventsFound} eventos, {previewById[confirmSyncId].ordersFound} pedidos, {previewById[confirmSyncId].ticketsFound} entradas.</p>
+                )}
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setConfirmSyncId(null)}>Cancel</Button>
+              <Button onClick={() => confirmSyncId != null && syncNowMut.mutate({ id: confirmSyncId })} disabled={syncNowMut.isPending}>
+                {syncNowMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null} Start sync
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <section className="bg-card border border-border rounded-lg p-5 space-y-3">
           <div className="flex items-center justify-between">
