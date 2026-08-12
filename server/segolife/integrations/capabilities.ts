@@ -62,16 +62,21 @@ export const FOURVENUES_CHANNEL_MANAGER_CAPABILITIES: ProviderCapabilities = {
   webhooks: true,
 };
 
-/** Si en el futuro un venue autoriza a Segolife su propia Integrations API. */
+/**
+ * Capacidades reales de Fourvenues **Integrations API** — confirmado
+ * 2026-08-12 con las tres API keys reales (`ik_live_...`) de Casanova, Tía
+ * Felisa y Limoncello. Es el modelo que Segolife usa de verdad hoy (no
+ * Channel Manager) — ver docs/integrations/fourvenues.md, sección "resuelto".
+ */
 export const FOURVENUES_INTEGRATIONS_API_CAPABILITIES: ProviderCapabilities = {
   events: true,
   ticketTypes: true,
-  orders: "unknown", // GET /sales/ sin schema documentado
+  orders: true, // CONFIRMADO derivado: GET /tickets/ trae payment_id+total_paid+total_fees+refunded por ticket — se agrupa por payment_id, no hay endpoint nativo de "pedido"
   tickets: true,
-  payments: "unknown", // external-payments existe pero no confirmado como venta primaria
+  payments: "unknown", // external-payments existe pero no confirmado como venta primaria — el importe ya viene embebido en cada ticket, ver "orders"
   refunds: false, // Integrations API confirmado SOLO LECTURA en refunds
-  individualAttendance: true, // PUT /tickets/{id}/checkin confirmado
-  consumptions: "unknown", // solo booking products / ticket supplements, no POS genérico
+  individualAttendance: true, // CONFIRMADO doble: PUT /tickets/{id}/checkin (escritura) y GET /tickets/ trae enter+entry_date por ticket (lectura bulk, sin pedir ticket a ticket)
+  consumptions: false, // CONFIRMADO no soportado: supplements[] es un perk ya incluido en el ticket, no una venta de barra nueva — ver fourvenues.md
   checkout: false, // sin endpoint de venta primaria confirmado
   webhooks: false, // sin webhooks documentados en Integrations API
 };

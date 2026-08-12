@@ -82,6 +82,12 @@ export async function getProviderByKey(key: string, db?: DbHandle): Promise<Inte
   return row ?? null;
 }
 
+export async function getProviderById(id: number, db?: DbHandle): Promise<IntegrationProviderRow | null> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select().from(integrationProviders).where(eq(integrationProviders.id, id)).limit(1);
+  return row ?? null;
+}
+
 // ─── VENUE INTEGRATIONS (Fourvenues) ──────────────────────────────────────────
 
 export async function listVenueIntegrations(venueId?: number, db?: DbHandle): Promise<SafeIntegration[]> {
