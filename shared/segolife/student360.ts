@@ -28,7 +28,14 @@ export type TimelineEventType =
   | "internal_note"
   | "tag_assigned"
   | "login"
-  | "admin_action";
+  | "admin_action"
+  // COMUNITY (spec punto 79) — solo los eventos con valor directo para el
+  // admin viendo la ficha del estudiante; el resto (proposal_approved,
+  // reward, event_conversion) ya quedan cubiertos por token_credit/
+  // admin_action existentes, no se duplican.
+  | "community_response"
+  | "community_support"
+  | "community_proposal_submitted";
 
 export interface TimelineEventDTO {
   /** Sintético: `${source}:${sourceRowId}` — único dentro de la ficha, no un id de BD real. */

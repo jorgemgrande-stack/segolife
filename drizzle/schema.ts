@@ -3970,6 +3970,14 @@ export const events = mysqlTable("events", {
   isFeatured:   boolean("is_featured").notNull().default(false),
   // Mismo criterio que venues.homeSortOrder — orden curado a mano en la Home.
   homeSortOrder: int("home_sort_order").notNull().default(0),
+  // Origen del evento — auditado antes de añadirse (COMUNITY, docs/comunity/
+  // event-conversion.md): no existía ningún rastro de "de dónde vino este
+  // evento". Mismo patrón que token_ledger.sourceType/sourceId (varchar libre
+  // + int sin FK real, nunca un enum cerrado que ataría events a un único
+  // origen posible). Ambas nullable — la inmensa mayoría de eventos se siguen
+  // creando a mano, sin origen.
+  sourceType:   varchar("source_type", { length: 64 }),
+  sourceId:     int("source_id"),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });
@@ -5340,3 +5348,240 @@ export const engagementCampaignMessages = mysqlTable("engagement_campaign_messag
 }));
 export type EngagementCampaignMessage = typeof engagementCampaignMessages.$inferSelect;
 export type InsertEngagementCampaignMessage = typeof engagementCampaignMessages.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEGOLIFE — COMUNITY (Social Intelligence, Polls, Proposals & Rapid Activation)
+// ═══════════════════════════════════════════════════════════════════════════
+// Auditado antes de crear nada — docs/comunity/architecture.md. Conclusión de
+// auditoría: no existe NINGÚN sistema de encuestas/votación/propuestas en
+// todo el repo — 7 tablas nuevas, justificadas una por una (spec: "no crear
+// 12 tablas si 5 resuelven correctamente el dominio").
+//
+// COLISIÓN DE NOMBRE evitada a propósito: ya existe `proposals`/
+// `proposalOptions` (Propuestas Comerciales Náyade — Lead→Propuesta→
+// Presupuesto→Reserva→Factura, drizzle/schema.ts:287-362), dominio y
+// lifecycle completamente distintos. Todo lo de COMUNITY usa el prefijo
+// `community_` para no chocar ni confundirse con esa infraestructura.
+//
+// Sin FK reales — mismo criterio consistente en todo el repo (comentarios de
+// diseño en events/venues/tokenLedger etc.).
+
+// ─── COMMUNITY_PROPOSALS ────────────────────────────────────────────────────
+// Entidad central: una pregunta/encuesta publicada (creada directamente por
+// un admin, o convertida desde una idea de estudiante vía
+// source_student_proposal_id). audienceDefinition reutiliza EXACTAMENTE el
+// mismo shape JSON que engagement_campaigns.audienceDefinition — mismo motor
+// (audienceEngine.resolveAudience), nunca un segmentador paralelo.
+
+export const communityProposals = mysqlTable("community_proposals", {
+  id:                       int("id").autoincrement().primaryKey(),
+  title:                    varchar("title", { length: 256 }).notNull(),
+  description:              text("description"),
+  questionType:             mysqlEnum("question_type", [
+    "single_choice", "yes_no", "percentage_scale", "scale_1_5",
+    "multiselect", "ranking", "attendance_intention", "me_apunto", "open_text",
+  ]).notNull(),
+  status:                   mysqlEnum("status", ["draft", "scheduled", "active", "closed", "cancelled", "converted"]).notNull().default("draft"),
+  urgencyType:              mysqlEnum("urgency_type", ["flash", "scheduled"]).notNull().default("scheduled"),
+  startsAt:                 timestamp("starts_at"),
+  endsAt:                   timestamp("ends_at"),
+  resultsVisibility:        mysqlEnum("results_visibility", ["immediate", "after_vote", "after_close", "never"]).notNull().default("after_vote"),
+  allowChangeResponse:      boolean("allow_change_response").notNull().default(true),
+  tokenReward:              int("token_reward"),
+  coverImageUrl:            varchar("cover_image_url", { length: 512 }),
+  venueId:                  int("venue_id"),
+  relatedEventId:           int("related_event_id"),
+  convertedEventId:         int("converted_event_id"),
+  sourceStudentProposalId:  int("source_student_proposal_id"),
+  audienceDefinition:       json("audience_definition").$type<Record<string, unknown>>(),
+  audienceSnapshotAt:       timestamp("audience_snapshot_at"),
+  // Nunca mostrar desglose por segmento con menos muestra que esto —
+  // spec punto 43, "no mostrar microsegmentos que puedan identificar individuos".
+  minSampleSize:            int("min_sample_size").notNull().default(5),
+  createdByUserId:          int("created_by_user_id").notNull(),
+  publishedAt:              timestamp("published_at"),
+  closedAt:                 timestamp("closed_at"),
+  cancelledAt:              timestamp("cancelled_at"),
+  createdAt:                timestamp("created_at").defaultNow().notNull(),
+  updatedAt:                timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  statusIdx:                index("community_proposals_status_idx").on(table.status),
+  startsAtIdx:               index("community_proposals_starts_at_idx").on(table.startsAt),
+  endsAtIdx:                 index("community_proposals_ends_at_idx").on(table.endsAt),
+  venueIdx:                  index("community_proposals_venue_id_idx").on(table.venueId),
+  sourceStudentProposalIdx:  index("community_proposals_source_student_proposal_idx").on(table.sourceStudentProposalId),
+}));
+export type CommunityProposal = typeof communityProposals.$inferSelect;
+export type InsertCommunityProposal = typeof communityProposals.$inferInsert;
+
+// ─── COMMUNITY_PROPOSAL_COMMUNITIES ─────────────────────────────────────────
+// M2M de ALCANCE administrativo — mismo patrón exacto que benefit_communities/
+// campaign_communities: sin fila = la propuesta es global (TODOS, spec punto
+// 9), visible/gestionable por cualquier admin. Con filas, un community_admin
+// solo puede crear/ver/gestionar si su alcance solapa con estas comunidades
+// (mismo criterio que assertStudentAccessible, aplicado aquí a un bridge
+// table curado en vez de a la membresía real de un estudiante). Distinto,
+// a propósito, de `audienceDefinition` (JSON, en community_proposals): esta
+// tabla es para SCOPING de quién puede ADMINISTRAR la propuesta; la
+// audiencia real que puede RESPONDER se resuelve vía audienceEngine y puede
+// ser más granular (tags, SegoScore, etc.) que el simple alcance de comunidad.
+
+export const communityProposalCommunities = mysqlTable("community_proposal_communities", {
+  id:           int("id").autoincrement().primaryKey(),
+  proposalId:   int("proposal_id").notNull(),
+  communityId:  int("community_id").notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  proposalCommunityUnique: unique("community_proposal_communities_unique").on(table.proposalId, table.communityId),
+}));
+export type CommunityProposalCommunity = typeof communityProposalCommunities.$inferSelect;
+export type InsertCommunityProposalCommunity = typeof communityProposalCommunities.$inferInsert;
+
+// ─── COMMUNITY_OPTIONS ──────────────────────────────────────────────────────
+// Solo para tipos con opciones discretas (single_choice/multiselect/ranking/
+// percentage_scale — cada criterio de una escala porcentual ES una "opción").
+// yes_no/scale_1_5/attendance_intention/me_apunto/open_text NUNCA tienen
+// filas aquí — sus respuestas posibles son fijas, resueltas en código, no
+// datos configurables (evita filas vacías sin sentido).
+
+export const communityOptions = mysqlTable("community_options", {
+  id:                 int("id").autoincrement().primaryKey(),
+  proposalId:         int("proposal_id").notNull(),
+  label:              varchar("label", { length: 256 }).notNull(),
+  sortOrder:          int("sort_order").notNull().default(0),
+  // Solo relevante para single_choice — spec punto 48: "admin define qué
+  // opciones cuentan como positive intent". Ignorado en el resto de tipos
+  // (yes_no/attendance_intention/me_apunto tienen semántica fija en código,
+  // ver communityIntentService.ts).
+  isPositiveIntent:   boolean("is_positive_intent").notNull().default(false),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  proposalIdx:  index("community_options_proposal_id_idx").on(table.proposalId),
+}));
+export type CommunityOption = typeof communityOptions.$inferSelect;
+export type InsertCommunityOption = typeof communityOptions.$inferInsert;
+
+// ─── COMMUNITY_PROPOSAL_AUDIENCES ───────────────────────────────────────────
+// Snapshot de audiencia al PUBLICAR — mismo patrón exacto que
+// engagement_campaign_audiences (drizzle/schema.ts arriba): quién PODÍA
+// responder queda fijado en ese momento, no cambia si luego cambian tags/
+// segmentos del estudiante (spec punto 11, decisión documentada).
+
+export const communityProposalAudiences = mysqlTable("community_proposal_audiences", {
+  id:           int("id").autoincrement().primaryKey(),
+  proposalId:   int("proposal_id").notNull(),
+  userId:       int("user_id").notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  proposalUserUnique: unique("community_proposal_audiences_unique").on(table.proposalId, table.userId),
+  userIdx:      index("community_proposal_audiences_user_id_idx").on(table.userId),
+}));
+export type CommunityProposalAudience = typeof communityProposalAudiences.$inferSelect;
+export type InsertCommunityProposalAudience = typeof communityProposalAudiences.$inferInsert;
+
+// ─── COMMUNITY_RESPONSES ────────────────────────────────────────────────────
+// Cabecera de UN acto de respuesta (proposal+user) — separada de los VALORES
+// (community_response_values) porque un multiselect/percentage_scale/ranking
+// genera varias filas de valor para una única respuesta; la cabecera es la
+// que sostiene la invariante UNIQUE(proposal,user) (spec punto 27),
+// allow_change_response y la idempotencia de la recompensa (spec punto 77:
+// "si cambia respuesta, NO volver a premiar").
+
+export const communityResponses = mysqlTable("community_responses", {
+  id:               int("id").autoincrement().primaryKey(),
+  proposalId:       int("proposal_id").notNull(),
+  userId:           int("user_id").notNull(),
+  respondedAt:      timestamp("responded_at").defaultNow().notNull(),
+  updatedAt:        timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  rewardGranted:    boolean("reward_granted").notNull().default(false),
+  tokenLedgerId:    int("token_ledger_id"),
+}, (table) => ({
+  proposalUserUnique: unique("community_responses_unique").on(table.proposalId, table.userId),
+  userIdx:          index("community_responses_user_id_idx").on(table.userId),
+}));
+export type CommunityResponse = typeof communityResponses.$inferSelect;
+export type InsertCommunityResponse = typeof communityResponses.$inferInsert;
+
+// ─── COMMUNITY_RESPONSE_VALUES ──────────────────────────────────────────────
+// El VALOR real de la respuesta — equilibrio deliberado (spec punto 66): ni
+// todo en JSON (perderíamos agregación SQL: AVG/COUNT/GROUP BY por opción),
+// ni una tabla distinta por tipo de pregunta (9 tipos → 9 tablas, exceso).
+// Una fila por "unidad de valor": single_choice/yes_no/scale_1_5/
+// attendance_intention/me_apunto → 1 fila; multiselect/ranking/
+// percentage_scale → N filas (una por opción marcada/ordenada/puntuada).
+
+export const communityResponseValues = mysqlTable("community_response_values", {
+  id:           int("id").autoincrement().primaryKey(),
+  responseId:   int("response_id").notNull(),
+  // Solo relevante para single_choice/multiselect/ranking/percentage_scale.
+  optionId:     int("option_id"),
+  // open_text (texto libre) y yes_no ("yes"/"no").
+  valueText:    text("value_text"),
+  // percentage_scale (0-100 por opción), scale_1_5 (1-5), ranking (posición
+  // 1..N), attendance_intention (código 0-3, ver comunityIntentService.ts).
+  valueNumber:  int("value_number"),
+  // Moderación — solo aplica en la práctica a open_text (spec punto 30).
+  isHidden:     boolean("is_hidden").notNull().default(false),
+  isFeatured:   boolean("is_featured").notNull().default(false),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  responseIdx:  index("community_response_values_response_id_idx").on(table.responseId),
+  optionIdx:    index("community_response_values_option_id_idx").on(table.optionId),
+}));
+export type CommunityResponseValue = typeof communityResponseValues.$inferSelect;
+export type InsertCommunityResponseValue = typeof communityResponseValues.$inferInsert;
+
+// ─── COMMUNITY_STUDENT_PROPOSALS ────────────────────────────────────────────
+// Ideas de estudiantes SIN estructurar (título+descripción libre) — lifecycle
+// y forma distintos de community_proposals (que ya es una pregunta
+// estructurada con tipo/opciones). Al aprobar y "Convertir en COMUNITY
+// formal", el admin crea una fila nueva en community_proposals enlazada vía
+// source_student_proposal_id — nunca se reescribe esta fila como si fuera
+// ya una encuesta.
+
+export const communityStudentProposals = mysqlTable("community_student_proposals", {
+  id:                       int("id").autoincrement().primaryKey(),
+  studentUserId:            int("student_user_id").notNull(),
+  communityId:              int("community_id").notNull(),
+  title:                    varchar("title", { length: 256 }).notNull(),
+  description:              text("description"),
+  venueId:                  int("venue_id"),
+  suggestedDate:            date("suggested_date", { mode: "string" }),
+  category:                 varchar("category", { length: 64 }),
+  status:                   mysqlEnum("status", [
+    "pending_moderation", "approved", "rejected", "scheduled", "active", "closed", "converted",
+  ]).notNull().default("pending_moderation"),
+  rejectionReasonInternal:  varchar("rejection_reason_internal", { length: 512 }),
+  rejectionReasonStudent:   varchar("rejection_reason_student", { length: 512 }),
+  moderatedByUserId:        int("moderated_by_user_id"),
+  moderatedAt:              timestamp("moderated_at"),
+  convertedProposalId:      int("converted_proposal_id"),
+  createdAt:                timestamp("created_at").defaultNow().notNull(),
+  updatedAt:                timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  statusIdx:        index("community_student_proposals_status_idx").on(table.status),
+  studentUserIdx:   index("community_student_proposals_student_user_id_idx").on(table.studentUserId),
+  communityIdx:      index("community_student_proposals_community_id_idx").on(table.communityId),
+}));
+export type CommunityStudentProposal = typeof communityStudentProposals.$inferSelect;
+export type InsertCommunityStudentProposal = typeof communityStudentProposals.$inferInsert;
+
+// ─── COMMUNITY_SUPPORTS ─────────────────────────────────────────────────────
+// "Apoyar" una idea de estudiante pendiente/aprobada — detecta demanda antes
+// de convertirla en encuesta formal (spec punto 34). Una persona = un apoyo,
+// sin SegoTokens (spec explícito). Conteo SIEMPRE agregado en vivo
+// (COUNT(*) sobre esta tabla) — deliberadamente SIN columna de contador
+// denormalizado, mismo criterio que token_ledger/token_wallets en todo este
+// repo ("nunca un contador que pueda desincronizarse de la fuente real").
+
+export const communitySupports = mysqlTable("community_supports", {
+  id:                   int("id").autoincrement().primaryKey(),
+  studentProposalId:    int("student_proposal_id").notNull(),
+  userId:               int("user_id").notNull(),
+  createdAt:            timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  proposalUserUnique:   unique("community_supports_unique").on(table.studentProposalId, table.userId),
+  userIdx:              index("community_supports_user_id_idx").on(table.userId),
+}));
+export type CommunitySupport = typeof communitySupports.$inferSelect;
+export type InsertCommunitySupport = typeof communitySupports.$inferInsert;

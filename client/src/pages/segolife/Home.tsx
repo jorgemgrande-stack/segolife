@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
-import { Coins, Gift, ChevronRight, Flame, Sparkles, PartyPopper } from "lucide-react";
+import { Coins, Gift, ChevronRight, Flame, Sparkles, PartyPopper, Vote } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
@@ -32,6 +32,7 @@ export default function Home() {
   const { data: summary, isLoading } = trpc.home.getSummary.useQuery();
   const { data: me } = trpc.students.me.useQuery();
   const { data: venues } = trpc.venues.publicActive.useQuery({ communityId: community?.id });
+  const { data: activeComunity } = trpc.community.myActive.useQuery();
 
   const firstName = me?.profile.firstName ?? me?.user.name?.split(" ")[0] ?? "";
   const hour = new Date().getHours();
@@ -79,6 +80,26 @@ export default function Home() {
                   {i18n.language === "en"
                     ? (summary.activeBenefit.definition.nameEn ?? summary.activeBenefit.definition.name)
                     : (summary.activeBenefit.definition.nameEs ?? summary.activeBenefit.definition.name)}
+                </p>
+              </div>
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            </div>
+          </Link>
+        )}
+
+        {!!activeComunity?.length && (
+          <Link
+            href={`/${slug}/comunity`}
+            className="block segolife-card-shadow rounded-3xl border border-primary/30 bg-primary/5 p-4"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+                <Vote className="size-5" aria-hidden="true" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-primary">{t("home.comunityTitle")}</p>
+                <p className="truncate text-sm font-semibold text-foreground">
+                  {t("home.comunityActiveCount", { count: activeComunity.length })}
                 </p>
               </div>
               <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />

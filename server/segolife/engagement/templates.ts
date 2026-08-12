@@ -70,6 +70,33 @@ export const ENGAGEMENT_TEMPLATES: Record<string, EngagementTemplate> = {
     bodyEs: "No te lo pierdas — míralo en Explorar.",
     allowedVariables: ["eventName"],
   },
+  // COMUNITY (spec punto 20) — publicación de una propuesta nueva.
+  community_proposal_published: {
+    key: "community_proposal_published",
+    version: 1,
+    category: "events",
+    audienceType: "transactional",
+    channels: ["in_app"],
+    titleEn: "🔥 New question in COMUNITY",
+    titleEs: "🔥 Nueva pregunta en COMUNITY",
+    bodyEn: "{{title}}",
+    bodyEs: "{{title}}",
+    allowedVariables: ["title"],
+  },
+  // COMUNITY (spec punto 47) — el Event convertido ya se publicó, notificar
+  // a quien respondió con intención positiva.
+  community_interested_event_published: {
+    key: "community_interested_event_published",
+    version: 1,
+    category: "events",
+    audienceType: "transactional",
+    channels: ["in_app"],
+    titleEn: "You asked for it. It's here.",
+    titleEs: "Lo pedisteis. Ya está aquí.",
+    bodyEn: "{{eventName}}",
+    bodyEs: "{{eventName}}",
+    allowedVariables: ["eventName"],
+  },
 };
 
 /** Sustituye SOLO las variables declaradas en allowedVariables — cualquier otra clave del objeto vars se ignora silenciosamente. */

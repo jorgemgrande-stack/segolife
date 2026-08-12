@@ -193,6 +193,14 @@ const EngagementTemplatesViewer = lazy(() => import("./pages/admin/engagement/Te
 const EngagementAudiencePage = lazy(() => import("./pages/admin/engagement/AudiencePage"));
 const StaffBenefitScan = lazy(() => import("./pages/staff/StaffBenefitScan"));
 
+// Segolife: COMUNITY — inteligencia social/sondeos/propuestas de estudiante
+const ComunityManager = lazy(() => import("./pages/admin/comunity/ComunityManager"));
+const ComunityWizard = lazy(() => import("./pages/admin/comunity/ComunityWizard"));
+const ComunityDetail = lazy(() => import("./pages/admin/comunity/ComunityDetail"));
+const ComunityModeration = lazy(() => import("./pages/admin/comunity/ComunityModeration"));
+const ComunityHub = lazy(() => import("./pages/segolife/ComunityHub"));
+const ComunityQuestionDetail = lazy(() => import("./pages/segolife/ComunityQuestionDetail"));
+
 // Segolife: Ticketing & Commerce Core + Integration Hub (Fase 5)
 const IntegrationsManager = lazy(() => import("./pages/admin/integrations/IntegrationsManager"));
 const UnresolvedOperations = lazy(() => import("./pages/admin/integrations/UnresolvedOperations"));
@@ -498,6 +506,10 @@ function Router() {
       <Route path="/admin/engagement/deliveries">{() => <Suspense fallback={<AdminLoadingFallback />}><EngagementDeliveriesLog /></Suspense>}</Route>
       <Route path="/admin/engagement/templates">{() => <Suspense fallback={<AdminLoadingFallback />}><EngagementTemplatesViewer /></Suspense>}</Route>
       <Route path="/admin/engagement/audience">{() => <Suspense fallback={<AdminLoadingFallback />}><EngagementAudiencePage /></Suspense>}</Route>
+      <Route path="/admin/comunity/nueva">{() => <Suspense fallback={<AdminLoadingFallback />}><ComunityWizard /></Suspense>}</Route>
+      <Route path="/admin/comunity/moderacion">{() => <Suspense fallback={<AdminLoadingFallback />}><ComunityModeration /></Suspense>}</Route>
+      <Route path="/admin/comunity/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><ComunityDetail /></Suspense>}</Route>
+      <Route path="/admin/comunity">{() => <Suspense fallback={<AdminLoadingFallback />}><ComunityManager /></Suspense>}</Route>
       <Route path="/admin/integrations/unresolved">{() => <Suspense fallback={<AdminLoadingFallback />}><UnresolvedOperations /></Suspense>}</Route>
       <Route path="/admin/integrations">{() => <Suspense fallback={<AdminLoadingFallback />}><IntegrationsManager /></Suspense>}</Route>
       <Route path="/admin/configuracion">{() => <Suspense fallback={<AdminLoadingFallback />}><ConfigPanel /></Suspense>}</Route>
@@ -532,6 +544,8 @@ function Router() {
       <Route path="/:community/tickets/:id">{() => <Suspense fallback={null}><TicketDetail /></Suspense>}</Route>
       <Route path="/:community/tickets">{() => <Suspense fallback={null}><MyTickets /></Suspense>}</Route>
       <Route path="/:community/profile">{() => <Suspense fallback={null}><SegolifeProfile /></Suspense>}</Route>
+      <Route path="/:community/comunity/:id">{() => <Suspense fallback={null}><ComunityQuestionDetail /></Suspense>}</Route>
+      <Route path="/:community/comunity">{() => <Suspense fallback={null}><ComunityHub /></Suspense>}</Route>
       <Route path="/:community">{() => <Suspense fallback={null}><SegolifeHome /></Suspense>}</Route>
 
       {/* 404 */}

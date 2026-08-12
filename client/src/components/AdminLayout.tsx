@@ -6,7 +6,7 @@ import {
   Bell, Search, User, BedDouble, Sparkles, UtensilsCrossed, AlertCircle,
   UserPlus, FileCheck, ChevronRight, Receipt, Truck, Monitor, Tag, Ticket,
   Sun, Moon, ExternalLink, Target, MessageCircle, Bot, Mail, Building2,
-  Briefcase, GraduationCap, Store, CalendarDays, Coins, QrCode, Gift,
+  Briefcase, GraduationCap, Store, CalendarDays, Coins, QrCode, Gift, Vote,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -106,6 +106,20 @@ const navItems = [
       { label: "Entregas", href: "/admin/engagement/deliveries" },
       { label: "Plantillas", href: "/admin/engagement/templates" },
       { label: "Audiencia", href: "/admin/engagement/audience" },
+    ],
+  },
+  {
+    // Módulo principal propio (spec COMUNITY punto 3: "cerca de Events/
+    // Engagement, nunca escondido dentro de CRM") — capa de inteligencia
+    // social/sondeos/propuestas, dominio totalmente distinto de las
+    // Propuestas comerciales de CRM (Lead→Propuesta→Presupuesto).
+    label: "COMUNITY",
+    href: "/admin/comunity",
+    icon: Vote,
+    roles: ["admin"],
+    children: [
+      { label: "Panel", href: "/admin/comunity" },
+      { label: "Moderación de ideas", href: "/admin/comunity/moderacion" },
     ],
   },
   {

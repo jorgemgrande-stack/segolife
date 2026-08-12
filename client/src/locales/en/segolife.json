@@ -276,7 +276,8 @@
     "scan": "Scan",
     "tickets": "Tickets",
     "rewards": "Rewards",
-    "profile": "Profile"
+    "profile": "Profile",
+    "comunity": "COMUNITY"
   },
   "community": {
     "notFoundTitle": "Community not found",
@@ -318,7 +319,10 @@
     "venuesTitle": "Venues",
     "upcomingEventsTitle": "Upcoming events",
     "exploreAll": "Explore all",
-    "scanCta": "Scan and earn SegoTokens"
+    "scanCta": "Scan and earn SegoTokens",
+    "comunityTitle": "COMUNITY",
+    "comunityActiveCount": "{{count}} active questions",
+    "comunityActiveCount_one": "{{count}} active question"
   },
   "explore": {
     "title": "Explore",

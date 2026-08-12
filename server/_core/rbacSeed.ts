@@ -126,6 +126,21 @@ const TICKETING_COMMERCE_STAFF_PERMISSIONS: Array<[string, string, string, strin
   ["commerce.record",   "commerce",   "record", "Registrar una venta de POS nativo (consumición en efectivo) en un venue"],
 ];
 
+// COMUNITY (encuestas/sondeos/propuestas de estudiantes) — módulo nuevo, sin
+// permiso previo. Nombre de módulo "community" (no "comunity") por
+// consistencia con las tablas del schema (community_proposals, etc.) — la UI
+// visible sigue mostrando "COMUNITY" tal como pide el producto, esto es solo
+// la clave técnica interna. `moderate` y `publish` separados de `manage`
+// porque son acciones con distinto nivel de sensibilidad (moderar una idea
+// de estudiante vs. crear/editar una propuesta vs. publicarla a audiencia
+// real) — mismo criterio que benefits.grant/cancel separados de benefits.manage.
+const COMMUNITY_PERMISSIONS: Array<[string, string, string, string]> = [
+  ["community.view",     "community", "view",     "Ver propuestas COMUNITY, respuestas, resultados e ideas de estudiantes"],
+  ["community.manage",   "community", "manage",   "Crear/editar/programar/cancelar propuestas COMUNITY, convertir a Event"],
+  ["community.moderate", "community", "moderate", "Aprobar/rechazar ideas de estudiante, ocultar/destacar respuestas de texto libre"],
+  ["community.publish",  "community", "publish",  "Publicar una propuesta COMUNITY a su audiencia (snapshot + notificación)"],
+];
+
 export async function seedRbacIfNeeded(): Promise<{
   rolesEnsured: string[];
   permissionsAdded: string[];
@@ -151,7 +166,7 @@ export async function seedRbacIfNeeded(): Promise<{
     // 2. Permisos students.view / students.manage / venues.* / events.* /
     //    tokens.* / qr.* / benefits.* / integrations.* / ticketing.* /
     //    commerce.* / attendance.* — no sembrados en ninguna migración histórica.
-    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS]) {
+    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS, ...COMMUNITY_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_permissions (\`key\`, module, action, description) VALUES (?, ?, ?, ?)`,
         [key, module, action, description]
@@ -164,7 +179,7 @@ export async function seedRbacIfNeeded(): Promise<{
     //    attendance.* al rol admin (idempotente, no asume que el CROSS JOIN
     //    histórico de 0070/0077 se haya vuelto a ejecutar para estos permisos
     //    nuevos).
-    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS]) {
+    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS, ...COMMUNITY_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
          SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p

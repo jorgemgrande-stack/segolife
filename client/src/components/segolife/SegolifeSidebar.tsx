@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
-import { Home as HomeIcon, Compass, Ticket, Gift, QrCode, User, ChevronDown, Check } from "lucide-react";
+import { Home as HomeIcon, Compass, Ticket, Gift, QrCode, User, ChevronDown, Check, Vote } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { trpc } from "@/lib/trpc";
@@ -47,6 +47,7 @@ export function SegolifeSidebar({ slug, benefitsBadge }: { slug: string; benefit
   const items = [
     { key: "home", href: `/${slug}`, icon: HomeIcon, label: t("nav.home"), exact: true },
     { key: "explore", href: `/${slug}/explore`, icon: Compass, label: t("nav.explore") },
+    { key: "comunity", href: `/${slug}/comunity`, icon: Vote, label: t("nav.comunity") },
     { key: "tickets", href: `/${slug}/tickets`, icon: Ticket, label: t("nav.tickets") },
     { key: "scan", href: `/${slug}/scan`, icon: QrCode, label: t("nav.scan") },
     { key: "rewards", href: `/${slug}/rewards`, icon: Gift, label: t("nav.rewards"), badge: benefitsBadge },

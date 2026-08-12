@@ -15,7 +15,7 @@ import {
   ArrowLeft, Loader2, GraduationCap, MapPin, Tag as TagIcon,
   StickyNote, Plus, X, Pencil, Trash2, Ticket, CalendarCheck, ShoppingBag,
   QrCode, Coins, Gift, Bell, User, ShieldCheck, ChevronDown, ChevronUp,
-  TrendingUp, AlertTriangle, Info, LogIn, History,
+  TrendingUp, AlertTriangle, Info, LogIn, History, MessageCircle, Heart, Lightbulb,
 } from "lucide-react";
 import type { TimelineEventDTO, TimelineEventType, TimelineCursor } from "@shared/segolife/student360";
 import type { StudentDetail as StudentDetailData } from "../../../../../server/db/studentsDb";
@@ -93,6 +93,9 @@ const TIMELINE_META: Record<TimelineEventType, { icon: React.ElementType; label:
   tag_assigned: { icon: TagIcon, label: "Etiqueta" },
   login: { icon: LogIn, label: "Inicio de sesión" },
   admin_action: { icon: ShieldCheck, label: "Acción admin" },
+  community_response: { icon: MessageCircle, label: "Respuesta en COMUNITY" },
+  community_support: { icon: Heart, label: "Apoyo a una idea" },
+  community_proposal_submitted: { icon: Lightbulb, label: "Idea propuesta" },
 };
 
 function TimelineRow({ event }: { event: TimelineEventDTO }) {
