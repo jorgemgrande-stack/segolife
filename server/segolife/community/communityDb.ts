@@ -54,7 +54,7 @@ export async function listProposalOptions(proposalId: number, db?: AnyDbHandle):
   return conn.select().from(communityOptions).where(eq(communityOptions.proposalId, proposalId)).orderBy(asc(communityOptions.sortOrder));
 }
 
-/** Reemplaza el conjunto completo de opciones — solo válido mientras la propuesta está en draft (comprobado por el caller/router, no aquí). */
+/** Reemplaza el conjunto completo de opciones — solo seguro mientras no existan respuestas todavía (comprobado por el caller/router, no aquí), porque community_response_values.optionId referencia estas filas y no hay FK con cascade. */
 export async function setProposalOptions(proposalId: number, labels: string[], db?: AnyDbHandle): Promise<void> {
   const conn = db ?? (await getDb());
   await conn.delete(communityOptions).where(eq(communityOptions.proposalId, proposalId));

@@ -26,7 +26,7 @@ import {
   listTrendingStudentProposals,
 } from "../segolife/community/communityStudentProposalDb";
 import { communityResponseValues, communityResponses, communityOptions as communityOptionsTable } from "../../drizzle/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 const communityViewProcedure = permissionProcedure("community.view", ["admin"]);
 const communityManageProcedure = permissionProcedure("community.manage", ["admin"]);
@@ -233,11 +233,23 @@ export const communityRouter = router({
       await assertProposalAccessible(access, input.id);
       const proposal = await getProposalById(input.id);
       if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Propuesta no encontrada" });
-      if (proposal.status !== "draft") {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "Solo se puede editar una propuesta en borrador" });
+      // Editable en cualquier estado salvo los terminales — "cancelled"/"converted"
+      // ya no representan una propuesta viva (spec: admin debe poder corregir
+      // título/descripción/fechas/etc. incluso tras publicar).
+      if (proposal.status === "cancelled" || proposal.status === "converted") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `No se puede editar una propuesta en estado "${proposal.status}"` });
       }
       const { id, options, communityIds, ...fields } = input;
       if (communityIds) assertCommunityIdsWithinAccess(access, communityIds);
+      if (options) {
+        const { getDb } = await import("../db");
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "BD no disponible" });
+        const [{ count }] = await db.select({ count: sql<number>`count(*)` }).from(communityResponses).where(eq(communityResponses.proposalId, id));
+        if (Number(count) > 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "No se pueden modificar las opciones de una propuesta que ya tiene respuestas registradas" });
+        }
+      }
       const updated = await updateProposal(id, fields);
       if (options) await setProposalOptions(id, options);
       if (communityIds) await setProposalCommunities(id, communityIds);

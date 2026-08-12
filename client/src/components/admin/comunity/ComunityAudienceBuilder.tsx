@@ -46,6 +46,22 @@ export function toComunityAudienceDefinition(form: ComunityAudienceForm) {
   };
 }
 
+/** Inverso de toComunityAudienceDefinition — reconstruye el form desde una audienceDefinition guardada (para editar propuestas existentes). Best-effort: solo entiende el subconjunto curado que expone este builder; si la definición trae criterios avanzados (venueActivity/eventAttended/benefitOwnership, no expuestos aquí) esos campos no se representan, así que el caller NO debe reenviar audienceDefinition a menos que el admin haya tocado explícitamente este builder. */
+export function fromComunityAudienceDefinition(def: Record<string, unknown> | null | undefined): ComunityAudienceForm {
+  if (!def) return EMPTY_COMUNITY_AUDIENCE;
+  return {
+    allStudents: def.allStudents === true,
+    communityIds: Array.isArray(def.communityIds) ? (def.communityIds as number[]) : [],
+    tagIds: Array.isArray(def.tagIds) ? (def.tagIds as number[]) : [],
+    tokensBalanceMin: typeof def.tokensBalanceMin === "number" ? String(def.tokensBalanceMin) : "",
+    tokensBalanceMax: typeof def.tokensBalanceMax === "number" ? String(def.tokensBalanceMax) : "",
+    academicYear: typeof def.academicYear === "string" ? def.academicYear : "",
+    profileComplete: def.profileComplete === true ? "true" : def.profileComplete === false ? "false" : "",
+    createdAfter: typeof def.createdAfter === "string" ? def.createdAfter : "",
+    createdBefore: typeof def.createdBefore === "string" ? def.createdBefore : "",
+  };
+}
+
 function hasAnyFilter(form: ComunityAudienceForm): boolean {
   if (form.allStudents) return true;
   const def = toComunityAudienceDefinition(form);

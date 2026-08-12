@@ -12,9 +12,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "sonner";
 import {
   ArrowLeft, Loader2, Vote, Users, MessageSquare, Gauge, Send, XCircle, Ban,
-  CalendarPlus, Bell, Eye, EyeOff, Star, ExternalLink,
+  CalendarPlus, Bell, Eye, EyeOff, Star, ExternalLink, Pencil,
 } from "lucide-react";
 import { QUESTION_TYPE_LABEL, STATUS_LABEL, STATUS_VARIANT, fmtDateTime, timeLeftLabel, ATTENDANCE_INTENTION_LABEL, type ComunityQuestionType, type ComunityStatus } from "@/lib/comunity";
+import { ComunityEditDialog } from "@/components/admin/comunity/ComunityEditDialog";
 import type { ProposalResults } from "../../../../../server/segolife/community/communityResultsService";
 
 /**
@@ -40,6 +41,8 @@ export default function ComunityDetail() {
     { id: proposalId, optionId: respondentsOptionId },
     { enabled: showRespondents }
   );
+
+  const [editOpen, setEditOpen] = useState(false);
 
   const [convertOpen, setConvertOpen] = useState(false);
   const [convertStartsAt, setConvertStartsAt] = useState("");
@@ -170,6 +173,11 @@ export default function ComunityDetail() {
 
         {/* ── Acciones ── */}
         <div className="bg-card border border-border rounded-lg p-4 flex flex-wrap gap-2">
+          {status !== "cancelled" && status !== "converted" && (
+            <Button variant="outline" onClick={() => setEditOpen(true)}>
+              <Pencil className="size-4 mr-1.5" /> Editar
+            </Button>
+          )}
           {(status === "draft" || status === "scheduled") && (
             <Button onClick={() => { if (confirm(`¿Publicar "${proposal.title}" a su audiencia?`)) publishMut.mutate({ id: proposalId }); }} disabled={publishMut.isPending}>
               <Send className="size-4 mr-1.5" /> Publicar
@@ -197,6 +205,16 @@ export default function ComunityDetail() {
           )}
         </div>
       </div>
+
+      <ComunityEditDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        proposal={proposal}
+        options={options}
+        communityIds={data.communityIds}
+        responseCount={results?.totalResponses ?? 0}
+        onSaved={invalidate}
+      />
 
       <Dialog open={convertOpen} onOpenChange={setConvertOpen}>
         <DialogContent className="max-w-sm">
