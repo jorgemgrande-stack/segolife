@@ -57,6 +57,13 @@ export async function getBenefitDefinitionById(id: number, db?: DbHandle): Promi
   return row ?? null;
 }
 
+/** Por slug (único) — usado por triggers automáticos que necesitan referenciar un beneficio concreto sin depender de su id numérico. */
+export async function getBenefitDefinitionBySlug(slug: string, db?: DbHandle): Promise<BenefitDefinition | null> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select().from(benefitDefinitions).where(eq(benefitDefinitions.slug, slug)).limit(1);
+  return row ?? null;
+}
+
 export async function createBenefitDefinition(input: InsertBenefitDefinition, db?: DbHandle): Promise<BenefitDefinition> {
   const conn = db ?? (await getDb());
   const insertResult = await conn.insert(benefitDefinitions).values(input);

@@ -40,6 +40,56 @@ import { users } from "../../../drizzle/schema";
 import { getCommunityBySlug, addUserToCommunity, getCommunityUniversities } from "../../db/communitiesDb";
 import { ensureStudentProfile, updateStudentProfile } from "../../db/studentsDb";
 import { updatePreference } from "../engagement/notificationPreferencesService";
+import { getBenefitDefinitionBySlug, getBenefitDefinitionCommunities } from "../../db/benefitsDb";
+import { grantBenefit } from "../benefits/benefitGrantService";
+import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/benefitEvents";
+
+/**
+ * Slug del beneficio de bienvenida (recomendación Student 360 §"Bienvenida
+ * al estudiante nuevo") — la definición en sí (nombre, tipo, venue/producto
+ * destino) se crea desde /admin/benefits con ESTE slug exacto; aquí solo se
+ * dispara el grant automático. Si todavía no existe esa definición,
+ * grantWelcomeBenefit no hace nada (nunca fabrica una definición).
+ */
+const WELCOME_BENEFIT_SLUG = "bienvenida-nuevo-estudiante";
+
+/**
+ * Grant automático del beneficio de bienvenida — SIEMPRE best-effort: un
+ * fallo aquí (definición todavía no creada, beneficio inactivo, no aplica a
+ * esta comunidad...) nunca debe romper el alta de un estudiante. Se llama
+ * DESPUÉS de confirmar la transacción de registro, nunca dentro de ella
+ * (mismo criterio que earnTokens en attendancePipeline.ts/commercePipeline.ts:
+ * un side-effect de loyalty no bloquea la operación principal).
+ */
+async function grantWelcomeBenefitBestEffort(userId: number, communityId: number): Promise<void> {
+  try {
+    const definition = await getBenefitDefinitionBySlug(WELCOME_BENEFIT_SLUG);
+    if (!definition || !definition.active) return;
+
+    // Sin filas en benefit_communities = universal; si tiene filas, debe
+    // incluir la comunidad de alta (mismo criterio que el resto del motor
+    // de Benefits, ver drizzle/schema.ts comentario de benefit_communities).
+    const scopedCommunities = await getBenefitDefinitionCommunities(definition.id);
+    if (scopedCommunities.length > 0 && !scopedCommunities.includes(communityId)) return;
+
+    const result = await grantBenefit({
+      userId,
+      benefitDefinitionId: definition.id,
+      sourceType: "registration_welcome",
+      communityId,
+      validFrom: new Date(),
+      validUntil: null,
+      grantedByUserId: null,
+      idempotencyKey: `registration_welcome:${userId}`,
+      metadata: { reason: "Beneficio de bienvenida automático al registrarse en SEGOLIFE" },
+    });
+    if (result.created) {
+      emitBenefitGranted(buildBenefitGrantedPayload(result.benefit, definition));
+    }
+  } catch (err) {
+    console.error("[registerStudent] No se pudo conceder el beneficio de bienvenida:", err);
+  }
+}
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -213,6 +263,8 @@ export async function registerStudent(input: RegisterStudentInput, db?: DbHandle
 
     return insertId;
   });
+
+  await grantWelcomeBenefitBestEffort(userId, community.id);
 
   return { userId, name, email, role: "user", communitySlug: community.slug };
 }
