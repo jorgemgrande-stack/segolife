@@ -240,4 +240,32 @@ describe("tick — multi-venue (Tía Felisa rollout, spec §51/§52/§62)", () =
     expect(mockSyncVenueIntegration).toHaveBeenCalledTimes(1);
     expect(mockSyncVenueIntegration).toHaveBeenCalledWith(3, expect.objectContaining({ mode: "incremental" }));
   });
+
+  it("Limoncello rollout (spec §34) — Casanova + Tía Felisa + Limoncello, las TRES habilitadas y debidas a la vez → las tres se sincronizan de forma independiente", async () => {
+    function limoncelloSafe(overrides: Partial<Record<string, unknown>> = {}) {
+      return safeIntegration({ id: 2, venueId: 4, ...overrides });
+    }
+    function limoncelloRaw(overrides: Partial<Record<string, unknown>> = {}) {
+      return rawIntegration({ id: 2, venueId: 4, ...overrides });
+    }
+
+    mockListProviders.mockResolvedValue([fourvenuesProvider()]);
+    mockListVenueIntegrations.mockResolvedValue([safeIntegration(), limoncelloSafe(), tiaFelisaSafe()]);
+    mockGetVenueIntegrationRaw.mockImplementation(async (id: number) => {
+      if (id === 2) return limoncelloRaw();
+      if (id === 3) return tiaFelisaRaw();
+      return rawIntegration();
+    });
+    mockCanSync.mockReturnValue(true);
+    mockIsDueForScheduledSync.mockReturnValue(true);
+    mockGetLastSuccessfulModeRunAt.mockResolvedValue(new Date()); // reconciliation ya corrida para las 3 — solo incremental en este tick
+
+    await tick();
+
+    const calledIds = mockSyncVenueIntegration.mock.calls.map(c => c[0]);
+    expect(calledIds).toContain(1); // Casanova
+    expect(calledIds).toContain(2); // Limoncello
+    expect(calledIds).toContain(3); // Tía Felisa
+    expect(mockSyncVenueIntegration).toHaveBeenCalledTimes(3);
+  });
 });
