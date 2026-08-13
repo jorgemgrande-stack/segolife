@@ -14,10 +14,10 @@
  * EXTERNAL_INTEGRATIONS_ENABLED sin definir, `canSync()` siempre es false —
  * ningún sync puede ejecutarse por accidente.
  */
-import { eq } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { venues, communityVenues, type VenueIntegration, type EventIntegration } from "../../../drizzle/schema";
+import { venues, communityVenues, eventTickets, type VenueIntegration, type EventIntegration } from "../../../drizzle/schema";
 import { startSyncRun, finishSyncRun, recordVenueIntegrationResult, getVenueIntegrationRaw, getProviderById, setSyncCursor, findInternalIdForExternal } from "./integrationsDb";
 import { CapabilityNotSupportedError, type ExternalTicketingProvider, type NormalizedOrder, type NormalizedTicket } from "./externalTicketingProvider";
 import { decryptCredentials } from "./integrationCredentialCrypto";
@@ -25,7 +25,7 @@ import { createFourvenuesIntegrationsAdapter, FOURVENUES_INTEGRATIONS_BASE_URL }
 import { createHttpTransport } from "./httpTransport";
 import { resolveIdentity } from "./identityResolver";
 import { syncEventCatalog, syncTicketTypes } from "./eventCatalogSync";
-import { ingestTicketPurchase } from "../ticketing/ticketPurchasePipeline";
+import { ingestTicketPurchase, ingestPaymentlessTicket } from "../ticketing/ticketPurchasePipeline";
 import { ingestAttendance } from "../ticketing/attendancePipeline";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
@@ -127,6 +127,28 @@ function resolveFourvenuesBaseUrl(environment: VenueIntegration["environment"]):
   return FOURVENUES_INTEGRATIONS_BASE_URL[environment];
 }
 
+/**
+ * Paymentless Tickets & Admissions Hardening — clasificación PURA (sin I/O)
+ * de los tickets crudos de un evento: agrupados por externalOrderId
+ * (payment_id) para el pipeline de pedidos existente, o aparte si no tienen
+ * ninguno (tickets reales sin checkout online — ver ingestPaymentlessTicket
+ * para el porqué). Extraída como función independiente para poder probar
+ * la mezcla "pedido + paymentless" sin mockear todo el orquestador —
+ * ticketsWithOrder + ticketsWithoutOrder === tickets.length siempre, por
+ * construcción (spec "ZERO SILENT DROP").
+ */
+export function classifyTicketsByOrder(tickets: NormalizedTicket[]): { ticketsByOrder: Map<string, NormalizedTicket[]>; paymentlessTickets: NormalizedTicket[] } {
+  const ticketsByOrder = new Map<string, NormalizedTicket[]>();
+  const paymentlessTickets: NormalizedTicket[] = [];
+  for (const t of tickets) {
+    if (!t.externalOrderId) { paymentlessTickets.push(t); continue; }
+    const list = ticketsByOrder.get(t.externalOrderId) ?? [];
+    list.push(t);
+    ticketsByOrder.set(t.externalOrderId, list);
+  }
+  return { ticketsByOrder, paymentlessTickets };
+}
+
 export interface VenueSyncOptions {
   /** spec §53/54 — ventana de sync configurable (piloto Casanova recomendado: 30/90). Sin especificar, usa el default amplio del adapter (180/365). */
   historyFromDays?: number;
@@ -162,6 +184,9 @@ export interface DryRunResult {
   ratesFound: number;
   ordersFound: number;
   ticketsFound: number;
+  /** Paymentless Tickets & Admissions Hardening — tickets crudos SIN externalOrderId (payment_id ausente en Fourvenues). ticketsFound = ticketsWithOrder + ticketsWithoutOrder, siempre. */
+  ticketsWithOrder: number;
+  ticketsWithoutOrder: number;
   attendanceFound: number;
   identitiesResolvable: number;
   identitiesUnresolved: number;
@@ -171,7 +196,8 @@ export interface DryRunResult {
 function blockedDryRun(venueId: number | null, message: string): DryRunResult {
   return {
     status: "blocked", message, venueId,
-    eventsFound: 0, mappedEvents: 0, newEvents: 0, ratesFound: 0, ordersFound: 0, ticketsFound: 0, attendanceFound: 0,
+    eventsFound: 0, mappedEvents: 0, newEvents: 0, ratesFound: 0, ordersFound: 0, ticketsFound: 0,
+    ticketsWithOrder: 0, ticketsWithoutOrder: 0, attendanceFound: 0,
     identitiesResolvable: 0, identitiesUnresolved: 0, events: [],
   };
 }
@@ -206,6 +232,7 @@ export async function dryRunVenueIntegration(venueIntegrationId: number, opts: V
   const events = await adapter.listEvents(credentials);
 
   let mappedEvents = 0, ratesFound = 0, ordersFound = 0, ticketsFound = 0, attendanceFound = 0;
+  let ticketsWithOrder = 0, ticketsWithoutOrder = 0;
   let identitiesResolvable = 0, identitiesUnresolved = 0;
   const preview: DryRunEventPreview[] = [];
 
@@ -227,6 +254,7 @@ export async function dryRunVenueIntegration(venueIntegrationId: number, opts: V
     try {
       tickets = await adapter.listTickets(credentials, ev.externalId);
       ticketsFound += tickets.length;
+      for (const t of tickets) { if (t.externalOrderId) ticketsWithOrder++; else ticketsWithoutOrder++; }
     } catch (err) { if (!(err instanceof CapabilityNotSupportedError)) throw err; }
     try {
       attendanceFound += (await adapter.listAttendance(credentials, ev.externalId)).length;
@@ -243,7 +271,7 @@ export async function dryRunVenueIntegration(venueIntegrationId: number, opts: V
   return {
     status: "ok", venueId: integration.venueId,
     eventsFound: events.length, mappedEvents, newEvents: events.length - mappedEvents,
-    ratesFound, ordersFound, ticketsFound, attendanceFound,
+    ratesFound, ordersFound, ticketsFound, ticketsWithOrder, ticketsWithoutOrder, attendanceFound,
     identitiesResolvable, identitiesUnresolved, events: preview,
   };
 }
@@ -260,6 +288,26 @@ export interface VenueSyncResult {
   ordersCreated: number;
   ordersUpdated: number;
   ticketsUnresolved: number;
+  /**
+   * Paymentless Tickets & Admissions Hardening — desglose completo de
+   * `ticketsFound` (spec "ZERO SILENT DROP", 929 = ticketsWithOrder +
+   * ticketsWithoutOrder, siempre, por construcción: todo ticket crudo entra
+   * por la rama de pedido O por la de paymentless, nunca se descarta en
+   * silencio). No existen categorías "ignored"/"invalid" en esta
+   * implementación — el DTO real de Fourvenues siempre trae externalId y
+   * eventId válidos, así que la única forma de que un ticket no termine
+   * clasificado es una excepción concreta durante su inserción, ya cubierta
+   * por `failedCount` (mismo criterio de aislamiento de fallos que el resto
+   * del sync).
+   */
+  ticketsFound: number;
+  ticketsWithOrder: number;
+  ticketsWithoutOrder: number;
+  paymentlessCreated: number;
+  paymentlessAlreadyExists: number;
+  paymentlessUnresolved: number;
+  /** Cuántos de los tickets paymentless también aparecen en listAttendance() de su evento — real, medido, no estimado. */
+  paymentlessAttended: number;
   attendanceProcessed: number;
   attendanceUnresolved: number;
   failedCount: number;
@@ -268,7 +316,10 @@ export interface VenueSyncResult {
 function emptyVenueSyncResult(status: VenueSyncResult["status"], venueId: number | null, message?: string): VenueSyncResult {
   return {
     status, message, venueId, eventsFound: 0, eventsCreated: 0, eventsUpdated: 0, eventsAmbiguous: 0,
-    ratesSynced: 0, ordersCreated: 0, ordersUpdated: 0, ticketsUnresolved: 0, attendanceProcessed: 0, attendanceUnresolved: 0, failedCount: 0,
+    ratesSynced: 0, ordersCreated: 0, ordersUpdated: 0, ticketsUnresolved: 0,
+    ticketsFound: 0, ticketsWithOrder: 0, ticketsWithoutOrder: 0,
+    paymentlessCreated: 0, paymentlessAlreadyExists: 0, paymentlessUnresolved: 0, paymentlessAttended: 0,
+    attendanceProcessed: 0, attendanceUnresolved: 0, failedCount: 0,
   };
 }
 
@@ -307,6 +358,8 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
   let fetchedCount = 0, failedCount = 0;
   let eventsCreated = 0, eventsUpdated = 0, eventsAmbiguous = 0, ratesSynced = 0;
   let ordersCreated = 0, ordersUpdated = 0, ticketsUnresolved = 0;
+  let ticketsFound = 0, ticketsWithOrder = 0, ticketsWithoutOrder = 0;
+  let paymentlessCreated = 0, paymentlessAlreadyExists = 0, paymentlessUnresolved = 0, paymentlessAttended = 0;
   let attendanceProcessed = 0, attendanceUnresolved = 0;
 
   try {
@@ -339,13 +392,10 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
           adapter.listOrders(credentials, item.externalId),
           adapter.listTickets(credentials, item.externalId),
         ]);
-        const ticketsByOrder = new Map<string, NormalizedTicket[]>();
-        for (const t of tickets) {
-          if (!t.externalOrderId) continue;
-          const list = ticketsByOrder.get(t.externalOrderId) ?? [];
-          list.push(t);
-          ticketsByOrder.set(t.externalOrderId, list);
-        }
+        ticketsFound += tickets.length;
+        const { ticketsByOrder, paymentlessTickets } = classifyTicketsByOrder(tickets);
+        ticketsWithOrder += tickets.length - paymentlessTickets.length;
+        ticketsWithoutOrder += paymentlessTickets.length;
 
         for (const order of orders) {
           try {
@@ -364,12 +414,51 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
           }
         }
 
-        const attendanceList = await adapter.listAttendance(credentials, item.externalId);
-        for (const a of attendanceList) {
+        // Paymentless Tickets & Admissions Hardening — tickets reales SIN
+        // externalOrderId (payment_id ausente en Fourvenues) nunca se
+        // descartan en silencio: se persisten como event_tickets con
+        // order_id=null (ver ingestPaymentlessTicket, ya soportado por el
+        // schema real sin migración). Nunca toca loyalty.
+        const attendanceListForLinking = await adapter.listAttendance(credentials, item.externalId);
+        const attendedExternalTicketIds = new Set(attendanceListForLinking.map(a => a.externalTicketId).filter((id): id is string => !!id));
+        for (const t of paymentlessTickets) {
+          try {
+            const result = await ingestPaymentlessTicket({
+              provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: integration.id,
+              eventId: item.eventId, venueId: integration.venueId,
+              ticket: t,
+              resolveTicketTypeId: (externalId) => (externalId ? rateResult.ticketTypeIdByExternalId.get(externalId) ?? null : null),
+            }, conn);
+            if (result.status === "created") {
+              paymentlessCreated++;
+              if (!result.identityResolved) paymentlessUnresolved++;
+            } else {
+              paymentlessAlreadyExists++;
+            }
+            if (attendedExternalTicketIds.has(t.externalId)) paymentlessAttended++;
+          } catch {
+            failedCount++;
+          }
+        }
+
+        // Vincula event_attendance.ticket_id al event_ticket real cuando se
+        // conoce (con order o paymentless) — antes nunca se poblaba, para
+        // NINGÚN ticket. Consulta única por evento, no por página/proveedor externo.
+        const allExternalTicketIds = tickets.map(t => t.externalId);
+        const ticketIdByExternalId = new Map<string, number>();
+        if (allExternalTicketIds.length > 0) {
+          const rows = await conn.select({ id: eventTickets.id, externalTicketId: eventTickets.externalTicketId })
+            .from(eventTickets)
+            .where(and(eq(eventTickets.provider, "fourvenues_integrations"), inArray(eventTickets.externalTicketId, allExternalTicketIds)));
+          for (const r of rows) if (r.externalTicketId) ticketIdByExternalId.set(r.externalTicketId, r.id);
+        }
+
+        for (const a of attendanceListForLinking) {
           try {
             const result = await ingestAttendance({
               provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: integration.id,
               eventId: item.eventId, venueId: integration.venueId, attendance: a,
+              ticketId: a.externalTicketId ? ticketIdByExternalId.get(a.externalTicketId) ?? null : null,
               suppressLoyalty: opts.historicalImport ?? false,
             }, conn);
             if (result.status === "processed") attendanceProcessed++;
@@ -383,9 +472,9 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
       }
     }
 
-    const createdCount = eventsCreated + ordersCreated;
+    const createdCount = eventsCreated + ordersCreated + paymentlessCreated;
     const updatedCount = eventsUpdated + ordersUpdated;
-    const unresolvedCount = ticketsUnresolved + attendanceUnresolved;
+    const unresolvedCount = ticketsUnresolved + attendanceUnresolved + paymentlessUnresolved;
 
     await setSyncCursor("venue_integration", integration.id, null, new Date(), conn);
     const status: VenueSyncResult["status"] = failedCount > 0 ? "partial" : "success";
@@ -395,7 +484,9 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
     return {
       status, venueId: integration.venueId, eventsFound: normalizedEvents.length,
       eventsCreated, eventsUpdated, eventsAmbiguous, ratesSynced, ordersCreated, ordersUpdated,
-      ticketsUnresolved, attendanceProcessed, attendanceUnresolved, failedCount,
+      ticketsUnresolved, ticketsFound, ticketsWithOrder, ticketsWithoutOrder,
+      paymentlessCreated, paymentlessAlreadyExists, paymentlessUnresolved, paymentlessAttended,
+      attendanceProcessed, attendanceUnresolved, failedCount,
     };
   } catch (err) {
     // Error NO recuperable (auth/credenciales/red antes de poder listar eventos) — aborta el run completo (spec §56).

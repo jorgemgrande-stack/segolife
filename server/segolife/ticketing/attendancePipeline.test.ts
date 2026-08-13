@@ -124,6 +124,29 @@ describe("ingestAttendance", () => {
     expect(mockPersistIdentityMapping).toHaveBeenCalledOnce();
   });
 
+  it("Paymentless Tickets Hardening — cuando el llamador conoce el event_ticket real (con o sin order), ticketId se persiste en event_attendance", async () => {
+    mockResolveIdentity.mockResolvedValue({ userId: 42, method: "participant_email" });
+    const inserted: Record<string, unknown>[] = [];
+    let selectCallCount = 0;
+    const db = {
+      select: () => ({ from: () => ({ where: () => ({ limit: async () => {
+        selectCallCount++;
+        if (selectCallCount === 1) return []; // sin idempotencia previa
+        if (selectCallCount === 2) return []; // Case B — sin reward previo
+        return [{ id: 501, ...inserted[0] }]; // lectura post-insert
+      } }) }) }),
+      insert: () => ({ ignore: () => ({ values: async (values: Record<string, unknown>) => { inserted.push(values); return [{ insertId: 501 }]; } }) }),
+    } as never;
+
+    await ingestAttendance({
+      provider: "fourvenues_integrations", eventId: 5, venueId: 10,
+      ticketId: 802, // resuelto por integrationSyncService.ts vía Map externalTicketId→event_tickets.id
+      attendance: attendanceFixture(),
+    }, db);
+
+    expect(inserted[0]).toMatchObject({ ticketId: 802 });
+  });
+
   it("no persiste el mapping de nuevo si la identidad ya venía de un mapping previo (previous_mapping)", async () => {
     mockResolveIdentity.mockResolvedValue({ userId: 42, method: "previous_mapping" });
     const db = fakeDb();

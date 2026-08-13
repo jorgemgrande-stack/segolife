@@ -32,7 +32,7 @@ vi.mock("../tokens/tokenEngine", () => ({ earnTokens: mockEarnTokens }));
 vi.mock("../benefits/benefitRuleEngine", () => ({ evaluateBenefitsForOrigin: mockEvaluateBenefitsForOrigin }));
 vi.mock("../engagement/engagementEvents", () => ({ emitEngagementEvent: mockEmitEngagementEvent }));
 
-import { ingestTicketPurchase } from "./ticketPurchasePipeline";
+import { ingestTicketPurchase, ingestPaymentlessTicket } from "./ticketPurchasePipeline";
 
 function fakeDb(selectQueue: unknown[][], insertIds: number[] = []) {
   let selectIdx = 0;
@@ -262,5 +262,170 @@ describe("ingestTicketPurchase — pedido ya existente (spec §58, §79)", () =>
 
     expect(result.status).toBe("updated");
     if (result.status === "updated") expect(result.reconciliationRequired).toBe(true);
+  });
+});
+
+// ─── ingestPaymentlessTicket — Paymentless Tickets & Admissions Hardening ───
+// Perfil real confirmado sobre la ventana de junio 2026 de Casanova (188/929
+// tickets crudos): externalOrderId=null, status="used" (asistieron),
+// amountPaidCents>0 (SÍ pagaron), sin email/teléfono/nombre — venta/
+// validación en puerta sin checkout online, nunca invitación (eso sería
+// price=0) ni pedido fantasma inventado.
+function normalizedPaymentlessTicket(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    externalId: "fvi_tkt_door_001",
+    externalEventId: "fvi_evt_001",
+    externalTicketTypeId: "fvi_rate_001",
+    externalOrderId: null,
+    participant: { email: null, phone: null, name: null },
+    status: "used" as const,
+    amountPaidCents: 900,
+    feesCents: 0,
+    purchasedAt: new Date("2026-06-11T22:14:26.000Z"),
+    ...overrides,
+  };
+}
+
+describe("ingestPaymentlessTicket — ticket real sin order (payment_id ausente)", () => {
+  it("identidad resuelta → created, userId set, persiste identity mapping, NUNCA toca loyalty", async () => {
+    mockResolveIdentity.mockResolvedValueOnce({ userId: 30, method: "participant_email" });
+    const { db, inserts } = fakeDb([[{ id: 801, externalTicketId: "fvi_tkt_door_001", userId: 30, status: "used" }]], [801]);
+
+    const result = await ingestPaymentlessTicket({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      eventId: 77, venueId: 10,
+      ticket: normalizedPaymentlessTicket(),
+      resolveTicketTypeId: () => 55,
+    }, db);
+
+    expect(result.status).toBe("created");
+    if (result.status === "created") expect(result.identityResolved).toBe(true);
+
+    const ticketInsert = inserts.find(i => "externalTicketId" in i.values);
+    expect(ticketInsert?.values).toMatchObject({
+      orderId: null, userId: 30, ticketTypeId: 55, provider: "fourvenues_integrations", externalTicketId: "fvi_tkt_door_001", status: "used",
+    });
+    expect((ticketInsert?.values.metadata as Record<string, unknown>)).toMatchObject({ paymentless: true, amountPaidCents: 900 });
+
+    expect(mockPersistIdentityMapping).toHaveBeenCalledOnce();
+    expect(mockRecordUnresolvedOperation).not.toHaveBeenCalled();
+    expect(mockEarnTokens).not.toHaveBeenCalled();
+    expect(mockEvaluateBenefitsForOrigin).not.toHaveBeenCalled();
+    expect(mockEmitEngagementEvent).not.toHaveBeenCalled();
+  });
+
+  it("identidad NO resuelta (perfil real: sin email/teléfono/nombre) → conserva el ticket con userId=null y registra unresolved_operations (operationType='order') con el importe real", async () => {
+    mockResolveIdentity.mockResolvedValueOnce({ userId: null, method: null });
+    const { db, inserts } = fakeDb([[{ id: 802, externalTicketId: "fvi_tkt_door_001", userId: null, status: "used" }]], [802]);
+
+    const result = await ingestPaymentlessTicket({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      eventId: 77, venueId: 10,
+      ticket: normalizedPaymentlessTicket(),
+      resolveTicketTypeId: () => 55,
+    }, db);
+
+    expect(result.status).toBe("created");
+    if (result.status === "created") expect(result.identityResolved).toBe(false);
+
+    const ticketInsert = inserts.find(i => "externalTicketId" in i.values);
+    expect(ticketInsert?.values).toMatchObject({ userId: null });
+
+    expect(mockRecordUnresolvedOperation).toHaveBeenCalledOnce();
+    expect(mockRecordUnresolvedOperation.mock.calls[0][0]).toMatchObject({
+      operationType: "order",
+      referenceType: "event_ticket",
+      referenceId: 802,
+      externalReferenceId: "fvi_tkt_door_001",
+      amountCents: 900, // evidencia económica real preservada aunque no haya order
+    });
+    expect(mockPersistIdentityMapping).not.toHaveBeenCalled();
+  });
+
+  it("price=0 (cortesía/invitación) → metadata.amountPaidCents=0, se persiste igual que cualquier otro ticket", async () => {
+    mockResolveIdentity.mockResolvedValueOnce({ userId: null, method: null });
+    const { db, inserts } = fakeDb([[{ id: 803 }]], [803]);
+
+    await ingestPaymentlessTicket({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      eventId: 77, ticket: normalizedPaymentlessTicket({ amountPaidCents: 0 }),
+      resolveTicketTypeId: () => 55,
+    }, db);
+
+    const ticketInsert = inserts.find(i => "externalTicketId" in i.values);
+    expect((ticketInsert?.values.metadata as Record<string, unknown>)).toMatchObject({ amountPaidCents: 0 });
+  });
+
+  it("price>0 (perfil real de puerta, 9€) → metadata.amountPaidCents=900, NUNCA se suma al revenue de ticket_orders", async () => {
+    mockResolveIdentity.mockResolvedValueOnce({ userId: null, method: null });
+    const { db, inserts } = fakeDb([[{ id: 804 }]], [804]);
+
+    await ingestPaymentlessTicket({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      eventId: 77, ticket: normalizedPaymentlessTicket({ amountPaidCents: 900 }),
+      resolveTicketTypeId: () => 55,
+    }, db);
+
+    const ticketInsert = inserts.find(i => "externalTicketId" in i.values);
+    expect((ticketInsert?.values.metadata as Record<string, unknown>)).toMatchObject({ amountPaidCents: 900 });
+    expect(inserts.some(i => "externalOrderId" in i.values)).toBe(false); // nunca crea un ticket_orders fantasma
+  });
+
+  it("status=cancelled → se persiste tal cual, sin tratamiento especial", async () => {
+    mockResolveIdentity.mockResolvedValueOnce({ userId: null, method: null });
+    const { db, inserts } = fakeDb([[{ id: 805 }]], [805]);
+
+    await ingestPaymentlessTicket({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      eventId: 77, ticket: normalizedPaymentlessTicket({ status: "cancelled" }),
+      resolveTicketTypeId: () => 55,
+    }, db);
+
+    expect(inserts.find(i => "externalTicketId" in i.values)?.values).toMatchObject({ status: "cancelled" });
+  });
+
+  it("status=refunded → se persiste tal cual, sin tratamiento especial", async () => {
+    mockResolveIdentity.mockResolvedValueOnce({ userId: null, method: null });
+    const { db, inserts } = fakeDb([[{ id: 806 }]], [806]);
+
+    await ingestPaymentlessTicket({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      eventId: 77, ticket: normalizedPaymentlessTicket({ status: "refunded" }),
+      resolveTicketTypeId: () => 55,
+    }, db);
+
+    expect(inserts.find(i => "externalTicketId" in i.values)?.values).toMatchObject({ status: "refunded" });
+  });
+
+  it("ticket sin rate mapeable (resolveTicketTypeId → null) → ticketTypeId=null, no lanza excepción", async () => {
+    mockResolveIdentity.mockResolvedValueOnce({ userId: null, method: null });
+    const { db, inserts } = fakeDb([[{ id: 807 }]], [807]);
+
+    const result = await ingestPaymentlessTicket({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      eventId: 77, ticket: normalizedPaymentlessTicket(),
+      resolveTicketTypeId: () => null,
+    }, db);
+
+    expect(result.status).toBe("created");
+    expect(inserts.find(i => "externalTicketId" in i.values)?.values).toMatchObject({ ticketTypeId: null });
+  });
+
+  it("duplicado / idempotencia de re-sync — 2ª llamada con el mismo externalTicketId devuelve 'already_exists', NO reintenta unresolved_operations ni reinserta", async () => {
+    mockResolveIdentity.mockResolvedValueOnce({ userId: null, method: null });
+    // insertId=0 (falsy) simula el `.ignore()` real de MySQL ante una fila ya existente por el UNIQUE (provider, external_ticket_id).
+    const { db, inserts } = fakeDb([[{ id: 802, externalTicketId: "fvi_tkt_door_001", userId: null }]], [0]);
+
+    const result = await ingestPaymentlessTicket({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      eventId: 77, ticket: normalizedPaymentlessTicket(),
+      resolveTicketTypeId: () => 55,
+    }, db);
+
+    expect(result.status).toBe("already_exists");
+    expect(result.ticket).toMatchObject({ id: 802 });
+    expect(mockRecordUnresolvedOperation).not.toHaveBeenCalled();
+    expect(mockPersistIdentityMapping).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(1); // el intento de insert SÍ ocurre (con .ignore()), pero nunca una segunda fila real
   });
 });

@@ -358,3 +358,121 @@ export async function ingestTicketPurchase(input: IngestTicketPurchaseInput, db?
   if (existing) return updateExistingOrder(input, existing, conn);
   return createNewOrder(input, conn);
 }
+
+/**
+ * ingestPaymentlessTicket — Paymentless Tickets & Admissions Hardening
+ * (2026-08-13). Persiste una entrada real de Fourvenues que NO tiene
+ * `payment_id` (por tanto ningún `NormalizedOrder` la agrupa — ver
+ * `listOrders`/`listTickets` en fourvenuesIntegrationsAdapter.ts) SIN
+ * inventar un pedido/pago falso. Investigación real sobre la ventana oficial
+ * de Casanova (junio 2026): 188/929 tickets crudos con este perfil, 100% con
+ * `status=used` (asistieron), 100% con `amountPaidCents>0` (SÍ pagaron), 0%
+ * con email/teléfono/nombre — perfil consistente de venta/validación en
+ * puerta sin checkout online, nunca invitación/cortesía (eso tendría
+ * price=0). Fourvenues no expone un campo de "canal" explícito que lo
+ * confirme literalmente — se documenta como inferencia con alta confianza
+ * a partir de un patrón 100% consistente, no como dato crudo del proveedor.
+ *
+ * TICKET != PURCHASE (principio explícito del encargo): `event_tickets` con
+ * `order_id=null` es un estado YA SOPORTADO por el schema real (confirmado
+ * contra information_schema.columns de producción — `order_id`/`user_id`
+ * nullable, sin FK) — 0 migraciones. `metadata.amountPaidCents` preserva la
+ * evidencia económica real del ticket (viene de `total_paid` de Fourvenues,
+ * el mismo campo que ya alimenta el revenue de los pedidos con order) SIN
+ * crear un `ticket_order`/`ticket_order_items` ficticio ni sumarla al
+ * revenue agregado de pedidos — queda como una evidencia aparte, explícita,
+ * nunca mezclada silenciosamente con GMV de compras reales.
+ *
+ * LOYALTY: esta función NUNCA llama a earnTokens/evaluateBenefitsForOrigin
+ * ni emite domain events — la sola existencia de una entrada no concede
+ * nada (igual que crear un `event_tickets` dentro de un pedido tampoco lo
+ * hace; el reward de compra vive en `grantPurchaseLoyalty`, a nivel de
+ * ORDEN, nunca de ticket individual). La asistencia real (si la hay) se
+ * sigue ingiriendo por separado vía `ingestAttendance` (con su propio
+ * `suppressLoyalty`), exactamente igual que para un ticket con order — este
+ * pipeline no necesita ni expone su propio flag de loyalty porque
+ * estructuralmente no hay nada que suprimir.
+ *
+ * IDENTIDAD: mismo resolver que el resto del sistema (`resolveIdentity`,
+ * sin fuzzy matching), con `buyer: null` — un ticket sin order no tiene
+ * comprador que ofrecer como fallback, solo el participante del propio
+ * ticket. Si no resuelve, el ticket se persiste igual (`userId: null`, spec
+ * "conservar ticket") y se registra en `unresolved_operations` reutilizando
+ * `operationType: "order"` (mismo valor que ya usa `persistTicketsForNewOrder`
+ * para tickets sin identidad DENTRO de un pedido — no hace falta un nuevo
+ * valor de enum, 0 migraciones también aquí).
+ *
+ * IDEMPOTENCIA: UNIQUE (provider, external_ticket_id) en event_tickets
+ * (misma restricción que ya protege los tickets con order) — un re-sync
+ * nunca duplica la fila ni vuelve a intentar `recordUnresolvedOperation`.
+ */
+export interface IngestPaymentlessTicketInput {
+  provider: string;
+  integrationType: "venue_integration" | "event_integration";
+  integrationId: number;
+  eventId: number;
+  venueId?: number | null;
+  /** Ticket YA filtrado por el llamador — `externalOrderId` se ignora deliberadamente aquí. */
+  ticket: NormalizedTicket;
+  resolveTicketTypeId: (externalTicketTypeId: string | null | undefined) => number | null;
+}
+
+export type IngestPaymentlessTicketResult =
+  | { status: "created"; ticket: EventTicket; identityResolved: boolean }
+  | { status: "already_exists"; ticket: EventTicket };
+
+export async function ingestPaymentlessTicket(input: IngestPaymentlessTicketInput, db?: DbHandle): Promise<IngestPaymentlessTicketResult> {
+  const conn = db ?? (await getDb());
+  const t = input.ticket;
+
+  const identity = await resolveIdentity({ provider: input.provider, participant: t.participant, buyer: null }, conn as unknown as Parameters<typeof resolveIdentity>[1]);
+
+  const [insertResult] = await conn.insert(eventTickets).ignore().values({
+    eventId: input.eventId,
+    ticketTypeId: input.resolveTicketTypeId(t.externalTicketTypeId),
+    orderId: null,
+    userId: identity.userId,
+    salesChannel: "external",
+    provider: input.provider,
+    externalTicketId: t.externalId,
+    status: t.status,
+    issuedAt: t.purchasedAt ?? new Date(),
+    metadata: { paymentless: true, amountPaidCents: t.amountPaidCents ?? 0, feesCents: t.feesCents ?? 0 },
+  });
+  const insertId = (insertResult as unknown as { insertId: number }).insertId;
+
+  if (!insertId) {
+    // Ya existía (re-sync) — nunca se recrea ni se reintenta unresolved_operations (spec idempotencia).
+    const [row] = await conn.select().from(eventTickets)
+      .where(and(eq(eventTickets.provider, input.provider), eq(eventTickets.externalTicketId, t.externalId)))
+      .limit(1);
+    return { status: "already_exists", ticket: row };
+  }
+
+  const [row] = await conn.select().from(eventTickets).where(eq(eventTickets.id, insertId)).limit(1);
+
+  if (!identity.userId) {
+    await recordUnresolvedOperation({
+      operationType: "order",
+      provider: input.provider,
+      integrationType: input.integrationType,
+      integrationId: input.integrationId,
+      referenceType: "event_ticket",
+      referenceId: row.id,
+      externalReferenceId: t.externalId,
+      eventId: input.eventId,
+      venueId: input.venueId ?? null,
+      occurredAt: t.purchasedAt ?? new Date(),
+      identityHintEmail: t.participant.email ?? null,
+      identityHintPhone: t.participant.phone ?? null,
+      identityHintName: t.participant.name ?? null,
+      amountCents: t.amountPaidCents ?? null,
+    }, conn as unknown as Parameters<typeof recordUnresolvedOperation>[1]);
+  } else if (isConfirmedResolutionMethod(identity.method) && identity.method !== "previous_mapping") {
+    await persistIdentityMapping({
+      provider: input.provider, participant: t.participant, buyer: null, userId: identity.userId, method: identity.method,
+    }, conn as unknown as Parameters<typeof resolveIdentity>[1]);
+  }
+
+  return { status: "created", ticket: row, identityResolved: !!identity.userId };
+}

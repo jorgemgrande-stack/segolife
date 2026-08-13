@@ -212,6 +212,62 @@ informe de Fourvenues Pagination Hardening & Complete Historical
 Reconciliation para el desglose evento por evento de cuántos eran
 truncation real.
 
+## Tickets sin pedido / "paymentless" (confirmado empíricamente 2026-08-13, Paymentless Tickets & Admissions Hardening)
+
+Investigado con evidencia real sobre la ventana oficial de Casanova (junio
+2026, 65 días atrás / 5 adelante): de **929 tickets crudos**, **741** traían
+`payment_id` (agrupables en `NormalizedOrder` — ver `listOrders`) y **188**
+NO — `payment_id` ausente en el DTO de Fourvenues para esos tickets.
+
+**Perfil real de los 188 (100% consistente, no una mezcla de casos)**:
+- `status`: 100% `"used"` (asistieron realmente al evento).
+- `total_paid`: 100% > 0 (pagaron algo — media observada ~9€ por ticket en
+  los eventos donde aparecen).
+- `enter`/asistencia (vía `listAttendance`): 100% presentes — coincide
+  exactamente con el `status="used"`.
+- Identidad (`email`/`phone`/`name`): **0%** — ninguno de los 188 trae
+  ningún dato de identidad.
+
+**Inferencia (no un campo explícito de Fourvenues)**: el patrón — pagado,
+asistido, sin checkout online — es consistente con venta/validación en
+puerta (efectivo o tarjeta en el propio local, fuera del flujo de compra
+online que genera `payment_id` y pide email/teléfono). Fourvenues no expone
+un campo de canal/origen que lo confirme literalmente; se documenta como
+inferencia de alta confianza a partir del patrón, no como un hecho crudo del
+proveedor. **Nunca son invitaciones/cortesías** (eso tendría `total_paid=0`,
+que no se observó ni una sola vez en los 188).
+
+**Modelo de datos**: `event_tickets.order_id` y `event_tickets.user_id` ya
+eran nullable en producción (confirmado contra
+`information_schema.columns`, sin FK) — **0 migraciones**. Un ticket
+paymentless se persiste vía `ingestPaymentlessTicket()`
+(`ticketPurchasePipeline.ts`) como una fila `event_tickets` normal con
+`order_id=null`, nunca inventando un `ticket_orders`/`ticket_order_items`
+falso. El precio real (`total_paid`) se preserva en
+`metadata.amountPaidCents` — evidencia económica real, pero **nunca** se
+suma al revenue agregado de pedidos (`ticket_orders.totalCents`), para no
+mezclar dos fuentes de revenue sin una decisión explícita de negocio.
+Identidad sin resolver → `unresolved_operations` reutilizando
+`operationType="order"` (mismo valor que ya usan los tickets sin identidad
+DENTRO de un pedido) — sin necesidad de un nuevo valor de enum. Ningún
+ticket se descarta nunca en silencio: todo ticket crudo entra por la rama de
+pedido O por la de paymentless (`classifyTicketsByOrder()`,
+`integrationSyncService.ts`), y `ticketsWithOrder + ticketsWithoutOrder`
+siempre suma `ticketsFound`.
+
+**Asistencia**: `event_attendance.ticket_id` ahora se vincula al
+`event_tickets.id` real cuando se conoce (antes nunca se poblaba, para
+ningún ticket, con o sin pedido). La asistencia de un ticket paymentless se
+sigue ingiriendo por el mismo `attendancePipeline.ts` de siempre — si la
+identidad no resuelve (caso real: 188/188), la asistencia queda igualmente
+como `unresolved_operations` de tipo `attendance`, nunca se pierde.
+
+**Loyalty**: `ingestPaymentlessTicket()` no llama nunca a
+`earnTokens`/`evaluateBenefitsForOrigin` — la existencia de un ticket no
+concede nada por sí misma (igual que un ticket dentro de un pedido tampoco
+lo hace; el reward de compra vive a nivel de pedido). No necesita su propio
+flag de `suppressLoyalty` porque estructuralmente no toca loyalty.
+
 ## Rate limits / fair use
 
 Documentado consistentemente para Channel Manager e Integrations (no encontrado para Reseller):
