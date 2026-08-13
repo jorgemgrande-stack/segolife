@@ -20,23 +20,24 @@ async function main() {
   const [[benefitsAgg]] = await db.execute(sql`SELECT COUNT(*) as cnt, COALESCE(MAX(id),0) as maxId FROM user_benefits`) as any;
   const [wallets] = await db.execute(sql`SELECT user_id, balance, lifetime_earned, lifetime_spent FROM token_wallets ORDER BY user_id`) as any;
 
-  const [[ordersAgg]] = await db.execute(sql`SELECT COUNT(*) as cnt FROM ticket_orders WHERE provider = 'fourvenues'`) as any;
-  const [[ticketsAgg]] = await db.execute(sql`SELECT COUNT(*) as cnt FROM event_tickets WHERE provider = 'fourvenues'`) as any;
-  const [[attendanceAgg]] = await db.execute(sql`SELECT COUNT(*) as cnt FROM event_attendance WHERE provider = 'fourvenues'`) as any;
+  const PROVIDER = "fourvenues_integrations";
+  const [[ordersAgg]] = await db.execute(sql`SELECT COUNT(*) as cnt FROM ticket_orders WHERE provider = ${PROVIDER}`) as any;
+  const [[ticketsAgg]] = await db.execute(sql`SELECT COUNT(*) as cnt FROM event_tickets WHERE provider = ${PROVIDER}`) as any;
+  const [[attendanceAgg]] = await db.execute(sql`SELECT COUNT(*) as cnt FROM event_attendance WHERE provider = ${PROVIDER}`) as any;
 
   const [dupTickets] = await db.execute(sql`
     SELECT provider, external_ticket_id, COUNT(*) as cnt FROM event_tickets
-    WHERE provider = 'fourvenues' AND external_ticket_id IS NOT NULL
+    WHERE provider = ${PROVIDER} AND external_ticket_id IS NOT NULL
     GROUP BY provider, external_ticket_id HAVING COUNT(*) > 1
   `) as any;
   const [dupOrders] = await db.execute(sql`
     SELECT provider, external_order_id, COUNT(*) as cnt FROM ticket_orders
-    WHERE provider = 'fourvenues' AND external_order_id IS NOT NULL
+    WHERE provider = ${PROVIDER} AND external_order_id IS NOT NULL
     GROUP BY provider, external_order_id HAVING COUNT(*) > 1
   `) as any;
   const [dupAttendance] = await db.execute(sql`
     SELECT provider, external_attendance_id, COUNT(*) as cnt FROM event_attendance
-    WHERE provider = 'fourvenues' AND external_attendance_id IS NOT NULL
+    WHERE provider = ${PROVIDER} AND external_attendance_id IS NOT NULL
     GROUP BY provider, external_attendance_id HAVING COUNT(*) > 1
   `) as any;
 
@@ -48,17 +49,17 @@ async function main() {
   const [[orphanTicketsOrder]] = await db.execute(sql`
     SELECT COUNT(*) as cnt FROM event_tickets t
     LEFT JOIN ticket_orders o ON o.id = t.order_id
-    WHERE t.provider = 'fourvenues' AND t.order_id IS NOT NULL AND o.id IS NULL
+    WHERE t.provider = ${PROVIDER} AND t.order_id IS NOT NULL AND o.id IS NULL
   `) as any;
   const [[orphanAttendanceTicket]] = await db.execute(sql`
     SELECT COUNT(*) as cnt FROM event_attendance a
     LEFT JOIN event_tickets t ON t.id = a.ticket_id
-    WHERE a.provider = 'fourvenues' AND a.ticket_id IS NOT NULL AND t.id IS NULL
+    WHERE a.provider = ${PROVIDER} AND a.ticket_id IS NOT NULL AND t.id IS NULL
   `) as any;
 
-  const [[identityAgg]] = await db.execute(sql`SELECT COUNT(*) as cnt FROM external_identity_mappings WHERE provider = 'fourvenues'`) as any;
+  const [[identityAgg]] = await db.execute(sql`SELECT COUNT(*) as cnt FROM external_identity_mappings WHERE provider = ${PROVIDER}`) as any;
   const [unresolvedByStatus] = await db.execute(sql`
-    SELECT status, COUNT(*) as cnt FROM unresolved_operations WHERE provider = 'fourvenues' GROUP BY status
+    SELECT status, COUNT(*) as cnt FROM unresolved_operations WHERE provider = ${PROVIDER} GROUP BY status
   `) as any;
 
   console.log(`\n=== SNAPSHOT: ${label} ===`);
