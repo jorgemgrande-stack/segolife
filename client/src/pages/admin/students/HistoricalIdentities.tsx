@@ -5,6 +5,7 @@ import { trpc } from "@/lib/trpc";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -48,6 +49,11 @@ function fmtDate(iso: string | null | undefined) {
 }
 function fmtSpend(cents: number) {
   return (cents / 100).toLocaleString("es-ES", { style: "currency", currency: "EUR" });
+}
+function initials(name: string | null): string {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/);
+  return (parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "");
 }
 
 type SortBy = "lastActivity" | "eventsCount" | "historicalSpendCents" | "venueIds";
@@ -96,23 +102,23 @@ export default function HistoricalIdentities() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <AdminLayout title="Históricos Fourvenues">
+    <AdminLayout title="Estudiantes históricos">
       <div className="space-y-6">
         <div className="flex items-center gap-3">
           <History className="w-6 h-6 text-primary" />
           <div>
-            <h2 className="text-lg font-semibold text-foreground">Identidades históricas — Fourvenues</h2>
+            <h2 className="text-lg font-semibold text-foreground">Estudiantes históricos</h2>
             <p className="text-sm text-muted-foreground">
-              Compradores/asistentes reales de Casanova, Tía Felisa y Limoncello anteriores a su alta como estudiante.
+              Identidades y actividad histórica importada de Fourvenues (Casanova, Tía Felisa, Limoncello) — personas reales, aún no vinculadas a una cuenta Segolife.
               {typeof data?.total === "number" ? ` · ${data.total} identidad(es)` : ""}
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap gap-3 items-center bg-card border border-border rounded-lg p-3">
-          <div className="relative flex-1 min-w-[220px]">
+          <div className="relative flex-1 min-w-[240px]">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input placeholder="Buscar por email o teléfono…" value={searchInput} onChange={e => setSearchInput(e.target.value)} className="pl-9" />
+            <Input placeholder="Buscar por nombre, email o teléfono…" value={searchInput} onChange={e => setSearchInput(e.target.value)} className="pl-9" />
           </div>
 
           <Select value={venueId} onValueChange={setVenueId}>
@@ -153,7 +159,7 @@ export default function HistoricalIdentities() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Contacto</TableHead>
+                  <TableHead className="min-w-[240px]">Estudiante histórico</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>Venues</TableHead>
                   <SortableHead label="Eventos" column="eventsCount" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
@@ -167,9 +173,15 @@ export default function HistoricalIdentities() {
                 {data.items.map(item => (
                   <TableRow key={item.identityKey} className="cursor-pointer hover:bg-accent/50">
                     <TableCell>
-                      <Link href={`/admin/students/historical/${encodeURIComponent(item.identityKey)}`} className="block">
-                        <div className="font-medium text-foreground">{item.email ?? item.phone ?? "—"}</div>
-                        {item.email && item.phone && <div className="text-xs text-muted-foreground">{item.phone}</div>}
+                      <Link href={`/admin/students/historical/${encodeURIComponent(item.identityKey)}`} className="flex items-center gap-2.5">
+                        <Avatar className="w-8 h-8 shrink-0">
+                          <AvatarFallback className="text-xs">{initials(item.name)}</AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <div className="font-medium text-foreground truncate">{item.name ?? "(sin nombre)"}</div>
+                          <div className="text-xs text-muted-foreground truncate">{item.email ?? "—"}</div>
+                          {item.phone && <div className="text-xs text-muted-foreground truncate">{item.phone}</div>}
+                        </div>
                       </Link>
                     </TableCell>
                     <TableCell><Badge variant={STATUS_VARIANT[item.status]}>{STATUS_LABEL[item.status]}</Badge></TableCell>

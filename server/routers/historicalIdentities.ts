@@ -21,22 +21,16 @@ import { getStudentByUserId } from "../db/studentsDb";
 const historicalIdentitiesViewProcedure = permissionProcedure("students.view", ["admin"]);
 const historicalIdentitiesManageProcedure = permissionProcedure("students.manage", ["admin"]);
 
-// Enmascarado por defecto (spec §35: "NO mostrar PII completa en el listado
-// por defecto") — el servicio interno trabaja con el valor real para poder
-// matchear; esta es la única capa de presentación hacia el admin.
-function maskEmail(email: string | null): string | null {
-  if (!email) return null;
-  const [user, domain] = email.split("@");
-  if (!domain) return "***";
-  return `${user[0] ?? "*"}***@${domain}`;
-}
-function maskPhone(phone: string | null): string | null {
-  if (!phone) return null;
-  return `***${phone.slice(-4)}`;
-}
-function maskItem<T extends { email: string | null; phone: string | null }>(item: T): T {
-  return { ...item, email: maskEmail(item.email), phone: maskPhone(item.phone) };
-}
+// PII COMPLETA, SIN ENMASCARAR (Historical Students Admin — Full Identity
+// Visibility, 2026-08-14): esta superficie está protegida por RBAC real
+// server-side (permissionProcedure lanza UNAUTHORIZED/FORBIDDEN antes de
+// ejecutar el resolver — ver server/_core/trpc.ts) y es de uso exclusivo
+// del admin autorizado (students.view/students.manage). El enmascarado
+// previo dificultaba el propósito administrativo de la herramienta (no se
+// podía identificar a la persona real). Nunca se expone por esta vía a
+// superficies públicas ni a otros routers — historicalIdentityService.ts
+// solo lo importan este router y el hook best-effort de registro (que
+// nunca devuelve datos al cliente).
 
 function mapHistoricalIdentityError(err: unknown): never {
   if (err instanceof HistoricalIdentityError) {
@@ -60,17 +54,14 @@ export const historicalIdentitiesRouter = router({
         sortDir: z.enum(["asc", "desc"]).default("desc"),
       })
     )
-    .query(async ({ input }) => {
-      const result = await listHistoricalIdentities(input);
-      return { ...result, items: result.items.map(maskItem) };
-    }),
+    .query(({ input }) => listHistoricalIdentities(input)),
 
   detail: historicalIdentitiesViewProcedure
     .input(z.object({ identityKey: z.string().min(1) }))
     .query(async ({ input }) => {
       const detail = await getHistoricalIdentityDetail(input.identityKey);
       if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "Identidad histórica no encontrada" });
-      return maskItem(detail);
+      return detail;
     }),
 
   /** Propone el match para un userId concreto elegido en el picker — solo consulta, nunca vincula. */

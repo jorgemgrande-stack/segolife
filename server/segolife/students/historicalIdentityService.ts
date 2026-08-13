@@ -130,6 +130,16 @@ export async function classifyMatch(email: string | null | undefined, phone: str
 
 export interface HistoricalIdentityListItem {
   identityKey: string;
+  /**
+   * Nombre completo tal cual lo entrega Fourvenues — UN SOLO campo, nunca
+   * separado en nombre/apellidos (el proveedor no distingue esos dos
+   * campos; partir el string por espacios sería un heurístico no fiable —
+   * ver informe, auditoría real: nombres de 1 a 4 palabras). Cuando la
+   * misma identidad trae variantes distintas entre operaciones (~37% de los
+   * casos, real, auditado), se usa la de la operación MÁS RECIENTE — nunca
+   * se usa para matching, solo presentación (spec §1/§9: "NO fuzzy matching").
+   */
+  name: string | null;
   email: string | null;
   phone: string | null;
   eventsCount: number;
@@ -189,7 +199,8 @@ async function loadAllIdentityGroups(db?: DbHandle): Promise<Map<string, Histori
     let g = groups.get(key);
     if (!g) {
       g = {
-        identityKey: key, email: r.identityHintEmail ? normalizeEmail(r.identityHintEmail) : null,
+        identityKey: key, name: r.identityHintName ?? null,
+        email: r.identityHintEmail ? normalizeEmail(r.identityHintEmail) : null,
         phone: r.identityHintPhone ? normalizePhone(r.identityHintPhone) : null,
         eventsCount: 0, ticketsCount: 0, attendanceCount: 0, historicalSpendCents: 0,
         firstActivity: r.occurredAt?.toISOString() ?? new Date(0).toISOString(),
@@ -202,6 +213,10 @@ async function loadAllIdentityGroups(db?: DbHandle): Promise<Map<string, Histori
     if (r.operationType === "order") { g.ticketsCount++; g.historicalSpendCents += r.amountCents ?? 0; }
     if (r.operationType === "attendance") g.attendanceCount++;
     if (r.venueId && !g.venueIds.includes(r.venueId)) g.venueIds.push(r.venueId);
+    // Nombre de la operación MÁS RECIENTE (nunca decide matching — solo presentación, spec §9).
+    if (r.identityHintName && r.occurredAt && (!g.lastActivity || r.occurredAt.toISOString() >= g.lastActivity)) {
+      g.name = r.identityHintName;
+    }
     const occ = r.occurredAt?.toISOString();
     if (occ && occ < g.firstActivity) g.firstActivity = occ;
     if (occ && occ > g.lastActivity) g.lastActivity = occ;
@@ -239,8 +254,15 @@ export async function listHistoricalIdentities(filters: ListHistoricalIdentities
   if (filters.crossVenueOnly) items = items.filter(g => g.crossVenue);
   if (filters.status) items = items.filter(g => g.status === filters.status);
   if (filters.search?.trim()) {
+    // Búsqueda por nombre/email/teléfono — SOLO presentación/localización,
+    // nunca alimenta classifyMatch() (spec §9: el nombre no decide matching).
     const q = filters.search.trim().toLowerCase();
-    items = items.filter(g => (g.email && g.email.includes(q)) || (g.phone && g.phone.includes(q)) || g.identityKey.includes(q));
+    items = items.filter(g =>
+      (g.name && g.name.toLowerCase().includes(q)) ||
+      (g.email && g.email.includes(q)) ||
+      (g.phone && g.phone.includes(q)) ||
+      g.identityKey.includes(q)
+    );
   }
 
   const dir = filters.sortDir === "asc" ? 1 : -1;

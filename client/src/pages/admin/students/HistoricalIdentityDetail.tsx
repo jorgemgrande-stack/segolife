@@ -5,6 +5,7 @@ import { trpc } from "@/lib/trpc";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -29,6 +30,11 @@ function fmtDateTime(iso: string | null | undefined) {
 }
 function fmtSpend(cents: number) {
   return (cents / 100).toLocaleString("es-ES", { style: "currency", currency: "EUR" });
+}
+function initials(name: string | null): string {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/);
+  return (parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "");
 }
 
 function ClaimDialog({ identityKey, open, onOpenChange }: { identityKey: string; open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -145,12 +151,15 @@ export default function HistoricalIdentityDetail() {
   return (
     <AdminLayout title="Identidad histórica">
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <Link href="/admin/students/historical"><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
+            <Avatar className="w-11 h-11"><AvatarFallback>{initials(data.name)}</AvatarFallback></Avatar>
             <div>
-              <h2 className="text-lg font-semibold text-foreground">{data.email ?? data.phone ?? data.identityKey}</h2>
-              <p className="text-sm text-muted-foreground">{data.email && data.phone ? data.phone : ""}</p>
+              <h2 className="text-lg font-semibold text-foreground">{data.name ?? "(sin nombre)"}</h2>
+              <p className="text-sm text-muted-foreground">
+                {data.email ?? "—"}{data.email && data.phone ? " · " : ""}{data.phone ?? ""}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -171,7 +180,14 @@ export default function HistoricalIdentityDetail() {
         </div>
 
         <Card>
-          <CardHeader><CardTitle className="text-base">Venues</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              Venues
+              {data.crossVenue && (
+                <Badge variant="outline">Actividad en {data.venueBreakdown.length} venues — cross-venue</Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {data.venueBreakdown.map(v => (
@@ -182,7 +198,6 @@ export default function HistoricalIdentityDetail() {
                 </div>
               ))}
             </div>
-            {data.crossVenue && <Badge variant="outline" className="mt-3">Cross-venue</Badge>}
           </CardContent>
         </Card>
 

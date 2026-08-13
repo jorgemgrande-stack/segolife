@@ -61,7 +61,7 @@ const navItems = [
     roles: ["admin"],
     children: [
       { label: "Listado", href: "/admin/students" },
-      { label: "Históricos Fourvenues", href: "/admin/students/historical" },
+      { label: "Estudiantes históricos", href: "/admin/students/historical" },
     ],
   },
   {

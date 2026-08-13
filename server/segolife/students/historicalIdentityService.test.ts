@@ -251,6 +251,46 @@ describe("listHistoricalIdentities — agregación y cross-venue (spec §43, §6
   });
 });
 
+describe("name — Historical Students Admin Full Identity Visibility (2026-08-14)", () => {
+  it("propaga el nombre real (identity_hint_name), sin enmascarar, en el listado y la ficha", async () => {
+    const rows = [unresolvedRow({ id: 1, identityHintName: "Ana García López" })];
+    const db = fakeDb({ unresolvedRows: rows, usersRows: [] });
+    const { items } = await listHistoricalIdentities({ limit: 25, offset: 0, sortBy: "lastActivity", sortDir: "desc" }, db);
+    expect(items[0].name).toBe("Ana García López");
+    expect(items[0].email).toBe("ana@example.com"); // email/phone reales, nunca enmascarados a nivel de motor
+    expect(items[0].phone).toBe("+34600111222");
+  });
+
+  it("cuando la misma identidad trae variantes de nombre distintas entre operaciones, gana la MÁS RECIENTE (nunca decide matching)", async () => {
+    const rows = [
+      unresolvedRow({ id: 1, identityHintName: "Ana G.", occurredAt: new Date("2025-01-01T00:00:00Z") }),
+      unresolvedRow({ id: 2, identityHintName: "Ana García López", occurredAt: new Date("2026-01-01T00:00:00Z") }),
+      unresolvedRow({ id: 3, identityHintName: "ANA GARCIA", occurredAt: new Date("2025-06-01T00:00:00Z") }),
+    ];
+    const db = fakeDb({ unresolvedRows: rows, usersRows: [] });
+    const { items } = await listHistoricalIdentities({ limit: 25, offset: 0, sortBy: "lastActivity", sortDir: "desc" }, db);
+    expect(items[0].name).toBe("Ana García López"); // la de 2026-01-01, la más reciente de las 3
+  });
+
+  it("búsqueda por nombre (parcial, insensible a mayúsculas) — nunca alimenta classifyMatch", async () => {
+    const rows = [
+      unresolvedRow({ id: 1, identityHintEmail: "persona1@example.com", identityHintName: "Carlos Ruiz" }),
+      unresolvedRow({ id: 2, identityHintEmail: "persona2@example.com", identityHintName: "Marta Send" }),
+    ];
+    const db = fakeDb({ unresolvedRows: rows, usersRows: [] });
+    const { items } = await listHistoricalIdentities({ search: "ruiz", limit: 25, offset: 0, sortBy: "lastActivity", sortDir: "desc" }, db);
+    expect(items).toHaveLength(1);
+    expect(items[0].name).toBe("Carlos Ruiz");
+  });
+
+  it("sin nombre en ninguna operación -> name null (nunca inventado)", async () => {
+    const rows = [unresolvedRow({ id: 1, identityHintName: null })];
+    const db = fakeDb({ unresolvedRows: rows, usersRows: [] });
+    const { items } = await listHistoricalIdentities({ limit: 25, offset: 0, sortBy: "lastActivity", sortDir: "desc" }, db);
+    expect(items[0].name).toBeNull();
+  });
+});
+
 describe("claimHistoricalIdentity — seguridad/idempotencia/loyalty (spec §18-19, §32, §44, §60)", () => {
   it("vincula tickets (order) y materializa attendance con suppressLoyalty:true SIEMPRE", async () => {
     const rows = [
