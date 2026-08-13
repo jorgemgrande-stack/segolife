@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { SegolifeImage } from "@/components/segolife/SegolifeImage";
 import { toast } from "sonner";
 import { Search, Store, Loader2, Plus, Star } from "lucide-react";
 import { useAdminCommunity } from "@/contexts/AdminCommunityContext";
@@ -159,6 +160,7 @@ export default function VenuesManager() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-14"></TableHead>
                   <TableHead>Venue</TableHead>
                   <TableHead>Categoría</TableHead>
                   <TableHead>Comunidad</TableHead>
@@ -170,6 +172,15 @@ export default function VenuesManager() {
               <TableBody>
                 {data.items.map(v => (
                   <TableRow key={v.id} className="cursor-pointer hover:bg-accent/50">
+                    <TableCell>
+                      <SegolifeImage
+                        src={v.imageUrl}
+                        alt={v.name}
+                        ratio={1}
+                        rounded="rounded-full"
+                        className="size-10"
+                      />
+                    </TableCell>
                     <TableCell>
                       <Link href={`/admin/venues/${v.id}`} className="font-medium text-foreground">
                         {v.name}
