@@ -500,6 +500,47 @@ export class HistoricalIdentityError extends Error {
   }
 }
 
+// ─── Entrada para el Historical Reward Simulator (Live Loyalty Design) ─────
+// Reutiliza la MISMA agregación canónica (`loadAllIdentityGroups`) en vez de
+// que el simulador vuelva a consultar/agrupar `unresolved_operations` por su
+// cuenta — spec "REUSE FIRST", ya aplicado en esta fase para el directorio
+// admin. `isKnownStudent` = status "LINKED" (claim real ya ejecutado), nunca
+// POSSIBLE_MATCH/AUTO_MATCH_CANDIDATE (esos son candidatos, no Students
+// confirmados) — el simulador calcula aparte, como análisis explícito, qué
+// habrían ganado los NO-Students "si lo hubieran sido" (spec Historical
+// Simulation, distinción Students conocidos vs identidades históricas).
+
+export interface SimulationRow {
+  operationType: "order" | "attendance";
+  occurredAt: Date;
+  eventId: number | null;
+  venueId: number | null;
+  amountCents: number | null;
+}
+
+export interface SimulationIdentity {
+  identityKey: string;
+  isKnownStudent: boolean;
+  rows: SimulationRow[];
+}
+
+export async function loadHistoricalSimulationInput(db?: DbHandle): Promise<SimulationIdentity[]> {
+  const groups = await loadAllIdentityGroups(db);
+  return Array.from(groups.values()).map(g => ({
+    identityKey: g.identityKey,
+    isKnownStudent: g.status === "LINKED",
+    rows: g.rows
+      .filter((r): r is UnresolvedOperation & { operationType: "order" | "attendance" } => r.operationType === "order" || r.operationType === "attendance")
+      .map(r => ({
+        operationType: r.operationType,
+        occurredAt: r.occurredAt ?? new Date(0),
+        eventId: r.eventId,
+        venueId: r.venueId,
+        amountCents: r.amountCents,
+      })),
+  }));
+}
+
 // ─── Hook de registro/login (spec §16-17, §54) ─────────────────────────────
 
 /**
