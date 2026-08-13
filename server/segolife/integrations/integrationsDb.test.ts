@@ -71,6 +71,12 @@ describe("tryAcquireSyncLock — Production Scheduler (spec §26-31)", () => {
     // 2 inserts: el upsert de sync_state (paso 1) + la nueva fila de sync_runs (paso 5).
     expect(inserts).toHaveLength(2);
     expect(inserts[1]).toMatchObject({ integrationType: "venue_integration", integrationId: 1, syncType: "incremental", status: "running", metadata: { trigger: "scheduler" } });
+    // Regresión real de producción (piloto 2026-08-13): updatedSince=new Date(0)
+    // (epoch) hacía fallar el upsert en MySQL estricto ("Incorrect datetime
+    // value") — CADA tick del scheduler fallaba en silencio. Nunca debe volver.
+    const syncStateInsert = inserts[0] as { updatedSince?: Date };
+    expect(syncStateInsert.updatedSince).toBeInstanceOf(Date);
+    expect(syncStateInsert.updatedSince!.getTime()).toBeGreaterThan(0);
   });
 
   it("ya hay un run 'running' RECIENTE (dentro del umbral) → NO adquiere, no inserta nueva fila, no actualiza nada", async () => {

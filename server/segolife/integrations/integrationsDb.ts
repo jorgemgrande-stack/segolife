@@ -305,8 +305,14 @@ export async function tryAcquireSyncLock(
   const conn = db ?? (await getDb());
   return conn.transaction(async (tx): Promise<AcquireSyncLockResult> => {
     // Garantiza que la fila de sync_state existe (no-op si ya estaba) — hace
-    // falta una fila real para poder tomar FOR UPDATE sobre ella.
-    await tx.insert(integrationSyncState).values({ integrationType, integrationId, cursor: null, updatedSince: new Date(0) })
+    // falta una fila real para poder tomar FOR UPDATE sobre ella. `new Date()`
+    // (nunca epoch/new Date(0)): MySQL en modo estricto (Railway, default)
+    // rechaza 1970-01-01T00:00:00.000Z en una columna TIMESTAMP — confirmado
+    // con evidencia real en el piloto (ver informe, "Failed query" en logs,
+    // params mostraban literalmente "1970-01-01 00:00:00.000"). Solo importa
+    // que la fila EXISTA para el FOR UPDATE de abajo — el valor real de
+    // updated_since no se usa hasta que exista un cursor real.
+    await tx.insert(integrationSyncState).values({ integrationType, integrationId, cursor: null, updatedSince: new Date() })
       .onDuplicateKeyUpdate({ set: { integrationType } }); // update sin efecto — solo asegura la existencia de la fila
     await tx.select().from(integrationSyncState)
       .where(and(eq(integrationSyncState.integrationType, integrationType), eq(integrationSyncState.integrationId, integrationId)))
