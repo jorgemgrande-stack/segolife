@@ -180,7 +180,13 @@ async function main() {
   console.log("\n--- B. Manifest QA original (scripts/qa-events-manifest.json) ---\n");
 
   // B1. Evento #10 (Limoncello) — 5 pedidos reales abandonados (nunca completados, 0 tickets emitidos)
+  // BUG real detectado tras la primera ejecución (integridad post-cleanup, huérfano #1): esta
+  // sección borraba ticket_order_items/ticket_orders pero nunca comprobaba ticket_payments — el
+  // pedido #5 (cancelado) tenía un intento de pago real fallido (provider="unconfigured", el
+  // checkout nativo nunca tuvo un PaymentProvider configurado) que quedó huérfano tras borrar su
+  // order_id. Mismo evento QA, mismo pedido ya auditado — se añade aquí, nunca con un DELETE manual.
   const EVENT10_ORDER_IDS = [1, 2, 3, 4, 5];
+  await del("ticket_payments (evento QA #10)", "ticket_payments", drizzleSql`order_id IN (${drizzleSql.join(EVENT10_ORDER_IDS, drizzleSql`,`)})`);
   await del("ticket_order_items (evento QA #10)", "ticket_order_items", drizzleSql`order_id IN (${drizzleSql.join(EVENT10_ORDER_IDS, drizzleSql`,`)})`);
   await del("ticket_orders (evento QA #10, abandonados)", "ticket_orders", drizzleSql`id IN (${drizzleSql.join(EVENT10_ORDER_IDS, drizzleSql`,`)})`, EVENT10_ORDER_IDS);
 
