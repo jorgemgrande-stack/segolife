@@ -5,17 +5,19 @@
  * counts — nunca nombres/emails/teléfonos reales.
  *
  * Uso (Railway Console, servicio segolife):
- *   npx tsx scripts/fourvenues-run-dry-run.ts <venueIntegrationId>
+ *   npx tsx scripts/fourvenues-run-dry-run.ts <venueIntegrationId> [historyFromDays] [futureUntilDays]
  */
 import { dryRunVenueIntegration } from "../server/segolife/integrations/integrationSyncService";
 
 async function main() {
   const id = Number(process.argv[2]);
+  const historyFromDays = Number(process.argv[3] ?? 30);
+  const futureUntilDays = Number(process.argv[4] ?? 90);
   if (!id) {
-    console.error("Uso: npx tsx scripts/fourvenues-run-dry-run.ts <venueIntegrationId>");
+    console.error("Uso: npx tsx scripts/fourvenues-run-dry-run.ts <venueIntegrationId> [historyFromDays] [futureUntilDays]");
     process.exit(1);
   }
-  const result = await dryRunVenueIntegration(id, { historyFromDays: 30, futureUntilDays: 90 });
+  const result = await dryRunVenueIntegration(id, { historyFromDays, futureUntilDays });
   console.log(JSON.stringify({
     status: result.status,
     message: result.message,
