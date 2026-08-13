@@ -106,6 +106,7 @@ async function collectIdentitiesForVenue(id: number, historyFromDays: number, fu
 async function main() {
   const historyFromDays = Number(process.argv[2] ?? 400);
   const futureUntilDays = Number(process.argv[3] ?? 5);
+  const skipCrossVenue = process.argv[4] === "skip-cross-venue";
 
   console.log(`=== PARTE 1 — RECONCILIACIÓN COMPLETA LIMONCELLO (venue_integration #2) — ventana ${historyFromDays}d/${futureUntilDays}d ===\n`);
 
@@ -256,6 +257,11 @@ async function main() {
     }
   }
   console.log(JSON.stringify({ sampleSize: sampleCount, resolved, unresolved, ambiguous }, null, 2));
+
+  if (skipCrossVenue) {
+    console.log("\n(Parte 2 — cross-venue — omitida en esta ejecución)");
+    process.exit(0);
+  }
 
   // ── PARTE 2 — CROSS-VENUE IDENTITY (spec §17-18, §55-56) ──────────────
   console.log(`\n\n=== PARTE 2 — CROSS-VENUE IDENTITY (Casanova + Tía Felisa + Limoncello, agregado, SIN PII) ===`);
