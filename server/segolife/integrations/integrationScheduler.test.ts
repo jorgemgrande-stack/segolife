@@ -165,3 +165,79 @@ describe("tick — due calculation (spec §53/§65)", () => {
     expect(mockSyncVenueIntegration.mock.calls[1][1]).toMatchObject({ mode: "reconciliation" });
   });
 });
+
+describe("tick — multi-venue (Tía Felisa rollout, spec §51/§52/§62)", () => {
+  function tiaFelisaSafe(overrides: Partial<Record<string, unknown>> = {}) {
+    return safeIntegration({ id: 3, venueId: 7, ...overrides });
+  }
+  function tiaFelisaRaw(overrides: Partial<Record<string, unknown>> = {}) {
+    return rawIntegration({ id: 3, venueId: 7, ...overrides });
+  }
+
+  it("Casanova Y Tía Felisa debidas a la vez → AMBAS se sincronizan de forma independiente, cada una con su propio id/venueId", async () => {
+    mockListProviders.mockResolvedValue([fourvenuesProvider()]);
+    mockListVenueIntegrations.mockResolvedValue([safeIntegration(), tiaFelisaSafe()]);
+    mockGetVenueIntegrationRaw.mockImplementation(async (id: number) => (id === 3 ? tiaFelisaRaw() : rawIntegration()));
+    mockCanSync.mockReturnValue(true);
+    mockIsDueForScheduledSync.mockReturnValue(true);
+    mockGetLastSuccessfulModeRunAt.mockResolvedValue(new Date()); // reconciliation ya corrida para ambas — solo incremental en este tick
+
+    await tick();
+
+    const calledIds = mockSyncVenueIntegration.mock.calls.map(c => c[0]);
+    expect(calledIds).toContain(1); // Casanova
+    expect(calledIds).toContain(3); // Tía Felisa
+    expect(mockSyncVenueIntegration).toHaveBeenCalledTimes(2);
+  });
+
+  it("Tía Felisa deshabilitada (enabled=false) mientras Casanova SÍ está habilitada → solo Casanova se sincroniza, la deshabilitada no bloquea ni afecta a las demás (spec §54/§11)", async () => {
+    mockListProviders.mockResolvedValue([fourvenuesProvider()]);
+    mockListVenueIntegrations.mockResolvedValue([safeIntegration(), tiaFelisaSafe({ enabled: false })]);
+    mockGetVenueIntegrationRaw.mockImplementation(async (id: number) => (id === 3 ? tiaFelisaRaw({ enabled: false }) : rawIntegration()));
+    mockCanSync.mockImplementation((integration: { id?: number }) => integration.id !== 3); // canSync real evaluaría enabled=false → false; aquí se simula el resultado
+    mockIsDueForScheduledSync.mockReturnValue(true);
+    mockGetLastSuccessfulModeRunAt.mockResolvedValue(new Date()); // reconciliation ya corrida — solo 1 llamada (incremental) por integración habilitada
+
+    await tick();
+
+    const calledIds = mockSyncVenueIntegration.mock.calls.map(c => c[0]);
+    expect(calledIds).toEqual([1]); // solo Casanova
+  });
+
+  it("Limoncello (enabled=false, sync_enabled=false) nunca se sincroniza aunque conviva en la misma lista que Casanova y Tía Felisa activas", async () => {
+    function limoncelloSafe() { return safeIntegration({ id: 2, venueId: 4 }); }
+    function limoncelloRaw() { return rawIntegration({ id: 2, venueId: 4, enabled: false, syncEnabled: false }); }
+
+    mockListProviders.mockResolvedValue([fourvenuesProvider()]);
+    mockListVenueIntegrations.mockResolvedValue([safeIntegration(), tiaFelisaSafe(), limoncelloSafe()]);
+    mockGetVenueIntegrationRaw.mockImplementation(async (id: number) => {
+      if (id === 2) return limoncelloRaw();
+      if (id === 3) return tiaFelisaRaw();
+      return rawIntegration();
+    });
+    mockCanSync.mockImplementation((integration: { id?: number }) => integration.id !== 2);
+    mockIsDueForScheduledSync.mockReturnValue(true);
+    mockGetLastSuccessfulModeRunAt.mockResolvedValue(new Date());
+
+    await tick();
+
+    const calledIds = mockSyncVenueIntegration.mock.calls.map(c => c[0]);
+    expect(calledIds).not.toContain(2); // Limoncello nunca
+    expect(calledIds).toContain(1);
+    expect(calledIds).toContain(3);
+  });
+
+  it("cada integración pasa su PROPIO id/venueId a syncVenueIntegration — nunca se cruzan ventanas/ids entre integraciones", async () => {
+    mockListProviders.mockResolvedValue([fourvenuesProvider()]);
+    mockListVenueIntegrations.mockResolvedValue([safeIntegration(), tiaFelisaSafe()]);
+    mockGetVenueIntegrationRaw.mockImplementation(async (id: number) => (id === 3 ? tiaFelisaRaw({ syncIntervalMinutes: 2 }) : rawIntegration({ syncIntervalMinutes: 10 })));
+    mockCanSync.mockReturnValue(true);
+    mockIsDueForScheduledSync.mockImplementation((integration: { id?: number }) => integration.id === 3); // solo Tía Felisa debida esta vez
+    mockGetLastSuccessfulModeRunAt.mockResolvedValue(new Date());
+
+    await tick();
+
+    expect(mockSyncVenueIntegration).toHaveBeenCalledTimes(1);
+    expect(mockSyncVenueIntegration).toHaveBeenCalledWith(3, expect.objectContaining({ mode: "incremental" }));
+  });
+});
