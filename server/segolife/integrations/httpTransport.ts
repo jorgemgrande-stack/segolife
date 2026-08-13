@@ -7,6 +7,20 @@
  */
 import type { IntegrationTransport } from "./externalTicketingProvider";
 
+/**
+ * Error con el status HTTP real accesible programáticamente (Fourvenues
+ * Pagination Hardening, spec §21) — antes el status solo vivía dentro del
+ * string del mensaje, así que un caller no podía distinguir "429 → reintentar"
+ * de "400 → no reintentar" sin parsear texto. Cambio aditivo: cualquier
+ * `catch (err)` existente que solo leía `err.message` sigue funcionando igual.
+ */
+export class HttpTransportError extends Error {
+  constructor(public readonly status: number, method: string, path: string) {
+    super(`${method} ${path} → HTTP ${status}`);
+    this.name = "HttpTransportError";
+  }
+}
+
 export function createHttpTransport(baseUrl: string): IntegrationTransport {
   return {
     async request<T>(opts: {
@@ -28,7 +42,7 @@ export function createHttpTransport(baseUrl: string): IntegrationTransport {
       if (!res.ok) {
         // Nunca incluir el cuerpo de la respuesta en el mensaje de error sin
         // sanitizar — podría contener datos del proveedor no pensados para logs.
-        throw new Error(`${opts.method} ${opts.path} → HTTP ${res.status}`);
+        throw new HttpTransportError(res.status, opts.method, opts.path);
       }
       return (await res.json()) as T;
     },

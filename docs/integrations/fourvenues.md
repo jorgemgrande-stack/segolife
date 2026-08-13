@@ -166,6 +166,52 @@ Esto resuelve varios UNKNOWN de las secciones anteriores.
   incluido en el ticket (p.ej. "1 copa"), no una venta de barra nueva —
   confirma la conclusión previa, no la contradice.
 
+## Paginación (confirmado empíricamente 2026-08-13, Fourvenues Pagination Hardening)
+
+Investigado con evidencia real contra `GET /tickets/` de un evento real de
+Casanova con 600 tickets — sin asumir nada a priori (dos hipótesis
+descartadas antes de confirmar: no hay cabeceras HTTP de paginación, no hay
+`total`/`count` en el body).
+
+- **Mecanismo real: `offset`/`limit`** — confirmado por prueba directa.
+  `page=N` y `skip=N` devuelven `400 Bad Request` (no reconocidos); `offset=N`
+  SÍ funciona.
+- **Tamaño de página máximo real: 500.** Sin `limit` explícito, el default
+  observado es exactamente 500. `limit=1000` → `400 Bad Request` — 500 es un
+  techo duro del proveedor, no una elección nuestra.
+- **Sin metadata de `total`/`count` en ningún sitio** (ni body ni headers) —
+  la única condición de fin fiable es que una página devuelva **menos
+  elementos que el `limit` pedido** (incluida una página vacía). Nunca se
+  compara contra un total, porque no existe.
+- **Verificado sin solapes**: página 1 (offset=0, 500 IDs) y página 2
+  (offset=500, 100 IDs) no comparten ningún `_id` — confirma que el
+  mecanismo es real y correcto, no una casualidad.
+- **`GET /events/` y `GET /tickets-rates/` aceptan el mismo `offset`/`limit`**,
+  pero en la práctica Casanova nunca se acerca a 500 eventos ni a 500 tarifas
+  por evento (confirmado: 88 eventos en una ventana de 400 días, ≤15 tarifas
+  por evento) — se pagina de todos modos por coherencia y por si el volumen
+  cambia, no porque hoy trunquen.
+
+**Implementación**: `fetchAllPages()` en `fourvenuesIntegrationsAdapter.ts`,
+genérico y reutilizado por `/events/`, `/tickets-rates/` y `/tickets/` — un
+único helper, nunca un bucle de paginación copiado tres veces. Deduplica por
+`_id` entre páginas (nunca inserta dos veces; cuenta y loguea si el
+proveedor repite algo, nunca lo oculta). Reintenta SOLO la página que falló
+(nunca reinicia el dataset completo) ante `429`/`5xx` transitorios — hasta 2
+reintentos con backoff (500ms/1500ms) — un error no transitorio (4xx que no
+sea 429) se propaga de inmediato. Guarda defensiva de 100 páginas
+(50.000 registros) por `event_id`: si se supera, aborta con
+`FourvenuesPaginationIncompleteError` explícito — **nunca** devuelve
+`success` con un dataset parcial.
+
+**Impacto real confirmado**: el evento real "PRE OPENING X HOUSEMAF" tenía
+**600 tickets reales**, no 500 — la versión anterior del adapter (sin
+paginación) los truncaba en silencio. En la exploración de 400 días de
+Casanova, **15 eventos distintos** devolvían exactamente 500 — ver el
+informe de Fourvenues Pagination Hardening & Complete Historical
+Reconciliation para el desglose evento por evento de cuántos eran
+truncation real.
+
 ## Rate limits / fair use
 
 Documentado consistentemente para Channel Manager e Integrations (no encontrado para Reseller):
