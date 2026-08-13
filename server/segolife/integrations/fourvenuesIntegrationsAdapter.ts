@@ -17,6 +17,7 @@
 import { CapabilityNotSupportedError, type ExternalTicketingProvider, type IntegrationTransport, type NormalizedAttendance, type NormalizedCommerceTransaction, type NormalizedEvent, type NormalizedOrder, type NormalizedTicket, type NormalizedTicketType, type ProviderCredentials } from "./externalTicketingProvider";
 import { FOURVENUES_INTEGRATIONS_API_CAPABILITIES, type ProviderCapabilities } from "./capabilities";
 import { eurosToCents } from "./priceConversion";
+import { HttpTransportError } from "./httpTransport";
 
 export const FOURVENUES_INTEGRATIONS_BASE_URL = {
   sandbox: "https://api-alpha.fourvenues.com/integrations",
@@ -103,26 +104,128 @@ function defaultDateWindow(window?: FourvenuesSyncWindow): { start: string; end:
   return { start: fmt(start), end: fmt(end) };
 }
 
+// Fourvenues Pagination Hardening — confirmado empíricamente 2026-08-13
+// contra la API real (Casanova, evento con 600 tickets reales):
+//   - GET /tickets/?event_id= SIN parámetros → exactamente 500 registros,
+//     sin metadata de paginación en el body ({success,data} nada más) ni
+//     en headers. offset=500 → 100 registros MÁS, nunca vistos en la
+//     primera página (0 solapes verificados por _id) → CONFIRMA
+//     truncation real, no coincidencia.
+//   - offset/limit SÍ son parámetros aceptados. limit=1000 → 400 Bad
+//     Request (rechazado) → 500 es el tamaño de página MÁXIMO real.
+//   - Sin campo total/count en ningún sitio — la única señal de "última
+//     página" es que la página devuelta tenga MENOS de `limit` elementos
+//     (o esté vacía), nunca un total a comparar (spec §20).
+//   - GET /events/ y GET /tickets-rates/ aceptan el MISMO offset/limit,
+//     pero en la práctica Casanova nunca se acerca a 500 eventos/tarifas
+//     por evento (confirmado: 88 eventos, ≤15 tarifas/evento) — se pagina
+//     igual por coherencia y por si algún día cambia, no porque hoy trunquen.
+const FOURVENUES_MAX_PAGE_SIZE = 500;
+// Guarda defensiva (spec §16-17): 100 páginas × 500 = 50.000 registros por
+// event_id — muy por encima de cualquier volumen real de Casanover — nunca
+// debe alcanzarse en producción. Si se alcanza, es señal de un bug del
+// proveedor (cursor que nunca converge) o un evento genuinamente anómalo:
+// en ambos casos se aborta con error explícito, NUNCA se devuelve un
+// dataset parcial marcado como completo.
+const FOURVENUES_MAX_PAGES = 100;
+
+/** Nunca se persiste un dataset incompleto como si fuera completo (spec §17, §61). */
+export class FourvenuesPaginationIncompleteError extends Error {
+  constructor(path: string, contextLabel: string, pagesFetched: number) {
+    super(`Fourvenues ${path} (${contextLabel}) superó ${pagesFetched} páginas sin terminar — abortando en vez de devolver un dataset parcial en silencio`);
+    this.name = "FourvenuesPaginationIncompleteError";
+  }
+}
+
+function isRetryableStatus(err: unknown): boolean {
+  if (!(err instanceof HttpTransportError)) return false;
+  return err.status === 429 || err.status >= 500;
+}
+
+/** Reintenta SOLO la página que falló (nunca reinicia el dataset completo) ante 429/5xx transitorios — spec §21. */
+async function withTransientRetry<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isRetryableStatus(err) || attempt >= maxRetries) throw err;
+      await new Promise(resolve => setTimeout(resolve, 500 * 3 ** attempt)); // 500ms, 1500ms
+    }
+  }
+}
+
+export interface FourvenuesPageStats {
+  pagesFetched: number;
+  recordsFetched: number;
+  duplicatesAcrossPages: number;
+  complete: true;
+}
+
+/**
+ * Trae TODAS las páginas de un listado Fourvenues vía offset/limit (spec
+ * §13-20) — genérico, reutilizado por eventos/tarifas/tickets, nunca
+ * duplicado por endpoint. Secuencial (nunca páginas concurrentes, spec §22
+ * — respeta ~10 req/s/api-key). Deduplica por id entre páginas sin ocultar
+ * el hallazgo (spec §18): cuenta pero nunca inserta dos veces.
+ */
+async function fetchAllPages<T>(
+  transport: IntegrationTransport,
+  credentials: ProviderCredentials,
+  path: string,
+  baseQuery: Record<string, string | number | boolean | undefined>,
+  idOf: (item: T) => string,
+  contextLabel: string
+): Promise<{ items: T[]; stats: FourvenuesPageStats }> {
+  const items: T[] = [];
+  const seenIds = new Set<string>();
+  let duplicatesAcrossPages = 0;
+  let offset = 0;
+  let page = 0;
+  while (true) {
+    page++;
+    if (page > FOURVENUES_MAX_PAGES) {
+      throw new FourvenuesPaginationIncompleteError(path, contextLabel, page - 1);
+    }
+    const result = await withTransientRetry(() => transport.request<{ data: T[] }>({
+      method: "GET",
+      path,
+      query: { ...baseQuery, offset, limit: FOURVENUES_MAX_PAGE_SIZE },
+      headers: authHeaders(credentials),
+    }));
+    const pageData = result.data ?? [];
+    for (const item of pageData) {
+      const id = idOf(item);
+      if (seenIds.has(id)) { duplicatesAcrossPages++; continue; }
+      seenIds.add(id);
+      items.push(item);
+    }
+    if (pageData.length < FOURVENUES_MAX_PAGE_SIZE) break; // última página — Fourvenues no da total, esta es la condición real de fin (spec §20)
+    offset += FOURVENUES_MAX_PAGE_SIZE;
+  }
+  const stats: FourvenuesPageStats = { pagesFetched: page, recordsFetched: items.length, duplicatesAcrossPages, complete: true };
+  // Observability (spec §23) — nunca PII: solo path/contextLabel (event_id o rango de fechas) y counts estructurales.
+  console.log(`[FourvenuesAdapter] ${path} ${contextLabel} — pages=${stats.pagesFetched} records=${stats.recordsFetched} duplicatesAcrossPages=${stats.duplicatesAcrossPages} complete=${stats.complete}`);
+  return { items, stats };
+}
+
 /**
  * listOrders/listTickets/listAttendance derivan los TRES del mismo
  * GET /tickets/?event_id= — auditoría previa confirmó que, sin caché, un
  * sync completo de un evento llama a este endpoint 3 veces con la misma
  * query. `createTicketsFetcher` memoiza por `externalEventId` DENTRO de una
  * instancia de adapter (una instancia = un sync run, ver
- * integrationSyncService.ts) — 1 llamada de red real, 3 vistas normalizadas
- * derivadas en memoria. Importante por rate limit (~10 req/s/api-key).
+ * integrationSyncService.ts) — 1 descarga LÓGICA por evento (que internamente
+ * puede ser N páginas reales si el evento supera 500 tickets), 3 vistas
+ * normalizadas derivadas en memoria. Importante por rate limit (~10 req/s/api-key).
  */
 function createTicketsFetcher(transport: IntegrationTransport) {
-  const cache = new Map<string, Promise<FourvenuesIntTicketDto[]>>();
-  return function fetchTickets(credentials: ProviderCredentials, externalEventId: string): Promise<FourvenuesIntTicketDto[]> {
+  const cache = new Map<string, Promise<{ items: FourvenuesIntTicketDto[]; stats: FourvenuesPageStats }>>();
+  return function fetchTickets(credentials: ProviderCredentials, externalEventId: string): Promise<{ items: FourvenuesIntTicketDto[]; stats: FourvenuesPageStats }> {
     const cached = cache.get(externalEventId);
     if (cached) return cached;
-    const promise = transport.request<{ data: FourvenuesIntTicketDto[] }>({
-      method: "GET",
-      path: "/tickets/",
-      query: { event_id: externalEventId },
-      headers: authHeaders(credentials),
-    }).then(result => result.data ?? []);
+    const promise = fetchAllPages<FourvenuesIntTicketDto>(
+      transport, credentials, "/tickets/", { event_id: externalEventId }, t => t._id, `event_id=${externalEventId}`
+    );
     cache.set(externalEventId, promise);
     return promise;
   };
@@ -155,15 +258,12 @@ export function createFourvenuesIntegrationsAdapter(transport: IntegrationTransp
 
     async listEvents(credentials) {
       const { start, end } = defaultDateWindow(syncWindow);
-      const result = await transport.request<{ data: FourvenuesIntEventDto[] }>({
-        method: "GET",
-        path: "/events/",
-        query: { start, end },
-        headers: authHeaders(credentials),
-      });
+      const { items } = await fetchAllPages<FourvenuesIntEventDto>(
+        transport, credentials, "/events/", { start, end }, e => e._id, `${start}..${end}`
+      );
       // Sin campo updated_at confirmado en el DTO de evento — "since" no se
       // puede aplicar de forma fiable aquí, se devuelve todo el rango.
-      return (result.data ?? []).map((e): NormalizedEvent => ({
+      return items.map((e): NormalizedEvent => ({
         externalId: e._id,
         name: e.name,
         description: e.description ?? null,
@@ -186,13 +286,10 @@ export function createFourvenuesIntegrationsAdapter(transport: IntegrationTransp
     // event_ticket_types.metadata las guarde (ver eventCatalogSync.ts) y un
     // futuro admin pueda mostrarlas, aunque hoy no se usen para segmentar.
     async listTicketTypes(credentials, externalEventId) {
-      const result = await transport.request<{ data: FourvenuesIntRateDto[] }>({
-        method: "GET",
-        path: "/tickets-rates/",
-        query: { event_id: externalEventId },
-        headers: authHeaders(credentials),
-      });
-      return (result.data ?? []).map((r): NormalizedTicketType => {
+      const { items } = await fetchAllPages<FourvenuesIntRateDto>(
+        transport, credentials, "/tickets-rates/", { event_id: externalEventId }, r => r._id, `event_id=${externalEventId}`
+      );
+      return items.map((r): NormalizedTicketType => {
         const options = r.options ?? [];
         const cheapest = options.reduce<FourvenuesIntRateOptionDto | null>((min, o) =>
           min === null || (o.price ?? Infinity) < (min.price ?? Infinity) ? o : min, null);
@@ -215,7 +312,7 @@ export function createFourvenuesIntegrationsAdapter(transport: IntegrationTransp
     // confirmado presente y poblado en cada ticket real (ver
     // docs/integrations/fourvenues.md, "Esquemas reales verificados").
     async listOrders(credentials, externalEventId) {
-      const tickets = await fetchTickets(credentials, externalEventId);
+      const { items: tickets } = await fetchTickets(credentials, externalEventId);
       const byPayment = new Map<string, FourvenuesIntTicketDto[]>();
       for (const t of tickets) {
         if (!t.payment_id) continue;
@@ -246,7 +343,7 @@ export function createFourvenuesIntegrationsAdapter(transport: IntegrationTransp
     },
 
     async listTickets(credentials, externalEventId, since) {
-      const tickets = await fetchTickets(credentials, externalEventId);
+      const { items: tickets } = await fetchTickets(credentials, externalEventId);
       const filtered = since
         ? tickets.filter(t => t.updated_at && new Date(t.updated_at).getTime() >= since.getTime())
         : tickets;
@@ -267,7 +364,7 @@ export function createFourvenuesIntegrationsAdapter(transport: IntegrationTransp
     // ticket, sin necesidad de GET /tickets/check-in/{code} uno a uno (ver
     // docs/integrations/fourvenues.md).
     async listAttendance(credentials, externalEventId, since) {
-      const tickets = await fetchTickets(credentials, externalEventId);
+      const { items: tickets } = await fetchTickets(credentials, externalEventId);
       return tickets
         .filter(t => t.enter === 1 && t.entry_date != null)
         .filter(t => !since || t.entry_date! * 1000 >= since.getTime())
