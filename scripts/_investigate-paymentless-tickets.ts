@@ -96,10 +96,15 @@ async function main() {
   let priceZero = 0, pricePositive = 0;
   let attended = 0, notAttended = 0;
   let hasEmail = 0, hasPhone = 0, hasName = 0, hasAnyIdentity = 0;
+  const priceHistogram: Record<string, number> = {};
+  let sumAmountCents = 0;
   for (const t of withoutOrder) {
     byStatus[t.status] = (byStatus[t.status] ?? 0) + 1;
     const amount = t.amountPaidCents ?? 0;
     if (amount === 0) priceZero++; else pricePositive++;
+    sumAmountCents += amount;
+    const key = (amount / 100).toFixed(2) + "€";
+    priceHistogram[key] = (priceHistogram[key] ?? 0) + 1;
     if (t.attended) attended++; else notAttended++;
     if (t.participant.email) hasEmail++;
     if (t.participant.phone) hasPhone++;
@@ -107,6 +112,8 @@ async function main() {
     if (t.participant.email || t.participant.phone || t.participant.name) hasAnyIdentity++;
   }
   console.log(`por status: ${JSON.stringify(byStatus)}`);
+  console.log(`price histogram: ${JSON.stringify(priceHistogram)}`);
+  console.log(`sum amountPaidCents: ${sumAmountCents} (${(sumAmountCents / 100).toFixed(2)}€)`);
   console.log(`price=0: ${priceZero} | price>0: ${pricePositive}`);
   console.log(`attended: ${attended} | not attended: ${notAttended}`);
   console.log(`identity — email: ${hasEmail}/${withoutOrderTotal} | phone: ${hasPhone}/${withoutOrderTotal} | name: ${hasName}/${withoutOrderTotal} | any: ${hasAnyIdentity}/${withoutOrderTotal}`);
