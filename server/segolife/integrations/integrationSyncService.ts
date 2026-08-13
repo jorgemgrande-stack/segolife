@@ -315,6 +315,8 @@ export interface VenueSyncResult {
   eventsCreated: number;
   eventsUpdated: number;
   eventsAmbiguous: number;
+  /** Tía Felisa rollout — eventos sin startsAt (proveedor no dio fecha): nunca se crean/actualizan con una fecha inventada, quedan observables aquí. ZERO SILENT DROP. */
+  eventsInvalid: number;
   ratesSynced: number;
   ordersCreated: number;
   ordersUpdated: number;
@@ -346,7 +348,7 @@ export interface VenueSyncResult {
 
 function emptyVenueSyncResult(status: VenueSyncResult["status"], venueId: number | null, message?: string): VenueSyncResult {
   return {
-    status, message, venueId, eventsFound: 0, eventsCreated: 0, eventsUpdated: 0, eventsAmbiguous: 0,
+    status, message, venueId, eventsFound: 0, eventsCreated: 0, eventsUpdated: 0, eventsAmbiguous: 0, eventsInvalid: 0,
     ratesSynced: 0, ordersCreated: 0, ordersUpdated: 0, ticketsUnresolved: 0,
     ticketsFound: 0, ticketsWithOrder: 0, ticketsWithoutOrder: 0,
     paymentlessCreated: 0, paymentlessAlreadyExists: 0, paymentlessUnresolved: 0, paymentlessAttended: 0,
@@ -402,7 +404,7 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
   const conn = db ?? (await getDb());
 
   let fetchedCount = 0, failedCount = 0;
-  let eventsCreated = 0, eventsUpdated = 0, eventsAmbiguous = 0, ratesSynced = 0;
+  let eventsCreated = 0, eventsUpdated = 0, eventsAmbiguous = 0, eventsInvalid = 0, ratesSynced = 0;
   let ordersCreated = 0, ordersUpdated = 0, ticketsUnresolved = 0;
   let ticketsFound = 0, ticketsWithOrder = 0, ticketsWithoutOrder = 0;
   let paymentlessCreated = 0, paymentlessAlreadyExists = 0, paymentlessUnresolved = 0, paymentlessAttended = 0;
@@ -422,6 +424,7 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
     }, conn);
     eventsCreated = catalogResult.createdCount;
     eventsAmbiguous = catalogResult.ambiguousCount;
+    eventsInvalid = catalogResult.invalidCount;
     eventsUpdated = catalogResult.items.filter(i => i.outcome === "mapped_existing" || i.outcome === "candidate_adopted").length;
 
     for (const item of catalogResult.items) {
@@ -529,7 +532,7 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
 
     return {
       status, venueId: integration.venueId, eventsFound: normalizedEvents.length,
-      eventsCreated, eventsUpdated, eventsAmbiguous, ratesSynced, ordersCreated, ordersUpdated,
+      eventsCreated, eventsUpdated, eventsAmbiguous, eventsInvalid, ratesSynced, ordersCreated, ordersUpdated,
       ticketsUnresolved, ticketsFound, ticketsWithOrder, ticketsWithoutOrder,
       paymentlessCreated, paymentlessAlreadyExists, paymentlessUnresolved, paymentlessAttended,
       attendanceProcessed, attendanceUnresolved, failedCount,

@@ -180,6 +180,62 @@ describe("syncEventCatalog — matching (spec §12-13)", () => {
   });
 });
 
+describe("syncEventCatalog — startsAt ausente (Tía Felisa rollout, spec §9/§63)", () => {
+  it("evento SIN mapping y startsAt=null → outcome 'invalid_missing_startsAt', NUNCA crea el evento ni un mapping, NUNCA inventa epoch", async () => {
+    const { db, inserts } = fakeDb([]); // ni siquiera se llega a consultar existingMapping — se descarta antes
+
+    const result = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent({ startsAt: null })],
+    }, db);
+
+    expect(result.items[0]).toMatchObject({ outcome: "invalid_missing_startsAt", eventId: null });
+    expect(result.invalidCount).toBe(1);
+    expect(result.createdCount).toBe(0);
+    expect(mockCreateEvent).not.toHaveBeenCalled();
+    expect(mockUpdateEvent).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0); // ni el evento ni el mapping se tocan
+  });
+
+  it("evento YA MAPEADO y startsAt=null en este run → outcome 'invalid_missing_startsAt', NUNCA llama a updateEvent (conserva su fecha anterior intacta)", async () => {
+    const { db } = fakeDb([]); // no debería ni consultar existingMapping
+
+    const result = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent({ startsAt: null })],
+    }, db);
+
+    expect(result.items[0].outcome).toBe("invalid_missing_startsAt");
+    expect(mockUpdateEvent).not.toHaveBeenCalled(); // nunca escribe una fecha inválida sobre un evento ya existente
+  });
+
+  it("lote mixto (1 evento válido + 1 sin startsAt) → el válido se procesa con normalidad, el inválido queda aparte — ZERO SILENT DROP, ninguno desaparece", async () => {
+    const { db, inserts } = fakeDb([
+      [], // existingMapping del evento VÁLIDO
+      [], // alreadyMapped
+      [], // sameVenue
+    ]);
+    mockCreateEvent.mockResolvedValue({ id: 77 });
+
+    const result = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [],
+      normalizedEvents: [
+        normalizedEvent({ externalId: "fvi_evt_valid", startsAt: new Date("2027-01-10T23:00:00.000Z") }),
+        normalizedEvent({ externalId: "fvi_evt_sin_fecha", name: "Evento sin fecha", startsAt: null }),
+      ],
+    }, db);
+
+    expect(result.items).toHaveLength(2);
+    expect(result.items.find(i => i.externalId === "fvi_evt_valid")).toMatchObject({ outcome: "created", eventId: 77 });
+    expect(result.items.find(i => i.externalId === "fvi_evt_sin_fecha")).toMatchObject({ outcome: "invalid_missing_startsAt", eventId: null });
+    expect(result.createdCount).toBe(1);
+    expect(result.invalidCount).toBe(1);
+    expect(inserts.some(i => i.values.externalId === "fvi_evt_valid")).toBe(true);
+    expect(inserts.some(i => i.values.externalId === "fvi_evt_sin_fecha")).toBe(false);
+  });
+});
+
 describe("syncTicketTypes", () => {
   it("rate nueva → crea event_ticket_type + mapping, precio ya en céntimos", async () => {
     const { db, inserts } = fakeDb([[]]); // sin mapping previo

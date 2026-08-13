@@ -268,7 +268,7 @@ export function createFourvenuesIntegrationsAdapter(transport: IntegrationTransp
         name: e.name,
         description: e.description ?? null,
         imageUrl: e.flyer ?? null,
-        startsAt: e.start ? new Date(e.start * 1000) : new Date(0),
+        startsAt: e.start ? new Date(e.start * 1000) : null, // nunca epoch — ver NormalizedEvent.startsAt (Tía Felisa rollout, mismo riesgo que el bug real del scheduler)
         endsAt: e.end ? new Date(e.end * 1000) : null,
         externalUrl: e.url ?? null,
       }));

@@ -31,7 +31,17 @@ export interface NormalizedEvent {
   name: string;
   description?: string | null;
   imageUrl?: string | null;
-  startsAt: Date;
+  /**
+   * Tía Felisa rollout (2026-08-13) — nullable a propósito: `events.starts_at`
+   * es TIMESTAMP NOT NULL en MySQL, y en modo estricto (Railway, default)
+   * rechaza el epoch — mismo patrón exacto que causó el bug real del
+   * scheduler (integration_sync_state.updated_since). Cuando el proveedor no
+   * da fecha de inicio (campo opcional en el DTO real), el adapter NUNCA
+   * inventa `new Date(0)` — devuelve `null` y el evento queda observable
+   * (`eventCatalogSync.ts`, outcome "invalid_missing_startsAt"), nunca
+   * silenciosamente descartado ni escrito con una fecha falsa.
+   */
+  startsAt: Date | null;
   endsAt?: Date | null;
   externalUrl?: string | null;
   raw?: Record<string, unknown>;

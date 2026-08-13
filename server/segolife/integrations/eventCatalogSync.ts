@@ -76,7 +76,7 @@ async function generateUniqueSlug(base: string, conn: DbHandle): Promise<string>
 export interface EventSyncItemResult {
   externalId: string;
   name: string;
-  outcome: "mapped_existing" | "candidate_adopted" | "created" | "ambiguous";
+  outcome: "mapped_existing" | "candidate_adopted" | "created" | "ambiguous" | "invalid_missing_startsAt";
   eventId: number | null;
 }
 
@@ -94,6 +94,8 @@ export interface SyncEventCatalogResult {
   createdCount: number;
   updatedCount: number;
   ambiguousCount: number;
+  /** Tía Felisa rollout — eventos sin startsAt (proveedor no dio fecha): ZERO SILENT DROP, nunca se inventa una fecha ni se crea/actualiza el evento; queda observable aquí. */
+  invalidCount: number;
 }
 
 /** Candidatos SIN mapping de este provider, mismo venue, mismo día Europe/Madrid, nombre normalizado exactamente igual. */
@@ -155,8 +157,22 @@ export async function syncEventCatalog(input: SyncEventCatalogInput, db?: DbHand
   let createdCount = 0;
   let updatedCount = 0;
   let ambiguousCount = 0;
+  let invalidCount = 0;
 
   for (const ev of input.normalizedEvents) {
+    // Tía Felisa rollout (spec §9) — un evento sin startsAt (el proveedor no
+    // dio fecha; campo opcional en el DTO real) NUNCA se crea/actualiza con
+    // una fecha inventada — events.starts_at es TIMESTAMP NOT NULL, y
+    // new Date(0) ya causó un fallo real de MySQL estricto en otro punto
+    // (ver integration_sync_state.updated_since). Si el evento ya estaba
+    // mapeado, conserva su fecha anterior intacta (Field ownership: esta
+    // sincronización simplemente no puede confirmarla en este run).
+    if (ev.startsAt === null) {
+      items.push({ externalId: ev.externalId, name: ev.name, outcome: "invalid_missing_startsAt", eventId: null });
+      invalidCount++;
+      continue;
+    }
+
     const [existingMapping] = await conn.select().from(externalEntityMappings)
       .where(and(eq(externalEntityMappings.provider, input.provider), eq(externalEntityMappings.externalType, "event"), eq(externalEntityMappings.externalId, ev.externalId)))
       .limit(1);
@@ -217,7 +233,7 @@ export async function syncEventCatalog(input: SyncEventCatalogInput, db?: DbHand
     items.push({ externalId: ev.externalId, name: ev.name, outcome, eventId });
   }
 
-  return { items, createdCount, updatedCount, ambiguousCount };
+  return { items, createdCount, updatedCount, ambiguousCount, invalidCount };
 }
 
 export interface SyncTicketTypesInput {

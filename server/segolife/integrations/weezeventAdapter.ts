@@ -102,7 +102,7 @@ export function createWeezeventAdapter(transport: IntegrationTransport, capabili
       return (result.events ?? []).map((e): NormalizedEvent => ({
         externalId: String(e.id),
         name: e.name,
-        startsAt: e.start ? new Date(e.start) : new Date(0),
+        startsAt: e.start ? new Date(e.start) : null, // nunca epoch — ver NormalizedEvent.startsAt
         endsAt: e.end ? new Date(e.end) : null,
         externalUrl: e.site_url ?? null,
       }));

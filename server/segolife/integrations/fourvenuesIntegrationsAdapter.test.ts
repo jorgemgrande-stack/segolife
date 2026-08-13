@@ -50,6 +50,15 @@ describe("FourvenuesIntegrationsAdapter — contract tests (Integrations API, fo
     expect(events[0].imageUrl).toBe("https://example.invalid/flyer.jpg");
   });
 
+  it("Tía Felisa rollout (spec §9/§63) — evento sin 'start' (campo opcional real) → startsAt=null, NUNCA epoch new Date(0)", async () => {
+    const t = createMockTransport({
+      "GET /events/": { success: true, data: [{ ...fourvenuesIntEventsFixture.data[0], start: undefined }] },
+    });
+    const a = createFourvenuesIntegrationsAdapter(t);
+    const events = await a.listEvents(credentials);
+    expect(events[0].startsAt).toBeNull();
+  });
+
   it("listEvents mapea event.url a externalUrl cuando el proveedor lo envía", async () => {
     const t = createMockTransport({
       "GET /events/": { success: true, data: [{ ...fourvenuesIntEventsFixture.data[0], url: "https://www.fourvenues.com/casanova/fixture" }] },

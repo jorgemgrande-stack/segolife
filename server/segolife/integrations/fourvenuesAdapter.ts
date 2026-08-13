@@ -110,7 +110,7 @@ export function createFourvenuesAdapter(transport: IntegrationTransport, capabil
         name: e.name,
         description: e.description ?? null,
         imageUrl: e.image ?? null,
-        startsAt: e.start_date ? new Date(e.start_date) : new Date(0),
+        startsAt: e.start_date ? new Date(e.start_date) : null, // nunca epoch — ver NormalizedEvent.startsAt
         endsAt: e.end_date ? new Date(e.end_date) : null,
         raw: { location_id: e.location_id },
       }));

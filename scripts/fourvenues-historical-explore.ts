@@ -72,6 +72,14 @@ async function main() {
   const events = await adapter.listEvents(credentials);
   console.log(`Eventos encontrados en la ventana: ${events.length}\n`);
 
+  // Tía Felisa rollout (spec §9) — nunca asumir que todo evento trae fecha;
+  // ZERO SILENT DROP: se reportan explícitamente, nunca se ignoran ni se
+  // les inventa una fecha (ver NormalizedEvent.startsAt / eventCatalogSync.ts).
+  const eventsWithoutStartsAt = events.filter(e => e.startsAt === null);
+  if (eventsWithoutStartsAt.length > 0) {
+    console.log(`⚠ ${eventsWithoutStartsAt.length} evento(s) SIN startsAt (el proveedor no dio fecha): ${eventsWithoutStartsAt.map(e => `"${e.name}" (${e.externalId})`).join(", ")}\n`);
+  }
+
   const allStats: EventStats[] = [];
 
   for (const ev of events) {
@@ -110,7 +118,7 @@ async function main() {
     const stats: EventStats = {
       externalId: ev.externalId,
       name: ev.name,
-      startsAt: ev.startsAt.toISOString(),
+      startsAt: ev.startsAt ? ev.startsAt.toISOString() : "(sin fecha)",
       ticketsTotal: tickets.length,
       paymentsTotal: byPayment.size,
       paymentsMultiTicket: multiTicketPayments,
@@ -125,7 +133,7 @@ async function main() {
     };
     allStats.push(stats);
 
-    console.log(`--- ${ev.name.slice(0, 60)} (${ev.startsAt.toISOString().slice(0, 10)}) ---`);
+    console.log(`--- ${ev.name.slice(0, 60)} (${ev.startsAt ? ev.startsAt.toISOString().slice(0, 10) : "sin fecha"}) ---`);
     console.log(`  tickets: ${stats.ticketsTotal} | pagos: ${stats.paymentsTotal} (multi-ticket: ${stats.paymentsMultiTicket}, CaseA: ${caseA}, CaseB: ${caseB})`);
     console.log(`  email: ${stats.ticketsWithEmail}/${stats.ticketsTotal} | phone: ${stats.ticketsWithPhone}/${stats.ticketsTotal} | name: ${stats.ticketsWithName}/${stats.ticketsTotal}`);
     console.log(`  asistieron: ${stats.attended} | reembolsados: ${stats.refunded} | revenue: ${(stats.revenueCents / 100).toFixed(2)}€`);
@@ -149,6 +157,7 @@ async function main() {
     revenueCents: acc.revenueCents + s.revenueCents,
   }), { tickets: 0, payments: 0, multiTicket: 0, caseA: 0, caseB: 0, attended: 0, refunded: 0, revenueCents: 0 });
   console.log(`Eventos con actividad: ${allStats.length} / ${events.length}`);
+  console.log(`Eventos sin startsAt: ${eventsWithoutStartsAt.length} / ${events.length}`);
   console.log(JSON.stringify(totals, null, 2));
   console.log(`Revenue total muestreado: ${(totals.revenueCents / 100).toFixed(2)}€`);
 
