@@ -168,6 +168,10 @@ const GlobalCalendar = lazy(() => import("./pages/admin/restaurants/GlobalCalend
 const StudentsManager = lazy(() => import("./pages/admin/students/StudentsManager"));
 const StudentDetail = lazy(() => import("./pages/admin/students/StudentDetail"));
 
+// Segolife: Historical Fourvenues Identity Claim
+const HistoricalIdentities = lazy(() => import("./pages/admin/students/HistoricalIdentities"));
+const HistoricalIdentityDetail = lazy(() => import("./pages/admin/students/HistoricalIdentityDetail"));
+
 // Segolife: Venues / Negocios / Eventos (Fase 1D)
 const VenuesManager = lazy(() => import("./pages/admin/venues/VenuesManager"));
 const VenueDetail = lazy(() => import("./pages/admin/venues/VenueDetail"));
@@ -492,6 +496,9 @@ function Router() {
       {/* Users & Settings */}
       <Route path="/admin/usuarios">{() => <Suspense fallback={<AdminLoadingFallback />}><UsersManager /></Suspense>}</Route>
       <Route path="/admin/students">{() => <Suspense fallback={<AdminLoadingFallback />}><StudentsManager /></Suspense>}</Route>
+      {/* Rutas literales ANTES de /admin/students/:id — wouter hace match en orden y ":id" capturaría "historical" si fuera declarada después. */}
+      <Route path="/admin/students/historical">{() => <Suspense fallback={<AdminLoadingFallback />}><HistoricalIdentities /></Suspense>}</Route>
+      <Route path="/admin/students/historical/:identityKey">{() => <Suspense fallback={<AdminLoadingFallback />}><HistoricalIdentityDetail /></Suspense>}</Route>
       <Route path="/admin/students/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><StudentDetail /></Suspense>}</Route>
       <Route path="/admin/venues">{() => <Suspense fallback={<AdminLoadingFallback />}><VenuesManager /></Suspense>}</Route>
       <Route path="/admin/venues/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><VenueDetail /></Suspense>}</Route>

@@ -164,6 +164,7 @@ import { reviewsRouter } from "./routers/reviews";
 import { communitiesRouter } from "./routers/communities";
 import { studentsRouter } from "./routers/students";
 import { students360Router } from "./routers/students360";
+import { historicalIdentitiesRouter } from "./routers/historicalIdentities";
 import { communityRouter } from "./routers/community";
 import { venuesRouter } from "./routers/venues";
 import { eventsRouter } from "./routers/events";
@@ -2166,6 +2167,7 @@ export const appRouter = router({
   communities: communitiesRouter,
   students: studentsRouter,
   students360: students360Router,
+  historicalIdentities: historicalIdentitiesRouter,
   community: communityRouter,
   venues: venuesRouter,
   events: eventsRouter,

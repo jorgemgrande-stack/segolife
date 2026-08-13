@@ -59,6 +59,10 @@ const navItems = [
     href: "/admin/students",
     icon: GraduationCap,
     roles: ["admin"],
+    children: [
+      { label: "Listado", href: "/admin/students" },
+      { label: "Históricos Fourvenues", href: "/admin/students/historical" },
+    ],
   },
   {
     label: "Venues",

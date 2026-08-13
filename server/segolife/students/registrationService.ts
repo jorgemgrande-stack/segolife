@@ -43,6 +43,7 @@ import { updatePreference } from "../engagement/notificationPreferencesService";
 import { getBenefitDefinitionBySlug, getBenefitDefinitionCommunities } from "../../db/benefitsDb";
 import { grantBenefit } from "../benefits/benefitGrantService";
 import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/benefitEvents";
+import { resolveHistoricalIdentityBestEffort } from "./historicalIdentityService";
 
 /**
  * Slug del beneficio de bienvenida (recomendación Student 360 §"Bienvenida
@@ -265,6 +266,12 @@ export async function registerStudent(input: RegisterStudentInput, db?: DbHandle
   });
 
   await grantWelcomeBenefitBestEffort(userId, community.id);
+  // HISTORICAL STUDENT IDENTITY CLAIM (spec §16) — best-effort, después de
+  // confirmar la transacción, nunca bloquea el alta. Solo auto-vincula si
+  // email+teléfono coinciden EXACTAMENTE con una identidad histórica
+  // Fourvenues (spec §15) — cualquier otra confianza queda para revisión
+  // manual en el directorio admin, nunca auto-link.
+  await resolveHistoricalIdentityBestEffort(userId, email, phone);
 
   return { userId, name, email, role: "user", communitySlug: community.slug };
 }
