@@ -58,6 +58,12 @@ import { recordUnresolvedOperation } from "../integrations/unresolvedOperationsS
 import { transitionOrderStatus, OrderStateError, type TicketOrderStatus } from "./orderStateMachine";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
 import type { NormalizedOrder, NormalizedTicket } from "../integrations/externalTicketingProvider";
+import { TokenEngineError, reverseTransaction, isLedgerEntryReversed } from "../tokens/tokenLedgerService";
+import { resolveLoyaltyCutoff, isBeforeCutoff } from "../tokens/loyaltyCutoffService";
+import {
+  buildNextAttempt, buildRegeneratedAttempt, shouldAttemptReward,
+  type RewardAttempt, type DenialReasonCode,
+} from "../tokens/rewardStateMachine";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -104,31 +110,68 @@ function mapOrderStatus(status: NormalizedOrder["status"]): TicketOrderStatus {
   }
 }
 
-function buildPurchaseIdempotencyKey(input: IngestTicketPurchaseInput, buyerUserId: number): string {
-  return `ticket_purchase:${input.provider}:${input.integrationType}:${input.integrationId}:${input.eventId}:${buyerUserId}`;
+/**
+ * `generation` (Loyalty Production Hardening, spec §3) — 0 en el primer
+ * intento (formato IDÉNTICO al histórico, sin sufijo, retrocompatible con
+ * cualquier idempotency_key real ya escrita), incrementa solo cuando una
+ * recompensa ya concedida fue revertida (refund) y el pedido vuelve a
+ * "paid" — permite un re-grant legítimo sin arriesgar una doble recompensa
+ * (el UNIQUE de idempotency_key sigue protegiendo dentro de cada generación).
+ */
+function buildPurchaseIdempotencyKey(input: IngestTicketPurchaseInput, buyerUserId: number, generation: number): string {
+  const base = `ticket_purchase:${input.provider}:${input.integrationType}:${input.integrationId}:${input.eventId}:${buyerUserId}`;
+  return generation > 0 ? `${base}:gen${generation}` : base;
 }
 
-/** Concede el reward de COMPRA (origin="ticket") — a lo sumo una vez por Student+Event, sin regla activa = 0 tokens (nunca falla el pedido). */
+function toDenialReason(code: string): DenialReasonCode | null {
+  return code === "NO_RULE_FOUND" || code === "RULE_LIMIT_EXCEEDED" || code === "OUTSIDE_SCHEDULE" ? code : null;
+}
+
+/**
+ * Concede el reward de COMPRA (origin="ticket") — a lo sumo una vez por
+ * Student+Event+generación, sin regla activa = 0 tokens (nunca falla el
+ * pedido). `previousAttempt` (spec §4-5) alimenta la Reward State Machine —
+ * null en la primera evaluación de un pedido nuevo; el intento previo
+ * (posiblemente regenerado tras una reversión, ver `updateExistingOrder`)
+ * en cualquier reintento posterior. `attempt` en el resultado es `null`
+ * SOLO cuando la operación es histórica (nunca se evalúa, spec: ni siquiera
+ * se registra un intento).
+ */
 async function grantPurchaseLoyalty(
   input: IngestTicketPurchaseInput,
   order: TicketOrder,
   buyerUserId: number,
+  previousAttempt: RewardAttempt | null,
   conn: AnyDbHandle
-): Promise<{ ledgerId: number | null; historical: boolean }> {
-  const isHistorical = !!input.suppressLoyalty || (!!input.loyaltyEffectiveFrom && !!order.purchasedAt && order.purchasedAt < input.loyaltyEffectiveFrom);
-  if (isHistorical) return { ledgerId: null, historical: true };
+): Promise<{ attempt: RewardAttempt | null; historical: boolean }> {
+  const at = order.purchasedAt ?? new Date();
+  const persistedCutoff = await resolveLoyaltyCutoff(input.integrationId, conn);
+  const isHistorical = !!input.suppressLoyalty
+    || (!!input.loyaltyEffectiveFrom && !!order.purchasedAt && order.purchasedAt < input.loyaltyEffectiveFrom)
+    || isBeforeCutoff(at, persistedCutoff);
+  if (isHistorical) return { attempt: null, historical: true };
 
-  const tokenResult = await earnTokens({
-    userId: buyerUserId,
-    communityId: input.communityId ?? null,
-    venueId: input.venueId ?? null,
-    eventId: input.eventId,
-    amountSpent: order.totalCents / 100,
-    origin: "ticket",
-    sourceId: order.id,
-    idempotencyKey: buildPurchaseIdempotencyKey(input, buyerUserId),
-    at: order.purchasedAt ?? new Date(),
-  }, conn).catch(() => null); // sin regla origin="ticket" activa → NO_RULE_FOUND, comportamiento esperado (spec §31: "sin regla activa: 0 tokens").
+  const generation = previousAttempt?.generation ?? 0;
+  let outcome: { ledgerId: number | null; reason: DenialReasonCode | null };
+  let ledgerId: number | null = null;
+  try {
+    const tokenResult = await earnTokens({
+      userId: buyerUserId,
+      communityId: input.communityId ?? null,
+      venueId: input.venueId ?? null,
+      eventId: input.eventId,
+      amountSpent: order.totalCents / 100,
+      origin: "ticket",
+      sourceId: order.id,
+      idempotencyKey: buildPurchaseIdempotencyKey(input, buyerUserId, generation),
+      at,
+    }, conn);
+    ledgerId = tokenResult.ledger.id;
+    outcome = { ledgerId, reason: null };
+  } catch (err) {
+    // sin regla origin="ticket" activa → NO_RULE_FOUND, comportamiento esperado (spec §31: "sin regla activa: 0 tokens") — igual que cualquier otra denegación, se registra en la Reward State Machine para poder explicar/reintentar.
+    outcome = { ledgerId: null, reason: err instanceof TokenEngineError ? toDenialReason(err.code) : null };
+  }
 
   await evaluateBenefitsForOrigin({
     type: "ticket",
@@ -138,11 +181,12 @@ async function grantPurchaseLoyalty(
     amountCents: order.totalCents,
     communityId: input.communityId ?? null,
     sourceId: order.id,
-    ledgerId: tokenResult?.ledger.id ?? null,
-    occurredAt: order.purchasedAt ?? new Date(),
-  }, conn).catch(() => []); // un fallo en Benefits nunca revierte el pedido ya registrado.
+    ledgerId,
+    occurredAt: at,
+  }, conn).catch(() => []); // un fallo en Benefits nunca revierte el pedido ya registrado. Idempotente por sí solo — seguro en cada reintento.
 
-  return { ledgerId: tokenResult?.ledger.id ?? null, historical: false };
+  const attempt = buildNextAttempt(outcome, previousAttempt, at);
+  return { attempt, historical: false };
 }
 
 /** Resuelve identidad de participante por ticket y persiste event_tickets + unresolved_operations (operationType="order", spec §46). */
@@ -278,9 +322,15 @@ async function createNewOrder(input: IngestTicketPurchaseInput, db: DbHandle): P
   const [order] = await db.select().from(ticketOrders).where(eq(ticketOrders.id, orderId)).limit(1);
 
   if (buyerIdentity.userId && order.status === "paid") {
-    const { ledgerId, historical } = await grantPurchaseLoyalty(input, order, buyerIdentity.userId, db);
-    if (ledgerId) {
-      await db.update(ticketOrders).set({ metadata: { purchaseLoyaltyLedgerId: ledgerId, purchaseLoyaltyGrantedAt: new Date().toISOString() } }).where(eq(ticketOrders.id, orderId));
+    const { attempt, historical } = await grantPurchaseLoyalty(input, order, buyerIdentity.userId, null, db);
+    if (attempt) {
+      await db.update(ticketOrders).set({
+        metadata: {
+          ...(order.metadata ?? {}),
+          rewardAttempt: attempt,
+          ...(attempt.ledgerId ? { purchaseLoyaltyLedgerId: attempt.ledgerId, purchaseLoyaltyGrantedAt: new Date().toISOString() } : {}),
+        },
+      }).where(eq(ticketOrders.id, orderId));
     }
     // Import histórico (spec §39-40): ni tokens/Benefits NI el domain event "en vivo" — evita que el Communication Center (aunque siga inactivo) llegue a tratar un backfill antiguo como una compra recién hecha.
     if (!historical) {
@@ -292,32 +342,112 @@ async function createNewOrder(input: IngestTicketPurchaseInput, db: DbHandle): P
   return { status: "created", order: finalOrder, ticketsCreated: input.tickets.length, unresolvedTickets: unresolvedCount };
 }
 
-/** Pedido ya existente (provider+externalOrderId) — spec §58: solo se actualiza estado (nunca se recrean items/tickets). */
+/**
+ * Pedido ya existente (provider+externalOrderId) — spec §58: solo se
+ * actualiza estado (nunca se recrean items/tickets).
+ *
+ * PENDING→PAID Y RETRY (spec §3): cualquier transición hacia "paid" desde
+ * un estado no-paid intenta la recompensa de compra — nunca depende
+ * exclusivamente de que el pedido sea nuevo (createNewOrder). Si el intento
+ * previo (guardado en metadata.rewardAttempt) sigue siendo reintentable
+ * (spec §5), se reintenta con la MISMA generación; si ya estaba GRANTED
+ * pero el ledger fue revertido (refund anterior, ahora vuelve a paid), se
+ * regenera (nueva generación, spec §3 test "refunded → paid").
+ *
+ * REVERSIÓN AUTOMÁTICA (spec §6): un refund sobre un pedido con recompensa
+ * ya concedida y AÚN NO revertida dispara `reverseTransaction()`
+ * automáticamente — `isLedgerEntryReversed` la hace idempotente (dos syncs
+ * del mismo refund nunca generan una segunda reversión). Si la reversión
+ * falla, se preserva el comportamiento histórico (loyaltyReconciliationRequired)
+ * para resolución manual, en vez de perder el fallo silenciosamente.
+ */
 async function updateExistingOrder(input: IngestTicketPurchaseInput, existing: TicketOrder, db: DbHandle): Promise<IngestTicketPurchaseResult> {
   const newStatus = mapOrderStatus(input.order.status);
-  if (newStatus === existing.status) {
-    // Igualmente se refleja el estado de cada ticket individual (p.ej. un ticket concreto pasó a refunded sin que el pedido entero cambie de estado agregado).
-    await syncTicketStatuses(input, db);
-    return { status: "unchanged", order: existing };
+  const statusChanged = newStatus !== existing.status;
+
+  const existingMeta = (existing.metadata ?? {}) as { rewardAttempt?: RewardAttempt; purchaseLoyaltyLedgerId?: number };
+  const existingAttempt: RewardAttempt | null = existingMeta.rewardAttempt ?? null;
+  const existingLedgerId = existingMeta.purchaseLoyaltyLedgerId ?? existingAttempt?.ledgerId ?? null;
+
+  const becomingRefunded = statusChanged && (newStatus === "refunded" || newStatus === "partially_refunded");
+  // isPaidNow (no solo "becomingPaid"): spec §3 pide reintentar también en un
+  // "paid → paid" repetido si quedó una denegación temporal pendiente — no
+  // solo en la transición. Un GRANTED ya concedido nunca se re-evalúa
+  // (shouldAttemptReward lo filtra), así que esto es seguro para el caso
+  // común (paid→paid sin nada pendiente) — no añade coste real.
+  const isPaidNow = newStatus === "paid";
+
+  let reconciliationRequired = false;
+  const metadataPatch: Record<string, unknown> = {};
+
+  // 1) Reversión automática — un refund sobre una recompensa ya concedida y aún no revertida.
+  if (becomingRefunded && existingLedgerId != null) {
+    const alreadyReversed = await isLedgerEntryReversed(existingLedgerId, db);
+    if (!alreadyReversed) {
+      try {
+        await reverseTransaction({
+          ledgerId: existingLedgerId,
+          reason: `Fourvenues: pedido ${input.order.externalId} reembolsado — reversión automática`,
+          adminUserId: null,
+        }, db);
+      } catch (err) {
+        reconciliationRequired = true;
+        metadataPatch.loyaltyReversalError = err instanceof Error ? err.message : String(err);
+      }
+    }
   }
 
-  const alreadyGrantedLoyalty = !!(existing.metadata as { purchaseLoyaltyLedgerId?: number } | null)?.purchaseLoyaltyLedgerId;
-  const becomingRefunded = newStatus === "refunded" || newStatus === "partially_refunded";
-  const reconciliationRequired = alreadyGrantedLoyalty && becomingRefunded;
+  // 2) Retry / regeneración — cualquier vez que el pedido esté "paid" reevalúa la recompensa si procede (spec §3: no depende solo de la transición).
+  if (isPaidNow && existing.userId) {
+    let attemptForRetry = existingAttempt;
+    const wasReversed = !!existingAttempt && existingAttempt.status === "GRANTED" && existingAttempt.ledgerId != null
+      && await isLedgerEntryReversed(existingAttempt.ledgerId, db);
+    if (wasReversed) {
+      attemptForRetry = buildRegeneratedAttempt(existingAttempt!);
+    }
+    if (shouldAttemptReward(attemptForRetry)) {
+      const { attempt, historical } = await grantPurchaseLoyalty(input, existing, existing.userId, attemptForRetry, db);
+      if (attempt) {
+        metadataPatch.rewardAttempt = attempt;
+        if (attempt.ledgerId) {
+          metadataPatch.purchaseLoyaltyLedgerId = attempt.ledgerId;
+          metadataPatch.purchaseLoyaltyGrantedAt = new Date().toISOString();
+        }
+        if (!historical && attempt.ledgerId) {
+          emitEngagementEvent("ticket_purchased", { userId: existing.userId, communityId: input.communityId ?? null, orderId: existing.id, eventId: existing.eventId });
+        }
+      }
+    }
+  }
+
+  if (!statusChanged) {
+    // Ni transición de estado real ni ningún intento de recompensa nuevo — no-op real, sin tocar la fila.
+    if (Object.keys(metadataPatch).length === 0) {
+      await syncTicketStatuses(input, db);
+      return { status: "unchanged", order: existing };
+    }
+    // Reintento sin transición de estado (p.ej. "paid → paid" con una denegación temporal que ahora sí se concede).
+    await db.update(ticketOrders).set({ metadata: { ...(existing.metadata ?? {}), ...metadataPatch } }).where(eq(ticketOrders.id, existing.id));
+    await syncTicketStatuses(input, db);
+    const [refreshed] = await db.select().from(ticketOrders).where(eq(ticketOrders.id, existing.id)).limit(1);
+    return { status: "unchanged", order: refreshed ?? existing };
+  }
 
   let updated: TicketOrder;
   try {
     updated = await transitionOrderStatus(existing.id, [existing.status], newStatus, {
       refundedAt: becomingRefunded ? new Date() : existing.refundedAt,
-      metadata: reconciliationRequired
-        ? { ...(existing.metadata ?? {}), loyaltyReconciliationRequired: true }
-        : existing.metadata,
+      metadata: {
+        ...(existing.metadata ?? {}),
+        ...metadataPatch,
+        ...(reconciliationRequired ? { loyaltyReconciliationRequired: true } : {}),
+      },
     }, db);
   } catch (err) {
     if (!(err instanceof OrderStateError)) throw err;
     // Transición no reconocida (p.ej. datos del proveedor fuera de orden) — se marca para revisión manual, NUNCA se pierde el pedido ni se lanza la excepción hacia el sync run completo.
     await db.update(ticketOrders)
-      .set({ status: "reconciliation_required", metadata: { ...(existing.metadata ?? {}), reconciliationReason: err.message } })
+      .set({ status: "reconciliation_required", metadata: { ...(existing.metadata ?? {}), ...metadataPatch, reconciliationReason: err.message } })
       .where(eq(ticketOrders.id, existing.id));
     const [row] = await db.select().from(ticketOrders).where(eq(ticketOrders.id, existing.id)).limit(1);
     updated = row;

@@ -18,9 +18,9 @@ import { tokenRules, tokenLedger, tokenCampaigns, campaignCommunities, campaignV
 function blankRule(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: 1, name: "Regla", description: null, direction: "earn", origin: "manual",
-    scope: "global", scopeCommunityId: null, scopeVenueId: null, scopeEventId: null, scopeProductId: null,
+    scope: "global", scopeCommunityId: null, scopeVenueId: null, scopeEventId: null, scopeProductId: null, scopeTicketTypeId: null,
     calcMethod: "fixed", fixedAmount: 10, rate: null, multiplier: null, minSpend: null,
-    maxTokens: null, dailyLimit: null, monthlyLimit: null,
+    maxTokens: null, dailyLimit: null, weeklyLimit: null, monthlyLimit: null, lifetimeLimit: null,
     recurrenceWindow: null, recurrenceThreshold: null, recurrenceMode: null,
     startsAt: null, endsAt: null, active: true, priority: 0,
     createdAt: new Date("2026-01-01"), updatedAt: new Date("2026-01-01"),
@@ -126,6 +126,21 @@ describe("tokenRuleEngine — selección de regla (findApplicableRule)", () => {
     const rule = await findApplicableRule({ direction: "earn", origin: "manual" }, new Date(), db);
     expect(rule?.id).toBe(2);
   });
+
+  it("una regla scope=ticket_type solo aplica al tipo de entrada exacto (Loyalty Production Hardening)", async () => {
+    const rule = blankRule({ id: 4, scope: "ticket_type", scopeTicketTypeId: 77 });
+    const dbMatch = makeSimpleMockDb([rule]);
+    const matched = await findApplicableRule({ direction: "earn", origin: "ticket", ticketTypeId: 77 }, new Date(), dbMatch);
+    expect(matched?.id).toBe(4);
+
+    const dbNoMatch = makeSimpleMockDb([rule]);
+    const notMatched = await findApplicableRule({ direction: "earn", origin: "ticket", ticketTypeId: 99 }, new Date(), dbNoMatch);
+    expect(notMatched).toBeNull();
+
+    const dbNoTicketType = makeSimpleMockDb([rule]);
+    const noTicketType = await findApplicableRule({ direction: "earn", origin: "ticket" }, new Date(), dbNoTicketType);
+    expect(noTicketType).toBeNull(); // sin ticketTypeId en el contexto, una regla ticket_type-específica nunca encaja
+  });
 });
 
 describe("tokenRuleEngine — recurrencia (applyRecurrenceBonus)", () => {
@@ -172,6 +187,22 @@ describe("tokenRuleEngine — recurrencia (applyRecurrenceBonus)", () => {
     const db = makeRecurrenceMockDb([], []);
     const result = await applyRecurrenceBonus({ userId: 42 }, db);
     expect(result).toEqual({ bonus: 0, rule: null });
+  });
+
+  it("recurrence_window='lifetime' dispara un hito real (5ª visita) sin reiniciarse por periodo (Loyalty Production Hardening)", async () => {
+    const rule = blankRule({ id: 7, origin: "recurrence", calcMethod: "fixed", fixedAmount: 50, recurrenceWindow: "lifetime", recurrenceThreshold: 5, recurrenceMode: "visit_count" });
+    // 4 visitas previas de TODA la vida (independiente de cuándo ocurrieron) → +1 (esta) = 5 = threshold
+    const db = makeRecurrenceMockDb([rule], [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]);
+    const result = await applyRecurrenceBonus({ userId: 42 }, db);
+    expect(result.bonus).toBe(50);
+    expect(result.rule?.id).toBe(7);
+  });
+
+  it("recurrence_window='lifetime' NO dispara de nuevo en la 6ª visita si el umbral es 5 (idempotencia de hito)", async () => {
+    const rule = blankRule({ id: 7, origin: "recurrence", calcMethod: "fixed", fixedAmount: 50, recurrenceWindow: "lifetime", recurrenceThreshold: 5, recurrenceMode: "visit_count" });
+    const db = makeRecurrenceMockDb([rule], [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }]); // ya van 5 — esta sería la 6ª
+    const result = await applyRecurrenceBonus({ userId: 42 }, db);
+    expect(result.bonus).toBe(0);
   });
 });
 

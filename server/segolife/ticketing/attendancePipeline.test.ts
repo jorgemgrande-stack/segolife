@@ -10,13 +10,24 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockResolveIdentity, mockPersistIdentityMapping, mockRecordUnresolvedOperation, mockEarnTokens, mockEvaluateBenefitsForOrigin } = vi.hoisted(() => ({
-  mockResolveIdentity: vi.fn(),
-  mockPersistIdentityMapping: vi.fn(),
-  mockRecordUnresolvedOperation: vi.fn(),
-  mockEarnTokens: vi.fn(),
-  mockEvaluateBenefitsForOrigin: vi.fn(),
-}));
+const {
+  mockResolveIdentity, mockPersistIdentityMapping, mockRecordUnresolvedOperation, mockEarnTokens, mockEvaluateBenefitsForOrigin,
+  mockResolveLoyaltyCutoff, MockTokenEngineError,
+} = vi.hoisted(() => {
+  class MockTokenEngineError extends Error {
+    code: string;
+    constructor(code: string, message: string) { super(message); this.code = code; this.name = "TokenEngineError"; }
+  }
+  return {
+    mockResolveIdentity: vi.fn(),
+    mockPersistIdentityMapping: vi.fn(),
+    mockRecordUnresolvedOperation: vi.fn(),
+    mockEarnTokens: vi.fn(),
+    mockEvaluateBenefitsForOrigin: vi.fn(),
+    mockResolveLoyaltyCutoff: vi.fn(),
+    MockTokenEngineError,
+  };
+});
 
 vi.mock("../integrations/identityResolver", () => ({
   resolveIdentity: mockResolveIdentity,
@@ -28,6 +39,11 @@ vi.mock("../integrations/unresolvedOperationsService", () => ({
 }));
 vi.mock("../tokens/tokenEngine", () => ({ earnTokens: mockEarnTokens }));
 vi.mock("../benefits/benefitRuleEngine", () => ({ evaluateBenefitsForOrigin: mockEvaluateBenefitsForOrigin }));
+vi.mock("../tokens/loyaltyCutoffService", () => ({
+  resolveLoyaltyCutoff: mockResolveLoyaltyCutoff,
+  isBeforeCutoff: (at: Date, cutoff: Date | null) => cutoff != null && at < cutoff,
+}));
+vi.mock("../tokens/tokenLedgerService", () => ({ TokenEngineError: MockTokenEngineError }));
 
 import { ingestAttendance } from "./attendancePipeline";
 
@@ -42,22 +58,25 @@ function attendanceFixture(overrides: Partial<Record<string, unknown>> = {}) {
 
 /**
  * Fake db mínimo — solo los métodos encadenados que attendancePipeline.ts
- * realmente llama. Secuencia real de `select()` cuando NO hay idempotencia
- * previa: 1ª = comprobación de idempotencia (existingAttendance), 2ª =
- * comprobación de Case B (priorRewarded — ¿este Student ya cobró por este
- * Event?), 3ª = leer la fila recién insertada.
+ * realmente llama. Sensible al ESTADO real (¿ya se comprobó idempotencia?,
+ * ¿ya se insertó?) en vez de contar posiciones ciegamente — el corte de
+ * loyalty (Loyalty Production Hardening) puede saltarse la comprobación de
+ * Case B por completo (retorno anticipado), así que una cola puramente
+ * posicional se desalinearía; este mock resuelve cada select según lo que
+ * REALMENTE ha ocurrido hasta ese momento, igual que el resto de fakeDb más
+ * robustos de este mismo módulo (ver tokenEngine.test.ts).
  */
 function fakeDb({ existingAttendance = null as unknown, priorRewarded = null as unknown, insertId = 501 } = {}) {
   const inserted: Record<string, unknown>[] = [];
-  let selectCallCount = 0;
+  let idempotencyChecked = false;
+  let hasInserted = false;
   const db = {
     select: () => ({
       from: () => ({
         where: () => ({
           limit: async () => {
-            selectCallCount++;
-            if (selectCallCount === 1) return existingAttendance ? [existingAttendance] : [];
-            if (selectCallCount === 2) return priorRewarded ? [priorRewarded] : [];
+            if (!idempotencyChecked) { idempotencyChecked = true; return existingAttendance ? [existingAttendance] : []; }
+            if (!hasInserted) return priorRewarded ? [priorRewarded] : [];
             return [{ id: insertId, ...inserted[0] }];
           },
         }),
@@ -67,6 +86,7 @@ function fakeDb({ existingAttendance = null as unknown, priorRewarded = null as 
       ignore: () => ({
         values: async (values: Record<string, unknown>) => {
           inserted.push(values);
+          hasInserted = true;
           return [{ insertId }];
         },
       }),
@@ -79,6 +99,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockEarnTokens.mockResolvedValue({ ledger: { id: 9001, createdAt: new Date("2026-10-03T22:15:00.000Z") }, wallet: {}, breakdown: {} });
   mockEvaluateBenefitsForOrigin.mockResolvedValue([]);
+  mockResolveLoyaltyCutoff.mockResolvedValue(null); // estado neutro real de producción — sin corte configurado
 });
 
 describe("ingestAttendance", () => {
@@ -158,7 +179,7 @@ describe("ingestAttendance", () => {
 
   it("polling repetido con el mismo external_attendance_id es idempotente — no vuelve a llamar a earnTokens", async () => {
     mockResolveIdentity.mockResolvedValue({ userId: 42, method: "participant_email" });
-    const db = fakeDb({ existingAttendance: { id: 501, idempotencyKey: "weezevent:native:0:wz_participant_700002" } });
+    const db = fakeDb({ existingAttendance: { id: 501, userId: 42, tokensLedgerId: 9001, idempotencyKey: "weezevent:native:0:wz_participant_700002" } });
 
     const result = await ingestAttendance({ provider: "weezevent", eventId: 5, attendance: attendanceFixture() }, db);
 
@@ -233,7 +254,7 @@ describe("ingestAttendance", () => {
   });
 
   it("resolvedUserId sigue siendo idempotente por idempotency_key — reprocesar (p.ej. vincular dos veces un unresolved_operations) no duplica NI tokens NI Benefits (loyalty completo, no solo event_attendance)", async () => {
-    const db = fakeDb({ existingAttendance: { id: 900, idempotencyKey: "segolife:native:0:native_checkin:900" } });
+    const db = fakeDb({ existingAttendance: { id: 900, userId: 77, tokensLedgerId: 9001, idempotencyKey: "segolife:native:0:native_checkin:900" } });
 
     const result = await ingestAttendance({
       provider: "segolife",
@@ -283,6 +304,87 @@ describe("ingestAttendance", () => {
 
       expect(mockEarnTokens).toHaveBeenCalledOnce();
       expect(mockEvaluateBenefitsForOrigin).toHaveBeenCalledOnce();
+    });
+  });
+
+  // ─── Loyalty Production Hardening — cutoff persistente + retry semantics ───
+  describe("loyalty cutoff persistente (spec §8)", () => {
+    it("una asistencia anterior al corte de loyalty persistido NUNCA concede tokens, aunque no haya suppressLoyalty explícito", async () => {
+      mockResolveLoyaltyCutoff.mockResolvedValue(new Date("2026-11-01T00:00:00.000Z")); // corte futuro respecto al fixture (2026-10-03)
+      mockResolveIdentity.mockResolvedValue({ userId: 42, method: "participant_email" });
+      const db = fakeDb();
+
+      const result = await ingestAttendance({ provider: "weezevent", eventId: 5, attendance: attendanceFixture() }, db);
+
+      expect(result.status).toBe("processed"); // la asistencia SÍ se persiste
+      expect(mockEarnTokens).not.toHaveBeenCalled();
+    });
+
+    it("una asistencia posterior al corte persistido evalúa con normalidad", async () => {
+      mockResolveLoyaltyCutoff.mockResolvedValue(new Date("2026-01-01T00:00:00.000Z")); // corte pasado respecto al fixture
+      mockResolveIdentity.mockResolvedValue({ userId: 42, method: "participant_email" });
+      const db = fakeDb();
+
+      await ingestAttendance({ provider: "weezevent", eventId: 5, attendance: attendanceFixture() }, db);
+
+      expect(mockEarnTokens).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("retry semantics (spec §5) — sobre una asistencia ya procesada sin token concedido", () => {
+    function fakeDbWithUpdate({ existingAttendance, priorRewarded = null as unknown, refreshedRow = null as Record<string, unknown> | null } = { existingAttendance: null as unknown }) {
+      let selectCallCount = 0;
+      const updates: Record<string, unknown>[] = [];
+      const db = {
+        select: () => ({
+          from: () => ({
+            where: () => ({
+              limit: async () => {
+                selectCallCount++;
+                if (selectCallCount === 1) return existingAttendance ? [existingAttendance] : [];
+                if (selectCallCount === 2) return priorRewarded ? [priorRewarded] : [];
+                return refreshedRow ? [refreshedRow] : (existingAttendance ? [existingAttendance] : []);
+              },
+            }),
+          }),
+        }),
+        update: () => ({ set: (values: Record<string, unknown>) => ({ where: async () => { updates.push(values); return [{ affectedRows: 1 }]; } }) }),
+      };
+      return { db: db as never, updates };
+    }
+
+    it("una denegación TEMPORAL previa (tope agotado) SÍ se reintenta en un re-sync y actualiza tokensLedgerId", async () => {
+      const deniedTemp = { status: "DENIED_TEMPORARY", reason: "RULE_LIMIT_EXCEEDED", attempts: 1, lastAttemptAt: "x", ledgerId: null, generation: 0, retryable: true };
+      const existing = { id: 501, userId: 42, tokensLedgerId: null, metadata: { rewardAttempt: deniedTemp }, idempotencyKey: "weezevent:native:0:wz_participant_700002" };
+      const { db, updates } = fakeDbWithUpdate({ existingAttendance: existing, refreshedRow: { ...existing, tokensLedgerId: 9001 } });
+
+      const result = await ingestAttendance({ provider: "weezevent", eventId: 5, attendance: attendanceFixture() }, db);
+
+      expect(result.status).toBe("already_processed");
+      expect(mockEarnTokens).toHaveBeenCalledOnce();
+      expect(updates[0]).toMatchObject({ tokensLedgerId: 9001 });
+      expect(mockResolveIdentity).not.toHaveBeenCalled(); // reintento usa existing.userId directamente, nunca re-resuelve identidad
+    });
+
+    it("una denegación PERMANENTE previa (p.ej. cutoff) NUNCA se reintenta", async () => {
+      const deniedPermanent = { status: "DENIED_PERMANENT", reason: "CUTOFF_BLOCKED", attempts: 1, lastAttemptAt: "x", ledgerId: null, generation: 0, retryable: false };
+      const existing = { id: 501, userId: 42, tokensLedgerId: null, metadata: { rewardAttempt: deniedPermanent } };
+      const db = fakeDb({ existingAttendance: existing });
+
+      const result = await ingestAttendance({ provider: "weezevent", eventId: 5, attendance: attendanceFixture() }, db);
+
+      expect(result.status).toBe("already_processed");
+      expect(mockEarnTokens).not.toHaveBeenCalled();
+    });
+
+    it("una fila YA con tokensLedgerId (GRANTED real) nunca reintenta, aunque el metadata no tenga rewardAttempt (retrocompatibilidad con filas anteriores a esta fase)", async () => {
+      const existing = { id: 501, userId: 42, tokensLedgerId: 8000, metadata: {} };
+      const db = fakeDb({ existingAttendance: existing });
+
+      const result = await ingestAttendance({ provider: "weezevent", eventId: 5, attendance: attendanceFixture() }, db);
+
+      expect(result.status).toBe("already_processed");
+      expect(mockEarnTokens).not.toHaveBeenCalled();
     });
   });
 });

@@ -20,6 +20,9 @@ import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
 import { resolveIdentity, persistIdentityMapping, isConfirmedResolutionMethod } from "../integrations/identityResolver";
 import { recordUnresolvedOperation } from "../integrations/unresolvedOperationsService";
 import type { NormalizedCommerceTransaction } from "../integrations/externalTicketingProvider";
+import { TokenEngineError } from "../tokens/tokenLedgerService";
+import { resolveLoyaltyCutoff, isBeforeCutoff } from "../tokens/loyaltyCutoffService";
+import { buildNextAttempt, shouldAttemptReward, type RewardAttempt, type DenialReasonCode } from "../tokens/rewardStateMachine";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -53,37 +56,68 @@ function buildIdempotencyKey(input: IngestCommerceTransactionInput): string {
   return `${input.provider}:${input.integrationType ?? "native"}:${input.integrationId ?? 0}:${input.transaction.externalTransactionId}`;
 }
 
-/** Procesa loyalty para una transacción YA CREADA con user_id resuelto — llamado tanto en el flujo automático como al vincular manualmente desde /admin/integrations/unresolved. */
+function toDenialReason(code: string): DenialReasonCode | null {
+  return code === "NO_RULE_FOUND" || code === "RULE_LIMIT_EXCEEDED" || code === "OUTSIDE_SCHEDULE" ? code : null;
+}
+
+/**
+ * Procesa loyalty para una transacción YA CREADA con user_id resuelto —
+ * llamado tanto en el flujo automático como al vincular manualmente desde
+ * /admin/integrations/unresolved (ese segundo camino es, de hecho, el punto
+ * de reintento real — spec §5: una denegación temporal en el primer intento
+ * ya no queda "fire-once" para siempre, se reevalúa cada vez que esta
+ * función se vuelve a llamar sobre la misma fila).
+ */
 export async function processCommerceLoyalty(transaction: CommerceTransaction, db?: DbHandle): Promise<void> {
   const conn = db ?? (await getDb());
-  if (transaction.loyaltyProcessedAt || !transaction.userId || transaction.status !== "confirmed") return;
+  if (!transaction.userId || transaction.status !== "confirmed") return;
 
-  const tokenResult = await earnTokens({
-    userId: transaction.userId,
-    communityId: null,
-    venueId: transaction.venueId,
-    eventId: transaction.eventId,
-    amountSpent: transaction.totalCents / 100,
-    origin: "consumption",
-    sourceId: transaction.id,
-    idempotencyKey: `commerce_transaction:${transaction.idempotencyKey}`,
-    at: transaction.occurredAt,
-  }, conn).catch(() => null);
+  const existingAttempt = (transaction.metadata as { rewardAttempt?: RewardAttempt } | null)?.rewardAttempt ?? null;
+  if (!shouldAttemptReward(existingAttempt)) return;
 
-  await evaluateBenefitsForOrigin({
-    type: "consumption",
-    userId: transaction.userId,
-    venueId: transaction.venueId,
-    eventId: transaction.eventId,
-    amountCents: transaction.totalCents,
-    communityId: null,
-    sourceId: transaction.id,
-    ledgerId: tokenResult?.ledger.id ?? null,
-    occurredAt: transaction.occurredAt,
-  }, conn).catch(() => []);
+  const persistedCutoff = await resolveLoyaltyCutoff(transaction.integrationId ?? null, conn);
+  let attempt: RewardAttempt;
+  if (isBeforeCutoff(transaction.occurredAt, persistedCutoff)) {
+    attempt = { status: "DENIED_PERMANENT", reason: "CUTOFF_BLOCKED", attempts: (existingAttempt?.attempts ?? 0) + 1, lastAttemptAt: transaction.occurredAt.toISOString(), ledgerId: null, generation: existingAttempt?.generation ?? 0, retryable: false };
+  } else {
+    let outcome: { ledgerId: number | null; reason: DenialReasonCode | null };
+    try {
+      const tokenResult = await earnTokens({
+        userId: transaction.userId,
+        communityId: null,
+        venueId: transaction.venueId,
+        eventId: transaction.eventId,
+        amountSpent: transaction.totalCents / 100,
+        origin: "consumption",
+        sourceId: transaction.id,
+        idempotencyKey: `commerce_transaction:${transaction.idempotencyKey}`,
+        at: transaction.occurredAt,
+      }, conn);
+      outcome = { ledgerId: tokenResult.ledger.id, reason: null };
+    } catch (err) {
+      outcome = { ledgerId: null, reason: err instanceof TokenEngineError ? toDenialReason(err.code) : null };
+    }
+    attempt = buildNextAttempt(outcome, existingAttempt, transaction.occurredAt);
+
+    await evaluateBenefitsForOrigin({
+      type: "consumption",
+      userId: transaction.userId,
+      venueId: transaction.venueId,
+      eventId: transaction.eventId,
+      amountCents: transaction.totalCents,
+      communityId: null,
+      sourceId: transaction.id,
+      ledgerId: attempt.ledgerId,
+      occurredAt: transaction.occurredAt,
+    }, conn).catch(() => []);
+  }
 
   await conn.update(commerceTransactions)
-    .set({ loyaltyProcessedAt: new Date(), loyaltyLedgerId: tokenResult?.ledger.id ?? null })
+    .set({
+      loyaltyProcessedAt: new Date(),
+      loyaltyLedgerId: attempt.ledgerId,
+      metadata: { ...(transaction.metadata ?? {}), rewardAttempt: attempt },
+    })
     .where(eq(commerceTransactions.id, transaction.id));
 }
 

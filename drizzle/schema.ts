@@ -4130,6 +4130,24 @@ export type InsertVenueProduct = typeof venueProducts.$inferInsert;
 // daily_limit/monthly_limit son límites de la propia regla (no globales del
 // usuario): el motor recorta (clamp) el importe final para no superarlos en
 // vez de rechazar la operación entera — ver tokenEngine.ts, paso "límites".
+//
+// LOYALTY PRODUCTION HARDENING (2026-08-14):
+// - weekly_limit/lifetime_limit siguen EXACTAMENTE el mismo patrón de clamp
+//   que daily_limit/monthly_limit (ver tokenEngine.ts). lifetime_limit es el
+//   máximo que ESA REGLA puede conceder a UN Student en toda su vida — no
+//   confundir con el saldo del wallet ni con el presupuesto de una campaña.
+// - recurrence_window="lifetime" (nuevo valor de enum) permite hitos/first-
+//   action reales sin reinicio periódico (p.ej. "5ª visita = +50, nunca se
+//   repite") — windowStart() lo resuelve como "desde siempre" (epoch), sin
+//   necesitar ninguna columna ni lógica nueva en tokenRuleEngine.ts más allá
+//   del propio valor de enum.
+// - scope="ticket_type" + scope_ticket_type_id: alcance determinista por
+//   tipo de entrada/tarifa real de Fourvenues — SIEMPRE vía el mismo id
+//   interno ya resuelto por eventCatalogSync.ts (event_ticket_types.id vía
+//   external_entity_mappings), nunca por nombre.
+// Todas las columnas nuevas son NULLABLE y no tienen ninguna fila real que
+// las use hoy (2 reglas reales en producción, ninguna las necesita) — su
+// sola existencia no cambia ningún cálculo hasta que un admin las configure.
 
 export const tokenRules = mysqlTable("token_rules", {
   id:                   int("id").autoincrement().primaryKey(),
@@ -4137,11 +4155,12 @@ export const tokenRules = mysqlTable("token_rules", {
   description:          text("description"),
   direction:            mysqlEnum("direction", ["earn", "spend"]).notNull(),
   origin:               mysqlEnum("origin", ["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign"]).notNull(),
-  scope:                mysqlEnum("scope", ["global", "community", "venue", "event", "product"]).notNull().default("global"),
+  scope:                mysqlEnum("scope", ["global", "community", "venue", "event", "product", "ticket_type"]).notNull().default("global"),
   scopeCommunityId:     int("scope_community_id"),
   scopeVenueId:         int("scope_venue_id"),
   scopeEventId:         int("scope_event_id"),
   scopeProductId:       int("scope_product_id"),
+  scopeTicketTypeId:    int("scope_ticket_type_id"),
   calcMethod:           mysqlEnum("calc_method", ["fixed", "per_euro", "percentage", "multiplier"]).notNull().default("fixed"),
   fixedAmount:          int("fixed_amount"),
   rate:                 decimal("rate", { precision: 10, scale: 4 }),
@@ -4149,8 +4168,10 @@ export const tokenRules = mysqlTable("token_rules", {
   minSpend:             decimal("min_spend", { precision: 10, scale: 2 }),
   maxTokens:            int("max_tokens"),
   dailyLimit:           int("daily_limit"),
+  weeklyLimit:          int("weekly_limit"),
   monthlyLimit:         int("monthly_limit"),
-  recurrenceWindow:     mysqlEnum("recurrence_window", ["day", "week", "month"]),
+  lifetimeLimit:        int("lifetime_limit"),
+  recurrenceWindow:     mysqlEnum("recurrence_window", ["day", "week", "month", "lifetime"]),
   recurrenceThreshold:  int("recurrence_threshold"),
   recurrenceMode:       mysqlEnum("recurrence_mode", ["visit_count", "distinct_venues"]),
   startsAt:             timestamp("starts_at"),
@@ -4178,6 +4199,12 @@ export const tokenCampaigns = mysqlTable("token_campaigns", {
   description:  text("description"),
   multiplier:   decimal("multiplier", { precision: 6, scale: 2 }),
   bonusTokens:  int("bonus_tokens"),
+  // Loyalty Production Hardening (2026-08-14) — presupuesto total de tokens
+  // que esta campaña puede conceder en toda su vida. NULL = sin presupuesto
+  // (comportamiento actual, sin cambio). Cuando tiene valor, tokenEngine.ts
+  // recorta (clamp) el importe final al remanente real, bajo el MISMO lock
+  // de fila que ya protege token_wallets — ver postLedgerMovementInTx.
+  maxTotalTokens: int("max_total_tokens"),
   startsAt:     timestamp("starts_at"),
   endsAt:       timestamp("ends_at"),
   active:       boolean("active").notNull().default(true),
@@ -4948,6 +4975,12 @@ export const venueIntegrations = mysqlTable("venue_integrations", {
   // una decisión explícita posterior (flip de esta columna), nunca un efecto
   // colateral de activar el scheduler — ver integrationSyncService.ts.
   loyaltyEnabled:        boolean("loyalty_enabled").notNull().default(false),
+  // Loyalty Production Hardening (2026-08-14) — override de corte SOLO para
+  // este venue, por encima del corte global (ver system_settings,
+  // key="loyalty_global_cutoff_at") — precedencia: override de venue > corte
+  // global > sin corte. NULL = usa el corte global (o ninguno si tampoco hay
+  // global). Nunca se configura una fecha real en esta fase — queda NULL.
+  loyaltyCutoffOverrideAt: timestamp("loyalty_cutoff_override_at"),
   lastSyncAt:            timestamp("last_sync_at"),
   lastSuccessAt:         timestamp("last_success_at"),
   lastErrorAt:           timestamp("last_error_at"),

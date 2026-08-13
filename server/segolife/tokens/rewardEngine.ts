@@ -26,6 +26,7 @@
  * deliberadamente separados, ver ticketPurchasePipeline.ts/attendancePipeline.ts,
  * que llaman a ambos motores por separado, nunca uno a través del otro).
  */
+import { eq, and } from "drizzle-orm";
 import {
   findApplicableRule,
   calculateBaseTokens,
@@ -36,7 +37,8 @@ import {
 import { earnTokens, type EngineResult } from "./tokenEngine";
 import { sumAmountByRuleInWindow, type AnyDbHandle } from "./tokenLedgerService";
 import { isWithinSchedule } from "./tokenScheduleService";
-import type { TokenRule } from "../../../drizzle/schema";
+import { resolveLoyaltyCutoff, isBeforeCutoff as isBeforePersistedCutoff } from "./loyaltyCutoffService";
+import { tokenLedger, type TokenRule } from "../../../drizzle/schema";
 
 export type RewardMode = "SIMULATION" | "LIVE";
 
@@ -53,14 +55,16 @@ export interface RewardContext {
   createdByUserId?: number | null;
   at?: Date;
   /**
-   * Fecha de corte opcional (diseño de `loyalty_cutoff_at`, ver informe de
-   * fase — no persistido todavía como columna real, se documenta la
-   * migración propuesta pero se expone aquí como parámetro explícito por
-   * llamada, mismo patrón ya usado por `loyaltyEffectiveFrom` en
-   * ticketPurchasePipeline.ts). Una operación anterior a esta fecha nunca
-   * genera recompensa, ni en SIMULATION ni en LIVE.
+   * Fecha de corte EXPLÍCITA por llamada — mismo patrón que
+   * `loyaltyEffectiveFrom` en ticketPurchasePipeline.ts, para simulaciones
+   * puntuales que quieran forzar un corte sin depender de la configuración
+   * persistida. Se combina con el corte PERSISTIDO real (Loyalty Production
+   * Hardening, spec §8 — `resolveLoyaltyCutoff`, venue override > global):
+   * basta con que UNO de los dos bloquee para que la operación quede fuera.
    */
   loyaltyCutoffAt?: Date | null;
+  /** `venue_integrations.id` real — permite resolver el override de corte por venue si existe. `null`/omitido = solo se consulta el corte global. */
+  integrationId?: number | null;
 }
 
 export type RewardReason =
@@ -118,6 +122,16 @@ function dayStart(at: Date): Date {
   return d;
 }
 
+/** Mismo criterio exacto que tokenEngine.ts/tokenRuleEngine.ts — sin abstracción de timezone dedicada todavía (ver docs/SEGOLIFE_BASELINE.md). */
+function weekStart(at: Date): Date {
+  const d = new Date(at);
+  const day = d.getDay();
+  const diffToMonday = day === 0 ? 6 : day - 1;
+  d.setDate(d.getDate() - diffToMonday);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 function monthStart(at: Date): Date {
   const d = new Date(at);
   d.setDate(1);
@@ -125,8 +139,14 @@ function monthStart(at: Date): Date {
   return d;
 }
 
-function isBeforeCutoff(ctx: RewardContext, at: Date): boolean {
-  return !!ctx.loyaltyCutoffAt && at < ctx.loyaltyCutoffAt;
+function lifetimeStart(): Date {
+  return new Date(0);
+}
+
+async function isBeforeCutoff(ctx: RewardContext, at: Date, db?: AnyDbHandle): Promise<boolean> {
+  if (ctx.loyaltyCutoffAt && at < ctx.loyaltyCutoffAt) return true;
+  const persistedCutoff = await resolveLoyaltyCutoff(ctx.integrationId ?? null, db as never);
+  return isBeforePersistedCutoff(at, persistedCutoff);
 }
 
 /**
@@ -140,7 +160,7 @@ function isBeforeCutoff(ctx: RewardContext, at: Date): boolean {
 async function calculateOnly(ctx: RewardContext, db?: AnyDbHandle): Promise<RewardExplanation> {
   const at = ctx.at ?? new Date();
 
-  if (isBeforeCutoff(ctx, at)) {
+  if (await isBeforeCutoff(ctx, at, db)) {
     return { eligible: false, reason: "CUTOFF_BLOCKED", ruleId: null, breakdown: null };
   }
 
@@ -171,9 +191,31 @@ async function calculateOnly(ctx: RewardContext, db?: AnyDbHandle): Promise<Rewa
     const earnedToday = await sumAmountByRuleInWindow(ctx.userId, rule.id, "credit", dayStart(at), db);
     final = Math.min(final, Math.max(0, rule.dailyLimit - earnedToday));
   }
+  if (rule.weeklyLimit != null) {
+    const earnedThisWeek = await sumAmountByRuleInWindow(ctx.userId, rule.id, "credit", weekStart(at), db);
+    final = Math.min(final, Math.max(0, rule.weeklyLimit - earnedThisWeek));
+  }
   if (rule.monthlyLimit != null) {
     const earnedThisMonth = await sumAmountByRuleInWindow(ctx.userId, rule.id, "credit", monthStart(at), db);
     final = Math.min(final, Math.max(0, rule.monthlyLimit - earnedThisMonth));
+  }
+  if (rule.lifetimeLimit != null) {
+    const earnedLifetime = await sumAmountByRuleInWindow(ctx.userId, rule.id, "credit", lifetimeStart(), db);
+    final = Math.min(final, Math.max(0, rule.lifetimeLimit - earnedLifetime));
+  }
+
+  // Presupuesto de campaña (spec §12) — cálculo de solo lectura (SIMULATION
+  // nunca escribe, así que no necesita el lock de fila que sí usa
+  // earnWithCampaignBudgetLock en tokenEngine.ts; el remanente mostrado es
+  // el mejor cálculo disponible EN ESTE INSTANTE, no una reserva atómica).
+  if (campaign?.maxTotalTokens != null) {
+    const conn = db ?? undefined;
+    const issuedRows = conn
+      ? await conn.select({ amount: tokenLedger.amount }).from(tokenLedger).where(and(eq(tokenLedger.campaignId, campaign.id), eq(tokenLedger.direction, "credit")))
+      : [];
+    const issued = issuedRows.reduce((sum, r) => sum + r.amount, 0);
+    const remaining = Math.max(0, campaign.maxTotalTokens - issued);
+    final = Math.min(final, remaining);
   }
 
   const breakdown: RewardBreakdown = {
@@ -201,7 +243,7 @@ export async function evaluateReward(ctx: RewardContext, mode: RewardMode, db?: 
     }
     // Camino real — inalcanzable mientras LIVE_MODE_ENABLED sea false (ver comentario de cabecera).
     const at = ctx.at ?? new Date();
-    if (isBeforeCutoff(ctx, at)) {
+    if (await isBeforeCutoff(ctx, at, db)) {
       throw new RewardEngineError("CUTOFF_BLOCKED", "La operación es anterior al corte de loyalty configurado.");
     }
     const result: EngineResult = await earnTokens({

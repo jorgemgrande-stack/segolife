@@ -48,6 +48,8 @@ export interface RuleMatchScope {
   venueId?: number | null;
   eventId?: number | null;
   productId?: number | null;
+  /** Loyalty Production Hardening (2026-08-14) — event_ticket_types.id real, resuelto por eventCatalogSync.ts vía external_entity_mappings. Nunca por nombre. */
+  ticketTypeId?: number | null;
 }
 
 function isWithinDateWindow(rule: { startsAt: Date | null; endsAt: Date | null }, at: Date): boolean {
@@ -63,6 +65,7 @@ function ruleMatchesScope(rule: TokenRule, scope: RuleMatchScope): boolean {
     case "venue": return rule.scopeVenueId != null && rule.scopeVenueId === scope.venueId;
     case "event": return rule.scopeEventId != null && rule.scopeEventId === scope.eventId;
     case "product": return rule.scopeProductId != null && rule.scopeProductId === scope.productId;
+    case "ticket_type": return rule.scopeTicketTypeId != null && rule.scopeTicketTypeId === scope.ticketTypeId;
     default: return false;
   }
 }
@@ -108,8 +111,17 @@ export function calculateBaseTokens(rule: TokenRule, params: { amountSpent?: num
   return Math.max(0, tokens);
 }
 
-function windowStart(window: "day" | "week" | "month", at: Date): Date {
+/**
+ * "lifetime" (Loyalty Production Hardening, 2026-08-14) — devuelve epoch
+ * (1970-01-01), que cubre "desde siempre" con la MISMA consulta
+ * (`gte(createdAt, sinceDate)`) que ya usan day/week/month — ningún cambio
+ * necesario en countRecentEarnEvents/countDistinctVenuesVisited. Habilita
+ * hitos/first-action reales (spec §9: "5 visitas → +50, nunca se repite")
+ * sin reiniciar el contador cada mes.
+ */
+function windowStart(window: "day" | "week" | "month" | "lifetime", at: Date): Date {
   const d = new Date(at);
+  if (window === "lifetime") return new Date(0);
   if (window === "day") {
     d.setHours(0, 0, 0, 0);
     return d;

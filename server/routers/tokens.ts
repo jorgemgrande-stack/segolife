@@ -40,6 +40,7 @@ import {
   deleteSchedule,
   setScheduleActive,
 } from "../segolife/tokens/tokenScheduleService";
+import { getActivationReadinessSnapshot } from "../segolife/tokens/activationReadinessService";
 
 const tokensViewProcedure = permissionProcedure("tokens.view", ["admin"]);
 const tokensManageProcedure = permissionProcedure("tokens.manage", ["admin"]);
@@ -78,11 +79,14 @@ const ruleInputSchema = z.object({
   description: z.string().max(4000).nullish(),
   direction: z.enum(["earn", "spend"]),
   origin: z.enum(["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign"]),
-  scope: z.enum(["global", "community", "venue", "event", "product"]).default("global"),
+  // "ticket_type" (Loyalty Production Hardening, 2026-08-14) — scope determinista
+  // por event_ticket_types.id (nunca por nombre), ver drizzle/schema.ts.
+  scope: z.enum(["global", "community", "venue", "event", "product", "ticket_type"]).default("global"),
   scopeCommunityId: z.number().int().positive().nullish(),
   scopeVenueId: z.number().int().positive().nullish(),
   scopeEventId: z.number().int().positive().nullish(),
   scopeProductId: z.number().int().positive().nullish(),
+  scopeTicketTypeId: z.number().int().positive().nullish(),
   calcMethod: z.enum(["fixed", "per_euro", "percentage", "multiplier"]).default("fixed"),
   fixedAmount: z.number().int().nullish(),
   rate: z.string().nullish(),
@@ -90,8 +94,11 @@ const ruleInputSchema = z.object({
   minSpend: z.string().nullish(),
   maxTokens: z.number().int().positive().nullish(),
   dailyLimit: z.number().int().positive().nullish(),
+  weeklyLimit: z.number().int().positive().nullish(),
   monthlyLimit: z.number().int().positive().nullish(),
-  recurrenceWindow: z.enum(["day", "week", "month"]).nullish(),
+  lifetimeLimit: z.number().int().positive().nullish(),
+  // "lifetime" (Loyalty Production Hardening) — hitos/first-action reales sin reinicio periódico.
+  recurrenceWindow: z.enum(["day", "week", "month", "lifetime"]).nullish(),
   recurrenceThreshold: z.number().int().positive().nullish(),
   recurrenceMode: z.enum(["visit_count", "distinct_venues"]).nullish(),
   startsAt: z.coerce.date().nullish(),
@@ -104,6 +111,8 @@ const campaignInputSchema = z.object({
   description: z.string().max(4000).nullish(),
   multiplier: z.string().nullish(),
   bonusTokens: z.number().int().nullish(),
+  // Loyalty Production Hardening — presupuesto total de la campaña (NULL = sin presupuesto, comportamiento sin cambio).
+  maxTotalTokens: z.number().int().positive().nullish(),
   startsAt: z.coerce.date().nullish(),
   endsAt: z.coerce.date().nullish(),
   priority: z.number().int().default(0),
@@ -315,6 +324,11 @@ export const tokensRouter = router({
       totalCampaignsCount: campaigns.length,
       recentMovements,
     };
+  }),
+
+  // Loyalty Production Hardening (spec §19) — diagnóstico mínimo, NUNCA un botón "Activate Loyalty".
+  activationReadiness: tokensViewProcedure.query(async () => {
+    return getActivationReadinessSnapshot();
   }),
 
   // ─── AUTOSERVICIO DEL ESTUDIANTE ────────────────────────────────────────────

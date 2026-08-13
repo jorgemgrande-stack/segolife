@@ -12,6 +12,7 @@ import { evaluateReward, RewardEngineError } from "./rewardEngine";
 import {
   tokenRules, tokenLedger, tokenCampaigns,
   campaignCommunities, campaignVenues, campaignEvents, venueTokenSchedules,
+  venueIntegrations, systemSettings,
 } from "../../../drizzle/schema";
 
 function blankRule(overrides: Partial<Record<string, unknown>> = {}) {
@@ -19,7 +20,7 @@ function blankRule(overrides: Partial<Record<string, unknown>> = {}) {
     id: 1, name: "Regla", description: null, direction: "earn", origin: "attendance",
     scope: "global", scopeCommunityId: null, scopeVenueId: null, scopeEventId: null, scopeProductId: null,
     calcMethod: "fixed", fixedAmount: 10, rate: null, multiplier: null, minSpend: null,
-    maxTokens: null, dailyLimit: null, monthlyLimit: null,
+    maxTokens: null, dailyLimit: null, weeklyLimit: null, monthlyLimit: null, lifetimeLimit: null,
     recurrenceWindow: null, recurrenceThreshold: null, recurrenceMode: null,
     startsAt: null, endsAt: null, active: true, priority: 0,
     createdAt: new Date("2026-01-01"), updatedAt: new Date("2026-01-01"),
@@ -32,6 +33,8 @@ function makeReadOnlyMockDb(opts: {
   schedules?: Array<Record<string, unknown>>;
   campaigns?: Array<Record<string, unknown>>;
   campaignScope?: { communities?: unknown[]; venues?: unknown[]; events?: unknown[] };
+  globalCutoffValue?: string | null;
+  venueCutoffOverrideAt?: Date | null;
 } = {}) {
   let wroteAnything = false;
   const rulesQueue: Array<Array<Record<string, unknown>>> = [];
@@ -49,6 +52,8 @@ function makeReadOnlyMockDb(opts: {
       if (table === campaignCommunities) return resolve(opts.campaignScope?.communities ?? []);
       if (table === campaignVenues) return resolve(opts.campaignScope?.venues ?? []);
       if (table === campaignEvents) return resolve(opts.campaignScope?.events ?? []);
+      if (table === venueIntegrations) return resolve(opts.venueCutoffOverrideAt !== undefined ? [{ loyaltyCutoffOverrideAt: opts.venueCutoffOverrideAt }] : []);
+      if (table === systemSettings) return resolve(opts.globalCutoffValue !== undefined ? [{ value: opts.globalCutoffValue }] : []);
       return resolve([]);
     };
     return q;
@@ -148,6 +153,53 @@ describe("evaluateReward — modo SIMULATION", () => {
       eligible: false, reason: "RULE_LIMIT_EXCEEDED", ruleId: 1,
       breakdown: { base: 10, recurrenceBonus: 0, recurrenceRuleId: null, campaignId: null, campaignMultiplier: null, campaignBonus: null, beforeLimits: 10, final: 0 },
     });
+  });
+
+  it("recorta por límite SEMANAL en SIMULATION (Loyalty Production Hardening, spec §10)", async () => {
+    const { db, queueRules, queueLedgerRead } = makeReadOnlyMockDb();
+    queueRules([blankRule({ id: 1, fixedAmount: 10, weeklyLimit: 15 })]);
+    queueRules([]);
+    queueLedgerRead([{ amount: 10 }]); // ya se ganaron 10 esta semana con esta regla
+    const result = await evaluateReward({ userId: 42, origin: "attendance" }, "SIMULATION", db);
+    expect(result.explanation.breakdown?.final).toBe(5);
+  });
+
+  it("recorta por límite LIFETIME en SIMULATION (spec §11)", async () => {
+    const { db, queueRules, queueLedgerRead } = makeReadOnlyMockDb();
+    queueRules([blankRule({ id: 1, fixedAmount: 100, lifetimeLimit: 100 })]);
+    queueRules([]);
+    queueLedgerRead([{ amount: 80 }]);
+    const result = await evaluateReward({ userId: 42, origin: "attendance" }, "SIMULATION", db);
+    expect(result.explanation.breakdown?.final).toBe(20);
+  });
+
+  it("recorta por presupuesto de campaña en SIMULATION — solo lectura, sin abrir ninguna transacción (spec §12)", async () => {
+    const { db, wroteAnything, queueRules, queueLedgerRead } = makeReadOnlyMockDb({
+      campaigns: [{ id: 9, name: "Budget", description: null, multiplier: null, bonusTokens: null, maxTotalTokens: 100, startsAt: null, endsAt: null, active: true, priority: 0, createdAt: new Date(), updatedAt: new Date() }],
+      campaignScope: { communities: [], venues: [], events: [] },
+    });
+    queueRules([blankRule({ id: 1, fixedAmount: 10 })]);
+    queueRules([]);
+    queueLedgerRead([{ amount: 93 }]); // ya emitidos por esta campaña
+    const result = await evaluateReward({ userId: 42, origin: "attendance" }, "SIMULATION", db);
+    expect(result.explanation.breakdown?.final).toBe(7); // 100-93=7
+    expect(wroteAnything()).toBe(false);
+  });
+
+  it("una operación anterior al CORTE PERSISTIDO (global, vía system_settings) → CUTOFF_BLOCKED, sin consultar ninguna regla", async () => {
+    const { db, queueRules } = makeReadOnlyMockDb({ globalCutoffValue: "2026-06-01T00:00:00.000Z" });
+    const result = await evaluateReward({ userId: 42, origin: "attendance", at: new Date("2026-01-01") }, "SIMULATION", db);
+    expect(result.explanation).toEqual({ eligible: false, reason: "CUTOFF_BLOCKED", ruleId: null, breakdown: null });
+    expect(queueRules).toBeDefined(); // nunca se llegó a consumir la cola de reglas
+  });
+
+  it("el override de CORTE POR VENUE gana sobre el corte global persistido (spec §8: venue override > global)", async () => {
+    const { db } = makeReadOnlyMockDb({
+      globalCutoffValue: "2026-01-01T00:00:00.000Z", // global NO bloquearía una operación de febrero (feb > ene)
+      venueCutoffOverrideAt: new Date("2026-09-01T00:00:00.000Z"), // override SÍ la bloquea (feb < sep)
+    });
+    const result = await evaluateReward({ userId: 42, venueId: 7, integrationId: 1, origin: "attendance", at: new Date("2026-02-01") }, "SIMULATION", db);
+    expect(result.explanation.reason).toBe("CUTOFF_BLOCKED");
   });
 
   it("una regla inactiva o fuera de ventana de fechas nunca la selecciona (mismo filtro que findApplicableRule)", async () => {

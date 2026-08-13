@@ -19,8 +19,14 @@
  *  - INMUTABILIDAD: nunca se hace UPDATE/DELETE de una fila de token_ledger
  *    ya insertada. Una corrección es un movimiento nuevo de signo opuesto
  *    (ver reverseTransaction).
- *  - SALDO NUNCA NEGATIVO: un `debit` que dejaría balance < 0 lanza
- *    TokenEngineError('INSUFFICIENT_BALANCE') y revierte la transacción.
+ *  - SALDO NUNCA NEGATIVO EN OPERACIONES ORDINARIAS: un `debit` que dejaría
+ *    balance < 0 lanza TokenEngineError('INSUFFICIENT_BALANCE') y revierte
+ *    la transacción. ÚNICA excepción (Loyalty Production Hardening,
+ *    2026-08-14, spec §7): `allowNegativeBalance:true`, que SOLO
+ *    `reverseTransaction()` puede activar — permite que revertir un earn ya
+ *    gastado deje el wallet en negativo (deuda que las siguientes
+ *    recompensas compensan primero) en vez de bloquear una reversión
+ *    legítima. Ningún gasto/canje/ajuste ordinario puede pasar este flag.
  */
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
@@ -94,9 +100,18 @@ export interface PostLedgerMovementInput {
   metadata?: Record<string, unknown> | null;
   createdByUserId?: number | null;
   reversedLedgerId?: number | null;
+  /** SOLO `reverseTransaction()` — ver comentario de cabecera. Nunca pasar `true` desde spendTokens/QR/ajuste manual. */
+  allowNegativeBalance?: boolean;
 }
 
-async function postLedgerMovementInTx(
+/**
+ * Exportada (Loyalty Production Hardening, 2026-08-14) para que tokenEngine.ts
+ * pueda anidar el lock de presupuesto de campaña (`SELECT...FOR UPDATE` sobre
+ * `token_campaigns`) DENTRO de la MISMA transacción que el insert del ledger
+ * — mismo criterio de atomicidad que ya protege token_wallets, sin duplicar
+ * este núcleo. Nunca llamar fuera de una transacción ya abierta.
+ */
+export async function postLedgerMovementInTx(
   tx: AnyDbHandle,
   input: PostLedgerMovementInput
 ): Promise<{ wallet: TokenWallet; ledger: TokenLedgerEntry }> {
@@ -123,10 +138,10 @@ async function postLedgerMovementInTx(
       .where(eq(tokenWallets.userId, input.userId)).limit(1).for("update");
   }
 
-  // 3. Calcular nuevo saldo — nunca negativo.
+  // 3. Calcular nuevo saldo — nunca negativo, salvo reversión legítima explícita.
   const delta = input.direction === "credit" ? input.amount : -input.amount;
   const newBalance = wallet.balance + delta;
-  if (newBalance < 0) {
+  if (newBalance < 0 && !input.allowNegativeBalance) {
     throw new TokenEngineError(
       "INSUFFICIENT_BALANCE",
       `Saldo insuficiente: ${wallet.balance} disponible(s), se intentó descontar ${input.amount}`
@@ -169,10 +184,24 @@ async function postLedgerMovementInTx(
   }
 
   // 5. Actualizar wallet — misma transacción, nunca desde la UI directamente.
+  //    lifetime_earned/lifetime_spent reflejan actividad GENUINA de
+  //    ganar/gastar — una reversión (reversedLedgerId != null) corrige el
+  //    contador que infló el movimiento original en vez de inflar también
+  //    el contrario (Loyalty Production Hardening, 2026-08-14): revertir un
+  //    earn de 100 resta 100 de lifetime_earned, NUNCA suma 100 a
+  //    lifetime_spent (ese Student jamás "gastó" nada) — y viceversa para la
+  //    reversión de un debit. Nunca por debajo de 0 (defensivo).
+  const isReversal = input.reversedLedgerId != null;
+  const lifetimeEarned = isReversal && input.direction === "debit"
+    ? Math.max(0, wallet.lifetimeEarned - input.amount) // revierte un credit anterior
+    : !isReversal && input.direction === "credit" ? wallet.lifetimeEarned + input.amount : wallet.lifetimeEarned;
+  const lifetimeSpent = isReversal && input.direction === "credit"
+    ? Math.max(0, wallet.lifetimeSpent - input.amount) // revierte un debit anterior
+    : !isReversal && input.direction === "debit" ? wallet.lifetimeSpent + input.amount : wallet.lifetimeSpent;
   await tx.update(tokenWallets).set({
     balance: newBalance,
-    lifetimeEarned: input.direction === "credit" ? wallet.lifetimeEarned + input.amount : wallet.lifetimeEarned,
-    lifetimeSpent: input.direction === "debit" ? wallet.lifetimeSpent + input.amount : wallet.lifetimeSpent,
+    lifetimeEarned,
+    lifetimeSpent,
   }).where(eq(tokenWallets.id, wallet.id));
 
   const [updatedWallet] = await tx.select().from(tokenWallets).where(eq(tokenWallets.id, wallet.id)).limit(1);
@@ -191,13 +220,24 @@ export async function postLedgerMovement(
 export interface ReverseTransactionInput {
   ledgerId: number;
   reason: string;
-  adminUserId: number;
+  /**
+   * `null` = reversión disparada automáticamente por el sistema (p.ej. un
+   * refund de Fourvenues detectado en `updateExistingOrder()`), sin ningún
+   * admin humano de por medio — mismo criterio de nullable ya aceptado por
+   * `postLedgerMovementInTx`/`createdByUserId`. Un admin real siempre pasa
+   * su propio `ctx.user.id` (comportamiento sin cambios).
+   */
+  adminUserId: number | null;
 }
 
 /**
- * Reversión administrativa — nunca borra/edita el movimiento original.
- * Impide doble reversal comprobando (dentro de la MISMA transacción que la
- * inserción) que ninguna otra fila ya referencia `reversedLedgerId = ledgerId`.
+ * Reversión (administrativa o automática por refund) — nunca borra/edita el
+ * movimiento original. Impide doble reversal comprobando (dentro de la
+ * MISMA transacción que la inserción) que ninguna otra fila ya referencia
+ * `reversedLedgerId = ledgerId`. `allowNegativeBalance:true` SIEMPRE — una
+ * reversión legítima de un earn ya gastado no debe bloquearse por saldo
+ * insuficiente (spec §7); el saldo negativo resultante se compensa con la
+ * siguiente recompensa real de ese Student.
  */
 export async function reverseTransaction(
   input: ReverseTransactionInput,
@@ -229,8 +269,17 @@ export async function reverseTransaction(
       campaignId: original.campaignId,
       createdByUserId: input.adminUserId,
       reversedLedgerId: original.id,
+      allowNegativeBalance: true,
     });
   });
+}
+
+/** Reutilizable por rewardStateMachine.ts — evita duplicar la consulta que ya hace reverseTransaction() internamente. */
+export async function isLedgerEntryReversed(ledgerId: number, db?: AnyDbHandle): Promise<boolean> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select({ id: tokenLedger.id }).from(tokenLedger)
+    .where(eq(tokenLedger.reversedLedgerId, ledgerId)).limit(1);
+  return !!row;
 }
 
 export interface AdjustManualTokensInput {

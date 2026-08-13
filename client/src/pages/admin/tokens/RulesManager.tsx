@@ -20,7 +20,11 @@ interface RuleForm {
   description: string;
   direction: "earn" | "spend";
   origin: string;
-  scope: "global" | "community" | "venue" | "event" | "product";
+  // "ticket_type" (Loyalty Production Hardening) — el backend ya lo admite;
+  // este formulario todavía no expone scopeTicketTypeId (fuera de alcance de
+  // esta fase, ver informe) pero el tipo debe aceptarlo para no romper la
+  // edición de una regla que ya tenga ese scope.
+  scope: "global" | "community" | "venue" | "event" | "product" | "ticket_type";
   scopeVenueId: string;
   scopeEventId: string;
   scopeCommunityId: string;

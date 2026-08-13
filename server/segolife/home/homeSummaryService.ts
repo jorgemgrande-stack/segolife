@@ -35,8 +35,10 @@ async function getDb(): Promise<DbHandle> {
   return _db;
 }
 
-function windowStart(window: "day" | "week" | "month", at: Date): Date {
+/** "lifetime" (Loyalty Production Hardening, 2026-08-14) — mismo criterio que tokenRuleEngine.windowStart: epoch cubre "desde siempre" sin lógica adicional. */
+function windowStart(window: "day" | "week" | "month" | "lifetime", at: Date): Date {
   const d = new Date(at);
+  if (window === "lifetime") return new Date(0);
   if (window === "day") { d.setHours(0, 0, 0, 0); return d; }
   if (window === "week") {
     const day = d.getDay();
@@ -55,7 +57,7 @@ export interface RecurrenceProgress {
   threshold: number;
   remaining: number;
   bonus: number;
-  window: "day" | "week" | "month";
+  window: "day" | "week" | "month" | "lifetime";
 }
 
 export interface ActiveCampaignSummary {

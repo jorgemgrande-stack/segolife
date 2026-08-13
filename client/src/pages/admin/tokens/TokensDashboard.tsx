@@ -3,11 +3,62 @@ import AdminLayout from "@/components/AdminLayout";
 import { trpc } from "@/lib/trpc";
 import { KpiCard } from "@/components/KpiCard";
 import { Badge } from "@/components/ui/badge";
-import { Coins, TrendingUp, TrendingDown, Wallet, Sparkles, Megaphone, Loader2, ArrowRight } from "lucide-react";
+import { Coins, TrendingUp, TrendingDown, Wallet, Sparkles, Megaphone, Loader2, ArrowRight, ShieldCheck, Lock } from "lucide-react";
 
 function fmtDateTime(d: Date | string | null | undefined) {
   if (!d) return "—";
   return new Date(d).toLocaleString("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * Loyalty Production Hardening (spec §19) — diagnóstico mínimo, SOLO
+ * LECTURA. Deliberadamente NO incluye ningún control para activar loyalty
+ * — el flip real de `loyalty_enabled` sigue siendo una acción manual fuera
+ * de esta pantalla (edición directa de la integración), nunca un botón aquí.
+ */
+function ActivationReadinessCard() {
+  const { data, isLoading } = trpc.tokens.activationReadiness.useQuery();
+  if (isLoading || !data) return null;
+
+  return (
+    <div className="bg-card border border-border rounded-lg p-5 space-y-3">
+      <div className="flex items-center gap-2">
+        <ShieldCheck className="w-5 h-5 text-violet-500" />
+        <h3 className="text-sm font-semibold text-foreground">Activation Readiness</h3>
+        <Badge variant="outline" className="ml-auto gap-1"><Lock className="w-3 h-3" /> LIVE MODE LOCKED</Badge>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+        <div>
+          <p className="text-xs text-muted-foreground">Corte global</p>
+          <p className="text-foreground font-medium">{data.globalCutoffConfigured ? "Configurado" : "Not configured"}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Topes</p>
+          <p className="text-foreground font-medium">Día · Semana · Mes · Lifetime</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Presupuesto de campaña</p>
+          <p className="text-foreground font-medium">Soportado</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Reglas / Campañas activas</p>
+          <p className="text-foreground font-medium">{data.activeRewardRulesCount} / {data.activeCampaignsCount}</p>
+        </div>
+      </div>
+      <div className="pt-2 border-t border-border">
+        <p className="text-xs text-muted-foreground mb-2">Venues (sync vs loyalty)</p>
+        <div className="flex flex-wrap gap-2">
+          {data.venues.map(v => (
+            <div key={v.venueId} className="flex items-center gap-1.5 text-xs bg-muted/40 rounded-md px-2 py-1">
+              <span className="text-foreground">{v.venueName}</span>
+              <Badge variant={v.syncEnabled ? "default" : "outline"} className="text-[10px] px-1.5 py-0">sync {v.syncEnabled ? "ON" : "OFF"}</Badge>
+              <Badge variant={v.loyaltyEnabled ? "default" : "secondary"} className="text-[10px] px-1.5 py-0">loyalty {v.loyaltyEnabled ? "ON" : "OFF"}</Badge>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function TokensDashboard() {
@@ -63,6 +114,8 @@ export default function TokensDashboard() {
                 </div>
               </Link>
             </div>
+
+            <ActivationReadinessCard />
 
             <div className="bg-card border border-border rounded-lg overflow-hidden">
               <div className="px-4 py-3 border-b border-border">

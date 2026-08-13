@@ -15,9 +15,14 @@
  *  7. bonus de recurrencia (applyRecurrenceBonus).
  *  8-9. campaña: multiplicador + bonus fijo (findApplicableCampaign +
  *       applyCampaignToAmount).
- *  10. límites diario/mensual de la regla — RECORTA el importe final en vez
- *      de rechazar la operación completa (ver drizzle/schema.ts,
- *      comentario de token_rules).
+ *  10. límites diario/semanal/mensual/lifetime de la regla — RECORTA el
+ *      importe final en vez de rechazar la operación completa (ver
+ *      drizzle/schema.ts, comentario de token_rules).
+ *  10b. presupuesto de campaña (max_total_tokens) — si la campaña aplicada
+ *      lo define, recorta al remanente real BAJO LOCK de fila (ver
+ *      earnWithCampaignBudgetLock) — protección real de concurrencia, dos
+ *      Students no pueden agotar el mismo presupuesto a la vez (Loyalty
+ *      Production Hardening, 2026-08-14, spec §12).
  *  11-12. ledger + wallet, atómicamente (postLedgerMovement).
  *
  * El desglose completo (`TokenBreakdown`) se guarda en `token_ledger.metadata`
@@ -26,11 +31,14 @@
  */
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
+import { eq, and } from "drizzle-orm";
 import {
   postLedgerMovement,
+  postLedgerMovementInTx,
   sumAmountByRuleInWindow,
   TokenEngineError,
   type AnyDbHandle,
+  type PostLedgerMovementInput,
 } from "./tokenLedgerService";
 import { isWithinSchedule } from "./tokenScheduleService";
 import {
@@ -40,7 +48,7 @@ import {
   findApplicableCampaign,
   applyCampaignToAmount,
 } from "./tokenRuleEngine";
-import type { TokenWallet, TokenLedgerEntry, TokenRule } from "../../../drizzle/schema";
+import { tokenCampaigns, tokenLedger, type TokenWallet, type TokenLedgerEntry, type TokenRule } from "../../../drizzle/schema";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
@@ -76,11 +84,26 @@ function dayStart(at: Date): Date {
   return d;
 }
 
+/** Semana ISO (lunes-domingo) — mismo criterio exacto que tokenRuleEngine.windowStart("week"), Europe/Madrid implícito vía Date local del proceso (ver docs/SEGOLIFE_BASELINE.md, sin abstracción de timezone dedicada todavía). */
+function weekStart(at: Date): Date {
+  const d = new Date(at);
+  const day = d.getDay();
+  const diffToMonday = day === 0 ? 6 : day - 1;
+  d.setDate(d.getDate() - diffToMonday);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 function monthStart(at: Date): Date {
   const d = new Date(at);
   d.setDate(1);
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+/** "Desde siempre" — mismo valor que tokenRuleEngine.windowStart("lifetime"). */
+function lifetimeStart(): Date {
+  return new Date(0);
 }
 
 export interface EarnTokensInput {
@@ -139,15 +162,27 @@ export async function earnTokens(input: EarnTokensInput, db?: AnyDbHandle): Prom
     const earnedToday = await sumAmountByRuleInWindow(input.userId, rule.id, "credit", dayStart(at), conn);
     final = Math.min(final, Math.max(0, rule.dailyLimit - earnedToday));
   }
+  if (rule.weeklyLimit != null) {
+    const earnedThisWeek = await sumAmountByRuleInWindow(input.userId, rule.id, "credit", weekStart(at), conn);
+    final = Math.min(final, Math.max(0, rule.weeklyLimit - earnedThisWeek));
+  }
   if (rule.monthlyLimit != null) {
     const earnedThisMonth = await sumAmountByRuleInWindow(input.userId, rule.id, "credit", monthStart(at), conn);
     final = Math.min(final, Math.max(0, rule.monthlyLimit - earnedThisMonth));
+  }
+  if (rule.lifetimeLimit != null) {
+    const earnedLifetime = await sumAmountByRuleInWindow(input.userId, rule.id, "credit", lifetimeStart(), conn);
+    final = Math.min(final, Math.max(0, rule.lifetimeLimit - earnedLifetime));
   }
   if (final <= 0) {
     throw new TokenEngineError("RULE_LIMIT_EXCEEDED", "Se ha alcanzado el límite de esta regla para el periodo actual");
   }
 
-  const breakdown: TokenBreakdown = {
+  // El breakdown depende del importe REALMENTE concedido, que solo se conoce
+  // con certeza tras el lock de presupuesto de campaña (puede recortar el
+  // último momento) — se construye como función para poder insertarse en
+  // `token_ledger.metadata` con el valor final correcto, nunca uno provisional.
+  const buildBreakdown = (grantedAmount: number): TokenBreakdown => ({
     base,
     recurrenceBonus: recurrence.bonus,
     recurrenceRuleId: recurrence.rule?.id ?? null,
@@ -155,14 +190,13 @@ export async function earnTokens(input: EarnTokensInput, db?: AnyDbHandle): Prom
     campaignBonus: campaign?.bonusTokens ?? null,
     campaignId: campaign?.id ?? null,
     beforeLimits,
-    final,
+    final: grantedAmount,
     ruleId: rule.id,
-  };
-
-  const { wallet, ledger } = await postLedgerMovement({
+  });
+  const buildMovement = (grantedAmount: number): PostLedgerMovementInput => ({
     userId: input.userId,
     direction: "credit",
-    amount: final,
+    amount: grantedAmount,
     reason: rule.name,
     sourceType: input.origin,
     sourceId: input.sourceId ?? null,
@@ -171,9 +205,19 @@ export async function earnTokens(input: EarnTokensInput, db?: AnyDbHandle): Prom
     ruleId: rule.id,
     campaignId: campaign?.id ?? null,
     idempotencyKey: input.idempotencyKey,
-    metadata: breakdown as unknown as Record<string, unknown>,
+    metadata: buildBreakdown(grantedAmount) as unknown as Record<string, unknown>,
     createdByUserId: input.createdByUserId,
-  }, conn);
+  });
+
+  // Presupuesto de campaña (spec §12) — solo si la campaña aplicada define
+  // max_total_tokens. El remanente real y el recorte se calculan DENTRO del
+  // lock de fila de la campaña, para que dos Students no puedan agotar el
+  // mismo presupuesto a la vez (misma garantía que el lock de wallet).
+  const { wallet, ledger } = campaign?.maxTotalTokens != null
+    ? await earnWithCampaignBudgetLock(conn, campaign.id, final, buildMovement)
+    : await postLedgerMovement(buildMovement(final), conn);
+
+  const breakdown = buildBreakdown(ledger.amount);
 
   // Communication Center: "tokens_earned" ya existía en el catálogo tipado
   // de engagementEvents.ts pero nunca se emitía (confirmado por auditoría) —
@@ -183,13 +227,50 @@ export async function earnTokens(input: EarnTokensInput, db?: AnyDbHandle): Prom
   emitEngagementEvent("tokens_earned", {
     userId: input.userId,
     communityId: input.communityId ?? null,
-    amount: final,
+    amount: ledger.amount,
     ledgerId: ledger.id,
     venueId: input.venueId ?? null,
     eventId: input.eventId ?? null,
   });
 
   return { wallet, ledger, breakdown };
+}
+
+/**
+ * Presupuesto de campaña con protección real de concurrencia (spec §12) —
+ * bloquea la FILA de la campaña (`SELECT...FOR UPDATE`) DENTRO de la misma
+ * transacción que calcula el remanente real y escribe el ledger: dos earns
+ * que compiten por el mismo presupuesto quedan serializados por MySQL, no
+ * por lógica de aplicación (mismo criterio exacto que ya protege
+ * token_wallets — nunca se usa Redis ni un contador aparte que pueda
+ * desincronizarse). Política de recorte (spec §12, decisión explícita):
+ * CLAMP TO REMAINING BUDGET — si el remanente es 7 y el candidato es 10, se
+ * conceden 7, nunca se rechaza la operación completa mientras quede margen
+ * > 0. Presupuesto agotado (remanente 0) → RULE_LIMIT_EXCEEDED, igual que
+ * cualquier otro tope.
+ */
+async function earnWithCampaignBudgetLock(
+  conn: AnyDbHandle,
+  campaignId: number,
+  candidateAmount: number,
+  buildMovement: (grantedAmount: number) => PostLedgerMovementInput
+): Promise<{ wallet: TokenWallet; ledger: TokenLedgerEntry }> {
+  return conn.transaction(async (tx) => {
+    const [lockedCampaign] = await tx.select().from(tokenCampaigns).where(eq(tokenCampaigns.id, campaignId)).limit(1).for("update");
+    if (!lockedCampaign || lockedCampaign.maxTotalTokens == null) {
+      // Carrera improbable (la campaña se desactivó/perdió presupuesto justo entre el lookup y el lock) — se concede el candidato sin recorte, mismo criterio que "sin campaña".
+      return postLedgerMovementInTx(tx, buildMovement(candidateAmount));
+    }
+    const issuedRows = await tx.select({ amount: tokenLedger.amount }).from(tokenLedger)
+      .where(and(eq(tokenLedger.campaignId, campaignId), eq(tokenLedger.direction, "credit")));
+    const issued = issuedRows.reduce((sum, r) => sum + r.amount, 0);
+    const remaining = Math.max(0, lockedCampaign.maxTotalTokens - issued);
+    const granted = Math.min(candidateAmount, remaining);
+    if (granted <= 0) {
+      throw new TokenEngineError("RULE_LIMIT_EXCEEDED", "Se ha alcanzado el presupuesto total de esta campaña");
+    }
+    return postLedgerMovementInTx(tx, buildMovement(granted));
+  });
 }
 
 export interface SpendTokensInput {

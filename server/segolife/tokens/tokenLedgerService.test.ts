@@ -11,6 +11,7 @@ import {
   postLedgerMovement,
   adjustManualTokens,
   reverseTransaction,
+  isLedgerEntryReversed,
   TokenEngineError,
 } from "./tokenLedgerService";
 import { tokenWallets, tokenLedger } from "../../../drizzle/schema";
@@ -323,5 +324,87 @@ describe("tokenLedgerService — atomicidad y concurrencia (dos gastos simultán
     expect(rejected).toHaveLength(1);
     expect(getWallet()?.balance).toBeGreaterThanOrEqual(0);
     expect(getLedgerRows()).toHaveLength(1); // solo un movimiento quedó registrado
+  });
+});
+
+describe("tokenLedgerService — política de saldo negativo (Loyalty Production Hardening, spec §7)", () => {
+  it("una reversión SÍ puede dejar el wallet en negativo (earn ya gastado)", async () => {
+    // wallet=100 → gasta 100 → wallet=0 → se revierte el earn original de 100 → wallet=-100
+    const { db, queuePreInsertSelect, getWallet } = makeLedgerMockDb(blankWallet({ balance: 0, lifetimeEarned: 100, lifetimeSpent: 100 }));
+    const original = { id: 1, walletId: 1, userId: 42, direction: "credit", amount: 100, balanceAfter: 100, reason: "x", sourceType: "manual", createdAt: new Date() };
+    queuePreInsertSelect([original]); // lookup por id
+    queuePreInsertSelect([]);         // ¿ya revertido? — no
+    const { wallet, ledger } = await reverseTransaction({ ledgerId: 1, reason: "Compra reembolsada", adminUserId: null }, db);
+    expect(ledger.direction).toBe("debit");
+    expect(wallet.balance).toBe(-100);
+    expect(getWallet()?.balance).toBe(-100);
+  });
+
+  it("un gasto ORDINARIO sigue bloqueado en negativo aunque el wallet ya esté negativo por una reversión previa", async () => {
+    const { db } = makeLedgerMockDb(blankWallet({ balance: -100 }));
+    await expect(
+      postLedgerMovement({ userId: 42, direction: "debit", amount: 10, reason: "canje QR", sourceType: "consumption" }, db)
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_BALANCE" });
+  });
+
+  it("reverseTransaction acepta adminUserId=null (reversión automática por refund, sin admin humano)", async () => {
+    const { db, queuePreInsertSelect } = makeLedgerMockDb(blankWallet({ balance: 50 }));
+    const original = { id: 1, walletId: 1, userId: 42, direction: "credit", amount: 50, balanceAfter: 50, reason: "x", sourceType: "manual", createdAt: new Date() };
+    queuePreInsertSelect([original]);
+    queuePreInsertSelect([]);
+    const { ledger } = await reverseTransaction({ ledgerId: 1, reason: "Refund automático Fourvenues", adminUserId: null }, db);
+    expect(ledger.createdByUserId).toBeNull();
+  });
+});
+
+describe("tokenLedgerService — lifetime_earned/lifetime_spent correctos en reversiones (Loyalty Production Hardening)", () => {
+  it("revertir un CRÉDITO resta de lifetime_earned — NUNCA suma a lifetime_spent", async () => {
+    const { db, queuePreInsertSelect, getWallet } = makeLedgerMockDb(blankWallet({ balance: 100, lifetimeEarned: 100, lifetimeSpent: 0 }));
+    const original = { id: 1, walletId: 1, userId: 42, direction: "credit", amount: 100, balanceAfter: 100, reason: "x", sourceType: "manual", createdAt: new Date() };
+    queuePreInsertSelect([original]);
+    queuePreInsertSelect([]);
+    await reverseTransaction({ ledgerId: 1, reason: "Error de carga", adminUserId: 1 }, db);
+    expect(getWallet()?.lifetimeEarned).toBe(0);
+    expect(getWallet()?.lifetimeSpent).toBe(0); // el Student nunca "gastó" nada — no debe aparecer como spend
+  });
+
+  it("revertir un DÉBITO resta de lifetime_spent — NUNCA suma a lifetime_earned", async () => {
+    const { db, queuePreInsertSelect, getWallet } = makeLedgerMockDb(blankWallet({ balance: 0, lifetimeEarned: 100, lifetimeSpent: 100 }));
+    const original = { id: 1, walletId: 1, userId: 42, direction: "debit", amount: 100, balanceAfter: 0, reason: "canje", sourceType: "consumption", createdAt: new Date() };
+    queuePreInsertSelect([original]);
+    queuePreInsertSelect([]);
+    await reverseTransaction({ ledgerId: 1, reason: "Canje anulado", adminUserId: 1 }, db);
+    expect(getWallet()?.lifetimeSpent).toBe(0);
+    expect(getWallet()?.lifetimeEarned).toBe(100); // no debe aparecer como si hubiera ganado tokens nuevos
+  });
+
+  it("lifetime_earned/lifetime_spent nunca bajan de 0 aunque la reversión sea mayor que el contador actual (defensivo)", async () => {
+    const { db, queuePreInsertSelect, getWallet } = makeLedgerMockDb(blankWallet({ balance: 100, lifetimeEarned: 30, lifetimeSpent: 0 }));
+    const original = { id: 1, walletId: 1, userId: 42, direction: "credit", amount: 100, balanceAfter: 100, reason: "x", sourceType: "manual", createdAt: new Date() };
+    queuePreInsertSelect([original]);
+    queuePreInsertSelect([]);
+    await reverseTransaction({ ledgerId: 1, reason: "x", adminUserId: 1 }, db);
+    expect(getWallet()?.lifetimeEarned).toBe(0); // clamp, nunca negativo
+  });
+
+  it("un movimiento ORDINARIO (no reversión) sigue sumando lifetime_earned/lifetime_spent como siempre", async () => {
+    const { db, getWallet } = makeLedgerMockDb(blankWallet({ balance: 0, lifetimeEarned: 10, lifetimeSpent: 5 }));
+    await postLedgerMovement({ userId: 42, direction: "credit", amount: 20, reason: "x", sourceType: "attendance" }, db);
+    expect(getWallet()?.lifetimeEarned).toBe(30);
+    expect(getWallet()?.lifetimeSpent).toBe(5);
+  });
+});
+
+describe("tokenLedgerService — isLedgerEntryReversed", () => {
+  it("devuelve true si otra fila referencia reversedLedgerId", async () => {
+    const { db, queuePreInsertSelect } = makeLedgerMockDb(blankWallet());
+    queuePreInsertSelect([{ id: 2 }]);
+    expect(await isLedgerEntryReversed(1, db)).toBe(true);
+  });
+
+  it("devuelve false si ninguna fila lo referencia", async () => {
+    const { db, queuePreInsertSelect } = makeLedgerMockDb(blankWallet());
+    queuePreInsertSelect([]);
+    expect(await isLedgerEntryReversed(1, db)).toBe(false);
   });
 });

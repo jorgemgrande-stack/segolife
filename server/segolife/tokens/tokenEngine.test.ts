@@ -39,18 +39,34 @@ function blankWallet(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-/** Mock combinado: schedules/campañas estáticos por test, tokenRules/tokenLedger (lecturas) por cola FIFO, wallet+ledger (escritura atómica) con estado real. */
+/**
+ * Mock combinado: schedules/campañas estáticos por test, tokenRules/tokenLedger
+ * (lecturas) por cola FIFO, wallet+ledger (escritura atómica) con estado real.
+ *
+ * `campaignForLock` (Loyalty Production Hardening) — fila de token_campaigns
+ * que devuelve el `SELECT...FOR UPDATE` DENTRO de la transacción de
+ * earnWithCampaignBudgetLock (independiente de `campaigns`, que alimenta el
+ * lookup de findApplicableCampaign FUERA de la transacción). El "issued" del
+ * presupuesto se calcula EN VIVO sumando `ledgerWrites` reales filtradas por
+ * campaignId — no una cola estática — para que un test de concurrencia real
+ * (dos transacciones encadenadas, mismo patrón que makeConcurrentMockDb) vea
+ * el efecto de la primera transacción al evaluar la segunda.
+ */
 function makeEngineMockDb(opts: {
   wallet?: Record<string, unknown>;
   schedules?: Array<Record<string, unknown>>;
   campaigns?: Array<Record<string, unknown>>;
   campaignScope?: { communities?: unknown[]; venues?: unknown[]; events?: unknown[] };
+  campaignForLock?: Record<string, unknown>;
+  /** Serializa las transacciones (mismo patrón que makeConcurrentMockDb) — solo necesario en tests de concurrencia real. */
+  serializeTransactions?: boolean;
 } = {}) {
   let wallet: Record<string, unknown> = opts.wallet ?? blankWallet();
   const ledgerWrites: Array<Record<string, unknown>> = [];
   let nextLedgerId = 1;
   const rulesQueue: Array<Array<Record<string, unknown>>> = [];
   const ledgerReadQueue: Array<Array<Record<string, unknown>>> = [];
+  let lockChain: Promise<unknown> = Promise.resolve();
 
   function makeReadQueryFor(table: unknown) {
     const q: Record<string, unknown> = {};
@@ -74,7 +90,7 @@ function makeEngineMockDb(opts: {
     select: () => ({ from: (t: unknown) => makeReadQueryFor(t) }),
   };
 
-  root.transaction = (cb: (tx: unknown) => Promise<unknown>) => {
+  function makeTxBuilder() {
     let table: unknown = null;
     let hasInserted = false;
     let insertedLedgerRow: Record<string, unknown> | null = null;
@@ -97,10 +113,25 @@ function makeEngineMockDb(opts: {
     };
     tx.then = (resolve: (v: unknown) => void) => {
       if (table === tokenWallets) return resolve(wallet ? [wallet] : []);
-      if (table === tokenLedger) return resolve(hasInserted && insertedLedgerRow ? [insertedLedgerRow] : []);
+      if (table === tokenCampaigns) return resolve(opts.campaignForLock ? [opts.campaignForLock] : []);
+      if (table === tokenLedger) {
+        if (hasInserted) return resolve(insertedLedgerRow ? [insertedLedgerRow] : []);
+        // Pre-insert: consulta de "issued" del presupuesto de campaña — suma EN VIVO lo ya escrito (real, no una cola estática).
+        const issuedRows = ledgerWrites
+          .filter(r => r.campaignId === opts.campaignForLock?.id && r.direction === "credit")
+          .map(r => ({ amount: r.amount }));
+        return resolve(issuedRows);
+      }
       return resolve([]);
     };
-    return cb(tx);
+    return tx;
+  }
+
+  root.transaction = (cb: (tx: unknown) => Promise<unknown>) => {
+    if (!opts.serializeTransactions) return cb(makeTxBuilder());
+    const run = lockChain.then(() => cb(makeTxBuilder()));
+    lockChain = run.catch(() => {});
+    return run;
   };
 
   return {
@@ -185,6 +216,133 @@ describe("tokenEngine — earnTokens (orden de aplicación)", () => {
     await expect(
       earnTokens({ userId: 42, origin: "attendance" }, db)
     ).rejects.toMatchObject({ code: "RULE_LIMIT_EXCEEDED" });
+  });
+
+  it("recorta el importe final cuando supera el límite SEMANAL de la regla (Loyalty Production Hardening)", async () => {
+    const { db, queueRules, queueLedgerRead } = makeEngineMockDb();
+    queueRules([blankRule({ id: 1, calcMethod: "fixed", fixedAmount: 10, weeklyLimit: 15 })]);
+    queueRules([]); // sin recurrencia
+    queueLedgerRead([{ amount: 10 }]); // ya se ganaron 10 esta semana con esta regla → quedan 5
+    const result = await earnTokens({ userId: 42, origin: "attendance" }, db);
+    expect(result.breakdown.final).toBe(5);
+  });
+
+  it("recorta el importe final cuando supera el límite LIFETIME de la regla (Loyalty Production Hardening, spec §11)", async () => {
+    const { db, queueRules, queueLedgerRead } = makeEngineMockDb();
+    queueRules([blankRule({ id: 1, calcMethod: "fixed", fixedAmount: 100, lifetimeLimit: 100 })]);
+    queueRules([]); // sin recurrencia
+    queueLedgerRead([{ amount: 80 }]); // ya se ganaron 80 en toda la vida con esta regla → quedan 20
+    const result = await earnTokens({ userId: 42, origin: "attendance" }, db);
+    expect(result.breakdown.final).toBe(20);
+  });
+
+  it("RULE_LIMIT_EXCEEDED cuando el límite lifetime ya está agotado — nunca podrá generar más de N tokens a ese Student", async () => {
+    const { db, queueRules, queueLedgerRead } = makeEngineMockDb();
+    queueRules([blankRule({ id: 1, calcMethod: "fixed", fixedAmount: 10, lifetimeLimit: 100 })]);
+    queueRules([]);
+    queueLedgerRead([{ amount: 100 }]); // ya agotado
+    await expect(
+      earnTokens({ userId: 42, origin: "attendance" }, db)
+    ).rejects.toMatchObject({ code: "RULE_LIMIT_EXCEEDED" });
+  });
+
+  it("aplica daily/weekly/monthly/lifetime en cascada — el más restrictivo gana", async () => {
+    const { db, queueRules, queueLedgerRead } = makeEngineMockDb();
+    queueRules([blankRule({ id: 1, calcMethod: "fixed", fixedAmount: 50, dailyLimit: 40, weeklyLimit: 30, monthlyLimit: 100, lifetimeLimit: 200 })]);
+    queueRules([]);
+    queueLedgerRead([{ amount: 5 }]);  // daily: 40-5=35 disponible
+    queueLedgerRead([{ amount: 15 }]); // weekly: 30-15=15 disponible ← el más restrictivo
+    queueLedgerRead([{ amount: 0 }]);  // monthly: 100-0=100 disponible
+    queueLedgerRead([{ amount: 0 }]);  // lifetime: 200-0=200 disponible
+    const result = await earnTokens({ userId: 42, origin: "attendance" }, db);
+    expect(result.breakdown.final).toBe(15); // min(50, 35, 15, 100, 200)
+  });
+});
+
+describe("tokenEngine — presupuesto de campaña con lock real (Loyalty Production Hardening, spec §12)", () => {
+  function blankCampaign(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      id: 1, name: "Campaña con presupuesto", description: null, multiplier: null, bonusTokens: null,
+      maxTotalTokens: 100, startsAt: null, endsAt: null, active: true, priority: 0,
+      createdAt: new Date("2026-01-01"), updatedAt: new Date("2026-01-01"),
+      ...overrides,
+    };
+  }
+
+  it("sin presupuesto agotado, concede el importe completo sin recortar", async () => {
+    const campaign = blankCampaign({ maxTotalTokens: 100 });
+    const engine = makeEngineMockDb({
+      campaigns: [campaign], campaignScope: { communities: [], venues: [], events: [] }, campaignForLock: campaign,
+    });
+    engine.queueRules([blankRule({ id: 1, calcMethod: "fixed", fixedAmount: 50 })]);
+    engine.queueRules([]); // sin recurrencia
+    const result = await earnTokens({ userId: 42, origin: "attendance" }, engine.db);
+    expect(result.breakdown.final).toBe(50);
+    expect(result.breakdown.campaignId).toBe(1);
+    expect(engine.getLedgerWrites()).toHaveLength(1);
+    expect(engine.getLedgerWrites()[0].campaignId).toBe(1);
+  });
+
+  it("CLAMP TO REMAINING BUDGET — remanente=7, candidato=10 → concede exactamente 7 (spec §12, política explícita)", async () => {
+    const campaign = blankCampaign({ maxTotalTokens: 100 });
+    const engine = makeEngineMockDb({
+      campaigns: [campaign], campaignScope: { communities: [], venues: [], events: [] }, campaignForLock: campaign,
+    });
+    // Simula que ya se emitieron 93 tokens de esta campaña — insertando una fila previa directamente en el estado del mock.
+    engine.getLedgerWrites().push({ id: 999, campaignId: 1, direction: "credit", amount: 93 });
+    engine.queueRules([blankRule({ id: 1, calcMethod: "fixed", fixedAmount: 10 })]);
+    engine.queueRules([]);
+    const result = await earnTokens({ userId: 42, origin: "attendance" }, engine.db);
+    expect(result.breakdown.final).toBe(7); // 100-93=7 remanente, candidato 10 → clamp a 7
+  });
+
+  it("presupuesto agotado (remanente=0) → RULE_LIMIT_EXCEEDED, nunca se sobrepasa el total", async () => {
+    const campaign = blankCampaign({ maxTotalTokens: 100 });
+    const engine = makeEngineMockDb({
+      campaigns: [campaign], campaignScope: { communities: [], venues: [], events: [] }, campaignForLock: campaign,
+    });
+    engine.getLedgerWrites().push({ id: 999, campaignId: 1, direction: "credit", amount: 100 });
+    engine.queueRules([blankRule({ id: 1, calcMethod: "fixed", fixedAmount: 10 })]);
+    engine.queueRules([]);
+    await expect(
+      earnTokens({ userId: 42, origin: "attendance" }, engine.db)
+    ).rejects.toMatchObject({ code: "RULE_LIMIT_EXCEEDED" });
+  });
+
+  it("CONCURRENCIA REAL — dos earns compitiendo por el mismo presupuesto nunca lo sobrepasan (lock de fila serializa, no SELECT+SELECT sin protección)", async () => {
+    const campaign = blankCampaign({ maxTotalTokens: 10 });
+    const engine = makeEngineMockDb({
+      wallet: blankWallet({ balance: 0 }),
+      campaigns: [campaign], campaignScope: { communities: [], venues: [], events: [] }, campaignForLock: campaign,
+      serializeTransactions: true,
+    });
+    // Cada earnTokens consulta tokenRules 2 veces (regla, luego recurrencia) ANTES
+    // de entrar en la transacción — con 2 llamadas GENUINAMENTE concurrentes el
+    // orden real de consumo de la cola FIFO compartida no está garantizado
+    // (A-regla, B-regla, A-recurrencia, B-recurrencia es un orden tan válido
+    // como A-regla, A-recurrencia, B-regla, B-recurrencia). Se encola la MISMA
+    // fila 4 veces — es inequívocamente correcta como "regla" en cualquier
+    // posición, y como "recurrencia" el propio applyRecurrenceBonus la
+    // descarta igual que un array vacío (recurrenceWindow=null en blankRule
+    // por defecto), así que el resultado es idéntico sin importar el
+    // entrelazado real de las dos promesas.
+    const rule = blankRule({ id: 1, calcMethod: "fixed", fixedAmount: 6 });
+    engine.queueRules([rule]);
+    engine.queueRules([rule]);
+    engine.queueRules([rule]);
+    engine.queueRules([rule]);
+
+    const results = await Promise.allSettled([
+      earnTokens({ userId: 42, origin: "attendance" }, engine.db),
+      earnTokens({ userId: 42, origin: "attendance" }, engine.db),
+    ]);
+
+    const totalGranted = results
+      .filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof earnTokens>>> => r.status === "fulfilled")
+      .reduce((sum, r) => sum + r.value.breakdown.final, 0);
+
+    expect(totalGranted).toBeLessThanOrEqual(10); // 6+6=12 > presupuesto=10 — NUNCA debe superarlo
+    expect(totalGranted).toBe(10); // política CLAMP: la 2ª llamada recorta al remanente (6 + 4 = 10), ninguna se pierde del todo
   });
 });
 
