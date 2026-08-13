@@ -18,7 +18,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { venues, communityVenues, eventTickets, type VenueIntegration, type EventIntegration } from "../../../drizzle/schema";
-import { startSyncRun, finishSyncRun, recordVenueIntegrationResult, getVenueIntegrationRaw, getProviderById, setSyncCursor, findInternalIdForExternal } from "./integrationsDb";
+import { startSyncRun, finishSyncRun, recordVenueIntegrationResult, getVenueIntegrationRaw, getProviderById, setSyncCursor, findInternalIdForExternal, tryAcquireSyncLock, isDueForScheduledSync, getCurrentLockStatus } from "./integrationsDb";
 import { CapabilityNotSupportedError, type ExternalTicketingProvider, type NormalizedOrder, type NormalizedTicket } from "./externalTicketingProvider";
 import { decryptCredentials } from "./integrationCredentialCrypto";
 import { createFourvenuesIntegrationsAdapter, FOURVENUES_INTEGRATIONS_BASE_URL } from "./fourvenuesIntegrationsAdapter";
@@ -166,6 +166,36 @@ export interface VenueSyncOptions {
    * Por defecto `false` — un sync en vivo no cambia de comportamiento.
    */
   historicalImport?: boolean;
+  /**
+   * Production Scheduler (2026-08-13) — override EXPLÍCITO por encima de
+   * `historicalImport`/`integration.loyaltyEnabled` (precedencia completa en
+   * `resolveSuppressLoyalty()` más abajo). Existe para separar dos ejes que
+   * antes estaban acoplados: "¿sincronizamos datos en vivo?" (sí, siempre
+   * que canSync() lo permita) y "¿concedemos loyalty por ellos?" (NO todavía
+   * — piloto scheduler con loyalty_enabled=false por defecto). Un sync
+   * programado (scheduler) NUNCA usa `historicalImport: true` — sería una
+   * etiqueta semánticamente falsa (no es una importación histórica) — usa
+   * en su lugar el gate real: `integration.loyaltyEnabled`.
+   */
+  suppressLoyalty?: boolean;
+  /** Production Scheduler — quién disparó este run, solo para observabilidad (integration_sync_runs.metadata). Nunca cambia el comportamiento del sync. */
+  trigger?: "manual" | "scheduler";
+  /** Production Scheduler — ventana estrecha/frecuente vs amplia/espaciada (spec §15-17), solo para observabilidad. */
+  mode?: "incremental" | "reconciliation";
+}
+
+/**
+ * Precedencia completa (Production Scheduler, spec §41-43): un flag
+ * explícito SIEMPRE gana; si no se pasa ninguno, se suprime loyalty salvo
+ * que `integration.loyaltyEnabled` esté activado explícitamente en la fila
+ * — "no default-on": una integración recién creada (loyalty_enabled=false
+ * por columna DEFAULT) nunca concede tokens aunque el scheduler ya esté
+ * sincronizando datos en vivo.
+ */
+function resolveSuppressLoyalty(opts: VenueSyncOptions, integration: Pick<VenueIntegration, "loyaltyEnabled">): boolean {
+  if (opts.suppressLoyalty !== undefined) return opts.suppressLoyalty;
+  if (opts.historicalImport) return true;
+  return !integration.loyaltyEnabled;
 }
 
 export interface DryRunEventPreview {
@@ -277,7 +307,8 @@ export async function dryRunVenueIntegration(venueIntegrationId: number, opts: V
 }
 
 export interface VenueSyncResult {
-  status: "success" | "partial" | "failed" | "skipped_disabled";
+  /** "skipped_locked" — Production Scheduler: ya había un run en curso para esta integración (manual+scheduler o scheduler+scheduler en 2 instancias) — nunca se ejecuta en paralelo, ver tryAcquireSyncLock. */
+  status: "success" | "partial" | "failed" | "skipped_disabled" | "skipped_locked";
   message?: string;
   venueId: number | null;
   eventsFound: number;
@@ -352,7 +383,22 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
     undefined,
     { historyFromDays: opts.historyFromDays, futureUntilDays: opts.futureUntilDays }
   );
-  const run = await startSyncRun({ integrationType: "venue_integration", integrationId: integration.id, syncType: "incremental" });
+
+  // Lock (Production Scheduler, spec §26-31): manual Sync Now y el scheduler
+  // automático comparten EXACTAMENTE este mismo punto de entrada — si ya hay
+  // un run "running" no obsoleto para esta integración (el otro disparador,
+  // u otra instancia de Railway), este intento se rinde inmediatamente sin
+  // tocar Fourvenues ni la BD de negocio. Nunca dos syncs de la misma
+  // integración en paralelo.
+  const lock = await tryAcquireSyncLock(
+    "venue_integration", integration.id, "incremental",
+    { trigger: opts.trigger ?? "manual", mode: opts.mode ?? "incremental", historyFromDays: opts.historyFromDays ?? null, futureUntilDays: opts.futureUntilDays ?? null },
+  );
+  if (!lock.acquired || !lock.run) {
+    return emptyVenueSyncResult("skipped_locked", integration.venueId, lock.reason ?? "sync already running");
+  }
+  const run = lock.run;
+  const suppressLoyalty = resolveSuppressLoyalty(opts, integration);
   const conn = db ?? (await getDb());
 
   let fetchedCount = 0, failedCount = 0;
@@ -405,7 +451,7 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
               order, tickets: ticketsByOrder.get(order.externalId) ?? [],
               resolveTicketTypeId: (externalId) => (externalId ? rateResult.ticketTypeIdByExternalId.get(externalId) ?? null : null),
               loyaltyEffectiveFrom: opts.loyaltyEffectiveFrom ?? null,
-              suppressLoyalty: opts.historicalImport ?? false,
+              suppressLoyalty,
             }, conn);
             if (result.status === "created") { ordersCreated++; ticketsUnresolved += result.unresolvedTickets; }
             else if (result.status === "updated") ordersUpdated++;
@@ -459,7 +505,7 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
               provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: integration.id,
               eventId: item.eventId, venueId: integration.venueId, attendance: a,
               ticketId: a.externalTicketId ? ticketIdByExternalId.get(a.externalTicketId) ?? null : null,
-              suppressLoyalty: opts.historicalImport ?? false,
+              suppressLoyalty,
             }, conn);
             if (result.status === "processed") attendanceProcessed++;
             else if (result.status === "unresolved") attendanceUnresolved++;
@@ -495,4 +541,47 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
     await recordVenueIntegrationResult(integration.id, false, message);
     return emptyVenueSyncResult("failed", integration.venueId, message);
   }
+}
+
+// ─── ADMIN STATUS (Production Scheduler, spec §61/§101) ───────────────────────
+// Sin dashboard — solo lo mínimo para responder "¿está el scheduler activo,
+// cuándo sincronizó por última vez, cuándo toca la próxima?" en el panel de
+// integración ya existente. `schedulerProcessRunning` llega desde
+// integrationScheduler.ts (estado del proceso, no de BD — un cron registrado
+// en ESTA instancia de Railway).
+export interface IntegrationSchedulerStatus {
+  schedulerProcessRunning: boolean;
+  due: boolean | null;
+  locked: boolean;
+  currentRun: { id: number; startedAt: Date; syncType: string } | null;
+  lastSuccessAt: Date | null;
+  lastErrorAt: Date | null;
+  lastErrorMessage: string | null;
+  syncIntervalMinutes: number | null;
+  nextDueAt: Date | null;
+  loyaltyEnabled: boolean;
+}
+
+export async function getIntegrationSchedulerStatus(
+  venueIntegrationId: number,
+  schedulerProcessRunning: boolean,
+  defaultIntervalMinutes: number,
+): Promise<IntegrationSchedulerStatus | null> {
+  const integration = await getVenueIntegrationRaw(venueIntegrationId);
+  if (!integration) return null;
+  const lock = await getCurrentLockStatus("venue_integration", integration.id);
+  const intervalMinutes = integration.syncIntervalMinutes ?? defaultIntervalMinutes;
+  const nextDueAt = integration.lastSuccessAt ? new Date(integration.lastSuccessAt.getTime() + intervalMinutes * 60_000) : null;
+  return {
+    schedulerProcessRunning,
+    due: canSync(integration) ? isDueForScheduledSync(integration, new Date(), defaultIntervalMinutes) : null,
+    locked: lock.locked,
+    currentRun: lock.run ? { id: lock.run.id, startedAt: lock.run.startedAt, syncType: lock.run.syncType } : null,
+    lastSuccessAt: integration.lastSuccessAt,
+    lastErrorAt: integration.lastErrorAt,
+    lastErrorMessage: integration.lastErrorMessage,
+    syncIntervalMinutes: integration.syncIntervalMinutes,
+    nextDueAt,
+    loyaltyEnabled: integration.loyaltyEnabled,
+  };
 }

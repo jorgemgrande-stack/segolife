@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const {
   mockGetVenueIntegrationRaw, mockGetProviderById, mockDecryptCredentials,
   mockStartSyncRun, mockFinishSyncRun, mockRecordVenueIntegrationResult, mockSetSyncCursor, mockFindInternalIdForExternal,
+  mockTryAcquireSyncLock, mockIsDueForScheduledSync, mockGetCurrentLockStatus,
   mockCreateAdapter, mockSyncEventCatalog, mockSyncTicketTypes, mockIngestTicketPurchase, mockIngestAttendance, mockResolveIdentity,
 } = vi.hoisted(() => ({
   mockGetVenueIntegrationRaw: vi.fn(),
@@ -23,6 +24,9 @@ const {
   mockRecordVenueIntegrationResult: vi.fn(),
   mockSetSyncCursor: vi.fn(),
   mockFindInternalIdForExternal: vi.fn(),
+  mockTryAcquireSyncLock: vi.fn(),
+  mockIsDueForScheduledSync: vi.fn(),
+  mockGetCurrentLockStatus: vi.fn(),
   mockCreateAdapter: vi.fn(),
   mockSyncEventCatalog: vi.fn(),
   mockSyncTicketTypes: vi.fn(),
@@ -39,6 +43,9 @@ vi.mock("./integrationsDb", () => ({
   recordVenueIntegrationResult: mockRecordVenueIntegrationResult,
   setSyncCursor: mockSetSyncCursor,
   findInternalIdForExternal: mockFindInternalIdForExternal,
+  tryAcquireSyncLock: mockTryAcquireSyncLock,
+  isDueForScheduledSync: mockIsDueForScheduledSync,
+  getCurrentLockStatus: mockGetCurrentLockStatus,
 }));
 vi.mock("./integrationCredentialCrypto", () => ({ decryptCredentials: mockDecryptCredentials }));
 vi.mock("./fourvenuesIntegrationsAdapter", () => ({
@@ -89,6 +96,7 @@ beforeEach(() => {
   mockGetProviderById.mockResolvedValue({ key: "fourvenues_integrations" });
   mockDecryptCredentials.mockReturnValue({ apiKey: "ik_fixture" });
   mockStartSyncRun.mockResolvedValue({ id: 900 });
+  mockTryAcquireSyncLock.mockResolvedValue({ acquired: true, run: { id: 900 } });
   mockSyncEventCatalog.mockResolvedValue({
     items: [{ externalId: "fvi_evt_001", name: "Fixture Night", outcome: "created", eventId: 77 }],
     createdCount: 1, updatedCount: 0, ambiguousCount: 0,
@@ -129,6 +137,49 @@ describe("syncVenueIntegration — kill switch", () => {
   });
 });
 
+describe("syncVenueIntegration — lock (Production Scheduler, spec §26-31/§52/§111)", () => {
+  it("ya hay un run en curso (lock ocupado) → skipped_locked, NUNCA llama al adapter ni escribe nada", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockTryAcquireSyncLock.mockResolvedValue({ acquired: false, run: null, reason: "sync already running (run #42, iniciado 2026-08-13T10:00:00.000Z)" });
+    const adapter = fakeAdapter();
+    mockCreateAdapter.mockReturnValue(adapter);
+
+    const result = await syncVenueIntegration(1, {}, fakeConn());
+
+    expect(result.status).toBe("skipped_locked");
+    expect(result.message).toContain("already running");
+    expect(adapter.listEvents).not.toHaveBeenCalled();
+    expect(mockSyncEventCatalog).not.toHaveBeenCalled();
+    expect(mockFinishSyncRun).not.toHaveBeenCalled();
+  });
+
+  it("manual Sync Now (trigger='manual') respeta el MISMO lock que un run de scheduler ya en curso — 'ONE SYNC PATH' (spec §39)", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockTryAcquireSyncLock.mockResolvedValue({ acquired: false, run: null, reason: "sync already running" });
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+
+    const result = await syncVenueIntegration(1, { trigger: "manual" }, fakeConn());
+
+    expect(result.status).toBe("skipped_locked");
+    expect(mockTryAcquireSyncLock).toHaveBeenCalledWith(
+      "venue_integration", 1, "incremental",
+      expect.objectContaining({ trigger: "manual" }),
+    );
+  });
+
+  it("lock adquirido correctamente → pasa trigger/mode a tryAcquireSyncLock para observabilidad (integration_sync_runs.metadata)", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+
+    await syncVenueIntegration(1, { trigger: "scheduler", mode: "reconciliation", historyFromDays: 7, futureUntilDays: 14 }, fakeConn());
+
+    expect(mockTryAcquireSyncLock).toHaveBeenCalledWith(
+      "venue_integration", 1, "incremental",
+      expect.objectContaining({ trigger: "scheduler", mode: "reconciliation", historyFromDays: 7, futureUntilDays: 14 }),
+    );
+  });
+});
+
 describe("syncVenueIntegration — orden EVENTS → RATES → ORDERS/TICKETS → ATTENDANCE (spec §49)", () => {
   it("con las 4 condiciones del kill switch cumplidas, sincroniza evento→rates→orders→attendance en orden y reporta counts", async () => {
     mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
@@ -165,14 +216,42 @@ describe("syncVenueIntegration — orden EVENTS → RATES → ORDERS/TICKETS →
     expect(mockIngestAttendance.mock.calls[0][0]).toMatchObject({ suppressLoyalty: true });
   });
 
-  it("sin historicalImport (sync en vivo, por defecto) → suppressLoyalty:false en ambos pipelines", async () => {
-    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
+  it("Production Scheduler — sin historicalImport NI suppressLoyalty explícito, loyaltyEnabled=false (default de la fila) → suppressLoyalty:true en ambos pipelines (NO default-on, spec §40-44)", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration({ loyaltyEnabled: false }));
     mockCreateAdapter.mockReturnValue(fakeAdapter());
 
     await syncVenueIntegration(1, {}, fakeConn());
 
+    expect(mockIngestTicketPurchase.mock.calls[0][0]).toMatchObject({ suppressLoyalty: true });
+    expect(mockIngestAttendance.mock.calls[0][0]).toMatchObject({ suppressLoyalty: true });
+  });
+
+  it("Production Scheduler — loyaltyEnabled=true en la fila (flip explícito posterior) y sync en vivo (scheduler, sin historicalImport) → suppressLoyalty:false — la arquitectura permite activar loyalty sin reescribir el sync (spec §89)", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration({ loyaltyEnabled: true }));
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+
+    await syncVenueIntegration(1, { trigger: "scheduler", mode: "incremental" }, fakeConn());
+
     expect(mockIngestTicketPurchase.mock.calls[0][0]).toMatchObject({ suppressLoyalty: false });
     expect(mockIngestAttendance.mock.calls[0][0]).toMatchObject({ suppressLoyalty: false });
+  });
+
+  it("Production Scheduler — suppressLoyalty:false explícito GANA aunque loyaltyEnabled=false en la fila (override explícito siempre manda)", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration({ loyaltyEnabled: false }));
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+
+    await syncVenueIntegration(1, { suppressLoyalty: false }, fakeConn());
+
+    expect(mockIngestTicketPurchase.mock.calls[0][0]).toMatchObject({ suppressLoyalty: false });
+  });
+
+  it("Production Scheduler — suppressLoyalty:true explícito GANA aunque loyaltyEnabled=true en la fila", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration({ loyaltyEnabled: true }));
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+
+    await syncVenueIntegration(1, { suppressLoyalty: true }, fakeConn());
+
+    expect(mockIngestTicketPurchase.mock.calls[0][0]).toMatchObject({ suppressLoyalty: true });
   });
 
   it("evento AMBIGUO (sin eventId resuelto) → se omite del sync, nunca se ingieren sus pedidos/asistencia", async () => {

@@ -25,6 +25,7 @@ import { healthRouter } from "./healthRouter";
 import { startCancellationStaleJob } from "../cancellationStaleJob";
 import { startEmailAutomationJob } from "../emailAutomationJob";
 import { startTaxReminderJob } from "../taxReminderJob";
+import { startFourvenuesScheduler } from "../segolife/integrations/integrationScheduler";
 import { registerBenefitGrantedListener } from "../segolife/engagement/benefitGrantedListener";
 import { registerTicketPurchasedListener } from "../segolife/engagement/ticketPurchasedListener";
 import { registerTokensEarnedListener } from "../segolife/engagement/tokensEarnedListener";
@@ -718,6 +719,12 @@ verifyDatabaseConnectivity()
   .then(() => conditionallyStartJob("card_terminal_relink_enabled",   startRelinkJob,   "Card Terminal Relink",   false))
   .then(() => conditionallyStartJob("email_automation_job_enabled",   startEmailAutomationJob, "Email Automation"))
   .then(() => conditionallyStartJob("tax_reminder_job_enabled",       startTaxReminderJob,     "Tax Reminder", false))
+  // Fourvenues Production Scheduler (2026-08-13) — Casanova piloto. Comparte
+  // el kill switch global EXTERNAL_INTEGRATIONS_ENABLED (comprobado también
+  // dentro del propio tick) + canSync()/loyalty_enabled por fila — este flag
+  // solo controla si el proceso cron llega a registrarse. Default false: en
+  // una BD nueva, o mientras no se decida activar el piloto, nunca arranca.
+  .then(() => conditionallyStartJob("fourvenues_scheduler_enabled",   startFourvenuesScheduler, "Fourvenues Scheduler", false))
   // Fase 7 — Engagement Core. El listener de BenefitGranted es puramente
   // in-process (nunca sale del sistema, nunca llama a un provider externo
   // directamente) — se registra siempre. El scheduler de deliveries SÍ

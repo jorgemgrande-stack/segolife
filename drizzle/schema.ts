@@ -4940,6 +4940,14 @@ export const venueIntegrations = mysqlTable("venue_integrations", {
   credentialsLast4:      varchar("credentials_last4", { length: 8 }),
   syncEnabled:           boolean("sync_enabled").notNull().default(false),
   syncIntervalMinutes:   int("sync_interval_minutes"),
+  // Production Scheduler (2026-08-13) — gate DECOUPLADO de syncEnabled: los
+  // datos (events/orders/tickets/paymentless/attendance) pueden sincronizarse
+  // en vivo con loyaltyEnabled=false (default) sin conceder ni un solo
+  // SegoToken/Benefit — earnTokens/evaluateBenefitsForOrigin se suprimen
+  // exactamente igual que con suppressLoyalty=true. Activar loyalty real es
+  // una decisión explícita posterior (flip de esta columna), nunca un efecto
+  // colateral de activar el scheduler — ver integrationSyncService.ts.
+  loyaltyEnabled:        boolean("loyalty_enabled").notNull().default(false),
   lastSyncAt:            timestamp("last_sync_at"),
   lastSuccessAt:         timestamp("last_success_at"),
   lastErrorAt:           timestamp("last_error_at"),
@@ -5007,6 +5015,12 @@ export const integrationSyncRuns = mysqlTable("integration_sync_runs", {
   unresolvedCount:  int("unresolved_count").notNull().default(0),
   failedCount:      int("failed_count").notNull().default(0),
   errorMessage:     varchar("error_message", { length: 512 }),
+  // Production Scheduler (2026-08-13) — trigger ("manual"|"scheduler"),
+  // mode ("incremental"|"reconciliation") y la ventana usada en ESTE run
+  // concreto. Nullable: los runs anteriores a esta columna, y los disparados
+  // por los scripts CLI históricos, simplemente no la rellenan — nunca se
+  // exige en ningún WHERE, solo se lee para observabilidad.
+  metadata:         json("metadata").$type<Record<string, unknown>>(),
   startedAt:        timestamp("started_at").defaultNow().notNull(),
   finishedAt:       timestamp("finished_at"),
 });

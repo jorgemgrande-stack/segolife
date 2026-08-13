@@ -15,7 +15,8 @@ import { createFourvenuesIntegrationsAdapter, FOURVENUES_INTEGRATIONS_BASE_URL }
 import { createWeezeventAdapter, WEEZEVENT_BASE_URL } from "../segolife/integrations/weezeventAdapter";
 import { createHttpTransport } from "../segolife/integrations/httpTransport";
 import { decryptCredentials } from "../segolife/integrations/integrationCredentialCrypto";
-import { isExternalIntegrationsGloballyEnabled, syncVenueIntegration, dryRunVenueIntegration } from "../segolife/integrations/integrationSyncService";
+import { isExternalIntegrationsGloballyEnabled, syncVenueIntegration, dryRunVenueIntegration, getIntegrationSchedulerStatus } from "../segolife/integrations/integrationSyncService";
+import { isFourvenuesSchedulerRunning, DEFAULT_INCREMENTAL_INTERVAL_MINUTES } from "../segolife/integrations/integrationScheduler";
 import { processCommerceLoyalty } from "../segolife/commerce/commercePipeline";
 import { ingestAttendance } from "../segolife/ticketing/attendancePipeline";
 import { commerceTransactions, eventTickets } from "../../drizzle/schema";
@@ -175,7 +176,13 @@ export const integrationsRouter = router({
       futureUntilDays: input.futureUntilDays,
       loyaltyEffectiveFrom: input.loyaltyEffectiveFrom ? new Date(input.loyaltyEffectiveFrom) : null,
       historicalImport: input.historicalImport,
+      trigger: "manual", // Production Scheduler — comparte lock/loyalty gate con el scheduler automático (mismo syncVenueIntegration, "ONE SYNC PATH"); si el scheduler tiene un run en curso, este mutation devuelve status="skipped_locked" en vez de ejecutar en paralelo.
     })),
+
+  // ── Production Scheduler (2026-08-13) — estado mínimo para el admin, sin dashboard ──
+  getSchedulerStatus: integrationsViewProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(({ input }) => getIntegrationSchedulerStatus(input.id, isFourvenuesSchedulerRunning(), DEFAULT_INCREMENTAL_INTERVAL_MINUTES)),
 
   // ── Unresolved operations (spec punto 56) ────────────────────────────────
   listUnresolved: integrationsViewProcedure

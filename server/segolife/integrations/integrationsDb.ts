@@ -25,6 +25,8 @@ const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit
 const _db = drizzle(_pool);
 
 type DbHandle = typeof _db;
+type TxHandle = Parameters<Parameters<DbHandle["transaction"]>[0]>[0];
+type AnyDbHandle = DbHandle | TxHandle;
 
 async function getDb(): Promise<DbHandle> {
   return _db;
@@ -43,6 +45,9 @@ export interface SafeIntegration {
   credentialsConfigured: boolean;
   credentialsLast4: string | null;
   syncEnabled: boolean;
+  /** Production Scheduler — solo real en venue_integrations (event_integrations no lo tiene todavía, no hay necesidad hoy); siempre false para "event". */
+  loyaltyEnabled: boolean;
+  syncIntervalMinutes: number | null;
   lastSyncAt: Date | null;
   lastSuccessAt: Date | null;
   lastErrorAt: Date | null;
@@ -62,6 +67,8 @@ function toSafeIntegration(row: VenueIntegration | EventIntegration, providerKey
     credentialsConfigured: !!row.credentialsEncrypted,
     credentialsLast4: row.credentialsLast4,
     syncEnabled: row.syncEnabled,
+    loyaltyEnabled: kind === "venue" ? (row as VenueIntegration).loyaltyEnabled : false,
+    syncIntervalMinutes: row.syncIntervalMinutes,
     lastSyncAt: row.lastSyncAt,
     lastSuccessAt: row.lastSuccessAt,
     lastErrorAt: row.lastErrorAt,
@@ -148,6 +155,23 @@ export async function createVenueIntegration(input: CreateVenueIntegrationInput,
 export async function setVenueIntegrationEnabled(id: number, enabled: boolean, db?: DbHandle): Promise<void> {
   const conn = db ?? (await getDb());
   await conn.update(venueIntegrations).set({ enabled, syncEnabled: enabled }).where(eq(venueIntegrations.id, id));
+}
+
+/**
+ * Production Scheduler (2026-08-13) — gate DECOUPLADO de `enabled`/
+ * `syncEnabled` a propósito (a diferencia de setVenueIntegrationEnabled de
+ * arriba): los datos pueden sincronizarse en vivo con loyalty_enabled=false
+ * (default) sin conceder ni un token. Activarlo es SIEMPRE un flip explícito
+ * separado — nunca un efecto colateral de habilitar sync/scheduler.
+ */
+export async function setVenueIntegrationLoyaltyEnabled(id: number, loyaltyEnabled: boolean, db?: DbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  await conn.update(venueIntegrations).set({ loyaltyEnabled }).where(eq(venueIntegrations.id, id));
+}
+
+export async function setVenueIntegrationSyncInterval(id: number, syncIntervalMinutes: number | null, db?: DbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  await conn.update(venueIntegrations).set({ syncIntervalMinutes }).where(eq(venueIntegrations.id, id));
 }
 
 export async function updateVenueIntegrationCredentials(id: number, credentials: Record<string, string | undefined>, displayValue?: string, db?: DbHandle): Promise<void> {
@@ -237,13 +261,130 @@ export async function findInternalIdForExternal(provider: string, externalType: 
   return row?.internalId ?? null;
 }
 
-export async function startSyncRun(input: { integrationType: "venue_integration" | "event_integration"; integrationId: number; syncType: "full" | "incremental" }, db?: DbHandle): Promise<IntegrationSyncRun> {
+export async function startSyncRun(input: { integrationType: "venue_integration" | "event_integration"; integrationId: number; syncType: "full" | "incremental"; metadata?: Record<string, unknown> }, db?: DbHandle): Promise<IntegrationSyncRun> {
   const conn = db ?? (await getDb());
-  const values: InsertIntegrationSyncRun = { ...input, status: "running" };
+  const values: InsertIntegrationSyncRun = { integrationType: input.integrationType, integrationId: input.integrationId, syncType: input.syncType, status: "running", metadata: input.metadata ?? null };
   const [result] = await conn.insert(integrationSyncRuns).values(values);
   const insertId = (result as unknown as { insertId: number }).insertId;
   const [row] = await conn.select().from(integrationSyncRuns).where(eq(integrationSyncRuns.id, insertId)).limit(1);
   return row;
+}
+
+// ─── SYNC LOCK (Production Scheduler, 2026-08-13) ─────────────────────────────
+// Sin Redis, sin GET_LOCK (poco fiable con un pool de conexiones — se
+// liberaría en cuanto la conexión vuelve al pool). Se reutiliza la fila YA
+// única de integration_sync_state (unique(integrationType, integrationId))
+// como punto de serialización real vía `SELECT ... FOR UPDATE` dentro de una
+// transacción: dos intentos concurrentes de adquirir el lock de la MISMA
+// integración (scheduler vs scheduler en 2 instancias de Railway, scheduler
+// vs manual Sync Now) se serializan por MySQL mismo, sin lock en memoria
+// (que no sobreviviría a multi-instancia) y sin tabla/columna nueva.
+//
+// "Ocupado" = ya existe una fila integration_sync_runs con status='running'
+// para esta integración, con menos de SYNC_STALE_LOCK_MINUTES de antigüedad.
+// Una fila "running" más vieja que eso se considera abandonada (contenedor
+// caído a mitad de sync, redeploy que mató el proceso) — se marca
+// automáticamente como failed (nunca se deja "running" para siempre) y el
+// intento actual continúa con normalidad.
+export const SYNC_STALE_LOCK_MINUTES = 30;
+
+export interface AcquireSyncLockResult {
+  acquired: boolean;
+  run: IntegrationSyncRun | null;
+  /** Motivo legible cuando acquired=false — para el mensaje "sync already running" del admin/scheduler. */
+  reason?: string;
+}
+
+export async function tryAcquireSyncLock(
+  integrationType: "venue_integration" | "event_integration",
+  integrationId: number,
+  syncType: "full" | "incremental",
+  metadata: Record<string, unknown> | undefined,
+  db?: DbHandle
+): Promise<AcquireSyncLockResult> {
+  const conn = db ?? (await getDb());
+  return conn.transaction(async (tx): Promise<AcquireSyncLockResult> => {
+    // Garantiza que la fila de sync_state existe (no-op si ya estaba) — hace
+    // falta una fila real para poder tomar FOR UPDATE sobre ella.
+    await tx.insert(integrationSyncState).values({ integrationType, integrationId, cursor: null, updatedSince: new Date(0) })
+      .onDuplicateKeyUpdate({ set: { integrationType } }); // update sin efecto — solo asegura la existencia de la fila
+    await tx.select().from(integrationSyncState)
+      .where(and(eq(integrationSyncState.integrationType, integrationType), eq(integrationSyncState.integrationId, integrationId)))
+      .limit(1).for("update"); // serializa cualquier otro intento concurrente hasta el commit/rollback de esta transacción
+
+    const staleThreshold = new Date(Date.now() - SYNC_STALE_LOCK_MINUTES * 60_000);
+    const [runningRow] = await tx.select().from(integrationSyncRuns)
+      .where(and(eq(integrationSyncRuns.integrationType, integrationType), eq(integrationSyncRuns.integrationId, integrationId), eq(integrationSyncRuns.status, "running")))
+      .orderBy(desc(integrationSyncRuns.id)).limit(1);
+
+    if (runningRow) {
+      if (runningRow.startedAt > staleThreshold) {
+        return { acquired: false, run: null, reason: `sync already running (run #${runningRow.id}, iniciado ${runningRow.startedAt.toISOString()})` };
+      }
+      await tx.update(integrationSyncRuns).set({
+        status: "failed",
+        errorMessage: "Stale lock — run abandonado (posible caída de contenedor/redeploy a mitad de sync), auto-recuperado por el siguiente intento",
+        finishedAt: new Date(),
+      }).where(eq(integrationSyncRuns.id, runningRow.id));
+    }
+
+    const values: InsertIntegrationSyncRun = { integrationType, integrationId, syncType, status: "running", metadata: metadata ?? null };
+    const [result] = await tx.insert(integrationSyncRuns).values(values);
+    const insertId = (result as unknown as { insertId: number }).insertId;
+    const [row] = await tx.select().from(integrationSyncRuns).where(eq(integrationSyncRuns.id, insertId)).limit(1);
+    return { acquired: true, run: row };
+  });
+}
+
+/** Estado derivado para el admin (spec §61/§101) — SIN columna/tabla nueva, calculado sobre integration_sync_runs. */
+export async function getCurrentLockStatus(integrationType: "venue_integration" | "event_integration", integrationId: number, db?: DbHandle): Promise<{ locked: boolean; run: IntegrationSyncRun | null }> {
+  const conn = db ?? (await getDb());
+  const staleThreshold = new Date(Date.now() - SYNC_STALE_LOCK_MINUTES * 60_000);
+  const [runningRow] = await conn.select().from(integrationSyncRuns)
+    .where(and(eq(integrationSyncRuns.integrationType, integrationType), eq(integrationSyncRuns.integrationId, integrationId), eq(integrationSyncRuns.status, "running")))
+    .orderBy(desc(integrationSyncRuns.id)).limit(1);
+  if (!runningRow) return { locked: false, run: null };
+  return { locked: runningRow.startedAt > staleThreshold, run: runningRow };
+}
+
+// ─── DUE CALCULATION (Production Scheduler) ───────────────────────────────────
+// Pura, sin I/O — testeable sin mockear BD. `lastSuccessAt` (nunca
+// `lastSyncAt`, que también se actualiza en fallos) es la referencia: un
+// sync fallido no debe "resetear" la cadencia y bloquear reintentos hasta el
+// próximo intervalo completo.
+export function isDueForScheduledSync(
+  integration: Pick<VenueIntegration, "lastSuccessAt" | "syncIntervalMinutes">,
+  now: Date,
+  defaultIntervalMinutes: number
+): boolean {
+  const intervalMinutes = integration.syncIntervalMinutes ?? defaultIntervalMinutes;
+  if (!integration.lastSuccessAt) return true; // nunca sincronizada — debida en cuanto está habilitada explícitamente (canSync ya lo exige aparte)
+  const elapsedMs = now.getTime() - integration.lastSuccessAt.getTime();
+  return elapsedMs >= intervalMinutes * 60_000;
+}
+
+/**
+ * Último run EXITOSO con metadata.mode=<mode> (Production Scheduler) — NUNCA
+ * reutiliza `lastSuccessAt` (que se actualiza en CUALQUIER sync exitoso,
+ * incremental o reconciliation): usarlo aquí resetearía el reloj de
+ * reconciliation en cada incremental y esta cadencia más espaciada nunca
+ * llegaría a dispararse. Escanea los últimos 20 runs exitosos — más que
+ * suficiente al volumen real de Casanova, evita filtrar por JSON path en
+ * SQL sin necesidad real de volumen.
+ */
+export async function getLastSuccessfulModeRunAt(
+  integrationType: "venue_integration" | "event_integration",
+  integrationId: number,
+  mode: "incremental" | "reconciliation",
+  db?: DbHandle
+): Promise<Date | null> {
+  const conn = db ?? (await getDb());
+  const rows = await conn.select({ startedAt: integrationSyncRuns.startedAt, metadata: integrationSyncRuns.metadata })
+    .from(integrationSyncRuns)
+    .where(and(eq(integrationSyncRuns.integrationType, integrationType), eq(integrationSyncRuns.integrationId, integrationId), eq(integrationSyncRuns.status, "success")))
+    .orderBy(desc(integrationSyncRuns.id)).limit(20);
+  const match = rows.find(r => (r.metadata as Record<string, unknown> | null)?.mode === mode);
+  return match?.startedAt ?? null;
 }
 
 export async function finishSyncRun(id: number, counts: { fetchedCount: number; createdCount: number; updatedCount: number; unresolvedCount: number; failedCount: number }, status: "success" | "partial" | "failed", errorMessage?: string | null, db?: DbHandle): Promise<void> {

@@ -47,7 +47,7 @@ export default function IntegrationsManager() {
     identitiesResolvable: number; identitiesUnresolved: number;
   }
   interface VenueSyncNowResult {
-    status: "success" | "partial" | "failed" | "skipped_disabled"; message?: string;
+    status: "success" | "partial" | "failed" | "skipped_disabled" | "skipped_locked"; message?: string;
     eventsCreated: number; eventsUpdated: number; eventsAmbiguous: number; ratesSynced: number;
     ordersCreated: number; ordersUpdated: number; ticketsUnresolved: number;
     attendanceProcessed: number; attendanceUnresolved: number; failedCount: number;
@@ -86,8 +86,10 @@ export default function IntegrationsManager() {
       setSyncResultById(prev => ({ ...prev, [vars.id]: r }));
       setConfirmSyncId(null);
       if (r.status === "skipped_disabled") toast.error(r.message ?? "Sync deshabilitado");
+      else if (r.status === "skipped_locked") toast.error(r.message ?? "Ya hay un sync en curso para esta integración");
       else toast[r.status === "failed" ? "error" : "success"](`Sync ${r.status} — ${r.eventsCreated + r.eventsUpdated} eventos, ${r.ordersCreated + r.ordersUpdated} pedidos, ${r.attendanceProcessed} asistencias`);
       utils.integrations.listVenueIntegrations.invalidate();
+      utils.integrations.getSchedulerStatus.invalidate({ id: vars.id });
     },
     onError: e => { toast.error(e.message); setConfirmSyncId(null); },
   });
@@ -195,6 +197,7 @@ export default function IntegrationsManager() {
                   )}
                   {i.providerKey === "fourvenues_integrations" && (
                     <div className="pt-2 border-t border-border space-y-2">
+                      <FourvenuesSchedulerStatusLine integrationId={i.id} />
                       <div className="flex items-center gap-2">
                         <Button size="sm" variant="outline" onClick={() => previewMut.mutate({ id: i.id })} disabled={previewMut.isPending || !i.credentialsConfigured}>
                           {previewMut.isPending && previewMut.variables?.id === i.id ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Eye className="w-3.5 h-3.5 mr-1" />}
@@ -312,5 +315,28 @@ export default function IntegrationsManager() {
         </section>
       </div>
     </AdminLayout>
+  );
+}
+
+/**
+ * Production Scheduler (2026-08-13) — línea mínima de estado, NO un
+ * dashboard: scheduler activo/off, último sync exitoso, próximo debido,
+ * si hay un run en curso (lock) ahora mismo. Un componente propio (no un
+ * useQuery dentro del .map() del padre) porque el número de filas es
+ * variable — llamar hooks en un bucle rompería las reglas de React.
+ */
+function FourvenuesSchedulerStatusLine({ integrationId }: { integrationId: number }) {
+  const { data: status } = trpc.integrations.getSchedulerStatus.useQuery({ id: integrationId }, { refetchInterval: 30_000 });
+  if (!status) return null;
+  return (
+    <p className="text-xs text-muted-foreground bg-muted/30 rounded px-2 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <span>Scheduler: <Badge variant={status.schedulerProcessRunning ? "default" : "secondary"} className="ml-1">{status.schedulerProcessRunning ? "Active" : "Off"}</Badge></span>
+      {status.locked && <Badge variant="secondary">Sync en curso (run #{status.currentRun?.id})</Badge>}
+      <span>Último éxito: {status.lastSuccessAt ? new Date(status.lastSuccessAt).toLocaleString() : "nunca"}</span>
+      <span>Próximo debido: {status.due === null ? "—" : status.due ? "ahora" : status.nextDueAt ? new Date(status.nextDueAt).toLocaleString() : "—"}</span>
+      <span>Intervalo: {status.syncIntervalMinutes ?? "default"} min</span>
+      <span>Loyalty: <Badge variant={status.loyaltyEnabled ? "default" : "secondary"} className="ml-1">{status.loyaltyEnabled ? "ON" : "OFF"}</Badge></span>
+      {status.lastErrorMessage && <span className="text-destructive">Último error: {status.lastErrorMessage}</span>}
+    </p>
   );
 }

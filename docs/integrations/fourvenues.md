@@ -426,15 +426,72 @@ concedido un reward de compra antes del reembolso, se marca
 tokens **nunca se retiran silenciosamente**, queda como decisión manual
 pendiente (sin política de reversión automática definida todavía).
 
-### Manual sync — sin scheduler
+### Manual sync + Production Scheduler (2026-08-13)
 
 `POST` (tRPC) `integrations.previewVenueSync` (dry run, sin persistir nada
 de negocio) y `integrations.syncVenueNow` (escritura real), ambos bajo el
-permiso `integrations.manage` existente, expuestos en
-`/admin/integrations` con un modal de confirmación. **No existe cron ni
-scheduler automático** — cada sync lo dispara un admin explícitamente. La
-arquitectura (kill switches + `integration_sync_state`) ya está preparada
-para un futuro scheduler, pero activarlo es una decisión posterior explícita.
+permiso `integrations.manage` existente, expuestos en `/admin/integrations`
+con un modal de confirmación — **siguen existiendo sin cambios**, para
+debug/reconciliación forzada.
+
+**Scheduler automático** (`server/segolife/integrations/integrationScheduler.ts`)
+— Casanova piloto. NUNCA arranca solo: requiere el feature flag DB-backed
+`fourvenues_scheduler_enabled` (`conditionallyStartJob`, mismo patrón que
+el resto de jobs del proyecto — `emailAutomationJob`, `cancellationStaleJob`,
+etc. — default `false`, nunca autoactivación en una BD nueva). Un tick de
+`node-cron` cada minuto (barato — solo lee due-state de BD, igual que
+`engagementScheduler.ts`) decide, por cada `venue_integration` cuyo
+provider real sea `fourvenues_integrations`, si toca sincronizar.
+
+**"ONE SYNC PATH" (nunca dos pipelines)** — tanto el botón manual "Sync Now"
+como el scheduler automático terminan llamando exactamente a la misma
+`syncVenueIntegration()`. Nunca hay una segunda implementación de la
+ingestión para el modo automático.
+
+**Lock (sin Redis, sin `GET_LOCK`)** — `tryAcquireSyncLock()`
+(`integrationsDb.ts`) reutiliza la fila YA única de `integration_sync_state`
+(`unique(integrationType, integrationId)`) como punto de serialización real
+vía `SELECT ... FOR UPDATE` dentro de una transacción: dos intentos
+concurrentes de sincronizar la MISMA integración (scheduler vs scheduler en
+2 instancias de Railway, scheduler vs manual Sync Now) se serializan por
+MySQL mismo. "Ocupado" = ya existe una fila `integration_sync_runs` con
+`status='running'` de menos de `SYNC_STALE_LOCK_MINUTES` (30) de antigüedad
+— si es más vieja, se considera abandonada (contenedor caído a mitad de
+sync) y se marca `failed` automáticamente antes de continuar (nunca se
+deja `running` para siempre). `syncVenueIntegration()` devuelve
+`status: "skipped_locked"` sin tocar Fourvenues cuando el lock está ocupado
+— tanto si lo llama el scheduler como si lo llama un admin desde el botón.
+
+**Dos cadencias** — nunca se re-descarga el histórico completo de 400 días
+de forma periódica:
+- **Incremental** (frecuente): `historyFromDays=2 / futureUntilDays=14`,
+  debida según `venue_integrations.sync_interval_minutes` (columna YA
+  existente, antes sin usar) medido desde `lastSuccessAt`.
+- **Reconciliation** (menos frecuente, ventana más amplia hacia atrás para
+  capturar attendance/refunds tardíos): `historyFromDays=7 / futureUntilDays=14`,
+  debida según el último run EXITOSO con `integration_sync_runs.metadata.mode
+  = "reconciliation"` — **nunca** se mide desde `lastSuccessAt` (que se
+  actualiza en CUALQUIER sync exitoso); si se hiciera así, cada incremental
+  reiniciaría el reloj de reconciliation y esta cadencia más espaciada
+  jamás llegaría a dispararse.
+
+**Cadencia productiva propuesta** (Casanova, con evidencia real — ver
+informe de la fase): incremental cada **10 minutos**, reconciliation cada
+**6 horas**. Configurable por fila vía `sync_interval_minutes` — nunca
+hardcodeada; los valores de arriba son solo el fallback cuando la columna
+es `null`.
+
+**Loyalty — separado de "¿sincronizamos datos?"** — `venue_integrations.loyalty_enabled`
+(nueva columna, `NOT NULL DEFAULT false`) es el gate real: con datos
+sincronizándose en vivo (scheduler activo) pero `loyalty_enabled=false`
+(default), `earnTokens`/`evaluateBenefitsForOrigin` se suprimen exactamente
+igual que con el `suppressLoyalty` histórico — cero SegoTokens/Benefits.
+Precedencia completa en `resolveSuppressLoyalty()`
+(`integrationSyncService.ts`): un `suppressLoyalty`/`historicalImport`
+explícito en la llamada siempre gana; si no se pasa ninguno, se suprime
+salvo que `loyalty_enabled=true` en la fila. Activar loyalty real es
+SIEMPRE un flip explícito posterior de esa columna — nunca un efecto
+colateral de activar el scheduler, y no requiere reescribir el sync.
 
 ### Ventana de sync configurable
 
