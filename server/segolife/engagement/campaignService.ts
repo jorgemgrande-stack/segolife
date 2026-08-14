@@ -121,7 +121,20 @@ export async function cancelCampaign(id: number, cancelledByUserId: number, db?:
   return (await getCampaign(id, conn))!;
 }
 
-/** Envía una campaña `manual` (o procesa una `scheduled` cuyo momento llegó) — crea 1 notification por (usuario × canal del mensaje). Idempotente: cada notification usa `campaign:<id>:<userId>:<channel>` como idempotency key. */
+// Communication Center (spec §29) — evita un burst de cientos/miles de
+// llamadas síncronas seguidas contra Brevo en la misma request/tick: se
+// procesa en lotes pequeños con una pausa corta entre lotes. No es una cola
+// real (Redis/SQS) — "la solución mínima segura" que pide el spec cuando no
+// existe ya una infraestructura de colas; suficiente para el volumen real
+// de esta plataforma (documentado, no una limitación oculta).
+const CAMPAIGN_BATCH_SIZE = 20;
+const CAMPAIGN_BATCH_DELAY_MS = 250;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Envía una campaña `manual` (o procesa una `scheduled` cuyo momento llegó) — crea 1 notification por (usuario × canal del mensaje), en lotes (spec §29). Idempotente: cada notification usa `campaign:<id>:<userId>:<channel>` como idempotency key. */
 export async function sendCampaignNow(id: number, db?: DbHandle): Promise<{ notified: number }> {
   const conn = db ?? (await getDb());
   const campaign = await getCampaign(id, conn);
@@ -145,23 +158,27 @@ export async function sendCampaignNow(id: number, db?: DbHandle): Promise<{ noti
 
   const messages = await getCampaignMessages(id, conn);
   let notified = 0;
-  for (const userId of userIds) {
-    for (const message of messages) {
-      const additionalChannels = message.channel === "in_app" ? [] : [message.channel];
-      await createNotification({
-        userId,
-        communityId: campaign.communityId,
-        type: "manual_announcement",
-        category: message.category,
-        audienceType: "marketing",
-        rendered: { titleEn: message.titleEn, titleEs: message.titleEs, bodyEn: message.bodyEn, bodyEs: message.bodyEs, deepLink: message.deepLink },
-        imageUrl: message.imageUrl,
-        campaignId: id,
-        idempotencyKey: `campaign:${id}:${userId}:${message.channel}`,
-        additionalChannels,
-      }, conn);
+  for (let i = 0; i < userIds.length; i += CAMPAIGN_BATCH_SIZE) {
+    const batch = userIds.slice(i, i + CAMPAIGN_BATCH_SIZE);
+    for (const userId of batch) {
+      for (const message of messages) {
+        const additionalChannels = message.channel === "in_app" ? [] : [message.channel];
+        await createNotification({
+          userId,
+          communityId: campaign.communityId,
+          type: "manual_announcement",
+          category: message.category,
+          audienceType: "marketing",
+          rendered: { titleEn: message.titleEn, titleEs: message.titleEs, bodyEn: message.bodyEn, bodyEs: message.bodyEs, deepLink: message.deepLink },
+          imageUrl: message.imageUrl,
+          campaignId: id,
+          idempotencyKey: `campaign:${id}:${userId}:${message.channel}`,
+          additionalChannels,
+        }, conn);
+      }
+      notified++;
     }
-    notified++;
+    if (i + CAMPAIGN_BATCH_SIZE < userIds.length) await sleep(CAMPAIGN_BATCH_DELAY_MS);
   }
 
   await conn.update(engagementCampaigns).set({ status: "completed", completedAt: new Date() }).where(eq(engagementCampaigns.id, id));

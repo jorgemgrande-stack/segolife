@@ -5378,6 +5378,12 @@ export const notificationDeliveries = mysqlTable("notification_deliveries", {
   failedAt:           timestamp("failed_at"),
   lastError:          varchar("last_error", { length: 512 }),
   externalMessageId:  varchar("external_message_id", { length: 191 }),
+  // Communication Center — Brevo webhook (spec §20). Timestamps separados de
+  // `status` a propósito: un email puede estar `delivered` Y abierto Y
+  // clicado — no son estados mutuamente excluyentes de una máquina de
+  // estados, son hechos que se acumulan sobre la misma entrega.
+  openedAt:           timestamp("opened_at"),
+  clickedAt:          timestamp("clicked_at"),
   createdAt:          timestamp("created_at").defaultNow().notNull(),
   updatedAt:          timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
@@ -5385,6 +5391,25 @@ export const notificationDeliveries = mysqlTable("notification_deliveries", {
 }));
 export type NotificationDelivery = typeof notificationDeliveries.$inferSelect;
 export type InsertNotificationDelivery = typeof notificationDeliveries.$inferInsert;
+
+// ─── EMAIL_SUPPRESSIONS (Communication Center, spec §21) ───────────────────────
+// Distinto de notification_preferences (opt-out de MARKETING, por elección
+// del Student) — esto es supresión TÉCNICA (la dirección en sí no es
+// entregable: hard bounce/blocked/spam), aplica a CUALQUIER envío
+// transactional o marketing por igual. Poblada por el webhook de Brevo.
+
+export const emailSuppressions = mysqlTable("email_suppressions", {
+  id:             int("id").autoincrement().primaryKey(),
+  email:          varchar("email", { length: 320 }).notNull(),
+  reason:         mysqlEnum("reason", ["hard_bounce", "blocked", "spam", "manual"]).notNull(),
+  source:         varchar("source", { length: 64 }).notNull(),
+  notes:          varchar("notes", { length: 512 }),
+  suppressedAt:   timestamp("suppressed_at").defaultNow().notNull(),
+}, (table) => ({
+  emailUnique: unique("email_suppressions_email_unique").on(table.email),
+}));
+export type EmailSuppression = typeof emailSuppressions.$inferSelect;
+export type InsertEmailSuppression = typeof emailSuppressions.$inferInsert;
 
 // ─── NOTIFICATION_PREFERENCES ─────────────────────────────────────────────────
 // (user_id, category, channel) → enabled. AUSENCIA de fila = default de

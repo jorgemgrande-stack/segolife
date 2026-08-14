@@ -38,9 +38,12 @@ function parseSender(raw: string): { name: string; email: string } {
 }
 
 // ─── Modo 1: Brevo HTTP API ───────────────────────────────────────────────────
-async function sendViaBrevoApi(params: MailParams): Promise<boolean> {
+
+export interface SendResult { success: boolean; messageId?: string; }
+
+async function sendViaBrevoApiTracked(params: MailParams): Promise<SendResult> {
   const apiKey = process.env.BREVO_API_KEY;
-  if (!apiKey) return false;
+  if (!apiKey) return { success: false };
 
   const noreplyEmail = getSystemSettingSync("email_noreply_sender", "");
   const brandName = getSystemSettingSync("brand_name", "Skicenter");
@@ -86,15 +89,15 @@ async function sendViaBrevoApi(params: MailParams): Promise<boolean> {
     if (res.ok) {
       const json = await res.json() as { messageId?: string };
       console.log(`[Mailer] ✓ Brevo API → ${Array.isArray(params.to) ? params.to.join(", ") : params.to} | messageId: ${json.messageId ?? "—"}`);
-      return true;
+      return { success: true, messageId: json.messageId };
     }
 
     const errText = await res.text();
     console.error(`[Mailer] ✗ Brevo API error ${res.status}: ${errText}`);
-    return false;
+    return { success: false };
   } catch (err) {
     console.error("[Mailer] ✗ Brevo API fetch error:", err);
-    return false;
+    return { success: false };
   }
 }
 
@@ -176,15 +179,28 @@ function mergeGlobalCc(params: MailParams): MailParams {
  * Devuelve true si el envío fue exitoso.
  */
 export async function sendEmail(params: MailParams): Promise<boolean> {
+  const result = await sendEmailTracked(params);
+  return result.success;
+}
+
+/**
+ * Igual que `sendEmail()`, pero devuelve el `messageId` de Brevo cuando
+ * existe — necesario para correlacionar el webhook de entrega/apertura/click
+ * (Communication Center, spec §20) con el envío original.
+ * `sendEmail()` sigue siendo la función que usan los ~15 módulos de negocio
+ * de Náyade/Skicenter — su contrato (booleano) no cambia; esta es aditiva.
+ */
+export async function sendEmailTracked(params: MailParams): Promise<SendResult> {
   const enriched = mergeGlobalCc(params);
 
   // Intentar primero con Brevo API
   if (process.env.BREVO_API_KEY) {
-    const ok = await sendViaBrevoApi(enriched);
-    if (ok) return true;
+    const result = await sendViaBrevoApiTracked(enriched);
+    if (result.success) return result;
     console.warn("[Mailer] Brevo API falló, intentando SMTP...");
   }
 
-  // Fallback SMTP
-  return sendViaSMTP(enriched);
+  // Fallback SMTP — sin messageId (Nodemailer no lo devuelve en un formato correlacionable con webhooks de Brevo)
+  const ok = await sendViaSMTP(enriched);
+  return { success: ok };
 }

@@ -44,6 +44,7 @@ import { getBenefitDefinitionBySlug, getBenefitDefinitionCommunities } from "../
 import { grantBenefit } from "../benefits/benefitGrantService";
 import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/benefitEvents";
 import { resolveHistoricalIdentityBestEffort } from "./historicalIdentityService";
+import { emitEngagementEvent } from "../engagement/engagementEvents";
 
 /**
  * Slug del beneficio de bienvenida (recomendación Student 360 §"Bienvenida
@@ -272,6 +273,13 @@ export async function registerStudent(input: RegisterStudentInput, db?: DbHandle
   // Fourvenues (spec §15) — cualquier otra confianza queda para revisión
   // manual en el directorio admin, nunca auto-link.
   await resolveHistoricalIdentityBestEffort(userId, email, phone);
+  // WELCOME_STUDENT (Communication Center, spec §27/§4) — este motor de
+  // negocio SOLO emite el evento tipado, nunca conoce notificationService.ts
+  // ni ningún provider (ver studentRegisteredListener.ts). emitEngagementEvent
+  // es fire-and-forget, síncrono y nunca lanza — no necesita su propio
+  // try/catch aquí (a diferencia de grantWelcomeBenefitBestEffort, que sí
+  // hace I/O real antes de fallar de forma segura).
+  emitEngagementEvent("student_registered", { userId, communityId: community.id, firstName });
 
   return { userId, name, email, role: "user", communitySlug: community.slug };
 }

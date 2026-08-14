@@ -16,9 +16,10 @@ import mysql from "mysql2/promise";
 import { notifications, notificationDeliveries, type Notification } from "../../../drizzle/schema";
 import { isChannelAllowed, type NotificationCategory, type NotificationChannel } from "./notificationPreferencesService";
 import { getProvider } from "./providers/providerRegistry";
-import type { RenderedTemplate } from "./templates";
+import { ENGAGEMENT_TEMPLATES, type RenderedTemplate } from "./templates";
 import { resolveCommunicationLocale, pickByLocale } from "./communicationLocale";
 import type { NotificationEmailMetadata } from "./notificationMetadata";
+import { resolveSenderByAdminCategory, resolveSenderByNotificationCategory, SENDER_IDENTITIES, type SenderIdentity } from "./senderRouting";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -58,6 +59,8 @@ export interface CreateNotificationInput {
    * hasta 1 minuto. Por defecto false (comportamiento Fase 7 original).
    */
   sendImmediately?: boolean;
+  /** Communication Center (spec §25) — envío manual (CRM/Student 360) con remitente elegido explícitamente por el admin; sin esto, el remitente se resuelve automáticamente por templateKey/category. */
+  senderOverride?: import("./senderRouting").SenderKey;
 }
 
 export type CreateNotificationResult =
@@ -74,6 +77,12 @@ export async function createNotification(input: CreateNotificationInput, db?: Db
   if (input.rendered.emailHtmlEn != null || input.rendered.emailHtmlEs != null) {
     metadata.emailHtml = { en: input.rendered.emailHtmlEn ?? null, es: input.rendered.emailHtmlEs ?? null };
     metadata.emailText = { en: input.rendered.emailTextEn ?? null, es: input.rendered.emailTextEs ?? null };
+  }
+  if (input.rendered.subjectEn != null || input.rendered.subjectEs != null) {
+    metadata.emailSubject = { en: input.rendered.subjectEn ?? null, es: input.rendered.subjectEs ?? null };
+  }
+  if (input.senderOverride) {
+    metadata.senderOverride = input.senderOverride;
   }
 
   const [insertResult] = await conn.insert(notifications).ignore().values({
@@ -116,16 +125,28 @@ export async function createNotification(input: CreateNotificationInput, db?: Db
   return { status: "created", notification };
 }
 
-/** Título/cuerpo/html/texto en el idioma correcto para ESTE destinatario — nunca hardcodear .titleEn/.bodyEn (ver communicationLocale.ts). */
+/** Remitente resuelto de forma centralizada (senderRouting.ts, spec §2) — 1) `senderOverride` explícito (envío manual CRM/Student 360, spec §25), 2) por templateKey (adminCategory, más preciso), 3) por category (fallback, cubre campañas manuales sin plantilla). Exportado: engagementScheduler.ts reutiliza esta misma función para las deliveries que procesa en su propio tick, nunca reimplementa el criterio de routing. */
+export function resolveSenderIdentity(notification: Notification): SenderIdentity {
+  const meta = (notification.metadata ?? {}) as NotificationEmailMetadata;
+  if (meta.senderOverride) return SENDER_IDENTITIES[meta.senderOverride];
+  const template = notification.templateKey ? ENGAGEMENT_TEMPLATES[notification.templateKey] : undefined;
+  if (template) return resolveSenderByAdminCategory(template.adminCategory);
+  return resolveSenderByNotificationCategory(notification.category);
+}
+
+/** Título/cuerpo/html/texto/asunto en el idioma correcto para ESTE destinatario — nunca hardcodear .titleEn/.bodyEn (ver communicationLocale.ts). */
 async function resolveLocalizedContent(notification: Notification, conn: DbHandle) {
   const locale = await resolveCommunicationLocale({ userId: notification.userId, communityId: notification.communityId }, conn);
   const meta = (notification.metadata ?? {}) as NotificationEmailMetadata;
+  const title = pickByLocale(locale, notification.titleEn, notification.titleEs);
   return {
     locale,
-    title: pickByLocale(locale, notification.titleEn, notification.titleEs),
+    title,
+    subject: meta.emailSubject ? pickByLocale(locale, meta.emailSubject.en, meta.emailSubject.es) : title,
     body: pickByLocale(locale, notification.bodyEn, notification.bodyEs),
     htmlBody: meta.emailHtml ? pickByLocale(locale, meta.emailHtml.en, meta.emailHtml.es) : null,
     plainTextBody: meta.emailText ? pickByLocale(locale, meta.emailText.en, meta.emailText.es) : null,
+    senderIdentity: resolveSenderIdentity(notification),
   };
 }
 
@@ -157,6 +178,8 @@ async function createAndProcessDelivery(
   const result = await provider.send({
     userId: notification.userId,
     title: content.title,
+    subject: content.subject,
+    senderIdentity: content.senderIdentity,
     body: content.body,
     htmlBody: content.htmlBody,
     plainTextBody: content.plainTextBody,

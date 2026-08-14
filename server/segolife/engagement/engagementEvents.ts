@@ -176,6 +176,21 @@ export interface EventCancelledPayload {
   eventId: number;
 }
 
+// ─── Communication Center — StudentRegistered (spec §27, WELCOME_STUDENT) ─────
+// `account_welcome` ya tenía plantilla EN/ES completa desde Fase 7/Communication
+// Center (templates.ts) con `triggerEvent: "StudentRegistered"` anticipado —
+// pero ningún emisor/listener real existía (confirmado por auditoría). Es el
+// único evento de esta lista que el spec propone explícitamente como
+// "claramente seguro y útil" para activar ya (spec §27), a diferencia de
+// EVENT_REMINDER/BENEFIT_EXPIRING (requieren un job programado, no un evento
+// síncrono — documentado como pendiente real, no construido esta fase).
+
+export interface StudentRegisteredPayload {
+  userId: number;
+  communityId: number;
+  firstName: string;
+}
+
 export interface EngagementDomainEvents {
   benefit_granted: BenefitGrantedPayload;
   benefit_expiring: BenefitExpiringPayload;
@@ -197,6 +212,7 @@ export interface EngagementDomainEvents {
   order_refunded: OrderRefundedPayload;
   event_updated: EventUpdatedPayload;
   event_cancelled: EventCancelledPayload;
+  student_registered: StudentRegisteredPayload;
 }
 
 export type EngagementEventType = keyof EngagementDomainEvents;

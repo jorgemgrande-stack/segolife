@@ -15,6 +15,7 @@ import { sendCampaignNow } from "./campaignService";
 import { getProvider } from "./providers/providerRegistry";
 import { resolveCommunicationLocale, pickByLocale } from "./communicationLocale";
 import type { NotificationEmailMetadata } from "./notificationMetadata";
+import { resolveSenderIdentity } from "./notificationService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -45,6 +46,8 @@ export async function processPendingDelivery(delivery: NotificationDelivery): Pr
   // inglés sin mirar la comunidad de origen.
   const locale = await resolveCommunicationLocale({ userId: notification.userId, communityId: notification.communityId }, _db);
   const meta = (notification.metadata ?? {}) as NotificationEmailMetadata;
+  const title = pickByLocale(locale, notification.titleEn, notification.titleEs);
+  const subject = meta.emailSubject ? pickByLocale(locale, meta.emailSubject.en, meta.emailSubject.es) : title;
 
   // Destinatario real resuelto AQUÍ, en el momento de la entrega (nunca
   // guardado en la notificación) — evita datos de contacto obsoletos en un
@@ -56,7 +59,9 @@ export async function processPendingDelivery(delivery: NotificationDelivery): Pr
 
   const result = await provider.send({
     userId: notification.userId,
-    title: pickByLocale(locale, notification.titleEn, notification.titleEs),
+    title,
+    subject,
+    senderIdentity: resolveSenderIdentity(notification),
     body: pickByLocale(locale, notification.bodyEn, notification.bodyEs),
     htmlBody: meta.emailHtml ? pickByLocale(locale, meta.emailHtml.en, meta.emailHtml.es) : null,
     plainTextBody: meta.emailText ? pickByLocale(locale, meta.emailText.en, meta.emailText.es) : null,

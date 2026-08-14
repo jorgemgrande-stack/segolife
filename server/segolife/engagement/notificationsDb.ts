@@ -89,3 +89,23 @@ export async function cancelDelivery(id: number, db?: DbHandle): Promise<void> {
   const conn = db ?? (await getDb());
   await conn.update(notificationDeliveries).set({ status: "cancelled" }).where(eq(notificationDeliveries.id, id));
 }
+
+// ─── STUDENT 360 — timeline de comunicaciones (spec §24) ────────────────────
+// Solo canal email tiene valor en el timeline unificado — in_app ya vive en
+// su propia inbox (Notifications.tsx), duplicarlo ahí sería ruido técnico.
+
+export interface StudentEmailDeliveryItem {
+  delivery: NotificationDelivery;
+  notification: Notification;
+}
+
+export async function listEmailDeliveriesByUserId(userId: number, limit = 300, db?: DbHandle): Promise<StudentEmailDeliveryItem[]> {
+  const conn = db ?? (await getDb());
+  const rows = await conn.select({ delivery: notificationDeliveries, notification: notifications })
+    .from(notificationDeliveries)
+    .innerJoin(notifications, eq(notificationDeliveries.notificationId, notifications.id))
+    .where(and(eq(notifications.userId, userId), eq(notificationDeliveries.channel, "email")))
+    .orderBy(desc(notificationDeliveries.createdAt))
+    .limit(limit);
+  return rows;
+}

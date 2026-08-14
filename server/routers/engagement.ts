@@ -16,11 +16,14 @@ import { ENGAGEMENT_TEMPLATES, renderTemplate } from "../segolife/engagement/tem
 import { getProvider } from "../segolife/engagement/providers/providerRegistry";
 import { createNotification } from "../segolife/engagement/notificationService";
 import { resolveWhatsappPolicy } from "../segolife/engagement/communicationChannelMatrix";
+import { SENDER_IDENTITIES, type SenderKey } from "../segolife/engagement/senderRouting";
 import { PREVIEW_VARIABLES_EN, PREVIEW_VARIABLES_ES } from "../segolife/engagement/templatePreviewData";
+import { listSuppressions, removeSuppression } from "../segolife/engagement/emailSuppressionService";
+import { getEngagementOverview } from "../segolife/engagement/engagementOverviewService";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { engagementCampaigns } from "../../drizzle/schema";
-import { desc } from "drizzle-orm";
+import { engagementCampaigns, users } from "../../drizzle/schema";
+import { desc, eq } from "drizzle-orm";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
 const _db = drizzle(_pool);
@@ -52,6 +55,9 @@ const audienceDefinitionSchema = z.object({
 });
 
 export const engagementRouter = router({
+  // ── Overview (spec §13) ──────────────────────────────────────────────────
+  getOverview: engagementViewProcedure.query(() => getEngagementOverview()),
+
   // ── Campaigns ─────────────────────────────────────────────────────────────
   listCampaigns: engagementViewProcedure.query(() =>
     _db.select().from(engagementCampaigns).orderBy(desc(engagementCampaigns.createdAt)).limit(100)
@@ -219,4 +225,53 @@ export const engagementRouter = router({
       });
       return { ok: true, notificationId: result.notification.id };
     }),
+
+  // ── CRM / Student 360 — envío manual a UN Student (spec §25) ───────────────
+  // Reutiliza createNotification() directamente — nunca un segundo "mail
+  // composer" ni un sendEmail directo. Contenido libre (no plantilla del
+  // catálogo): el admin escribe una vez, se usa igual para en/es — es un
+  // mensaje ad-hoc dirigido a una persona concreta, no contenido bilingüe
+  // versionado.
+  sendManualMessage: engagementSendProcedure
+    .input(z.object({
+      studentUserId: z.number().int().positive(),
+      subject: z.string().min(1).max(256),
+      body: z.string().min(1).max(8000),
+      senderKey: z.enum(["system", "human", "support", "community", "tickets", "partners"]).default("human"),
+      category: z.enum(["events", "rewards", "benefits", "promotions", "account"]).default("account"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [student] = await _db.select({ email: users.email }).from(users).where(eq(users.id, input.studentUserId)).limit(1);
+      if (!student) throw new TRPCError({ code: "NOT_FOUND", message: "Student no encontrado" });
+
+      const result = await createNotification({
+        userId: input.studentUserId,
+        communityId: null,
+        type: "crm_manual_message",
+        category: input.category,
+        audienceType: "transactional", // mensaje dirigido admin→Student concreto, no marketing masivo — siempre se entrega
+        rendered: {
+          titleEn: input.subject, titleEs: input.subject,
+          bodyEn: input.body, bodyEs: input.body,
+          deepLink: null,
+          subjectEn: input.subject, subjectEs: input.subject,
+        },
+        sourceType: "crm_manual",
+        sourceId: ctx.user.id,
+        idempotencyKey: `crm_manual:${input.studentUserId}:${ctx.user.id}:${Date.now()}`,
+        additionalChannels: ["email"],
+        sendImmediately: true,
+        recipient: { email: student.email ?? null },
+        senderOverride: input.senderKey as SenderKey,
+      });
+      return { ok: true, notificationId: result.notification.id, hadEmail: !!student.email };
+    }),
+
+  listSenderIdentities: engagementViewProcedure.query(() => Object.values(SENDER_IDENTITIES)),
+
+  // ── Suppression técnica (spec §21) ──────────────────────────────────────────
+  listSuppressions: engagementViewProcedure.query(() => listSuppressions(200)),
+  removeSuppression: engagementManageProcedure
+    .input(z.object({ email: z.string().email() }))
+    .mutation(async ({ input }) => { await removeSuppression(input.email); return { success: true }; }),
 });

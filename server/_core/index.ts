@@ -14,6 +14,7 @@ import { createAuthGuardMiddleware } from "../authGuard";
 import uploadRouter from "../uploadRoutes";
 import redsysRouter from "../redsysRoutes";
 import ticketPaymentWebhookRouter from "../ticketPaymentWebhookRoutes";
+import brevoWebhookRouter from "../brevoWebhookRoutes";
 import { metaCapiRouter } from "../metaCapiRoute";
 import settlementExportRouter from "../settlementExportRoutes";
 import invoicePreviewRouter from "../invoicePreviewRouter";
@@ -33,6 +34,7 @@ import { registerOrderRefundedListener } from "../segolife/engagement/orderRefun
 import { registerTicketCheckedInListener } from "../segolife/engagement/ticketCheckedInListener";
 import { registerTokensEarnedListener } from "../segolife/engagement/tokensEarnedListener";
 import { registerEventLifecycleListeners } from "../segolife/engagement/eventLifecycleListener";
+import { registerStudentRegisteredListener } from "../segolife/engagement/studentRegisteredListener";
 import { startEngagementScheduler, isEngagementDeliveryEnabled } from "../segolife/engagement/engagementScheduler";
 import { startEmailIngestionJob } from "../services/emailTpvIngestionService";
 import { startExpenseEmailIngestionJob } from "../services/expenseEmailIngestionService";
@@ -293,6 +295,8 @@ async function startServer() {
   app.use("/api/redsys/restaurant-notification", redsysRateLimit);
   // Mismo límite para el webhook de pago de ticketing nativo (spec §37 — mismo criterio de replay/fuzzing)
   app.use("/api/ticket-payments/webhook", redsysRateLimit);
+  // Communication Center — webhook de entrega de Brevo (spec §20/§29, mismo criterio de replay/fuzzing)
+  app.use("/api/engagement/brevo-webhook", redsysRateLimit);
 
   // Rate limiting en endpoint de subida de archivos (20 req/min por IP)
   app.use("/api/upload", uploadRateLimit);
@@ -332,6 +336,8 @@ async function startServer() {
   app.use(redsysRouter);
   // Native ticketing — payment webhook (SEGOLIFE — Native Ticket Sales, spec §10)
   app.use(ticketPaymentWebhookRouter);
+  // Communication Center — Brevo delivery webhook (spec §20)
+  app.use(brevoWebhookRouter);
   // Meta Conversions API proxy (recibe eventos del cliente para envío server-side)
   app.use(metaCapiRouter);
   // Settlement Excel export endpoint
@@ -748,6 +754,7 @@ verifyDatabaseConnectivity()
   .then(() => { registerTicketCheckedInListener(); })
   .then(() => { registerTokensEarnedListener(); })
   .then(() => { registerEventLifecycleListeners(); })
+  .then(() => { registerStudentRegisteredListener(); })
   .then(() => {
     if (isEngagementDeliveryEnabled()) {
       startEngagementScheduler();

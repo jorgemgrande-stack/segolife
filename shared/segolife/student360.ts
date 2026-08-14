@@ -35,7 +35,12 @@ export type TimelineEventType =
   // admin_action existentes, no se duplican.
   | "community_response"
   | "community_support"
-  | "community_proposal_submitted";
+  | "community_proposal_submitted"
+  // Communication Center (spec §24) — solo el canal email tiene valor real
+  // en el timeline (in_app ya tiene su propia inbox dedicada, ver
+  // Notifications.tsx — mostrarlo aquí también sería ruido duplicado, spec
+  // §24: "no contaminar el timeline con eventos técnicos irrelevantes").
+  | "communication_email";
 
 export interface TimelineEventDTO {
   /** Sintético: `${source}:${sourceRowId}` — único dentro de la ficha, no un id de BD real. */

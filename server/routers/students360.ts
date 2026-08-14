@@ -63,6 +63,7 @@ const timelineTypeEnum = z.enum([
   "benefit_granted", "benefit_used", "benefit_cancelled", "internal_note",
   "tag_assigned", "login", "admin_action",
   "community_response", "community_support", "community_proposal_submitted",
+  "communication_email",
 ]);
 
 export const students360Router = router({

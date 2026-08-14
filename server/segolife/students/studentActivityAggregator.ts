@@ -28,6 +28,7 @@ import { listLoginEventsByUserId } from "./studentLoginEventsDb";
 import { listAdminActionsByStudentProfileId } from "./studentAdminActionsDb";
 import { listResponsesByUserId } from "../community/communityResponseService";
 import { listSupportsByUserId, listStudentProposalsByUserId } from "../community/communityStudentProposalDb";
+import { listEmailDeliveriesByUserId } from "../engagement/notificationsDb";
 import type { TimelineEventDTO, TimelineFilters, TimelineCursor, TimelinePage } from "../../../shared/segolife/student360";
 
 const SOURCE_FETCH_LIMIT = 300;
@@ -51,7 +52,7 @@ export async function getStudentActivitySnapshot(userId: number, studentProfileI
 }
 
 async function collectAllEvents(userId: number, studentProfileId: number): Promise<TimelineEventDTO[]> {
-  const [tickets, attendance, commerce, qrRedemptions, ledger, benefits, notes, tagEvents, logins, adminActions, communityResponses, communitySupports, communityStudentProposals] =
+  const [tickets, attendance, commerce, qrRedemptions, ledger, benefits, notes, tagEvents, logins, adminActions, communityResponses, communitySupports, communityStudentProposals, emailDeliveries] =
     await Promise.all([
       listMyTickets(userId),
       listAttendanceByUserId(userId),
@@ -66,6 +67,7 @@ async function collectAllEvents(userId: number, studentProfileId: number): Promi
       listResponsesByUserId(userId, SOURCE_FETCH_LIMIT),
       listSupportsByUserId(userId, SOURCE_FETCH_LIMIT),
       listStudentProposalsByUserId(userId, SOURCE_FETCH_LIMIT),
+      listEmailDeliveriesByUserId(userId, SOURCE_FETCH_LIMIT),
     ]);
 
   const events: TimelineEventDTO[] = [];
@@ -166,6 +168,36 @@ async function collectAllEvents(userId: number, studentProfileId: number): Promi
       venueName: qr.venueName,
       eventName: null,
       metadata: { quantity: qr.quantity },
+    });
+  }
+
+  // ── Comunicaciones (email) ───────────────────────────────────────────────
+  // Solo email — in_app ya tiene su propia inbox (Notifications.tsx), no se
+  // duplica aquí (spec §24, "no contaminar el timeline con eventos técnicos
+  // irrelevantes"). Un fallo/omisión (skipped) también se muestra — un admin
+  // viendo por qué un Student "no recibió" el email debe poder verlo aquí.
+  for (const { delivery, notification } of emailDeliveries) {
+    events.push({
+      id: `communication_email:${delivery.id}`,
+      occurredAt: toIso(delivery.sentAt ?? delivery.createdAt)!,
+      type: "communication_email",
+      title: notification.titleEs || notification.titleEn,
+      description: null,
+      source: "notification_deliveries",
+      amountCents: null,
+      tokens: null,
+      venueName: null,
+      eventName: null,
+      metadata: {
+        notificationId: notification.id,
+        templateKey: notification.templateKey,
+        status: delivery.status,
+        deliveredAt: toIso(delivery.deliveredAt),
+        openedAt: toIso(delivery.openedAt),
+        clickedAt: toIso(delivery.clickedAt),
+        failedAt: toIso(delivery.failedAt),
+        lastError: delivery.lastError,
+      },
     });
   }
 

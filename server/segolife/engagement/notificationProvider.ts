@@ -4,11 +4,16 @@
  * recibe un mensaje ya resuelto y devuelve un resultado de entrega.
  */
 import type { ChannelCapabilities } from "./capabilities";
+import type { SenderIdentity } from "./senderRouting";
 
 export interface OutboundMessage {
   userId: number;
   title: string;
   body: string;
+  /** Asunto de email específico (subjectEn/Es de la plantilla) — si falta, el provider cae a `title` (spec §10, Communication Center). Otros canales lo ignoran. */
+  subject?: string | null;
+  /** Remitente resuelto centralmente (senderRouting.ts, spec §2) — el provider de email nunca decide el remitente por sí mismo. Otros canales lo ignoran. */
+  senderIdentity?: SenderIdentity | null;
   deepLink: string | null;
   imageUrl: string | null;
   /**
