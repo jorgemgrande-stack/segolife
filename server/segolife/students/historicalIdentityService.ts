@@ -359,6 +359,22 @@ export interface ClaimResult {
  * legacy `integrations.linkUnresolved`, que NO pasa este flag — ver
  * hallazgo documentado en el informe final; no se toca ese código legacy en
  * esta fase, pero este motor nunca hereda su comportamiento).
+ *
+ * DEFERRED POST-CUTOFF REWARD — BACKLOG (SegoTokens Live Activation, spec
+ * §7): esta función NUNCA distingue si la operación reclamada es anterior o
+ * posterior a `LIVE_ACTIVATED_AT` — `suppressLoyalty:true` es incondicional
+ * a propósito (ver arriba). Esto es CORRECTO para el caso pre-cutoff (nunca
+ * debe cobrar) pero es DELIBERADAMENTE CONSERVADOR para el caso "operación
+ * post-cutoff elegible, pero el Student resuelve su identidad más tarde":
+ * hoy ese reward NUNCA se concede, ni siquiera diferido. Construir un
+ * pago diferido seguro e idempotente (detectar businessOccurredAt >= cutoff,
+ * reutilizar earnTokens() con idempotencyKey basada en el hecho de negocio
+ * real, nunca en el momento del claim) es una pieza nueva no trivial que
+ * esta fase decide NO construir (spec: "si la infraestructura actual no
+ * permite hacerlo de forma segura, no construir un sistema complejo — no
+ * bloquea LIVE"). Impacto real esperado: bajo — requiere que exista tráfico
+ * post-cutoff Y que su Student reclame identidad histórica en vez de haber
+ * comprado/asistido ya autenticado.
  */
 export async function claimHistoricalIdentity(
   input: { identityKey: string; userId: number; actorUserId: number; method: string; reason?: string | null },
