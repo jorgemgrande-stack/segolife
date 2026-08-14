@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { eq, asc } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, permissionProcedure } from "../_core/trpc";
 import { getCommunityAccess } from "../_core/communityAccess";
@@ -24,10 +25,14 @@ import {
   addVenueStaff,
   removeVenueStaff,
   getVenueBenefitStats,
+  listMarketplaceBenefits,
+  getMarketplaceBenefitById,
 } from "../db/benefitsDb";
 import { grantBenefit, cancelBenefit, expireBenefitIfNeeded, BenefitError } from "../segolife/benefits/benefitGrantService";
 import { redeemBenefit } from "../segolife/benefits/benefitRedemptionService";
 import { emitBenefitGranted, buildBenefitGrantedPayload } from "../segolife/benefits/benefitEvents";
+import { purchaseBenefitWithTokens, BenefitPurchaseError } from "../segolife/benefits/benefitPurchaseService";
+import { ensureWallet } from "../segolife/tokens/tokenLedgerService";
 
 const benefitsViewProcedure = permissionProcedure("benefits.view", ["admin"]);
 const benefitsManageProcedure = permissionProcedure("benefits.manage", ["admin"]);
@@ -76,6 +81,14 @@ const definitionInputSchema = z.object({
   descriptionEs: z.string().max(4000).nullish(),
   termsEn: z.string().max(8000).nullish(),
   termsEs: z.string().max(8000).nullish(),
+  // SEGOLIFE — Benefits Marketplace & SegoTokens Redemption (spec §6/§9).
+  tokenCost: z.number().int().positive().nullish(),
+  isMarketplaceEnabled: z.boolean().default(false),
+  marketplaceInventoryTotal: z.number().int().positive().nullish(),
+  perStudentPurchaseLimit: z.number().int().positive().nullish(),
+  purchaseWindowStart: z.coerce.date().nullish(),
+  purchaseWindowEnd: z.coerce.date().nullish(),
+  redemptionValidityDays: z.number().int().positive().nullish(),
 });
 
 const ruleInputSchema = z.object({
@@ -109,6 +122,17 @@ const ruleInputSchema = z.object({
   oncePerOrigin: z.boolean().default(false),
   oncePerRule: z.boolean().default(false),
 });
+
+/** Resuelve la comunidad real del Student (primera por antigüedad, mismo criterio que ticketPurchasedListener.ts/notifyProposalPublished) — nunca inferida por venue/email. */
+async function resolveMyCommunityId(userId: number): Promise<number | null> {
+  const { getDb } = await import("../db");
+  const { userCommunities } = await import("../../drizzle/schema");
+  const db = await getDb();
+  if (!db) return null;
+  const [membership] = await db.select({ communityId: userCommunities.communityId })
+    .from(userCommunities).where(eq(userCommunities.userId, userId)).orderBy(asc(userCommunities.joinedAt)).limit(1);
+  return membership?.communityId ?? null;
+}
 
 export const benefitsRouter = router({
   // ─── ADMIN — definiciones ───────────────────────────────────────────────────
@@ -320,6 +344,75 @@ export const benefitsRouter = router({
         status: resolved.status,
         qrToken: isCurrentlyValid ? benefit.qrToken : null,
       };
+    }),
+
+  // ─── ESTUDIANTE — Marketplace (SEGOLIFE Benefits Marketplace & SegoTokens Redemption) ──
+
+  /** Catálogo — solo lo que ES marketplace, activo y elegible para la comunidad real del Student (spec §13, decisión siempre server-side). Incluye el saldo actual para que el frontend pueda mostrar "te faltan XX ST" sin ocultar el Benefit (spec §14). */
+  marketplaceList: protectedProcedure.query(async ({ ctx }) => {
+    const communityId = await resolveMyCommunityId(ctx.user.id);
+    const [items, wallet] = await Promise.all([
+      listMarketplaceBenefits({ userId: ctx.user.id, communityId }),
+      ensureWallet(ctx.user.id),
+    ]);
+    return { items, walletBalance: wallet.balance };
+  }),
+
+  marketplaceGetById: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ input, ctx }) => {
+      const communityId = await resolveMyCommunityId(ctx.user.id);
+      const [item, wallet] = await Promise.all([
+        getMarketplaceBenefitById(input.id, { userId: ctx.user.id, communityId }),
+        ensureWallet(ctx.user.id),
+      ]);
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Beneficio no encontrado" });
+      return { item, walletBalance: wallet.balance };
+    }),
+
+  /**
+   * Canje real (spec §15/§16) — transacción única: valida + debita SegoTokens
+   * + concede el Benefit, o nada. `idempotencyKey` la genera el cliente por
+   * cada pulsación de "Canjear" (spec §19) — un doble-click/retry de red
+   * reenvía la MISMA clave y nunca vuelve a cobrar.
+   */
+  purchase: protectedProcedure
+    .input(z.object({ benefitDefinitionId: z.number().int().positive(), idempotencyKey: z.string().min(8).max(191) }))
+    .mutation(async ({ input, ctx }) => {
+      const communityId = await resolveMyCommunityId(ctx.user.id);
+      try {
+        const result = await purchaseBenefitWithTokens({
+          userId: ctx.user.id,
+          benefitDefinitionId: input.benefitDefinitionId,
+          communityId,
+          idempotencyKey: input.idempotencyKey,
+        });
+        if (result.created) {
+          const definition = await getBenefitDefinitionById(input.benefitDefinitionId);
+          if (definition) emitBenefitGranted(buildBenefitGrantedPayload(result.userBenefit, definition));
+        }
+        return {
+          success: true,
+          userBenefitId: result.userBenefit.id,
+          walletBalance: result.walletBalance,
+        };
+      } catch (err) {
+        if (err instanceof BenefitPurchaseError) {
+          const codeMap: Record<string, "NOT_FOUND" | "BAD_REQUEST" | "CONFLICT" | "FORBIDDEN"> = {
+            NOT_FOUND: "NOT_FOUND",
+            NOT_MARKETPLACE_ENABLED: "BAD_REQUEST",
+            INACTIVE: "BAD_REQUEST",
+            NOT_YET_AVAILABLE: "BAD_REQUEST",
+            PURCHASE_WINDOW_ENDED: "BAD_REQUEST",
+            NOT_ELIGIBLE_COMMUNITY: "FORBIDDEN",
+            LIMIT_EXCEEDED: "CONFLICT",
+            OUT_OF_STOCK: "CONFLICT",
+            INSUFFICIENT_BALANCE: "BAD_REQUEST",
+          };
+          throw new TRPCError({ code: codeMap[err.code] ?? "BAD_REQUEST", message: err.message, cause: err });
+        }
+        throw err;
+      }
     }),
 
   /** Venues donde este usuario puede validar Benefits — "all" = admin global (el frontend usa venues.publicActive como selector completo). */

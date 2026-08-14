@@ -4558,6 +4558,19 @@ export const benefitDefinitions = mysqlTable("benefit_definitions", {
   descriptionEs:        text("description_es"),
   termsEn:              text("terms_en"),
   termsEs:              text("terms_es"),
+  // SEGOLIFE — Benefits Marketplace & SegoTokens Redemption: columnas
+  // aditivas, TODAS nullable/con default seguro — una definición histórica
+  // (automática, concedida por benefit_rules) NUNCA aparece accidentalmente
+  // en el marketplace solo porque tokenCost sea NULL/0 (spec §67) — la
+  // condición explícita es `isMarketplaceEnabled=true` AND `tokenCost>0`,
+  // nunca una sola de las dos por separado.
+  tokenCost:                 int("token_cost"), // SegoTokens que cuesta canjear — NULL/0 = no comprable con tokens.
+  isMarketplaceEnabled:      boolean("is_marketplace_enabled").notNull().default(false), // flag EXPLÍCITO — ver spec §67, nunca inferir de tokenCost.
+  marketplaceInventoryTotal: int("marketplace_inventory_total"), // NULL = stock ilimitado. Comprometido se cuenta en caliente sobre user_benefits (mismo criterio que inventoryHoldService.ts de Native Ticketing) — nunca un contador mutable aparte.
+  perStudentPurchaseLimit:   int("per_student_purchase_limit"), // NULL = sin límite por Student.
+  purchaseWindowStart:       timestamp("purchase_window_start"), // cuándo puede EMPEZAR a comprarse en el marketplace (NULL = ya disponible).
+  purchaseWindowEnd:         timestamp("purchase_window_end"), // cuándo deja de poder comprarse (NULL = sin fin programado).
+  redemptionValidityDays:    int("redemption_validity_days"), // días desde la compra hasta que el user_benefit adquirido expira (NULL = sin caducidad) — distinto de purchaseWindow*, que regula cuándo se puede COMPRAR, no cuánto dura lo comprado.
   createdAt:            timestamp("created_at").defaultNow().notNull(),
   updatedAt:            timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({

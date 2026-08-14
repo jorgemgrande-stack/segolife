@@ -7,7 +7,7 @@
  */
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { eq, and, inArray, desc, type SQL } from "drizzle-orm";
+import { eq, and, ne, inArray, desc, type SQL } from "drizzle-orm";
 import {
   benefitDefinitions,
   benefitCommunities,
@@ -26,6 +26,9 @@ import {
   type BenefitRedemptionAttempt,
   type VenueStaff,
 } from "../../drizzle/schema";
+
+/** Origen de una concesión pagada con SegoTokens (spec §7/§34) — inequívocamente distinto de un origen automático (consumption/ticket/event_attendance/manual). Definido aquí (capa de datos) e importado por benefitPurchaseService.ts, nunca al revés. */
+export const TOKEN_PURCHASE_SOURCE_TYPE = "token_purchase";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -84,6 +87,84 @@ export async function setBenefitDefinitionActive(id: number, active: boolean, db
   await conn.update(benefitDefinitions).set({ active }).where(eq(benefitDefinitions.id, id));
   const [updated] = await conn.select().from(benefitDefinitions).where(eq(benefitDefinitions.id, id)).limit(1);
   return updated ?? null;
+}
+
+// ─── MARKETPLACE (SEGOLIFE — Benefits Marketplace & SegoTokens Redemption) ──
+// Solo LECTURA — la escritura real (compra atómica) vive en
+// benefitPurchaseService.ts, nunca aquí. Elegibilidad SIEMPRE server-side
+// (spec §13): el frontend nunca decide qué se muestra ni si se puede
+// comprar, solo renderiza lo que esta capa ya decidió.
+
+export interface MarketplaceBenefitItem extends BenefitDefinition {
+  /** null = stock ilimitado. */
+  available: number | null;
+  /** Cuántas veces YA compró este Student este beneficio (no canceladas). */
+  ownedCount: number;
+  /** Derivado server-side — nunca una columna nueva de estado (spec §67/§10: reutilizar `active` + ventanas calculadas). */
+  marketplaceStatus: "available" | "sold_out" | "limit_reached" | "not_yet_available" | "ended";
+}
+
+interface MarketplaceEligibilityContext {
+  userId: number;
+  /** "all" cuando el Student no tiene comunidad resuelta (nunca debería pasar en producción, pero nunca se asume) — trata como sin comunidad, solo ve beneficios globales. */
+  communityId: number | null;
+}
+
+function computeMarketplaceStatus(def: BenefitDefinition, available: number | null, ownedCount: number, now: Date): MarketplaceBenefitItem["marketplaceStatus"] {
+  if (def.purchaseWindowStart && def.purchaseWindowStart > now) return "not_yet_available";
+  if (def.purchaseWindowEnd && def.purchaseWindowEnd < now) return "ended";
+  if (def.perStudentPurchaseLimit != null && ownedCount >= def.perStudentPurchaseLimit) return "limit_reached";
+  if (available != null && available <= 0) return "sold_out";
+  return "available";
+}
+
+/** Catálogo del marketplace para UN Student — solo `active=true` + `isMarketplaceEnabled=true` + elegible por comunidad (spec §13). Nunca expone definiciones automáticas-solo (isMarketplaceEnabled=false). */
+export async function listMarketplaceBenefits(ctx: MarketplaceEligibilityContext, db?: DbHandle): Promise<MarketplaceBenefitItem[]> {
+  const conn = db ?? (await getDb());
+  const now = new Date();
+
+  const definitions = await conn.select().from(benefitDefinitions)
+    .where(and(eq(benefitDefinitions.active, true), eq(benefitDefinitions.isMarketplaceEnabled, true)))
+    .orderBy(desc(benefitDefinitions.createdAt));
+  if (definitions.length === 0) return [];
+
+  const scopedRows = await conn.select({ benefitDefinitionId: benefitCommunities.benefitDefinitionId, communityId: benefitCommunities.communityId })
+    .from(benefitCommunities).where(inArray(benefitCommunities.benefitDefinitionId, definitions.map(d => d.id)));
+  const scopesByDefinition = new Map<number, number[]>();
+  for (const row of scopedRows) {
+    const list = scopesByDefinition.get(row.benefitDefinitionId) ?? [];
+    list.push(row.communityId);
+    scopesByDefinition.set(row.benefitDefinitionId, list);
+  }
+
+  const eligible = definitions.filter(d => {
+    const scopes = scopesByDefinition.get(d.id);
+    if (!scopes || scopes.length === 0) return true; // global
+    return ctx.communityId != null && scopes.includes(ctx.communityId);
+  });
+  if (eligible.length === 0) return [];
+
+  const purchaseRows = await conn.select({ benefitDefinitionId: userBenefits.benefitDefinitionId, userId: userBenefits.userId })
+    .from(userBenefits)
+    .where(and(
+      inArray(userBenefits.benefitDefinitionId, eligible.map(d => d.id)),
+      eq(userBenefits.sourceType, TOKEN_PURCHASE_SOURCE_TYPE),
+      ne(userBenefits.status, "cancelled"),
+    ));
+
+  return eligible.map(def => {
+    const totalPurchased = purchaseRows.filter(r => r.benefitDefinitionId === def.id).length;
+    const ownedCount = purchaseRows.filter(r => r.benefitDefinitionId === def.id && r.userId === ctx.userId).length;
+    const available = def.marketplaceInventoryTotal != null ? Math.max(0, def.marketplaceInventoryTotal - totalPurchased) : null;
+    return { ...def, available, ownedCount, marketplaceStatus: computeMarketplaceStatus(def, available, ownedCount, now) };
+  });
+}
+
+/** Detalle de UN item del marketplace — misma elegibilidad que listMarketplaceBenefits, null si no existe/no está en el marketplace/no es elegible para esta comunidad (nunca revela la existencia de un beneficio de otra comunidad — mismo criterio 404-no-403 que getMyBenefit). */
+export async function getMarketplaceBenefitById(id: number, ctx: MarketplaceEligibilityContext, db?: DbHandle): Promise<MarketplaceBenefitItem | null> {
+  const conn = db ?? (await getDb());
+  const items = await listMarketplaceBenefits(ctx, conn);
+  return items.find(i => i.id === id) ?? null;
 }
 
 export async function getBenefitDefinitionCommunities(benefitDefinitionId: number, db?: DbHandle): Promise<number[]> {
