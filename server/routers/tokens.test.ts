@@ -114,6 +114,12 @@ describe("tokens router — dashboard (admin) rechaza sin sesión", () => {
   });
 });
 
+describe("tokens router — SEGOTOKENS ECONOMY: Rule Preview (spec §26) rechaza sin sesión", () => {
+  it("tokens.previewReward rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().previewReward({ userId: 42, origin: "attendance" })).rejects.toThrow(/please login/i);
+  });
+});
+
 describe("tokens router — autoservicio del estudiante (nunca público) rechaza sin sesión", () => {
   it("tokens.getMyWallet rechaza sin sesión", async () => {
     await expect(callerWithoutSession().getMyWallet()).rejects.toThrow(/please login/i);

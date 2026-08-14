@@ -41,6 +41,8 @@ import {
   setScheduleActive,
 } from "../segolife/tokens/tokenScheduleService";
 import { getActivationReadinessSnapshot } from "../segolife/tokens/activationReadinessService";
+import { getEconomyOverviewExtras } from "../segolife/tokens/economyOverviewService";
+import { evaluateReward } from "../segolife/tokens/rewardEngine";
 
 const tokensViewProcedure = permissionProcedure("tokens.view", ["admin"]);
 const tokensManageProcedure = permissionProcedure("tokens.manage", ["admin"]);
@@ -310,11 +312,12 @@ export const tokensRouter = router({
   // ─── ADMIN — dashboard ──────────────────────────────────────────────────────
 
   dashboardSummary: tokensViewProcedure.query(async () => {
-    const [rules, campaigns, stats, recentMovements] = await Promise.all([
+    const [rules, campaigns, stats, recentMovements, extras] = await Promise.all([
       listTokenRules(),
       listTokenCampaigns(),
       getGlobalTokenStats(),
       listRecentLedgerGlobal(20),
+      getEconomyOverviewExtras(),
     ]);
     return {
       ...stats,
@@ -323,6 +326,9 @@ export const tokensRouter = router({
       totalRulesCount: rules.length,
       totalCampaignsCount: campaigns.length,
       recentMovements,
+      ...extras,
+      // Estimación analítica (spec §9) — nunca cash value, nunca altera lo que gana un Student.
+      estimatedPromotionalLiabilityCents: stats.totalBalance * extras.estimatedTokenValueCents,
     };
   }),
 
@@ -330,6 +336,31 @@ export const tokensRouter = router({
   activationReadiness: tokensViewProcedure.query(async () => {
     return getActivationReadinessSnapshot();
   }),
+
+  /**
+   * SEGOTOKENS ECONOMY (spec §26) — Rule Preview/Simulador. SIEMPRE vía
+   * evaluateReward(ctx, "SIMULATION") real — nunca una calculadora paralela
+   * en el frontend. Requiere un Student real (userId) para que los
+   * topes/recurrencia se calculen contra su historial real de token_ledger
+   * — sin esto, cualquier preview de topes/recurrencia sería ficticio.
+   * SIMULATION nunca persiste nada (mismo motor que usa Shadow).
+   */
+  previewReward: tokensViewProcedure
+    .input(z.object({
+      userId: z.number().int().positive(),
+      origin: z.enum(["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign"]),
+      venueId: z.number().int().positive().optional(),
+      eventId: z.number().int().positive().optional(),
+      communityId: z.number().int().positive().optional(),
+      amountSpent: z.number().nonnegative().optional(),
+    }))
+    .query(async ({ input }) => {
+      const result = await evaluateReward({
+        userId: input.userId, origin: input.origin, venueId: input.venueId ?? null, eventId: input.eventId ?? null,
+        communityId: input.communityId ?? null, amountSpent: input.amountSpent,
+      }, "SIMULATION");
+      return result.explanation;
+    }),
 
   // ─── AUTOSERVICIO DEL ESTUDIANTE ────────────────────────────────────────────
 
