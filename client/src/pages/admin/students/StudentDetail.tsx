@@ -10,12 +10,15 @@ import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   ArrowLeft, Loader2, GraduationCap, MapPin, Tag as TagIcon,
   StickyNote, Plus, X, Pencil, Trash2, Ticket, CalendarCheck, ShoppingBag,
   QrCode, Coins, Gift, Bell, User, ShieldCheck, ChevronDown, ChevronUp,
-  TrendingUp, AlertTriangle, Info, LogIn, History, MessageCircle, Heart, Lightbulb, Archive,
+  TrendingUp, AlertTriangle, Info, LogIn, History, MessageCircle, Heart, Lightbulb, Archive, Send,
 } from "lucide-react";
 import type { TimelineEventDTO, TimelineEventType, TimelineCursor } from "@shared/segolife/student360";
 import type { StudentDetail as StudentDetailData } from "../../../../../server/db/studentsDb";
@@ -96,6 +99,7 @@ const TIMELINE_META: Record<TimelineEventType, { icon: React.ElementType; label:
   community_response: { icon: MessageCircle, label: "Respuesta en COMUNITY" },
   community_support: { icon: Heart, label: "Apoyo a una idea" },
   community_proposal_submitted: { icon: Lightbulb, label: "Idea propuesta" },
+  communication_email: { icon: Send, label: "Email" },
 };
 
 function TimelineRow({ event }: { event: TimelineEventDTO }) {
@@ -603,14 +607,67 @@ function BenefitsTab({ studentProfileId, userId }: { studentProfileId: number; u
 
 // ─── Pestaña: Engagement ────────────────────────────────────────────────────
 
-function EngagementTab({ studentProfileId }: { studentProfileId: number }) {
+function SendMessageDialog({ userId, open, onOpenChange }: { userId: number; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const utils = trpc.useUtils();
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [senderKey, setSenderKey] = useState("human");
+  const { data: senders } = trpc.engagement.listSenderIdentities.useQuery();
+
+  const sendMut = trpc.engagement.sendManualMessage.useMutation({
+    onSuccess: (res) => {
+      toast.success(res.hadEmail ? "Mensaje enviado" : "Mensaje registrado (el Student no tiene email)");
+      utils.students360.getEngagement.invalidate();
+      setSubject(""); setBody(""); onOpenChange(false);
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle>Enviar mensaje al Student</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-2">
+          <div>
+            <Label>Remitente</Label>
+            <Select value={senderKey} onValueChange={setSenderKey}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {(senders ?? []).map(s => <SelectItem key={s.key} value={s.key}>{s.name} ({s.email})</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div><Label>Asunto</Label><Input value={subject} onChange={e => setSubject(e.target.value)} placeholder="Asunto del email" /></div>
+          <div><Label>Mensaje</Label><Textarea rows={5} value={body} onChange={e => setBody(e.target.value)} placeholder="Contenido del mensaje…" /></div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button
+            disabled={!subject.trim() || !body.trim() || sendMut.isPending}
+            onClick={() => sendMut.mutate({ studentUserId: userId, subject: subject.trim(), body: body.trim(), senderKey: senderKey as any, category: "account" })}
+          >
+            {sendMut.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
+            Enviar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EngagementTab({ studentProfileId, userId }: { studentProfileId: number; userId: number }) {
   const { data, isLoading } = trpc.students360.getEngagement.useQuery({ studentProfileId });
+  const [sendOpen, setSendOpen] = useState(false);
   if (isLoading) return <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
   const notifications = data?.notifications ?? [];
   const preferences = data?.preferences ?? [];
 
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button size="sm" onClick={() => setSendOpen(true)}><Send className="w-4 h-4 mr-2" /> Enviar mensaje</Button>
+      </div>
+      <SendMessageDialog userId={userId} open={sendOpen} onOpenChange={setSendOpen} />
       <div className="bg-card border border-border rounded-lg p-4">
         <p className="text-sm font-semibold text-foreground mb-3">Notificaciones in-app</p>
         <p className="text-xs text-muted-foreground mb-3">
@@ -996,7 +1053,7 @@ export default function StudentDetail() {
           <TabsContent value="consumo"><ConsumptionTab studentProfileId={studentProfileId} /></TabsContent>
           <TabsContent value="segotokens"><StudentTokensTab userId={student.profile.userId} /></TabsContent>
           <TabsContent value="benefits"><BenefitsTab studentProfileId={studentProfileId} userId={student.profile.userId} /></TabsContent>
-          <TabsContent value="engagement"><EngagementTab studentProfileId={studentProfileId} /></TabsContent>
+          <TabsContent value="engagement"><EngagementTab studentProfileId={studentProfileId} userId={student.profile.userId} /></TabsContent>
           <TabsContent value="historico"><HistoricalTab studentProfileId={studentProfileId} /></TabsContent>
           <TabsContent value="perfil"><ProfileTab student={student} studentProfileId={studentProfileId} allTags={allTags ?? []} /></TabsContent>
           <TabsContent value="notas"><NotesTab studentProfileId={studentProfileId} /></TabsContent>

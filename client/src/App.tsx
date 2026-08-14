@@ -193,6 +193,7 @@ const StudentScan = lazy(() => import("./pages/segolife/StudentScan"));
 
 // Segolife: Motor de Benefits (Fase 4)
 const BenefitsManager = lazy(() => import("./pages/admin/benefits/BenefitsManager"));
+const EngagementOverview = lazy(() => import("./pages/admin/engagement/EngagementOverview"));
 const EngagementCampaignsManager = lazy(() => import("./pages/admin/engagement/CampaignsManager"));
 const EngagementNotificationsLog = lazy(() => import("./pages/admin/engagement/NotificationsLog"));
 const EngagementDeliveriesLog = lazy(() => import("./pages/admin/engagement/DeliveriesLog"));
@@ -514,6 +515,7 @@ function Router() {
       <Route path="/admin/tokens/shadow">{() => <Suspense fallback={<AdminLoadingFallback />}><LoyaltyShadow /></Suspense>}</Route>
       <Route path="/admin/qr">{() => <Suspense fallback={<AdminLoadingFallback />}><QrManager /></Suspense>}</Route>
       <Route path="/admin/benefits">{() => <Suspense fallback={<AdminLoadingFallback />}><BenefitsManager /></Suspense>}</Route>
+      <Route path="/admin/engagement/overview">{() => <Suspense fallback={<AdminLoadingFallback />}><EngagementOverview /></Suspense>}</Route>
       <Route path="/admin/engagement/campaigns">{() => <Suspense fallback={<AdminLoadingFallback />}><EngagementCampaignsManager /></Suspense>}</Route>
       <Route path="/admin/engagement/notifications">{() => <Suspense fallback={<AdminLoadingFallback />}><EngagementNotificationsLog /></Suspense>}</Route>
       <Route path="/admin/engagement/deliveries">{() => <Suspense fallback={<AdminLoadingFallback />}><EngagementDeliveriesLog /></Suspense>}</Route>

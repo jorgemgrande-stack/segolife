@@ -111,11 +111,12 @@ const navItems = [
     roles: ["admin"],
   },
   {
-    label: "Engagement",
-    href: "/admin/engagement/campaigns",
+    label: "Communication Center",
+    href: "/admin/engagement/overview",
     icon: Bell,
     roles: ["admin"],
     children: [
+      { label: "Overview", href: "/admin/engagement/overview" },
       { label: "Campañas", href: "/admin/engagement/campaigns" },
       { label: "Notificaciones", href: "/admin/engagement/notifications" },
       { label: "Entregas", href: "/admin/engagement/deliveries" },
@@ -339,7 +340,7 @@ const navItems = [
       { label: "Datos del negocio",   href: "/admin/configuracion/sitio" },
       { label: "Estado del sistema",  href: "/admin/configuracion/estado" },
       { label: "Onboarding",          href: "/admin/onboarding" },
-      { label: "Communication Center", href: "/admin/plantillas-email" },
+      { label: "Plantillas (legacy)", href: "/admin/plantillas-email" },
       { label: "Cuentas de Email", href: "/admin/configuracion/email", flagKey: "commercial_email_enabled" },
     ],
   },
