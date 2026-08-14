@@ -4291,6 +4291,84 @@ export type VenueTokenSchedule = typeof venueTokenSchedules.$inferSelect;
 export type InsertVenueTokenSchedule = typeof venueTokenSchedules.$inferInsert;
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SEGOLIFE — LOYALTY SHADOW MODE
+// ═══════════════════════════════════════════════════════════════════════════
+// Observabilidad pura sobre tráfico real: qué habría hecho el Reward Engine
+// (rewardEngine.ts, evaluateReward(ctx, "SIMULATION")) si loyalty estuviera
+// activo. Tabla NUEVA, aditiva, completamente aislada — nunca se relaciona
+// con token_ledger/token_wallets/user_benefits, ni con foreign keys hacia
+// ellas (ver loyaltyShadowService.ts, que garantiza cero escritura en esas
+// tres tablas). Sin PII: solo user_id (nullable — null = identidad histórica
+// sin Student resuelto, nunca inferida), venue_id/event_id/rule_id/
+// campaign_id — nunca email/teléfono/nombre.
+//
+// Idempotencia (provider, external_operation_id, trigger) UNIQUE: reevaluar
+// la MISMA operación bajo el MISMO trigger (p.ej. un pedido "paid" visto de
+// nuevo en la siguiente pasada del scheduler) es la MISMA observación —
+// nunca duplica filas. Un cambio de estado real (paid→refunded) usa un
+// trigger DISTINTO (EVENT_REFUND), así que genera una fila nueva de forma
+// natural sin ninguna lógica adicional de "state/version".
+//
+// rule_policy_version/campaign_policy_version = updatedAt de la regla/
+// campaña en el momento exacto de evaluar (spec §16, reproducibilidad) — si
+// la regla cambia mañana, esta fila sigue explicando con qué versión se
+// calculó, sin necesidad de un sistema de versionado propio.
+
+export const loyaltyShadowEvaluations = mysqlTable("loyalty_shadow_evaluations", {
+  id:                          int("id").autoincrement().primaryKey(),
+  provider:                    varchar("provider", { length: 32 }).notNull(),
+  externalOperationId:         varchar("external_operation_id", { length: 191 }).notNull(),
+  trigger:                     mysqlEnum("trigger", ["EVENT_PURCHASE", "EVENT_ATTENDANCE", "EVENT_REFUND", "EVENT_CANCEL", "PENDING_TO_PAID"]).notNull(),
+  operationState:              varchar("operation_state", { length: 32 }),
+  userId:                      int("user_id"),
+  venueId:                     int("venue_id"),
+  eventId:                     int("event_id"),
+  communityId:                 int("community_id"),
+  ruleId:                      int("rule_id"),
+  rulePolicyVersion:           timestamp("rule_policy_version"),
+  campaignId:                  int("campaign_id"),
+  campaignPolicyVersion:       timestamp("campaign_policy_version"),
+  eligible:                    boolean("eligible").notNull(),
+  decision:                    mysqlEnum("decision", ["GRANTED", "DENIED", "SIMULATED_REVERSAL"]).notNull(),
+  denialReason:                varchar("denial_reason", { length: 32 }),
+  baseTokens:                  int("base_tokens"),
+  recurrenceTokens:            int("recurrence_tokens"),
+  campaignTokens:              int("campaign_tokens"),
+  capApplied:                  boolean("cap_applied").notNull().default(false),
+  finalTokens:                 int("final_tokens"),
+  isReversal:                  boolean("is_reversal").notNull().default(false),
+  originalShadowEvaluationId:  int("original_shadow_evaluation_id"),
+  evaluatedAt:                 timestamp("evaluated_at").notNull(),
+  createdAt:                   timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  operationTriggerUnique: unique("loyalty_shadow_evaluations_operation_trigger_unique").on(table.provider, table.externalOperationId, table.trigger),
+  userIdIdx: index("loyalty_shadow_evaluations_user_id_idx").on(table.userId),
+  venueIdIdx: index("loyalty_shadow_evaluations_venue_id_idx").on(table.venueId),
+  evaluatedAtIdx: index("loyalty_shadow_evaluations_evaluated_at_idx").on(table.evaluatedAt),
+  triggerIdx: index("loyalty_shadow_evaluations_trigger_idx").on(table.trigger),
+}));
+export type LoyaltyShadowEvaluation = typeof loyaltyShadowEvaluations.$inferSelect;
+export type InsertLoyaltyShadowEvaluation = typeof loyaltyShadowEvaluations.$inferInsert;
+
+// Observabilidad de fallos (spec §42: "Dropped evaluations = MUST BE 0
+// unless explained" / "No silent drop") — sin esta tabla, un fallo de
+// observeShadow() solo quedaría en console.error, invisible para el admin
+// UI. Tabla mínima, aditiva, separada de loyaltyShadowEvaluations (un fallo
+// significa que NO se pudo crear una fila ahí).
+export const loyaltyShadowErrors = mysqlTable("loyalty_shadow_errors", {
+  id:                   int("id").autoincrement().primaryKey(),
+  provider:             varchar("provider", { length: 32 }),
+  externalOperationId:  varchar("external_operation_id", { length: 191 }),
+  trigger:              varchar("trigger", { length: 32 }),
+  errorMessage:         varchar("error_message", { length: 512 }).notNull(),
+  occurredAt:           timestamp("occurred_at").defaultNow().notNull(),
+}, (table) => ({
+  occurredAtIdx: index("loyalty_shadow_errors_occurred_at_idx").on(table.occurredAt),
+}));
+export type LoyaltyShadowError = typeof loyaltyShadowErrors.$inferSelect;
+export type InsertLoyaltyShadowError = typeof loyaltyShadowErrors.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SEGOLIFE FASE 3 — QR DE CONSUMICIONES
 // ═══════════════════════════════════════════════════════════════════════════
 // Auditoría previa (ver informe de fase): sin infraestructura reutilizable.
