@@ -13,6 +13,7 @@ import { createPasswordResetRouter } from "../passwordReset";
 import { createAuthGuardMiddleware } from "../authGuard";
 import uploadRouter from "../uploadRoutes";
 import redsysRouter from "../redsysRoutes";
+import ticketPaymentWebhookRouter from "../ticketPaymentWebhookRoutes";
 import { metaCapiRouter } from "../metaCapiRoute";
 import settlementExportRouter from "../settlementExportRoutes";
 import invoicePreviewRouter from "../invoicePreviewRouter";
@@ -28,6 +29,8 @@ import { startTaxReminderJob } from "../taxReminderJob";
 import { startFourvenuesScheduler } from "../segolife/integrations/integrationScheduler";
 import { registerBenefitGrantedListener } from "../segolife/engagement/benefitGrantedListener";
 import { registerTicketPurchasedListener } from "../segolife/engagement/ticketPurchasedListener";
+import { registerOrderRefundedListener } from "../segolife/engagement/orderRefundedListener";
+import { registerTicketCheckedInListener } from "../segolife/engagement/ticketCheckedInListener";
 import { registerTokensEarnedListener } from "../segolife/engagement/tokensEarnedListener";
 import { registerEventLifecycleListeners } from "../segolife/engagement/eventLifecycleListener";
 import { startEngagementScheduler, isEngagementDeliveryEnabled } from "../segolife/engagement/engagementScheduler";
@@ -288,6 +291,8 @@ async function startServer() {
   // Rate limiting en endpoints de pago Redsys (30 req/min por IP)
   app.use("/api/redsys/notification", redsysRateLimit);
   app.use("/api/redsys/restaurant-notification", redsysRateLimit);
+  // Mismo límite para el webhook de pago de ticketing nativo (spec §37 — mismo criterio de replay/fuzzing)
+  app.use("/api/ticket-payments/webhook", redsysRateLimit);
 
   // Rate limiting en endpoint de subida de archivos (20 req/min por IP)
   app.use("/api/upload", uploadRateLimit);
@@ -325,6 +330,8 @@ async function startServer() {
 
   // Redsys IPN notification endpoint
   app.use(redsysRouter);
+  // Native ticketing — payment webhook (SEGOLIFE — Native Ticket Sales, spec §10)
+  app.use(ticketPaymentWebhookRouter);
   // Meta Conversions API proxy (recibe eventos del cliente para envío server-side)
   app.use(metaCapiRouter);
   // Settlement Excel export endpoint
@@ -735,6 +742,10 @@ verifyDatabaseConnectivity()
   // vacío", confirmado por auditoría). Mismo criterio: in-process, siempre
   // registrado, nunca depende del kill switch del scheduler.
   .then(() => { registerTicketPurchasedListener(); })
+  // SEGOLIFE — Native Ticket Sales (spec §31): mismos "fires into the void"
+  // que ticketPurchasedListener.ts ya corrigió, ahora para refund/check-in.
+  .then(() => { registerOrderRefundedListener(); })
+  .then(() => { registerTicketCheckedInListener(); })
   .then(() => { registerTokensEarnedListener(); })
   .then(() => { registerEventLifecycleListeners(); })
   .then(() => {

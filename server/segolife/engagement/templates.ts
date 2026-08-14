@@ -202,6 +202,28 @@ export const ENGAGEMENT_TEMPLATES: Record<string, EngagementTemplate> = {
       return { rows, paragraphs: [`${vars.eventName} — ${vars.venueName}`, `${vars.ticketTypeName} × ${vars.quantity} — ${vars.totalAmountLabel}`], headline };
     },
   },
+  // SEGOLIFE — Native Ticket Sales (spec §31): `order_refunded`/`ticket_checked_in`
+  // ya se emitían desde checkoutService.ts/ticketCancellationService.ts/
+  // nativeCheckinService.ts sin ningún listener conectado (mismo "fires into
+  // the void" que ticketPurchasedListener.ts ya corrigió para
+  // ticket_purchased) — solo in_app, spec explícito: "NO implementar SMTP/
+  // Brevo en esta fase".
+  order_refunded: {
+    key: "order_refunded", version: 1, category: "events", adminCategory: "TICKETING",
+    audienceType: "transactional", channels: ["in_app"], status: "active",
+    description: "Reembolso de un pedido de entradas confirmado.", triggerEvent: "OrderRefunded",
+    titleEn: "Your refund is confirmed", titleEs: "Tu reembolso está confirmado",
+    bodyEn: "{{eventName}} — {{amountLabel}}", bodyEs: "{{eventName}} — {{amountLabel}}",
+    allowedVariables: ["eventName", "venueName", "amountLabel", "orderReference"],
+  },
+  ticket_checked_in: {
+    key: "ticket_checked_in", version: 1, category: "events", adminCategory: "TICKETING",
+    audienceType: "transactional", channels: ["in_app"], status: "active",
+    description: "Confirmación de check-in validado en puerta.", triggerEvent: "TicketCheckedIn",
+    titleEn: "You're checked in! 🎉", titleEs: "¡Ya estás dentro! 🎉",
+    bodyEn: "{{eventName}} — {{venueName}}", bodyEs: "{{eventName}} — {{venueName}}",
+    allowedVariables: ["eventName", "venueName"],
+  },
   event_reminder_24h: {
     key: "event_reminder_24h", version: 1, category: "events", adminCategory: "EVENTS",
     audienceType: "transactional", channels: ["in_app", "email"], status: "active",

@@ -5,24 +5,26 @@
  *  - Cancelar ANTES de pagar (pending/awaiting_payment): libera el hold sin
  *    más consecuencias — todavía no existen event_tickets ni loyalty.
  *  - Reembolsar DESPUÉS de pagado (paid): si NINGÚN ticket del order se ha
- *    usado (check-in), es un caso limpio — nada que compensar en
- *    SegoTokens/Benefits, porque ese loyalty solo se concede al hacer
- *    check-in (evento attendance), nunca al comprar. Si YA hay algún
- *    ticket `used`, el estudiante ya asistió y puede haber SegoTokens/
- *    Benefits concedidos por esa asistencia — auditado `reverseTransaction`
- *    de Fase 2 y la política de Benefits: ninguna de las dos define hoy
- *    una política comercial de "qué hacer si se reembolsa una entrada ya
- *    disfrutada", así que NUNCA se improvisa una reversión automática —
- *    el order queda en `reconciliation_required` para resolución manual.
+ *    usado (check-in), la única loyalty asociada es la recompensa de
+ *    COMPRA (spec §18/§21, `checkoutService.grantNativePurchaseReward`) —
+ *    se revierte automáticamente vía `reverseTransaction()` (Fase 2), el
+ *    mismo mecanismo probado que ya usa `ticketPurchasePipeline.ts` para
+ *    refunds Fourvenues, idempotente por `isLedgerEntryReversed`. Si YA hay
+ *    algún ticket `used`, el estudiante ya asistió y puede haber SegoTokens/
+ *    Benefits concedidos por esa asistencia además de por la compra — ni
+ *    esa reversión ni la política de Benefits están definidas hoy para
+ *    "entrada ya disfrutada", así que NUNCA se improvisa — el order queda
+ *    en `reconciliation_required` para resolución manual (sin tocar nada).
  */
 import { eq, and, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { ticketOrders, eventTickets, ticketPayments, type TicketOrder } from "../../../drizzle/schema";
+import { ticketOrders, eventTickets, ticketPayments, tokenLedger, type TicketOrder } from "../../../drizzle/schema";
 import { transitionOrderStatus, OrderStateError } from "./orderStateMachine";
 import { getPaymentProvider } from "./payments/paymentProviderRegistry";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
 import { CheckoutError } from "./inventoryHoldService";
+import { reverseTransaction, isLedgerEntryReversed } from "../tokens/tokenLedgerService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -87,9 +89,30 @@ export async function refundOrder(orderId: number, refundedByUserId: number, rea
     await conn.update(eventTickets).set({ status: "refunded", refundedAt: new Date() }).where(inArray(eventTickets.id, unusedTicketIds));
   }
 
+  await reverseNativePurchaseReward(refunded, refundedByUserId, conn);
+
   if (refunded.userId) {
     emitEngagementEvent("order_refunded", { userId: refunded.userId, communityId: null, orderId: refunded.id, eventId: refunded.eventId, amountCents: order.totalCents, partial: false });
   }
 
   return { order: refunded, reconciliationRequired: false };
+}
+
+/** Reversión automática (spec §21) de la recompensa de COMPRA concedida por `checkoutService.grantNativePurchaseReward` — nunca llamada si algún ticket ya se usó (ese caso queda en reconciliation_required más arriba). Best-effort: un fallo aquí nunca deshace el reembolso real ya confirmado con el provider. */
+async function reverseNativePurchaseReward(order: TicketOrder, refundedByUserId: number, conn: DbHandle): Promise<void> {
+  if (!order.userId) return;
+  try {
+    const [purchaseLedgerEntry] = await conn.select().from(tokenLedger)
+      .where(and(eq(tokenLedger.sourceType, "ticket"), eq(tokenLedger.sourceId, order.id), eq(tokenLedger.direction, "credit")))
+      .limit(1);
+    if (!purchaseLedgerEntry) return; // ticket gratuito, o la recompensa nunca se concedió (p.ej. NO_RULE_FOUND) — nada que revertir
+    if (await isLedgerEntryReversed(purchaseLedgerEntry.id, conn)) return;
+    await reverseTransaction({
+      ledgerId: purchaseLedgerEntry.id,
+      reason: `Reembolso de entrada — pedido #${order.id}`,
+      adminUserId: refundedByUserId,
+    }, conn);
+  } catch (err) {
+    console.error(`[ticketCancellationService] No se pudo revertir la recompensa de compra (orderId=${order.id}):`, err);
+  }
 }
