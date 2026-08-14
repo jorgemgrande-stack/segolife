@@ -6,12 +6,30 @@
  * descartando todos los cambios si el callback lanza — así se puede probar
  * honestamente "fallo tokens → QR no redeemed" sin una BD real.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Solo para reverseConsumptionQrReward (spec §31-33/§72/§96) — el resto del
+// archivo ejecuta el motor de tokens REAL (earnTokens/postLedgerMovementInTx)
+// contra makeQrServiceMockDb, sin mockear tokenLedgerService. importOriginal
+// preserva TokenEngineError/postLedgerMovementInTx reales (los tests de
+// canje siguen sin tocar) y solo sustituye reverseTransaction/
+// isLedgerEntryReversed, ya cubiertos en tokenLedgerService.test.ts — no se
+// duplica esa cobertura aquí.
+const { mockReverseTransaction, mockIsLedgerEntryReversed } = vi.hoisted(() => ({
+  mockReverseTransaction: vi.fn(),
+  mockIsLedgerEntryReversed: vi.fn(),
+}));
+vi.mock("../tokens/tokenLedgerService", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, reverseTransaction: mockReverseTransaction, isLedgerEntryReversed: mockIsLedgerEntryReversed };
+});
+
 import {
   issueConsumptionQr,
   issueQrBatch,
   redeemConsumptionQr,
   cancelConsumptionQr,
+  reverseConsumptionQrReward,
   QrError,
 } from "./consumptionQrService";
 import { benefitEvents, type BenefitGrantedPayload } from "../benefits/benefitEvents";
@@ -583,5 +601,58 @@ describe("consumptionQrService — cancelación (cancelConsumptionQr)", () => {
   it("requiere un motivo", async () => {
     const { db } = makeQrServiceMockDb({ qr: blankQr() });
     await expect(cancelConsumptionQr({ qrId: 1, reason: "  ", cancelledByUserId: 1 }, db)).rejects.toMatchObject({ code: "REASON_REQUIRED" });
+  });
+});
+
+// ─── reverseConsumptionQrReward (SEGOLIFE — Venue Commerce, Consumption QR &
+// SegoTokens, spec §31-33/§72/§96) ────────────────────────────────────────
+
+describe("consumptionQrService — reverseConsumptionQrReward", () => {
+  beforeEach(() => {
+    mockReverseTransaction.mockReset().mockResolvedValue({ wallet: {}, ledger: { id: 9003 } });
+    mockIsLedgerEntryReversed.mockReset().mockResolvedValue(false);
+  });
+
+  it("un QR redeemed con ledgerId → revierte exactamente ese movimiento, el QR permanece redeemed", async () => {
+    const { db, getQr } = makeQrServiceMockDb({ qr: blankQr({ status: "redeemed", ledgerId: 555 }) });
+
+    const result = await reverseConsumptionQrReward({ qrId: 1, reason: "Consumo no realizado", reversedByUserId: 9 }, db);
+
+    expect(result.tokensReversed).toBe(true);
+    expect(getQr().status).toBe("redeemed"); // el consumo físico sucedió — nunca se reinterpreta
+    expect(mockReverseTransaction).toHaveBeenCalledOnce();
+    expect(mockReverseTransaction.mock.calls[0][0]).toMatchObject({ ledgerId: 555, adminUserId: 9 });
+  });
+
+  it("ya revertido antes (isLedgerEntryReversed=true) → idempotente, no vuelve a llamar reverseTransaction", async () => {
+    mockIsLedgerEntryReversed.mockResolvedValue(true);
+    const { db } = makeQrServiceMockDb({ qr: blankQr({ status: "redeemed", ledgerId: 555 }) });
+
+    const result = await reverseConsumptionQrReward({ qrId: 1, reason: "x", reversedByUserId: 9 }, db);
+
+    expect(result.tokensReversed).toBe(false);
+    expect(mockReverseTransaction).not.toHaveBeenCalled();
+  });
+
+  it("un QR issued/cancelled/expired nunca tuvo tokens que revertir → NOT_REDEEMED", async () => {
+    const { db } = makeQrServiceMockDb({ qr: blankQr({ status: "issued" }) });
+    await expect(reverseConsumptionQrReward({ qrId: 1, reason: "x", reversedByUserId: 9 }, db))
+      .rejects.toMatchObject({ code: "NOT_REDEEMED" });
+    expect(mockReverseTransaction).not.toHaveBeenCalled();
+  });
+
+  it("QR inexistente → NOT_FOUND", async () => {
+    const emptyDb = {
+      select: () => ({ from: () => ({ where: () => ({ limit: () => Promise.resolve([]) }) }) }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    await expect(reverseConsumptionQrReward({ qrId: 999, reason: "x", reversedByUserId: 9 }, emptyDb))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("requiere un motivo", async () => {
+    const { db } = makeQrServiceMockDb({ qr: blankQr({ status: "redeemed" }) });
+    await expect(reverseConsumptionQrReward({ qrId: 1, reason: "   ", reversedByUserId: 9 }, db))
+      .rejects.toMatchObject({ code: "REASON_REQUIRED" });
   });
 });

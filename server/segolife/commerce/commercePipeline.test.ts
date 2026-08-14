@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
   mockResolveIdentity, mockPersistIdentityMapping, mockRecordUnresolvedOperation, mockEarnTokens, mockEvaluateBenefitsForOrigin,
-  mockResolveLoyaltyCutoff, MockTokenEngineError,
+  mockResolveLoyaltyCutoff, MockTokenEngineError, mockReverseTransaction, mockIsLedgerEntryReversed,
 } = vi.hoisted(() => {
   class MockTokenEngineError extends Error {
     code: string;
@@ -23,6 +23,8 @@ const {
     mockEvaluateBenefitsForOrigin: vi.fn(),
     mockResolveLoyaltyCutoff: vi.fn(),
     MockTokenEngineError,
+    mockReverseTransaction: vi.fn(),
+    mockIsLedgerEntryReversed: vi.fn(),
   };
 });
 
@@ -40,9 +42,13 @@ vi.mock("../tokens/loyaltyCutoffService", () => ({
   resolveLoyaltyCutoff: mockResolveLoyaltyCutoff,
   isBeforeCutoff: (at: Date, cutoff: Date | null) => cutoff != null && at < cutoff,
 }));
-vi.mock("../tokens/tokenLedgerService", () => ({ TokenEngineError: MockTokenEngineError }));
+vi.mock("../tokens/tokenLedgerService", () => ({
+  TokenEngineError: MockTokenEngineError,
+  reverseTransaction: mockReverseTransaction,
+  isLedgerEntryReversed: mockIsLedgerEntryReversed,
+}));
 
-import { ingestCommerceTransaction, processCommerceLoyalty } from "./commercePipeline";
+import { ingestCommerceTransaction, processCommerceLoyalty, refundCommerceTransaction, CommerceError } from "./commercePipeline";
 
 function transactionFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -89,6 +95,8 @@ beforeEach(() => {
   mockEarnTokens.mockResolvedValue({ ledger: { id: 9002, createdAt: new Date("2026-09-05T10:00:00.000Z") }, wallet: {}, breakdown: {} });
   mockEvaluateBenefitsForOrigin.mockResolvedValue([]);
   mockResolveLoyaltyCutoff.mockResolvedValue(null); // estado neutro real de producción — sin corte configurado
+  mockIsLedgerEntryReversed.mockResolvedValue(false);
+  mockReverseTransaction.mockResolvedValue({ wallet: {}, ledger: { id: 9003 } });
 });
 
 describe("ingestCommerceTransaction", () => {
@@ -194,5 +202,82 @@ describe("processCommerceLoyalty — retry semantics (spec §5, ya no es fire-on
 
     expect(mockEarnTokens).not.toHaveBeenCalled();
     expect(updates).toHaveLength(0);
+  });
+});
+
+// ─── refundCommerceTransaction (SEGOLIFE — Venue Commerce, Consumption QR &
+// SegoTokens, spec §31-33/§72/§96) ────────────────────────────────────────
+
+describe("refundCommerceTransaction", () => {
+  function fakeRefundDb(transaction: Record<string, unknown>) {
+    let current = { ...transaction };
+    const db = {
+      select: () => ({ from: () => ({ where: () => ({ limit: async () => [current] }) }) }),
+      update: () => ({
+        set: (values: Record<string, unknown>) => ({
+          where: async () => {
+            if (current.status !== "confirmed") return [{ affectedRows: 0 }];
+            current = { ...current, ...values };
+            return [{ affectedRows: 1 }];
+          },
+        }),
+      }),
+    };
+    return { db: db as never, getCurrent: () => current };
+  }
+
+  it("transacción confirmed con recompensa concedida → transiciona a refunded y revierte el ledgerId exacto", async () => {
+    const { db } = fakeRefundDb({ id: 701, status: "confirmed", loyaltyLedgerId: 9002, metadata: {} });
+
+    const result = await refundCommerceTransaction({ transactionId: 701, reason: "Cliente insatisfecho", refundedByUserId: 5 }, db);
+
+    expect(result.tokensReversed).toBe(true);
+    expect(result.transaction.status).toBe("refunded");
+    expect(mockReverseTransaction).toHaveBeenCalledOnce();
+    expect(mockReverseTransaction.mock.calls[0][0]).toMatchObject({ ledgerId: 9002, adminUserId: 5 });
+  });
+
+  it("transacción confirmed SIN recompensa concedida (loyaltyLedgerId null) → reembolsa el estado, nada que revertir", async () => {
+    const { db } = fakeRefundDb({ id: 701, status: "confirmed", loyaltyLedgerId: null, metadata: {} });
+
+    const result = await refundCommerceTransaction({ transactionId: 701, reason: "x", refundedByUserId: 5 }, db);
+
+    expect(result.tokensReversed).toBe(false);
+    expect(result.transaction.status).toBe("refunded");
+    expect(mockReverseTransaction).not.toHaveBeenCalled();
+  });
+
+  it("un ledger ya revertido por otra vía (isLedgerEntryReversed=true) no se revierte dos veces", async () => {
+    mockIsLedgerEntryReversed.mockResolvedValue(true);
+    const { db } = fakeRefundDb({ id: 701, status: "confirmed", loyaltyLedgerId: 9002, metadata: {} });
+
+    const result = await refundCommerceTransaction({ transactionId: 701, reason: "x", refundedByUserId: 5 }, db);
+
+    expect(result.tokensReversed).toBe(false);
+    expect(mockReverseTransaction).not.toHaveBeenCalled();
+  });
+
+  it("una transacción NO confirmed (pending/cancelled/ya refunded) es INVALID_STATE — nunca se reinterpreta silenciosamente", async () => {
+    const { db } = fakeRefundDb({ id: 701, status: "pending", loyaltyLedgerId: null, metadata: {} });
+
+    await expect(refundCommerceTransaction({ transactionId: 701, reason: "x", refundedByUserId: 5 }, db))
+      .rejects.toMatchObject({ code: "INVALID_STATE" });
+    expect(mockReverseTransaction).not.toHaveBeenCalled();
+  });
+
+  it("transacción inexistente → NOT_FOUND", async () => {
+    const db = { select: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) };
+
+    await expect(refundCommerceTransaction({ transactionId: 999, reason: "x", refundedByUserId: 5 }, db as never))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("motivo vacío → REASON_REQUIRED, sin tocar la base de datos", async () => {
+    const dbSelect = vi.fn();
+    const db = { select: dbSelect };
+
+    await expect(refundCommerceTransaction({ transactionId: 701, reason: "   ", refundedByUserId: 5 }, db as never))
+      .rejects.toBeInstanceOf(CommerceError);
+    expect(dbSelect).not.toHaveBeenCalled();
   });
 });

@@ -32,7 +32,8 @@ describe("getVenuePerformance", () => {
       [{ venue_id: 10, venue_name: "Casanova" }, { venue_id: 11, venue_name: "Tía Felisa" }], // venues
       [{ venue_id: 10, tickets_sold: 40, revenue_cents: 100000 }], // tickets
       [{ venue_id: 10, n: 12 }], // attendance
-      [{ venue_id: 11, revenue_cents: 5000 }], // commerce
+      [{ venue_id: 11, revenue_cents: 5000 }], // commerce (POS)
+      [], // consumo QR
       [{ venue_id: 10, earned: 200, spent: 50 }], // tokens
       [{ venue_id: 10, generated: 6, redeemed: 2 }], // benefits
       [{ venue_id: 10, last24h: 2000, prior24h: 1000 }], // trend
@@ -47,7 +48,7 @@ describe("getVenuePerformance", () => {
       [{ venue_id: 10, tickets_sold: 40, revenue_cents: 100000 }],
       [],
       [{ venue_id: 10, revenue_cents: 30000 }],
-      [], [], [],
+      [], [], [], [],
     ]);
     const snapshot = await getVenuePerformance(CTX, db as never, NOW);
     const row = snapshot.rows[0];
@@ -59,7 +60,7 @@ describe("getVenuePerformance", () => {
   it("un venue sin ningún dato en el periodo muestra ceros honestos, nunca null/undefined que rompa el render", async () => {
     const db = fakeExecuteDb([
       [{ venue_id: 99, venue_name: "Venue Nuevo Sin Actividad" }],
-      [], [], [], [], [], [],
+      [], [], [], [], [], [], [],
     ]);
     const snapshot = await getVenuePerformance(CTX, db as never, NOW);
     expect(snapshot.rows[0]).toMatchObject({
@@ -79,7 +80,7 @@ describe("getVenuePerformance", () => {
   it("trend 'up' cuando last24h supera claramente a prior24h; 'flat' cuando ambos son 0", async () => {
     const db = fakeExecuteDb([
       [{ venue_id: 10, venue_name: "Casanova" }, { venue_id: 11, venue_name: "Tía Felisa" }],
-      [], [], [], [], [],
+      [], [], [], [], [], [],
       [{ venue_id: 10, last24h: 4000, prior24h: 1000 }],
     ]);
     const snapshot = await getVenuePerformance(CTX, db as never, NOW);
@@ -87,5 +88,35 @@ describe("getVenuePerformance", () => {
     const tiaFelisa = snapshot.rows.find(r => r.venueId === 11);
     expect(casanova?.trend.direction).toBe("up");
     expect(tiaFelisa?.trend.direction).toBe("flat");
+  });
+
+  // ─── Consumo vía QR (SEGOLIFE — Venue Commerce, Consumption QR &
+  // SegoTokens): redeemConsumptionQr() nunca crea una fila en
+  // commerce_transactions — sin esta segunda fuente, commerceRevenueCents
+  // solo vería ventas de /staff/pos. ─────────────────────────────────────
+
+  it("commerceRevenueCents suma POS (commerce_transactions) + consumo QR (consumption_qr_codes) del mismo venue", async () => {
+    const db = fakeExecuteDb([
+      [{ venue_id: 10, venue_name: "Casanova" }],
+      [], [],
+      [{ venue_id: 10, revenue_cents: 30000 }], // commerce (POS)
+      [{ venue_id: 10, revenue_cents: 12000 }], // consumo QR
+      [], [], [],
+    ]);
+    const snapshot = await getVenuePerformance(CTX, db as never, NOW);
+    expect(snapshot.rows[0].commerceRevenueCents).toBe(42000);
+  });
+
+  it("un venue con SOLO consumo vía QR (0 ventas de POS) igualmente cuenta como commerce revenue", async () => {
+    const db = fakeExecuteDb([
+      [{ venue_id: 10, venue_name: "Casanova" }],
+      [], [],
+      [], // commerce (POS) — sin filas
+      [{ venue_id: 10, revenue_cents: 8000 }], // consumo QR
+      [], [], [],
+    ]);
+    const snapshot = await getVenuePerformance(CTX, db as never, NOW);
+    expect(snapshot.rows[0].commerceRevenueCents).toBe(8000);
+    expect(snapshot.rows[0].totalEcosystemRevenueCents).toBe(8000);
   });
 });
