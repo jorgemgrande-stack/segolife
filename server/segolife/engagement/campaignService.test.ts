@@ -156,4 +156,21 @@ describe("campaignService — sendCampaignNow", () => {
     const { db } = makeMockDb({ campaign: { id: 5, status: "completed" } });
     await expect(sendCampaignNow(5, db)).rejects.toBeInstanceOf(CampaignError);
   });
+
+  // Communication Center (spec §29) — audiencia mayor que CAMPAIGN_BATCH_SIZE
+  // (20): el envío en lotes con pausa entre ellos no debe perder ni duplicar
+  // a nadie — mismo total exacto que sin batching.
+  it("una audiencia de 45 (> 1 lote de 20) notifica exactamente a los 45, sin perder ni duplicar a nadie", async () => {
+    const userIds = Array.from({ length: 45 }, (_, i) => i + 1);
+    mockResolveAudience.mockResolvedValue(userIds);
+    const { db } = makeMockDb({
+      campaign: { id: 9, status: "draft", communityId: null, audienceDefinition: { communityIds: [1] }, audienceSnapshotAt: null },
+      presetMessages: [DEFAULT_MESSAGE],
+    });
+    const result = await sendCampaignNow(9, db);
+    expect(result.notified).toBe(45);
+    expect(mockCreateNotification).toHaveBeenCalledTimes(45);
+    const notifiedUserIds = mockCreateNotification.mock.calls.map(c => c[0].userId);
+    expect(new Set(notifiedUserIds).size).toBe(45);
+  }, 10000);
 });

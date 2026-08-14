@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { mockGetProvider } = vi.hoisted(() => ({ mockGetProvider: vi.fn() }));
 vi.mock("./providers/providerRegistry", () => ({ getProvider: mockGetProvider }));
 
-import { createNotification } from "./notificationService";
+import { createNotification, resolveSenderIdentity } from "./notificationService";
 import { notifications, notificationDeliveries } from "../../../drizzle/schema";
 
 function makeMockDb(config: { existingNotification?: any; preferenceRows?: any[] } = {}) {
@@ -161,5 +161,75 @@ describe("notificationService — canales adicionales", () => {
     const delivery = deliveryRows.find(d => d.channel === "whatsapp");
     expect(delivery?.status).toBe("skipped");
     expect(delivery?.lastError).toMatch(/not configured/i);
+  });
+});
+
+// ─── Communication Center — sender routing / subject (spec §2/§10/§25) ─────
+
+describe("resolveSenderIdentity", () => {
+  function blankNotification(overrides: Partial<Record<string, unknown>> = {}) {
+    return { id: 1, userId: 1, templateKey: null, category: "account", metadata: null, ...overrides } as any;
+  }
+
+  it("un senderOverride explícito en metadata SIEMPRE gana (envío manual CRM, spec §25)", () => {
+    const n = blankNotification({ templateKey: "benefit_granted", category: "benefits", metadata: { senderOverride: "support" } });
+    expect(resolveSenderIdentity(n).key).toBe("support");
+  });
+
+  it("sin override, resuelve por templateKey → adminCategory de la plantilla (más preciso que category)", () => {
+    const n = blankNotification({ templateKey: "community_proposal_published", category: "events" });
+    // community_proposal_published es adminCategory COMMUNITY en el catálogo real — se resuelve a community@, NO a tickets@ que daría la category "events" del enum de BD.
+    expect(resolveSenderIdentity(n).key).toBe("community");
+  });
+
+  it("sin templateKey (p.ej. campaña manual), cae al fallback por category", () => {
+    const n = blankNotification({ templateKey: null, category: "events" });
+    expect(resolveSenderIdentity(n).key).toBe("tickets");
+  });
+
+  it("templateKey desconocido en el catálogo se trata igual que sin templateKey (fallback por category, nunca lanza)", () => {
+    const n = blankNotification({ templateKey: "no_existe_esta_plantilla", category: "account" });
+    expect(resolveSenderIdentity(n).key).toBe("system");
+  });
+});
+
+describe("notificationService — subject de email (spec §10)", () => {
+  it("subjectEn/Es de la plantilla se persisten en metadata.emailSubject y se pasan al provider como `subject` (nunca se pierden)", async () => {
+    const emailSend = vi.fn().mockResolvedValue({ status: "sent" });
+    mockGetProvider.mockImplementation((channel: string) => ({
+      channel,
+      capabilities: { configured: true, supportsTransactional: true, supportsMarketing: true, supportsDeliveryStatus: true, supportsRichContent: true, supportsDeepLinks: true },
+      send: channel === "email" ? emailSend : vi.fn().mockResolvedValue({ status: "sent" }),
+    }));
+    const { db } = makeMockDb();
+    await createNotification({
+      userId: 1, communityId: null, type: "account_welcome", category: "account", audienceType: "transactional",
+      rendered: { titleEn: "T", titleEs: "T-ES", bodyEn: "B", bodyEs: "B-ES", deepLink: null, subjectEn: "Subject EN", subjectEs: "Asunto ES" },
+      idempotencyKey: "welcome:1", additionalChannels: ["email"], sendImmediately: true,
+      recipient: { email: "student@example.invalid" },
+    }, db);
+
+    expect(emailSend).toHaveBeenCalledOnce();
+    const call = emailSend.mock.calls[0][0];
+    expect(call.subject).toBe("Asunto ES"); // fallback de plataforma "es" — sin comunidad/preferencia, ver communicationLocale.ts
+    expect(call.senderIdentity).toBeDefined();
+  });
+
+  it("sin subjectEn/Es en la plantilla, el provider recibe `title` como subject (comportamiento previo preservado)", async () => {
+    const emailSend = vi.fn().mockResolvedValue({ status: "sent" });
+    mockGetProvider.mockImplementation((channel: string) => ({
+      channel,
+      capabilities: { configured: true, supportsTransactional: true, supportsMarketing: true, supportsDeliveryStatus: true, supportsRichContent: true, supportsDeepLinks: true },
+      send: channel === "email" ? emailSend : vi.fn().mockResolvedValue({ status: "sent" }),
+    }));
+    const { db } = makeMockDb();
+    await createNotification({
+      userId: 1, communityId: null, type: "benefit_granted", category: "benefits", audienceType: "transactional",
+      rendered, idempotencyKey: "benefit_granted:1", additionalChannels: ["email"], sendImmediately: true,
+      recipient: { email: "student@example.invalid" },
+    }, db);
+
+    const call = emailSend.mock.calls[0][0];
+    expect(call.subject).toBe(call.title);
   });
 });
