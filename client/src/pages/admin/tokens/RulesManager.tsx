@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Plus, Sparkles, Loader2, Pencil } from "lucide-react";
+import { Plus, Sparkles, Loader2, Pencil, FlaskConical } from "lucide-react";
 
 const NONE = "__none__";
 
@@ -35,7 +35,9 @@ interface RuleForm {
   minSpend: string;
   maxTokens: string;
   dailyLimit: string;
+  weeklyLimit: string;
   monthlyLimit: string;
+  lifetimeLimit: string;
   recurrenceWindow: string;
   recurrenceThreshold: string;
   recurrenceMode: string;
@@ -46,12 +48,115 @@ const emptyForm: RuleForm = {
   name: "", description: "", direction: "earn", origin: "manual", scope: "global",
   scopeVenueId: "", scopeEventId: "", scopeCommunityId: "",
   calcMethod: "fixed", fixedAmount: "", rate: "", multiplier: "", minSpend: "",
-  maxTokens: "", dailyLimit: "", monthlyLimit: "",
+  maxTokens: "", dailyLimit: "", weeklyLimit: "", monthlyLimit: "", lifetimeLimit: "",
   recurrenceWindow: "", recurrenceThreshold: "", recurrenceMode: "",
   priority: "0",
 };
 
 const ORIGINS = ["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign"];
+
+/**
+ * SEGOTOKENS ECONOMY (spec §26-27) — Rule Preview/Simulador. SIEMPRE vía
+ * tokens.previewReward, que llama a evaluateReward(ctx, "SIMULATION") real
+ * — nunca una calculadora paralela aquí. Requiere un Student real para que
+ * topes/recurrencia reflejen su historial real de token_ledger.
+ */
+function RulePreviewPanel() {
+  const [studentSearch, setStudentSearch] = useState("");
+  const [selectedStudent, setSelectedStudent] = useState<{ userId: number; name: string } | null>(null);
+  const [origin, setOrigin] = useState("attendance");
+  const [venueId, setVenueId] = useState("");
+  const [amountSpent, setAmountSpent] = useState("");
+
+  const { data: studentResults } = trpc.students.list.useQuery(
+    { communityId: "all", search: studentSearch, limit: 5 },
+    { enabled: studentSearch.trim().length >= 2 }
+  );
+
+  const { data: preview, isFetching } = trpc.tokens.previewReward.useQuery(
+    {
+      userId: selectedStudent?.userId ?? 0,
+      origin: origin as never,
+      venueId: venueId ? Number(venueId) : undefined,
+      amountSpent: amountSpent ? Number(amountSpent) : undefined,
+    },
+    { enabled: !!selectedStudent }
+  );
+
+  return (
+    <div className="bg-card border border-border rounded-lg p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <FlaskConical className="w-5 h-5 text-violet-500" />
+        <h3 className="text-sm font-semibold text-foreground">Simulador de regla</h3>
+      </div>
+      <p className="text-xs text-muted-foreground">Motor real (evaluateReward, SIMULATION) contra un Student real — nunca escribe nada, mismo motor que usará LIVE.</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <Label>Student</Label>
+          {selectedStudent ? (
+            <div className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
+              <span className="text-foreground">{selectedStudent.name}</span>
+              <button className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setSelectedStudent(null)}>Cambiar</button>
+            </div>
+          ) : (
+            <div className="relative">
+              <Input placeholder="Buscar por nombre o email..." value={studentSearch} onChange={e => setStudentSearch(e.target.value)} />
+              {studentResults && studentResults.items.length > 0 && (
+                <div className="absolute z-10 mt-1 w-full border border-border rounded-md bg-popover shadow-md divide-y divide-border">
+                  {studentResults.items.map(s => (
+                    <button
+                      key={s.userId}
+                      className="block w-full text-left px-3 py-1.5 text-sm hover:bg-accent"
+                      onClick={() => { setSelectedStudent({ userId: s.userId, name: s.name ?? `Student #${s.userId}` }); setStudentSearch(""); }}
+                    >
+                      {s.name ?? `Student #${s.userId}`} · <span className="text-muted-foreground">{s.email}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <div>
+          <Label>Origen</Label>
+          <Select value={origin} onValueChange={setOrigin}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>{ORIGINS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+        <div><Label>Venue ID (opcional)</Label><Input type="number" value={venueId} onChange={e => setVenueId(e.target.value)} /></div>
+        <div><Label>Importe pagado € (si aplica)</Label><Input value={amountSpent} onChange={e => setAmountSpent(e.target.value)} placeholder="18.00" /></div>
+      </div>
+      {selectedStudent && (
+        <div className="border-t border-border pt-3">
+          {isFetching ? (
+            <div className="flex justify-center py-2"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div>
+          ) : !preview ? null : !preview.eligible ? (
+            <p className="text-sm text-rose-500 font-medium">DENIED — {preview.reason}</p>
+          ) : (
+            <div className="space-y-1 text-sm">
+              <div className="flex justify-between"><span className="text-muted-foreground">Base</span><span className="text-foreground">{preview.breakdown?.base ?? 0}</span></div>
+              {!!preview.breakdown?.recurrenceBonus && (
+                <div className="flex justify-between"><span className="text-muted-foreground">Recurrencia</span><span className="text-foreground">+{preview.breakdown.recurrenceBonus}</span></div>
+              )}
+              {preview.breakdown?.campaignMultiplier != null && (
+                <div className="flex justify-between"><span className="text-muted-foreground">Campaña (multiplicador)</span><span className="text-foreground">×{preview.breakdown.campaignMultiplier}</span></div>
+              )}
+              {!!preview.breakdown?.campaignBonus && (
+                <div className="flex justify-between"><span className="text-muted-foreground">Campaña (bonus)</span><span className="text-foreground">+{preview.breakdown.campaignBonus}</span></div>
+              )}
+              <div className="flex justify-between text-xs text-muted-foreground"><span>Antes de topes</span><span>{preview.breakdown?.beforeLimits ?? 0}</span></div>
+              {preview.breakdown && preview.breakdown.final < preview.breakdown.beforeLimits && (
+                <div className="flex justify-between text-xs text-amber-600 dark:text-amber-400"><span>Tope aplicado</span><span>-{preview.breakdown.beforeLimits - preview.breakdown.final}</span></div>
+              )}
+              <div className="flex justify-between font-semibold border-t border-border pt-1.5 mt-1"><span className="text-foreground">Final</span><span className="text-foreground">{preview.breakdown?.final ?? 0} SegoTokens</span></div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function RulesManager() {
   const [open, setOpen] = useState(false);
@@ -86,7 +191,9 @@ export default function RulesManager() {
       rate: rule.rate ?? "", multiplier: rule.multiplier ?? "", minSpend: rule.minSpend ?? "",
       maxTokens: rule.maxTokens != null ? String(rule.maxTokens) : "",
       dailyLimit: rule.dailyLimit != null ? String(rule.dailyLimit) : "",
+      weeklyLimit: rule.weeklyLimit != null ? String(rule.weeklyLimit) : "",
       monthlyLimit: rule.monthlyLimit != null ? String(rule.monthlyLimit) : "",
+      lifetimeLimit: rule.lifetimeLimit != null ? String(rule.lifetimeLimit) : "",
       recurrenceWindow: rule.recurrenceWindow ?? "", recurrenceThreshold: rule.recurrenceThreshold != null ? String(rule.recurrenceThreshold) : "",
       recurrenceMode: rule.recurrenceMode ?? "",
       priority: String(rule.priority),
@@ -110,7 +217,9 @@ export default function RulesManager() {
     minSpend: form.minSpend || undefined,
     maxTokens: form.maxTokens ? Number(form.maxTokens) : undefined,
     dailyLimit: form.dailyLimit ? Number(form.dailyLimit) : undefined,
+    weeklyLimit: form.weeklyLimit ? Number(form.weeklyLimit) : undefined,
     monthlyLimit: form.monthlyLimit ? Number(form.monthlyLimit) : undefined,
+    lifetimeLimit: form.lifetimeLimit ? Number(form.lifetimeLimit) : undefined,
     recurrenceWindow: form.origin === "recurrence" && form.recurrenceWindow ? (form.recurrenceWindow as never) : undefined,
     recurrenceThreshold: form.origin === "recurrence" && form.recurrenceThreshold ? Number(form.recurrenceThreshold) : undefined,
     recurrenceMode: form.origin === "recurrence" && form.recurrenceMode ? (form.recurrenceMode as never) : undefined,
@@ -136,6 +245,8 @@ export default function RulesManager() {
           </div>
           <Button onClick={openCreate}><Plus className="w-4 h-4 mr-2" /> Nueva regla</Button>
         </div>
+
+        <RulePreviewPanel />
 
         <div className="bg-card border border-border rounded-lg overflow-x-auto">
           {isLoading ? (
@@ -264,7 +375,9 @@ export default function RulesManager() {
               <div><Label>Gasto mínimo (€)</Label><Input value={form.minSpend} onChange={e => setForm(f => ({ ...f, minSpend: e.target.value }))} /></div>
               <div><Label>Máx. tokens por operación</Label><Input type="number" value={form.maxTokens} onChange={e => setForm(f => ({ ...f, maxTokens: e.target.value }))} /></div>
               <div><Label>Límite diario</Label><Input type="number" value={form.dailyLimit} onChange={e => setForm(f => ({ ...f, dailyLimit: e.target.value }))} /></div>
+              <div><Label>Límite semanal</Label><Input type="number" value={form.weeklyLimit} onChange={e => setForm(f => ({ ...f, weeklyLimit: e.target.value }))} /></div>
               <div><Label>Límite mensual</Label><Input type="number" value={form.monthlyLimit} onChange={e => setForm(f => ({ ...f, monthlyLimit: e.target.value }))} /></div>
+              <div><Label>Límite de por vida</Label><Input type="number" value={form.lifetimeLimit} onChange={e => setForm(f => ({ ...f, lifetimeLimit: e.target.value }))} /></div>
 
               {form.origin === "recurrence" && (
                 <>
@@ -277,6 +390,7 @@ export default function RulesManager() {
                         <SelectItem value="day">Día</SelectItem>
                         <SelectItem value="week">Semana</SelectItem>
                         <SelectItem value="month">Mes</SelectItem>
+                        <SelectItem value="lifetime">De por vida</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

@@ -18,12 +18,13 @@ interface CampaignForm {
   description: string;
   multiplier: string;
   bonusTokens: string;
+  maxTotalTokens: string;
   startsAt: string;
   endsAt: string;
   priority: string;
 }
 
-const emptyForm: CampaignForm = { name: "", description: "", multiplier: "", bonusTokens: "", startsAt: "", endsAt: "", priority: "0" };
+const emptyForm: CampaignForm = { name: "", description: "", multiplier: "", bonusTokens: "", maxTotalTokens: "", startsAt: "", endsAt: "", priority: "0" };
 
 export default function CampaignsManager() {
   const [open, setOpen] = useState(false);
@@ -62,6 +63,7 @@ export default function CampaignsManager() {
     setEditId(c.id);
     setForm({
       name: c.name, description: c.description ?? "", multiplier: c.multiplier ?? "", bonusTokens: c.bonusTokens != null ? String(c.bonusTokens) : "",
+      maxTotalTokens: c.maxTotalTokens != null ? String(c.maxTotalTokens) : "",
       startsAt: c.startsAt ? new Date(c.startsAt).toISOString().slice(0, 16) : "",
       endsAt: c.endsAt ? new Date(c.endsAt).toISOString().slice(0, 16) : "",
       priority: String(c.priority),
@@ -76,6 +78,7 @@ export default function CampaignsManager() {
     description: form.description || undefined,
     multiplier: form.multiplier || undefined,
     bonusTokens: form.bonusTokens ? Number(form.bonusTokens) : undefined,
+    maxTotalTokens: form.maxTotalTokens ? Number(form.maxTotalTokens) : undefined,
     startsAt: form.startsAt ? new Date(form.startsAt) : undefined,
     endsAt: form.endsAt ? new Date(form.endsAt) : undefined,
     priority: Number(form.priority) || 0,
@@ -121,6 +124,7 @@ export default function CampaignsManager() {
                   <TableHead>Nombre</TableHead>
                   <TableHead>Multiplicador</TableHead>
                   <TableHead>Bonus fijo</TableHead>
+                  <TableHead>Presupuesto</TableHead>
                   <TableHead>Alcance</TableHead>
                   <TableHead>Prioridad</TableHead>
                   <TableHead>Activa</TableHead>
@@ -133,6 +137,7 @@ export default function CampaignsManager() {
                     <TableCell className="font-medium text-foreground">{c.name}</TableCell>
                     <TableCell className="text-muted-foreground">{c.multiplier ? `x${c.multiplier}` : "—"}</TableCell>
                     <TableCell className="text-muted-foreground">{c.bonusTokens ?? "—"}</TableCell>
+                    <TableCell className="text-muted-foreground">{c.maxTotalTokens != null ? c.maxTotalTokens.toLocaleString("es-ES") : "Sin límite"}</TableCell>
                     <TableCell>
                       {c.scope.communityIds.length === 0 && c.scope.venueIds.length === 0 && c.scope.eventIds.length === 0
                         ? <Badge variant="secondary">Global</Badge>
@@ -158,6 +163,7 @@ export default function CampaignsManager() {
             <div className="grid grid-cols-2 gap-4">
               <div><Label>Multiplicador</Label><Input value={form.multiplier} onChange={e => setForm(f => ({ ...f, multiplier: e.target.value }))} placeholder="2.00" /></div>
               <div><Label>Bonus fijo</Label><Input type="number" value={form.bonusTokens} onChange={e => setForm(f => ({ ...f, bonusTokens: e.target.value }))} /></div>
+              <div><Label>Presupuesto total (tokens)</Label><Input type="number" value={form.maxTotalTokens} onChange={e => setForm(f => ({ ...f, maxTotalTokens: e.target.value }))} placeholder="Sin límite" /></div>
               <div><Label>Inicio</Label><Input type="datetime-local" value={form.startsAt} onChange={e => setForm(f => ({ ...f, startsAt: e.target.value }))} /></div>
               <div><Label>Fin</Label><Input type="datetime-local" value={form.endsAt} onChange={e => setForm(f => ({ ...f, endsAt: e.target.value }))} /></div>
               <div><Label>Prioridad</Label><Input type="number" value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} /></div>

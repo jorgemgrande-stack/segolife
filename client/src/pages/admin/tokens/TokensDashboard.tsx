@@ -3,11 +3,14 @@ import AdminLayout from "@/components/AdminLayout";
 import { trpc } from "@/lib/trpc";
 import { KpiCard } from "@/components/KpiCard";
 import { Badge } from "@/components/ui/badge";
-import { Coins, TrendingUp, TrendingDown, Wallet, Sparkles, Megaphone, Loader2, ArrowRight, ShieldCheck, Lock } from "lucide-react";
+import { Coins, TrendingUp, TrendingDown, Wallet, Sparkles, Megaphone, Loader2, ArrowRight, ShieldCheck, Lock, Ghost, Users, Undo2, Trophy } from "lucide-react";
 
 function fmtDateTime(d: Date | string | null | undefined) {
   if (!d) return "—";
   return new Date(d).toLocaleString("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+function fmtEUR(cents: number): string {
+  return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(cents / 100);
 }
 
 /**
@@ -67,12 +70,22 @@ export default function TokensDashboard() {
   return (
     <AdminLayout title="SegoTokens">
       <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <Coins className="w-6 h-6 text-primary" />
-          <div>
-            <h2 className="text-lg font-semibold text-foreground">SegoTokens</h2>
-            <p className="text-sm text-muted-foreground">Motor de puntos SegoLife — wallets, reglas, campañas y horarios.</p>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <Coins className="w-6 h-6 text-primary" />
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">SegoTokens</h2>
+              <p className="text-sm text-muted-foreground">Motor de puntos SegoLife — wallets, reglas, campañas y horarios.</p>
+            </div>
           </div>
+          {!isLoading && data && (
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="gap-1"><Lock className="w-3 h-3" /> LIVE LOYALTY OFF</Badge>
+              <Badge variant={data.shadowEnabled ? "default" : "secondary"} className="gap-1">
+                <Ghost className="w-3 h-3" /> SHADOW {data.shadowEnabled ? "ACTIVE" : "OFF"}
+              </Badge>
+            </div>
+          )}
         </div>
 
         {isLoading ? (
@@ -84,8 +97,21 @@ export default function TokensDashboard() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <KpiCard label="Tokens emitidos" value={data.totalIssued} icon={TrendingUp} color="emerald" subLabel="Total histórico" />
               <KpiCard label="Tokens gastados" value={data.totalSpent} icon={TrendingDown} color="orange" subLabel="Total histórico" />
-              <KpiCard label="Saldo total existente" value={data.totalBalance} icon={Wallet} color="blue" subLabel="Suma de todos los wallets" />
+              <KpiCard label="Saldo total existente" value={data.totalBalance} icon={Wallet} color="blue" subLabel={`${fmtEUR(data.estimatedPromotionalLiabilityCents)} liability estimada`} />
               <KpiCard label="Reglas activas" value={data.activeRulesCount} icon={Sparkles} color="violet" subLabel={`${data.totalRulesCount} en total`} href="/admin/tokens/rules" />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <KpiCard label="Emitidos hoy" value={data.issuedToday} icon={TrendingUp} color="emerald" />
+              <KpiCard label="Emitidos 7 días" value={data.issued7d} icon={TrendingUp} color="blue" />
+              <KpiCard label="Emitidos 30 días" value={data.issued30d} icon={TrendingUp} color="violet" />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+              <KpiCard label="Students con tokens" value={data.activeStudentsWithTokens} icon={Users} color="blue" />
+              <KpiCard label="Top regla (30d)" value={data.topEarningRule?.totalEarned ?? 0} icon={Trophy} color="amber" subLabel={data.topEarningRule?.ruleName ?? "Sin datos"} />
+              <KpiCard label="Top venue (30d)" value={data.topVenue?.earned ?? 0} icon={Trophy} color="amber" subLabel={data.topVenue?.venueName ?? "Sin datos"} />
+              <KpiCard label="Reversiones" value={data.reversalsCount} icon={Undo2} color="rose" subLabel="Total histórico" />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
