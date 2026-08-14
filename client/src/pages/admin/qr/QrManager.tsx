@@ -201,6 +201,11 @@ function ListTab() {
     onSuccess: () => { utils.consumptionQr.list.invalidate(); toast.success("QR cancelado"); },
     onError: e => toast.error(e.message),
   });
+  const [reverseReason, setReverseReason] = useState<Record<number, string>>({});
+  const reverseMut = trpc.consumptionQr.reverseReward.useMutation({
+    onSuccess: (res) => { utils.consumptionQr.list.invalidate(); toast.success(res.tokensReversed ? "SegoTokens revertidos" : "Ya estaba revertido"); },
+    onError: e => toast.error(e.message),
+  });
 
   return (
     <div className="space-y-4">
@@ -272,6 +277,23 @@ function ListTab() {
                           onClick={() => cancelMut.mutate({ qrId: qr.id, reason: cancelReason[qr.id] })}
                         >
                           Cancelar
+                        </Button>
+                      </div>
+                    )}
+                    {qr.status === "redeemed" && (
+                      <div className="flex items-center gap-1">
+                        <Input
+                          placeholder="Motivo"
+                          className="h-7 w-[110px] text-xs"
+                          value={reverseReason[qr.id] ?? ""}
+                          onChange={e => setReverseReason(r => ({ ...r, [qr.id]: e.target.value }))}
+                        />
+                        <Button
+                          size="sm" variant="outline" className="h-7"
+                          disabled={reverseMut.isPending || !reverseReason[qr.id]?.trim()}
+                          onClick={() => reverseMut.mutate({ qrId: qr.id, reason: reverseReason[qr.id] })}
+                        >
+                          Revertir tokens
                         </Button>
                       </div>
                     )}

@@ -1,17 +1,33 @@
+import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Loader2, Plug, Receipt, AlertCircle } from "lucide-react";
+import { toast } from "sonner";
 
 /**
  * VenueCommerceTab — tab "Commerce / Integrations" del admin de venues
  * (Fase 5, spec punto 58): integraciones del proveedor (Fourvenues),
  * transacciones de comercio, no resueltas, estado de sync. Explícitamente
  * SIN contabilidad (eso sigue viviendo en el módulo fiscal legacy, no aquí).
+ *
+ * Reembolso (SEGOLIFE — Venue Commerce, Consumption QR & SegoTokens, spec
+ * §31-33/§46): solo transacciones `confirmed` — reutiliza
+ * commerce.refundTransaction (reversión atómica de la recompensa vía el
+ * ledgerId exacto, nunca recalculada). Mismo patrón inline motivo+botón que
+ * QrManager.tsx (cancelación de QR).
  */
 export function VenueCommerceTab({ venueId }: { venueId: number }) {
   const { data: venueIntegrations, isLoading: loadingIntegrations } = trpc.integrations.listVenueIntegrations.useQuery({ venueId });
   const { data: transactions, isLoading: loadingTx } = trpc.commerce.listByVenue.useQuery({ venueId });
   const { data: unresolved } = trpc.integrations.listUnresolved.useQuery({ status: "unresolved" });
+  const utils = trpc.useUtils();
+  const [refundReason, setRefundReason] = useState<Record<number, string>>({});
+  const refundMut = trpc.commerce.refundTransaction.useMutation({
+    onSuccess: () => { utils.commerce.listByVenue.invalidate({ venueId }); toast.success("Transacción reembolsada"); },
+    onError: e => toast.error(e.message),
+  });
 
   const venueUnresolved = (unresolved ?? []).filter(u => u.venueId === venueId);
 
@@ -47,9 +63,28 @@ export function VenueCommerceTab({ venueId }: { venueId: number }) {
         ) : (
           <div className="space-y-1.5">
             {transactions.slice(0, 20).map(t => (
-              <div key={t.id} className="flex items-center justify-between text-sm border border-border rounded-lg px-3 py-2">
+              <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 text-sm border border-border rounded-lg px-3 py-2">
                 <span>{t.provider} · {new Date(t.occurredAt).toLocaleString()}</span>
-                <span>{(t.totalCents / 100).toFixed(2)} {t.currency} · <Badge variant="secondary">{t.status}</Badge></span>
+                <div className="flex items-center gap-2">
+                  <span>{(t.totalCents / 100).toFixed(2)} {t.currency} · <Badge variant="secondary">{t.status}</Badge></span>
+                  {t.status === "confirmed" && (
+                    <div className="flex items-center gap-1">
+                      <Input
+                        placeholder="Motivo"
+                        className="h-7 w-[110px] text-xs"
+                        value={refundReason[t.id] ?? ""}
+                        onChange={e => setRefundReason(r => ({ ...r, [t.id]: e.target.value }))}
+                      />
+                      <Button
+                        size="sm" variant="outline" className="h-7"
+                        disabled={refundMut.isPending || !refundReason[t.id]?.trim()}
+                        onClick={() => refundMut.mutate({ transactionId: t.id, reason: refundReason[t.id] })}
+                      >
+                        Reembolsar
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>
