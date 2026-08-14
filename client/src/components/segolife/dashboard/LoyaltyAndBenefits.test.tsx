@@ -6,12 +6,16 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 
-const { mockLoyaltyQuery, mockBenefitsQuery } = vi.hoisted(() => ({
+const { mockLoyaltyQuery, mockBenefitsQuery, mockShadowStatusQuery } = vi.hoisted(() => ({
   mockLoyaltyQuery: vi.fn(),
   mockBenefitsQuery: vi.fn(),
+  mockShadowStatusQuery: vi.fn(() => ({ data: { enabled: false }, isLoading: false, error: null })),
 }));
 vi.mock("@/lib/trpc", () => ({
-  trpc: { dashboard: { getLoyalty: { useQuery: mockLoyaltyQuery }, getBenefits: { useQuery: mockBenefitsQuery } } },
+  trpc: {
+    dashboard: { getLoyalty: { useQuery: mockLoyaltyQuery }, getBenefits: { useQuery: mockBenefitsQuery } },
+    loyaltyShadow: { getStatus: { useQuery: mockShadowStatusQuery } },
+  },
 }));
 
 import { LoyaltyAndBenefits } from "./LoyaltyAndBenefits";

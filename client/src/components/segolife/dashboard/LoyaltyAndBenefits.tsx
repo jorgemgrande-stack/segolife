@@ -12,11 +12,15 @@ import type { DashboardQueryInput } from "./useDashboardFilters";
 export function LoyaltyAndBenefits({ filters }: { filters: DashboardQueryInput }) {
   const loyalty = trpc.dashboard.getLoyalty.useQuery(filters);
   const benefits = trpc.dashboard.getBenefits.useQuery(filters);
+  const shadowStatus = trpc.loyaltyShadow.getStatus.useQuery();
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <Panel title="SegoTokens Economy" icon={Coins} action={<Link href="/admin/tokens" className="text-[10px] font-semibold text-violet-500 hover:underline">Ver tokens →</Link>}>
-        <div className="mb-2"><Badge tone="locked">LIVE OFF · simulación</Badge></div>
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          <Badge tone="locked">LIVE OFF · simulación</Badge>
+          <Badge tone={shadowStatus.data?.enabled ? "good" : "locked"}>SHADOW {shadowStatus.data?.enabled ? "ACTIVE" : "OFF"}</Badge>
+        </div>
         {loyalty.isLoading && <DashboardEmptyState kind="loading" title="" />}
         {loyalty.error && <DashboardEmptyState kind="error" title="No se pudo cargar SegoTokens" detail={loyalty.error.message} />}
         {loyalty.data && (

@@ -31,6 +31,7 @@ vi.mock("@/lib/trpc", () => ({
       getAlerts: { useQuery: noopQuery },
       getSystemHealth: { useQuery: noopQuery },
     },
+    loyaltyShadow: { getStatus: { useQuery: noopQuery } },
   },
 }));
 vi.mock("@/_core/hooks/useAuth", () => ({ useAuth: () => ({ user: { name: "Ana García" } }) }));
