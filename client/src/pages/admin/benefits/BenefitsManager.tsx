@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { Gift, Loader2, Plus, Pencil, ShieldAlert, Ban } from "lucide-react";
 import { useAdminCommunity } from "@/contexts/AdminCommunityContext";
 import { ADMIN_COMMUNITY_FILTER_ALL } from "@shared/segolife/adminCommunityFilter";
+import ImageUploader from "@/components/ImageUploader";
 
 const ALL = "__all__";
 const NONE = "__none__";
@@ -191,6 +192,11 @@ function DefinitionsTab() {
               <div><Label>Slug *</Label><Input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value }))} placeholder="entrada-casanova" /></div>
             </div>
             <div><Label>Descripción interna</Label><Textarea rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></div>
+            <ImageUploader
+              label="Imagen (Student — Home/Benefit detail)"
+              value={form.imageUrl}
+              onChange={url => setForm(f => ({ ...f, imageUrl: url }))}
+            />
             <div className="grid grid-cols-3 gap-4">
               <div>
                 <Label>Tipo de beneficio *</Label>
