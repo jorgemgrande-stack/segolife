@@ -14,7 +14,17 @@ export function Panel({ title, icon: Icon, children, action, badge, className }:
   title: string; icon?: React.ElementType; children: ReactNode; action?: ReactNode; badge?: number; className?: string;
 }) {
   return (
-    <div className={cn("rounded-xl border border-border/50 overflow-hidden bg-card/40", className)}>
+    <div className={cn(
+      "rounded-xl border border-border/50 overflow-hidden bg-card/40",
+      // Dark mode visual depth polish — únicamente dark: (light intacto).
+      // `bg-card/40`+`border-border/50` en dark quedaban casi fundidos con
+      // `--background` (oklch L 0.10 vs --card L 0.14, ya poco margen, y la
+      // opacidad al 40%/50% lo diluía aún más). Misma paleta de siempre
+      // (--card/--border), solo más opacos + una sombra/hairline muy tenue
+      // para separación — sin tocar light, estructura, grid ni contenido.
+      "dark:border-border dark:bg-card/90 dark:shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset,0_1px_2px_rgba(0,0,0,0.2),0_6px_16px_-8px_rgba(0,0,0,0.35)]",
+      className
+    )}>
       <div className="flex items-center justify-between px-4 py-3.5 border-b border-border/30 gap-2">
         <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2 min-w-0">
           {Icon && <Icon className="w-3.5 h-3.5 text-violet-500 dark:text-violet-400 shrink-0" />}
