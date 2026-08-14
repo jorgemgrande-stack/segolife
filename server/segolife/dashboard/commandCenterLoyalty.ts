@@ -139,7 +139,7 @@ export async function getBenefitsPerformance(ctx: DashboardFilterContext, db: An
   const [statsResult, expiringResult, rankingResult] = await Promise.all([
     db.execute(sql`
       SELECT
-        COUNT(*) AS generated,
+        COUNT(*) AS \`generated\`,
         SUM(CASE WHEN ub.status = 'active' AND (ub.valid_until IS NULL OR ub.valid_until >= ${now}) THEN 1 ELSE 0 END) AS available,
         SUM(CASE WHEN ub.status = 'used' AND ub.used_at >= ${ctx.from} AND ub.used_at < ${ctx.to} THEN 1 ELSE 0 END) AS redeemed,
         SUM(CASE WHEN ub.status = 'expired' OR (ub.status = 'active' AND ub.valid_until < ${now}) THEN 1 ELSE 0 END) AS expired

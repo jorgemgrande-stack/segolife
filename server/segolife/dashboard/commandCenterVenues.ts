@@ -79,7 +79,7 @@ export async function getVenuePerformance(ctx: DashboardFilterContext, db: AnyDb
     `),
     db.execute(sql`
       SELECT source_venue_id AS venue_id,
-        COUNT(*) AS generated,
+        COUNT(*) AS \`generated\`,
         SUM(CASE WHEN status = 'used' AND used_at >= ${ctx.from} AND used_at < ${ctx.to} THEN 1 ELSE 0 END) AS redeemed
       FROM user_benefits WHERE granted_at >= ${ctx.from} AND granted_at < ${ctx.to} AND source_venue_id IN (${inClause})
       GROUP BY source_venue_id
