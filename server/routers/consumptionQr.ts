@@ -9,6 +9,7 @@ import {
   redeemConsumptionQr,
   cancelConsumptionQr,
   getConsumptionQrStatus,
+  reverseConsumptionQrReward,
   QrError,
 } from "../segolife/qr/consumptionQrService";
 import {
@@ -41,6 +42,7 @@ function mapQrOrEngineError(err: unknown): never {
       COMMUNITY_NOT_AUTHORIZED: "FORBIDDEN",
       REASON_REQUIRED: "BAD_REQUEST",
       CANNOT_CANCEL: "CONFLICT",
+      NOT_REDEEMED: "CONFLICT",
     };
     throw new TRPCError({ code: codeMap[err.code] ?? "BAD_REQUEST", message: err.message, cause: err });
   }
@@ -154,6 +156,16 @@ export const consumptionQrRouter = router({
       const qr = await getConsumptionQrStatus(input.qrId);
       if (!qr) throw new TRPCError({ code: "NOT_FOUND", message: "QR no encontrado" });
       return qr;
+    }),
+
+  reverseReward: qrManageProcedure
+    .input(z.object({ qrId: z.number().int().positive(), reason: z.string().min(1).max(256) }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await reverseConsumptionQrReward({ qrId: input.qrId, reason: input.reason, reversedByUserId: ctx.user.id });
+      } catch (err) {
+        mapQrOrEngineError(err);
+      }
     }),
 
   // ─── ESTUDIANTE — canje ─────────────────────────────────────────────────────

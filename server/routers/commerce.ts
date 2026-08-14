@@ -3,16 +3,27 @@ import { TRPCError } from "@trpc/server";
 import { router, permissionProcedure } from "../_core/trpc";
 import { listCommerceTransactionsByVenue, listCommerceTransactionItems } from "../segolife/commerce/commerceDb";
 import { listPosProducts, recordNativeSale, PosError } from "../segolife/commerce/nativeCommerceService";
+import { refundCommerceTransaction, CommerceError } from "../segolife/commerce/commercePipeline";
 import { lookupStudentByIdentityToken } from "../segolife/commerce/studentIdentityService";
 import { getVenueStaffAccess } from "../segolife/benefits/venueStaffAccess";
 
 const commerceViewProcedure = permissionProcedure("commerce.view", ["admin"]);
 // Fase 8 — POS nativo de staff (mirroring benefits.redeem/attendance.redeem).
 const commerceRecordProcedure = permissionProcedure("commerce.record", ["admin"]);
+// SEGOLIFE — Venue Commerce, Consumption QR & SegoTokens: reembolso es acción admin, nunca de staff/POS (spec §46/§58 "Admin puede ver/cancelar").
+const commerceManageProcedure = permissionProcedure("commerce.manage", ["admin"]);
 
 function mapPosError(err: unknown): never {
   if (err instanceof PosError) {
     throw new TRPCError({ code: err.code === "PRODUCT_UNAVAILABLE" ? "CONFLICT" : "BAD_REQUEST", message: err.message, cause: err });
+  }
+  throw err;
+}
+
+function mapCommerceError(err: unknown): never {
+  if (err instanceof CommerceError) {
+    const codeMap: Record<string, "NOT_FOUND" | "BAD_REQUEST" | "CONFLICT"> = { NOT_FOUND: "NOT_FOUND", INVALID_STATE: "CONFLICT", REASON_REQUIRED: "BAD_REQUEST" };
+    throw new TRPCError({ code: codeMap[err.code] ?? "BAD_REQUEST", message: err.message, cause: err });
   }
   throw err;
 }
@@ -32,6 +43,16 @@ export const commerceRouter = router({
   listItems: commerceViewProcedure
     .input(z.object({ transactionId: z.number().int().positive() }))
     .query(({ input }) => listCommerceTransactionItems(input.transactionId)),
+
+  refundTransaction: commerceManageProcedure
+    .input(z.object({ transactionId: z.number().int().positive(), reason: z.string().min(1).max(500) }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await refundCommerceTransaction({ transactionId: input.transactionId, reason: input.reason, refundedByUserId: ctx.user.id });
+      } catch (err) {
+        mapCommerceError(err);
+      }
+    }),
 
   // ─── POS nativo (staff) — Fase 8 ─────────────────────────────────────────────
   myAuthorizedVenuesForPos: commerceRecordProcedure.query(async ({ ctx }) => {

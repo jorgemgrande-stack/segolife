@@ -57,7 +57,7 @@ export async function getVenuePerformance(ctx: DashboardFilterContext, db: AnyDb
   const venueIds = venueList.map(v => Number(v.venue_id));
   const inClause = sql.join(venueIds, sql`, `);
 
-  const [activeStudentsMap, historicalByVenue, ticketsResult, attendanceResult, commerceResult, tokensResult, benefitsResult, trendResult] = await Promise.all([
+  const [activeStudentsMap, historicalByVenue, ticketsResult, attendanceResult, commerceResult, qrConsumptionResult, tokensResult, benefitsResult, trendResult] = await Promise.all([
     activeStudentsByVenue(ctx.from, ctx.to, ctx.communityId, db),
     getHistoricalIdentityStatsByVenue(db as never),
     db.execute(sql`
@@ -70,6 +70,13 @@ export async function getVenuePerformance(ctx: DashboardFilterContext, db: AnyDb
     `),
     db.execute(sql`SELECT venue_id, COUNT(*) AS n FROM event_attendance WHERE occurred_at >= ${ctx.from} AND occurred_at < ${ctx.to} AND venue_id IN (${inClause}) GROUP BY venue_id`),
     db.execute(sql`SELECT venue_id, COALESCE(SUM(total_cents), 0) AS revenue_cents FROM commerce_transactions WHERE status = 'confirmed' AND occurred_at >= ${ctx.from} AND occurred_at < ${ctx.to} AND venue_id IN (${inClause}) GROUP BY venue_id`),
+    // Consumo registrado vía QR (consumptionQrService.ts) NUNCA crea una fila
+    // en commerce_transactions — es un circuito paralelo al POS nativo (spec
+    // SEGOLIFE — Venue Commerce, §36-38). Sin esta segunda fuente,
+    // commerceRevenueCents solo reflejaría ventas de /staff/pos, aunque
+    // segoTokensEarned (más abajo, origin-agnóstico sobre token_ledger) ya
+    // incluía ambos caminos correctamente.
+    db.execute(sql`SELECT venue_id, COALESCE(SUM(amount_cents), 0) AS revenue_cents FROM consumption_qr_codes WHERE status = 'redeemed' AND redeemed_at >= ${ctx.from} AND redeemed_at < ${ctx.to} AND venue_id IN (${inClause}) GROUP BY venue_id`),
     db.execute(sql`
       SELECT venue_id,
         COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE 0 END), 0) AS earned,
@@ -102,6 +109,10 @@ export async function getVenuePerformance(ctx: DashboardFilterContext, db: AnyDb
   for (const r of rowsOf<{ venue_id: number; n: number | string }>(attendanceResult)) attendanceByVenue.set(Number(r.venue_id), Number(r.n));
   const commerceByVenue = new Map<number, number>();
   for (const r of rowsOf<{ venue_id: number; revenue_cents: number | string }>(commerceResult)) commerceByVenue.set(Number(r.venue_id), Number(r.revenue_cents));
+  for (const r of rowsOf<{ venue_id: number; revenue_cents: number | string }>(qrConsumptionResult)) {
+    const venueId = Number(r.venue_id);
+    commerceByVenue.set(venueId, (commerceByVenue.get(venueId) ?? 0) + Number(r.revenue_cents));
+  }
   const tokensByVenue = new Map<number, { earned: number; spent: number }>();
   for (const r of rowsOf<{ venue_id: number; earned: number | string; spent: number | string }>(tokensResult)) {
     tokensByVenue.set(Number(r.venue_id), { earned: Number(r.earned), spent: Number(r.spent) });

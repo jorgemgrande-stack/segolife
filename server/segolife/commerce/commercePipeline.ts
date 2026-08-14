@@ -11,7 +11,7 @@
  * cuando se vincula, no antes. `loyalty_processed_at` marca si ya se
  * intentó, evitando doble-procesado si se reprocesa por error.
  */
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { commerceTransactions, commerceTransactionItems, type CommerceTransaction } from "../../../drizzle/schema";
@@ -20,7 +20,7 @@ import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
 import { resolveIdentity, persistIdentityMapping, isConfirmedResolutionMethod } from "../integrations/identityResolver";
 import { recordUnresolvedOperation } from "../integrations/unresolvedOperationsService";
 import type { NormalizedCommerceTransaction } from "../integrations/externalTicketingProvider";
-import { TokenEngineError } from "../tokens/tokenLedgerService";
+import { TokenEngineError, reverseTransaction, isLedgerEntryReversed } from "../tokens/tokenLedgerService";
 import { resolveLoyaltyCutoff, isBeforeCutoff } from "../tokens/loyaltyCutoffService";
 import { buildNextAttempt, shouldAttemptReward, type RewardAttempt, type DenialReasonCode } from "../tokens/rewardStateMachine";
 
@@ -208,4 +208,76 @@ export async function ingestCommerceTransaction(input: IngestCommerceTransaction
   await processCommerceLoyalty(row, conn);
   const [processedRow] = await conn.select().from(commerceTransactions).where(eq(commerceTransactions.id, insertId)).limit(1);
   return { status: "processed_with_loyalty", transaction: processedRow };
+}
+
+// ─── REEMBOLSO (SEGOLIFE — Venue Commerce, Consumption QR & SegoTokens, spec §31-33/§72/§96) ──
+
+export type CommerceErrorCode = "NOT_FOUND" | "INVALID_STATE" | "REASON_REQUIRED";
+
+export class CommerceError extends Error {
+  code: CommerceErrorCode;
+  constructor(code: CommerceErrorCode, message: string) {
+    super(message);
+    this.name = "CommerceError";
+    this.code = code;
+  }
+}
+
+export interface RefundCommerceTransactionInput {
+  transactionId: number;
+  reason: string;
+  refundedByUserId: number;
+}
+
+export interface RefundCommerceTransactionResult {
+  transaction: CommerceTransaction;
+  /** false si la transacción nunca llegó a conceder tokens (identidad no resuelta, NO_RULE_FOUND, cutoff...) — no hay nada que revertir, y eso es correcto, no un fallo. */
+  tokensReversed: boolean;
+}
+
+/**
+ * Reembolso de una commerce_transaction CONFIRMADA — venta de POS nativo ya
+ * cobrada en efectivo por el venue. Transición atómica confirmed→refunded
+ * (UPDATE condicional, mismo patrón que consumptionQrService.ts) seguida de
+ * la reversión EXACTA del movimiento de ledger original vía
+ * `reverseTransaction()` (Fase 2) — nunca recalculado, se usa
+ * `loyaltyLedgerId` ya persistido por `processCommerceLoyalty`. Nunca borra
+ * el ledger original, crea una entrada compensatoria; idempotente (una
+ * transacción ya `refunded` es INVALID_STATE en el segundo intento, nunca se
+ * reinterpreta silenciosamente).
+ */
+export async function refundCommerceTransaction(input: RefundCommerceTransactionInput, db?: DbHandle): Promise<RefundCommerceTransactionResult> {
+  if (!input.reason || !input.reason.trim()) {
+    throw new CommerceError("REASON_REQUIRED", "El reembolso requiere un motivo");
+  }
+  const conn = db ?? (await getDb());
+
+  const [transaction] = await conn.select().from(commerceTransactions).where(eq(commerceTransactions.id, input.transactionId)).limit(1);
+  if (!transaction) throw new CommerceError("NOT_FOUND", "Transacción no encontrada");
+  if (transaction.status !== "confirmed") {
+    throw new CommerceError("INVALID_STATE", `Solo se puede reembolsar una transacción confirmada (estado actual: ${transaction.status})`);
+  }
+
+  const [updateResult] = await conn.update(commerceTransactions)
+    .set({
+      status: "refunded",
+      metadata: { ...(transaction.metadata ?? {}), refund: { reason: input.reason, refundedByUserId: input.refundedByUserId, refundedAt: new Date().toISOString() } },
+    })
+    .where(and(eq(commerceTransactions.id, input.transactionId), eq(commerceTransactions.status, "confirmed")));
+  if ((updateResult as unknown as { affectedRows: number }).affectedRows === 0) {
+    throw new CommerceError("INVALID_STATE", "La transacción cambió de estado antes de poder reembolsarse");
+  }
+
+  let tokensReversed = false;
+  if (transaction.loyaltyLedgerId != null && !(await isLedgerEntryReversed(transaction.loyaltyLedgerId, conn))) {
+    await reverseTransaction({
+      ledgerId: transaction.loyaltyLedgerId,
+      reason: `Reembolso de consumición — transacción #${transaction.id}: ${input.reason}`,
+      adminUserId: input.refundedByUserId,
+    }, conn);
+    tokensReversed = true;
+  }
+
+  const [refunded] = await conn.select().from(commerceTransactions).where(eq(commerceTransactions.id, input.transactionId)).limit(1);
+  return { transaction: refunded, tokensReversed };
 }

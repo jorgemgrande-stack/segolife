@@ -60,7 +60,7 @@ import {
   type QrBatch,
 } from "../../../drizzle/schema";
 import { earnTokens, type TokenBreakdown } from "../tokens/tokenEngine";
-import { TokenEngineError } from "../tokens/tokenLedgerService";
+import { TokenEngineError, reverseTransaction, isLedgerEntryReversed } from "../tokens/tokenLedgerService";
 import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
 import { buildBenefitUnlockedSummaries, type BenefitUnlockedSummary } from "../benefits/benefitSummary";
 import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/benefitEvents";
@@ -85,7 +85,8 @@ export type QrErrorCode =
   | "PRODUCT_INACTIVE"
   | "COMMUNITY_NOT_AUTHORIZED"
   | "REASON_REQUIRED"
-  | "CANNOT_CANCEL";
+  | "CANNOT_CANCEL"
+  | "NOT_REDEEMED";
 
 export class QrError extends Error {
   code: QrErrorCode;
@@ -438,4 +439,54 @@ export async function getConsumptionQrStatus(qrId: number, db?: DbHandle): Promi
   const conn = db ?? (await getDb());
   const [qr] = await conn.select().from(consumptionQrCodes).where(eq(consumptionQrCodes.id, qrId)).limit(1);
   return qr ?? null;
+}
+
+// ─── REVERSIÓN DE RECOMPENSA (SEGOLIFE — Venue Commerce, Consumption QR & SegoTokens, spec §31-33/§72/§96) ──
+
+export interface ReverseQrRewardInput {
+  qrId: number;
+  reason: string;
+  reversedByUserId: number;
+}
+
+export interface ReverseQrRewardResult {
+  qr: ConsumptionQrCode;
+  /** false si ya se había revertido antes (reintento idempotente) o si el canje nunca llegó a conceder tokens. */
+  tokensReversed: boolean;
+}
+
+/**
+ * Revierte los SegoTokens de un QR YA CANJEADO. El consumo físico sucedió de
+ * verdad — a diferencia de `cancelConsumptionQr` (solo aplicable a
+ * `issued`), este QR permanece `redeemed` para siempre, nunca se
+ * reinterpreta como si no hubiera pasado (spec §31: "no convertir
+ * simplemente a cancelled si hubo reward"). Solo se retira la recompensa vía
+ * `reverseTransaction()` sobre `qr.ledgerId` — el mismo movimiento exacto
+ * que generó `redeemConsumptionQr`, nunca recalculado. Idempotente: un
+ * segundo intento sobre el mismo QR ya revertido devuelve
+ * `tokensReversed:false` en vez de fallar (mismo criterio que
+ * `ticketCancellationService.ts::reverseNativePurchaseReward`).
+ */
+export async function reverseConsumptionQrReward(input: ReverseQrRewardInput, db?: DbHandle): Promise<ReverseQrRewardResult> {
+  if (!input.reason || !input.reason.trim()) {
+    throw new QrError("REASON_REQUIRED", "La reversión requiere un motivo");
+  }
+  const conn = db ?? (await getDb());
+  const [qr] = await conn.select().from(consumptionQrCodes).where(eq(consumptionQrCodes.id, input.qrId)).limit(1);
+  if (!qr) throw new QrError("NOT_FOUND", "QR no encontrado");
+  if (qr.status !== "redeemed") {
+    throw new QrError("NOT_REDEEMED", `Solo se puede revertir un QR canjeado (estado actual: ${qr.status})`);
+  }
+
+  let tokensReversed = false;
+  if (qr.ledgerId != null && !(await isLedgerEntryReversed(qr.ledgerId, conn))) {
+    await reverseTransaction({
+      ledgerId: qr.ledgerId,
+      reason: `Reversión de canje QR #${qr.id}: ${input.reason}`,
+      adminUserId: input.reversedByUserId,
+    }, conn);
+    tokensReversed = true;
+  }
+
+  return { qr, tokensReversed };
 }
