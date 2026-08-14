@@ -18,6 +18,8 @@ import {
   unassignStudentTag,
 } from "../db/studentsDb";
 import { recordStudentAdminAction } from "../segolife/students/studentAdminActionsDb";
+import { listStudentsBySegment } from "../segolife/students/studentSegmentFilterService";
+import { getDb } from "../db";
 
 // Lectura del CRM de estudiantes: ver el listado/fichas.
 const studentsViewProcedure = permissionProcedure("students.view", ["admin"]);
@@ -74,6 +76,34 @@ export const studentsRouter = router({
       const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
       const communityIds = resolveCommunityFilter(access, input.communityId);
       return listStudents({ ...input, communityIds });
+    }),
+
+  /**
+   * Deep navigation desde el Command Center (Student Intelligence, spec §10
+   * de la fase "Production Polish Gate") — el gap conocido: los segmentos
+   * (new/active/highly_engaged/at_risk/dormant/high_spend) no eran
+   * filtrables porque son computados, no una columna. Reutiliza
+   * `studentSegmentFilterService.ts` — nunca modifica `listStudents`.
+   */
+  listBySegment: studentsViewProcedure
+    .input(
+      z.object({
+        segment: z.enum(["new", "active", "highly_engaged", "at_risk", "dormant", "high_spend"]),
+        communityId: communityFilterInput,
+        search: z.string().max(256).optional(),
+        universityId: z.number().int().positive().optional(),
+        nationality: z.string().length(2).optional(),
+        profileCompleted: z.boolean().optional(),
+        limit: z.number().int().min(1).max(200).default(50),
+        offset: z.number().int().min(0).default(0),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
+      const communityIds = resolveCommunityFilter(access, input.communityId);
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Base de datos no disponible" });
+      return listStudentsBySegment(input.segment, { ...input, communityIds }, db as never);
     }),
 
   getById: studentsViewProcedure

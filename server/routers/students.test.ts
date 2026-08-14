@@ -31,6 +31,10 @@ describe("students router — endpoint privado (nunca público)", () => {
     await expect(callerWithoutSession().getById({ id: 1 })).rejects.toThrow(/please login/i);
   });
 
+  it("students.listBySegment (deep navigation desde el Command Center) rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().listBySegment({ segment: "at_risk", limit: 50, offset: 0 })).rejects.toThrow(/please login/i);
+  });
+
   it("students.addNote (escritura admin) rechaza sin sesión", async () => {
     await expect(callerWithoutSession().addNote({ studentProfileId: 1, note: "x" })).rejects.toThrow(/please login/i);
   });
