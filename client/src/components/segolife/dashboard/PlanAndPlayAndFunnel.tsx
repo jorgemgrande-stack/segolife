@@ -29,12 +29,22 @@ export function PlanAndPlayAndFunnel({ filters }: { filters: DashboardQueryInput
               <StatRow label="Pendientes de moderar" value={planAndPlay.data.pendingModerationStudentProposals} />
             )}
             {planAndPlay.data.mostActive && (
-              <div className="mt-2 pt-2 border-t border-border/20 rounded-lg">
+              <Link href={`/admin/comunity/${planAndPlay.data.mostActive.proposalId}`} className="block mt-2 pt-2 border-t border-border/20 rounded-lg hover:bg-muted/40 transition-colors -mx-1 px-1">
                 <p className="text-[10px] font-bold uppercase text-muted-foreground mb-1">Más activa</p>
                 <p className="text-xs font-semibold">{planAndPlay.data.mostActive.title}</p>
                 <p className="text-[11px] text-muted-foreground">
                   {planAndPlay.data.mostActive.topAnswerLabel ?? "—"} {planAndPlay.data.mostActive.topAnswerPct != null ? `${planAndPlay.data.mostActive.topAnswerPct}%` : ""} · {planAndPlay.data.mostActive.responseCount} respuestas
                 </p>
+              </Link>
+            )}
+            {planAndPlay.data.endingSoon.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-border/20 space-y-1">
+                <p className="text-[10px] font-bold uppercase text-muted-foreground mb-1">Terminan pronto</p>
+                {planAndPlay.data.endingSoon.slice(0, 3).map(p => (
+                  <Link key={p.proposalId} href={`/admin/comunity/${p.proposalId}`} className="block text-[11px] hover:text-violet-500 dark:hover:text-violet-400 transition-colors truncate">
+                    {p.title}
+                  </Link>
+                ))}
               </div>
             )}
           </div>

@@ -3,20 +3,33 @@
  * resumen ejecutivo (DETERMINISTA, sin IA), KPI strip con click-through, y
  * el saludo con el nombre real del admin.
  */
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 
-const { mockOverviewQuery, mockAuth } = vi.hoisted(() => ({
+interface AdminCommunityMock {
+  filter: number | "all";
+  setFilter: (v: number | "all") => void;
+  communities: Array<{ id: number; name: string; slug: string }>;
+  loading: boolean;
+}
+
+const { mockOverviewQuery, mockAuth, mockAdminCommunity } = vi.hoisted(() => ({
   mockOverviewQuery: vi.fn(),
   mockAuth: vi.fn(),
+  mockAdminCommunity: vi.fn<() => AdminCommunityMock>(() => ({ filter: "all", setFilter: () => {}, communities: [], loading: false })),
 }));
 
 vi.mock("@/lib/trpc", () => ({ trpc: { dashboard: { getOverview: { useQuery: mockOverviewQuery } } } }));
 vi.mock("@/_core/hooks/useAuth", () => ({ useAuth: () => mockAuth() }));
+vi.mock("@/contexts/AdminCommunityContext", () => ({
+  useAdminCommunity: () => mockAdminCommunity(),
+  ADMIN_COMMUNITY_FILTER_ALL: "all",
+}));
 
 import { CommandCenterHeader } from "./CommandCenterHeader";
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
+beforeEach(() => { mockAdminCommunity.mockReturnValue({ filter: "all" as const, setFilter: vi.fn(), communities: [], loading: false }); });
 
 function overviewFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -78,5 +91,20 @@ describe("CommandCenterHeader", () => {
     mockOverviewQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });
     render(<CommandCenterHeader filters={{}} />);
     expect(screen.getByText(/Buenos días, Administrador/)).toBeInTheDocument();
+  });
+
+  it("filter feedback (spec §34): muestra la comunidad Y el periodo activos, nunca deja al admin sin saber que está filtrando", () => {
+    mockAuth.mockReturnValue({ user: { name: "Ana García" } });
+    mockOverviewQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });
+    mockAdminCommunity.mockReturnValue({ filter: 3, setFilter: vi.fn(), communities: [{ id: 3, name: "Segolife IE", slug: "ie" }], loading: false });
+    render(<CommandCenterHeader filters={{ range: "7d" }} />);
+    expect(screen.getByText("Segolife IE · Últimos 7 días")).toBeInTheDocument();
+  });
+
+  it("filter feedback: 'Todas las comunidades' cuando no hay filtro de comunidad activo", () => {
+    mockAuth.mockReturnValue({ user: { name: "Ana García" } });
+    mockOverviewQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });
+    render(<CommandCenterHeader filters={{ range: "30d" }} />);
+    expect(screen.getByText("Todas las comunidades · Últimos 30 días")).toBeInTheDocument();
   });
 });

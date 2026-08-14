@@ -15,6 +15,16 @@ const SEGMENT_COLOR: Record<string, string> = {
   at_risk: "bg-amber-500", dormant: "bg-muted-foreground/40", high_spend: "bg-rose-500",
 };
 
+/** Definiciones REALES (mismos umbrales que studentIntelligenceService.ts) — nunca inventadas, spec §22/§67. */
+const SEGMENT_TOOLTIP: Record<string, string> = {
+  new: "Registrado hace menos de 14 días.",
+  active: "Con actividad genuina en los últimos 30 días, sin cumplir ningún otro criterio especial.",
+  highly_engaged: "10 o más señales de actividad en los últimos 90 días, con actividad en los últimos 14 días.",
+  at_risk: "Sin actividad genuina entre 30 y 60 días.",
+  dormant: "Sin actividad genuina registrada nunca, o más de 60 días sin actividad.",
+  high_spend: "Gasto acumulado o SegoTokens acumulados altos, con actividad en los últimos 30 días.",
+};
+
 export function StudentIntelligence({ filters }: { filters: DashboardQueryInput }) {
   const { data, isLoading, error } = trpc.dashboard.getStudentIntelligence.useQuery(filters);
   const historical = trpc.dashboard.getHistoricalAudience.useQuery();
@@ -28,12 +38,17 @@ export function StudentIntelligence({ filters }: { filters: DashboardQueryInput 
       {data && data.totalStudents > 0 && (
         <div className="space-y-1.5">
           {data.segments.filter(s => s.count > 0 || s.key !== "dormant").map(seg => (
-            <div key={seg.key} className="flex items-center gap-2">
+            <Link
+              key={seg.key}
+              href={`/admin/students?segment=${seg.key}`}
+              className="flex items-center gap-2 -mx-1 px-1 py-0.5 rounded-md hover:bg-muted/60 transition-colors group"
+              title={SEGMENT_TOOLTIP[seg.key]}
+            >
               <span className={`w-2 h-2 rounded-full shrink-0 ${SEGMENT_COLOR[seg.key] ?? "bg-muted"}`} />
-              <span className="text-xs text-foreground/80 flex-1">{seg.label}</span>
+              <span className="text-xs text-foreground/80 flex-1 group-hover:text-violet-500 dark:group-hover:text-violet-400">{seg.label}</span>
               <span className="text-xs font-bold tabular-nums">{seg.count}</span>
               <span className="text-[10px] text-muted-foreground w-10 text-right">{seg.populationPct}%</span>
-            </div>
+            </Link>
           ))}
           <div className="pt-2 mt-2 border-t border-border/20">
             <StatRow label="Multi-venue (dimensión aparte)" value={`${data.multiVenue.count} (${fmtPct(data.multiVenue.populationPct)})`} />
@@ -49,12 +64,20 @@ export function StudentIntelligence({ filters }: { filters: DashboardQueryInput 
           {historical.isLoading && <DashboardEmptyState kind="loading" title="" />}
           {historical.error && <DashboardEmptyState kind="error" title="Error" detail={historical.error.message} />}
           {historical.data && (
-            <Link href="/admin/students/historical" className="block space-y-1 hover:opacity-80">
-              <StatRow label="Total" value={historical.data.total} />
-              <StatRow label="Vinculadas" value={historical.data.linked} />
-              <StatRow label="Posibles" value={historical.data.possibleMatch + historical.data.autoMatchCandidate} />
-              <StatRow label="Cross-venue" value={historical.data.crossVenue} />
-            </Link>
+            <div className="space-y-1">
+              <Link href="/admin/students/historical" className="block hover:text-violet-500 dark:hover:text-violet-400 transition-colors">
+                <StatRow label="Total" value={historical.data.total} />
+              </Link>
+              <Link href="/admin/students/historical?status=LINKED" className="block hover:text-violet-500 dark:hover:text-violet-400 transition-colors">
+                <StatRow label="Vinculadas" value={historical.data.linked} />
+              </Link>
+              <Link href="/admin/students/historical?status=POSSIBLE_MATCH" className="block hover:text-violet-500 dark:hover:text-violet-400 transition-colors">
+                <StatRow label="Posibles" value={historical.data.possibleMatch + historical.data.autoMatchCandidate} />
+              </Link>
+              <Link href="/admin/students/historical?crossVenueOnly=true" className="block hover:text-violet-500 dark:hover:text-violet-400 transition-colors">
+                <StatRow label="Cross-venue" value={historical.data.crossVenue} />
+              </Link>
+            </div>
           )}
         </div>
         <div>
@@ -65,8 +88,11 @@ export function StudentIntelligence({ filters }: { filters: DashboardQueryInput 
           {crossVenue.error && <DashboardEmptyState kind="error" title="Error" detail={crossVenue.error.message} />}
           {crossVenue.data && (
             <div className="space-y-1">
+              {/* Sin filtro multi-venue real en StudentsManager todavía — no se enlaza para no simular una función que no existe (spec §9). */}
               <StatRow label="Registrados multi-venue" value={`${crossVenue.data.registered.multiVenue} (${fmtPct(crossVenue.data.registered.multiVenuePct)})`} />
-              <StatRow label="Históricos multi-venue" value={`${crossVenue.data.historical.crossVenue} (${fmtPct(crossVenue.data.historical.crossVenuePct)})`} />
+              <Link href="/admin/students/historical?crossVenueOnly=true" className="block hover:text-violet-500 dark:hover:text-violet-400 transition-colors">
+                <StatRow label="Históricos multi-venue" value={`${crossVenue.data.historical.crossVenue} (${fmtPct(crossVenue.data.historical.crossVenuePct)})`} />
+              </Link>
             </div>
           )}
         </div>

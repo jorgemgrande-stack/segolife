@@ -25,7 +25,7 @@ import { PlanAndPlayAndFunnel } from "@/components/segolife/dashboard/PlanAndPla
 import { ActionCenterAndHealth } from "@/components/segolife/dashboard/ActionCenterAndHealth";
 
 export default function AdminDashboard() {
-  const { communityId, setCommunityId, range, setRange, queryInput } = useDashboardFilters();
+  const { communityId, setCommunityId, range, setRange, queryInput, communities } = useDashboardFilters();
 
   return (
     <AdminLayout title="Command Center">
@@ -37,7 +37,7 @@ export default function AdminDashboard() {
             </DashboardErrorBoundary>
           </div>
           <div className="shrink-0">
-            <DashboardFilterBar communityId={communityId} onCommunityChange={setCommunityId} range={range} onRangeChange={setRange} />
+            <DashboardFilterBar communityId={communityId} onCommunityChange={setCommunityId} range={range} onRangeChange={setRange} communities={communities} />
           </div>
         </div>
 

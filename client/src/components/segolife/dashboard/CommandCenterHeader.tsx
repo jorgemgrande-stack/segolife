@@ -3,15 +3,19 @@
  * (sin IA, sin texto inventado — construida solo con datos reales de
  * `dashboard.getOverview`) + tira de 6 KPIs con sub-métricas y click-through.
  */
-import { Users, UserCheck, Ticket, CalendarCheck, Coins, Gift } from "lucide-react";
+import { Users, UserCheck, Ticket, CalendarCheck, Coins, Gift, Radio } from "lucide-react";
 import { KpiCard } from "@/components/KpiCard";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { useAdminCommunity, ADMIN_COMMUNITY_FILTER_ALL } from "@/contexts/AdminCommunityContext";
 import { DashboardEmptyState } from "./shared";
 import type { DashboardQueryInput, TimeRangeKey } from "./useDashboardFilters";
 
 const RANGE_LABEL: Record<TimeRangeKey, string> = {
   today: "hoy", "7d": "en los últimos 7 días", "30d": "en los últimos 30 días", course: "durante el curso actual",
+};
+const RANGE_LABEL_SHORT: Record<TimeRangeKey, string> = {
+  today: "Hoy", "7d": "Últimos 7 días", "30d": "Últimos 30 días", course: "Curso actual",
 };
 
 function buildExecutiveSummary(overview: NonNullable<ReturnType<typeof useOverview>["data"]>, range: TimeRangeKey): string {
@@ -31,18 +35,29 @@ function useOverview(input: DashboardQueryInput) {
 
 export function CommandCenterHeader({ filters }: { filters: DashboardQueryInput }) {
   const { user } = useAuth();
+  const { filter: communityFilter, communities } = useAdminCommunity();
   const firstName = user?.name?.split(" ")[0] ?? "Administrador";
   const { data, isLoading, error } = useOverview(filters);
   const range = filters.range ?? "30d";
+  const communityLabel = communityFilter === ADMIN_COMMUNITY_FILTER_ALL
+    ? "Todas las comunidades"
+    : communities.find(c => c.id === communityFilter)?.name ?? "Comunidad seleccionada";
 
   return (
     <div className="space-y-4">
       <div>
+        <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.15em] text-violet-500 dark:text-violet-400 mb-1">
+          <Radio className="w-3 h-3" /> SEGOLIFE Command Center
+        </p>
         <h1 className="text-xl font-black tracking-tight">Buenos días, {firstName}</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
           {isLoading && "Calculando el estado de SEGOLIFE…"}
           {error && "No se pudo calcular el resumen ejecutivo (fallo de red)."}
           {data && buildExecutiveSummary(data, range)}
+        </p>
+        {/* Feedback de contexto activo (spec §34) — nunca dejar que el admin olvide que está filtrando. */}
+        <p className="text-[11px] text-muted-foreground/70 mt-1.5 font-medium">
+          {communityLabel} · {RANGE_LABEL_SHORT[range]}
         </p>
       </div>
 

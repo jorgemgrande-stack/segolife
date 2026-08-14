@@ -14,9 +14,16 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Search, GraduationCap, Loader2, ArrowUp, ArrowDown, Coins } from "lucide-react";
+import { Search, GraduationCap, Loader2, ArrowUp, ArrowDown, Coins, X } from "lucide-react";
 import { useAdminCommunity } from "@/contexts/AdminCommunityContext";
 import { ADMIN_COMMUNITY_FILTER_ALL } from "@shared/segolife/adminCommunityFilter";
+import { useUrlParam } from "@/hooks/useUrlParam";
+
+const SEGMENT_LABEL: Record<string, string> = {
+  new: "Nuevos", active: "Activos", highly_engaged: "Muy comprometidos",
+  at_risk: "En riesgo", dormant: "Dormidos", high_spend: "Alto gasto",
+};
+const VALID_SEGMENTS = new Set(Object.keys(SEGMENT_LABEL));
 
 const ALL = "__all__";
 const PAGE_SIZE = 50;
@@ -61,6 +68,12 @@ export default function StudentsManager() {
   // listado — es el uso real que le faltaba (ver docs/SEGOLIFE_ROADMAP.md).
   const { filter: communityFilter, communities } = useAdminCommunity();
 
+  // Deep navigation desde el Command Center (Student Intelligence) — spec §10/§13
+  // "Production Polish Gate": ?segment=at_risk etc. Shareable/reload-safe/
+  // back-button-safe (useUrlParam sincroniza con la URL real, no solo estado local).
+  const [segmentParam, setSegmentParam] = useUrlParam("segment");
+  const segment = segmentParam && VALID_SEGMENTS.has(segmentParam) ? segmentParam : null;
+
   const [searchInput, setSearchInput] = useState("");
   const search = useDebouncedValue(searchInput, 300);
   const [universityId, setUniversityId] = useState<string>(ALL);
@@ -73,22 +86,44 @@ export default function StudentsManager() {
 
   // Cualquier cambio de filtro/orden vuelve a la primera página — evita
   // quedarse en un offset que ya no tiene sentido con el nuevo filtro.
-  useEffect(() => { setPage(0); }, [search, universityId, nationality, status, profileCompleted, communityFilter, sortBy, sortDir]);
+  useEffect(() => { setPage(0); }, [search, universityId, nationality, status, profileCompleted, communityFilter, sortBy, sortDir, segment]);
 
   const { data: universities } = trpc.communities.listUniversities.useQuery();
 
-  const { data, isLoading, error } = trpc.students.list.useQuery({
-    communityId: communityFilter === ADMIN_COMMUNITY_FILTER_ALL ? "all" : communityFilter,
-    search: search || undefined,
-    universityId: universityId !== ALL ? Number(universityId) : undefined,
-    nationality: nationality || undefined,
-    status: status !== ALL ? (status as "active" | "inactive") : undefined,
-    profileCompleted: profileCompleted !== ALL ? profileCompleted === "true" : undefined,
-    limit: PAGE_SIZE,
-    offset: page * PAGE_SIZE,
-    sortBy,
-    sortDir,
-  });
+  const communityIdParam = communityFilter === ADMIN_COMMUNITY_FILTER_ALL ? "all" : communityFilter;
+
+  // Segmento = motor de clasificación aparte (studentSegmentFilterService.ts,
+  // no soporta `status`/sortBy — la clasificación por segmento reemplaza el
+  // orden habitual, siempre por fecha de alta más reciente).
+  const segmentQuery = trpc.students.listBySegment.useQuery(
+    {
+      segment: (segment ?? "active") as "new" | "active" | "highly_engaged" | "at_risk" | "dormant" | "high_spend",
+      communityId: communityIdParam,
+      search: search || undefined,
+      universityId: universityId !== ALL ? Number(universityId) : undefined,
+      nationality: nationality || undefined,
+      profileCompleted: profileCompleted !== ALL ? profileCompleted === "true" : undefined,
+      limit: PAGE_SIZE,
+      offset: page * PAGE_SIZE,
+    },
+    { enabled: segment !== null }
+  );
+  const listQuery = trpc.students.list.useQuery(
+    {
+      communityId: communityIdParam,
+      search: search || undefined,
+      universityId: universityId !== ALL ? Number(universityId) : undefined,
+      nationality: nationality || undefined,
+      status: status !== ALL ? (status as "active" | "inactive") : undefined,
+      profileCompleted: profileCompleted !== ALL ? profileCompleted === "true" : undefined,
+      limit: PAGE_SIZE,
+      offset: page * PAGE_SIZE,
+      sortBy,
+      sortDir,
+    },
+    { enabled: segment === null }
+  );
+  const { data, isLoading, error } = segment !== null ? segmentQuery : listQuery;
 
   const handleSort = (column: SortBy) => {
     if (sortBy === column) { setSortDir(d => (d === "asc" ? "desc" : "asc")); }
@@ -103,7 +138,7 @@ export default function StudentsManager() {
       <div className="space-y-6">
         <div className="flex items-center gap-3">
           <GraduationCap className="w-6 h-6 text-primary" />
-          <div>
+          <div className="flex-1">
             <h2 className="text-lg font-semibold text-foreground">Estudiantes</h2>
             <p className="text-sm text-muted-foreground">
               {communityFilter === ADMIN_COMMUNITY_FILTER_ALL
@@ -112,6 +147,15 @@ export default function StudentsManager() {
               {typeof data?.total === "number" ? ` · ${data.total} estudiante(s)` : ""}
             </p>
           </div>
+          {segment && (
+            <button
+              onClick={() => setSegmentParam(null)}
+              className="flex items-center gap-1.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 text-xs font-semibold px-3 py-1.5 hover:bg-violet-500/20 transition-colors"
+            >
+              Segmento: {SEGMENT_LABEL[segment]}
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
         {/* ── Filtros ── */}
@@ -143,8 +187,10 @@ export default function StudentsManager() {
             className="w-[160px]"
           />
 
-          <Select value={status} onValueChange={setStatus}>
-            <SelectTrigger className="w-[150px]"><SelectValue placeholder="Estado" /></SelectTrigger>
+          <Select value={status} onValueChange={setStatus} disabled={segment !== null}>
+            <SelectTrigger className="w-[150px]" title={segment !== null ? "No aplica junto con un filtro de segmento" : undefined}>
+              <SelectValue placeholder="Estado" />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL}>Cualquier estado</SelectItem>
               <SelectItem value="active">Activo</SelectItem>

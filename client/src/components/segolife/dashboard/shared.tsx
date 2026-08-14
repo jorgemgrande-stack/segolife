@@ -88,13 +88,22 @@ export function StatRow({ label, value, sub }: { label: string; value: ReactNode
   );
 }
 
-export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "good" | "warn" | "bad" | "info" }) {
+/**
+ * Sistema de estado semántico ÚNICO y compartido (Production Polish Gate
+ * §8) — nunca "un verde distinto en cada widget". `locked` es un tono
+ * DELIBERADAMENTE distinto de `warn`: un estado bloqueado a propósito
+ * (Live Loyalty OFF, Email/Push/WhatsApp sin configurar) no es lo mismo que
+ * una alerta que requiere acción — mezclarlos (p.ej. mostrar "LIVE OFF" en
+ * ámbar) sugiere falsamente que hay algo que arreglar.
+ */
+export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "good" | "warn" | "bad" | "info" | "locked" }) {
   const tones: Record<string, string> = {
     neutral: "bg-muted text-muted-foreground",
     good: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
     warn: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
     bad: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
     info: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
+    locked: "bg-slate-500/15 text-slate-500 dark:text-slate-400",
   };
   return <span className={cn("inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide", tones[tone])}>{children}</span>;
 }

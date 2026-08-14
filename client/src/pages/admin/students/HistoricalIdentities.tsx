@@ -13,6 +13,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Search, History, Loader2, ArrowUp, ArrowDown } from "lucide-react";
+import { useUrlParam } from "@/hooks/useUrlParam";
 
 const ALL = "__all__";
 const PAGE_SIZE = 25;
@@ -70,12 +71,23 @@ function SortableHead({ label, column, sortBy, sortDir, onSort }: { label: strin
   );
 }
 
+const VALID_STATUS = new Set(["UNREGISTERED", "POSSIBLE_MATCH", "AUTO_MATCH_CANDIDATE", "LINKED", "CONFLICT"]);
+
 export default function HistoricalIdentities() {
   const [searchInput, setSearchInput] = useState("");
   const search = useDebouncedValue(searchInput, 300);
   const [venueId, setVenueId] = useState<string>(ALL);
-  const [status, setStatus] = useState<string>(ALL);
-  const [crossVenueOnly, setCrossVenueOnly] = useState(false);
+
+  // Deep navigation desde el Command Center (Historical Audience/Cross-Venue,
+  // spec §14 "Production Polish Gate") — shareable/reload-safe/back-button-safe.
+  const [statusParam, setStatusParam] = useUrlParam("status");
+  const status = statusParam && VALID_STATUS.has(statusParam) ? statusParam : ALL;
+  const setStatus = (v: string) => setStatusParam(v === ALL ? null : v);
+
+  const [crossVenueParam, setCrossVenueParam] = useUrlParam("crossVenueOnly");
+  const crossVenueOnly = crossVenueParam === "true";
+  const setCrossVenueOnly = (v: boolean) => setCrossVenueParam(v ? "true" : null);
+
   const [page, setPage] = useState(0);
   const [sortBy, setSortBy] = useState<SortBy>("lastActivity");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -143,7 +155,7 @@ export default function HistoricalIdentities() {
             </SelectContent>
           </Select>
 
-          <Button variant={crossVenueOnly ? "default" : "outline"} size="sm" onClick={() => setCrossVenueOnly(v => !v)}>
+          <Button variant={crossVenueOnly ? "default" : "outline"} size="sm" onClick={() => setCrossVenueOnly(!crossVenueOnly)}>
             Solo cross-venue
           </Button>
         </div>

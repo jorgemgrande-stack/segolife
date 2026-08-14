@@ -1,9 +1,11 @@
 /**
- * DashboardFilterBar.tsx — selector de Comunidad (spec §5, real vía
- * `communities.list`, NUNCA hardcoded "IE"/"UVA") y de Rango de tiempo
- * (Hoy/7 días/30 días/Curso).
+ * DashboardFilterBar.tsx — selector de Comunidad (real, vía AdminCommunityContext
+ * compartido con el resto de /admin — spec §5, nunca hardcoded "IE"/"UVA")
+ * y de Rango de tiempo (Hoy/7 días/30 días/Curso). `communities` llega por
+ * prop desde el mismo contexto que ya la carga — evita una segunda llamada
+ * a `communities.list` en paralelo (Production Polish Gate §33).
  */
-import { trpc } from "@/lib/trpc";
+import type { Community } from "../../../../../drizzle/schema";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { TimeRangeKey } from "./useDashboardFilters";
@@ -18,13 +20,12 @@ const RANGE_OPTIONS: Array<{ key: TimeRangeKey; label: string }> = [
 ];
 
 export function DashboardFilterBar({
-  communityId, onCommunityChange, range, onRangeChange,
+  communityId, onCommunityChange, range, onRangeChange, communities,
 }: {
   communityId: number | null; onCommunityChange: (id: number | null) => void;
   range: TimeRangeKey; onRangeChange: (r: TimeRangeKey) => void;
+  communities: Community[];
 }) {
-  const { data: communities } = trpc.communities.list.useQuery();
-
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Select
@@ -36,7 +37,7 @@ export function DashboardFilterBar({
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={ALL}>Todas las comunidades</SelectItem>
-          {(communities ?? []).map(c => (
+          {communities.map(c => (
             <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
           ))}
         </SelectContent>

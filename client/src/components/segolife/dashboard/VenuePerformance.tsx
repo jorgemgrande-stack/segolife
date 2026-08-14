@@ -22,7 +22,9 @@ export function VenuePerformance({ filters }: { filters: DashboardQueryInput }) 
           {data.rows.map(row => (
             <div key={row.venueId} className="rounded-lg border border-border/30 p-2.5">
               <div className="flex items-center justify-between mb-1.5">
-                <span className="font-bold text-sm">{row.venueName}</span>
+                <Link href={`/admin/venues/${row.venueId}`} className="font-bold text-sm hover:text-violet-500 dark:hover:text-violet-400 transition-colors">
+                  {row.venueName}
+                </Link>
                 <Badge tone={row.trend.direction === "up" ? "good" : row.trend.direction === "down" ? "bad" : "neutral"}>
                   {row.trend.direction === "up" ? "↑" : row.trend.direction === "down" ? "↓" : "→"}
                 </Badge>

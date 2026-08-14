@@ -22,8 +22,13 @@ export function FourvenuesHealth() {
 
       {data && data.integrations.length > 0 && (
         <div className="space-y-2">
+          {data.overallStatus === "all_healthy" && (
+            <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 mb-1">
+              {data.integrations.length}/{data.integrations.length} CONNECTED — sin incidencias
+            </p>
+          )}
           {data.integrations.map(integ => (
-            <div key={integ.integrationId} className="flex items-center justify-between gap-2 text-xs py-1 border-b border-border/20 last:border-0">
+            <Link key={integ.integrationId} href="/admin/integrations" className="flex items-center justify-between gap-2 text-xs py-1 border-b border-border/20 last:border-0 hover:bg-muted/30 -mx-1 px-1 rounded transition-colors">
               <span className="font-semibold truncate">{integ.venueName ?? `Venue #${integ.venueId}`}</span>
               <div className="flex items-center gap-2 shrink-0">
                 {integ.scheduler?.lastSuccessAt && (
@@ -31,7 +36,7 @@ export function FourvenuesHealth() {
                 )}
                 <Badge tone={STATUS_TONE[integ.status] ?? "neutral"}>{integ.status}</Badge>
               </div>
-            </div>
+            </Link>
           ))}
         </div>
       )}

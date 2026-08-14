@@ -18,13 +18,25 @@ const SEVERITY_TONE: Record<string, "bad" | "warn" | "info" | "neutral"> = {
 const SEVERITY_LABEL: Record<string, string> = {
   critical: "CRÍTICO", warning: "AVISO", opportunity: "OPORTUNIDAD", info: "INFO",
 };
-const ENTITY_HREF: Record<string, string> = {
-  event: "/admin/events", venue: "/admin/venues", integration: "/admin/integrations",
-  benefit: "/admin/benefits", proposal: "/admin/comunity", historical: "/admin/students/historical",
-};
+/**
+ * Deep navigation (Production Polish Gate §18): cuando existe una ficha real
+ * por ID (evento/venue/propuesta) se enlaza DIRECTAMENTE a ella, no a la
+ * lista general — spec §9 "SEE → UNDERSTAND → INVESTIGATE → ACT". Integración/
+ * Benefit/Historical no tienen ficha por ID navegable desde aquí todavía →
+ * se enlaza a la pantalla administrativa más específica disponible (spec §15).
+ */
+function resolveAlertHref(entity: string | null, entityId: number | null): string | undefined {
+  if (entity === "event") return entityId != null ? `/admin/events/${entityId}` : "/admin/events";
+  if (entity === "venue") return entityId != null ? `/admin/venues/${entityId}` : "/admin/venues";
+  if (entity === "proposal") return entityId != null ? `/admin/comunity/${entityId}` : "/admin/comunity";
+  if (entity === "integration") return "/admin/integrations";
+  if (entity === "benefit") return "/admin/benefits";
+  if (entity === "historical") return "/admin/students/historical";
+  return undefined;
+}
 
-const HEALTH_TONE: Record<string, "good" | "warn" | "bad" | "neutral"> = {
-  ok: "good", degraded: "warn", error: "bad", off: "neutral",
+const HEALTH_TONE: Record<string, "good" | "warn" | "bad" | "locked"> = {
+  ok: "good", degraded: "warn", error: "bad", off: "locked",
 };
 
 const QUICK_ACTIONS = [
@@ -52,7 +64,7 @@ export function ActionCenterAndHealth({ filters }: { filters: DashboardQueryInpu
         {alerts.data && alerts.data.length > 0 && (
           <div className="space-y-2">
             {alerts.data.map((alert, i) => {
-              const href = alert.ctaEntity ? ENTITY_HREF[alert.ctaEntity] : undefined;
+              const href = resolveAlertHref(alert.ctaEntity, alert.ctaEntityId);
               const content = (
                 <div className="flex items-start gap-2">
                   <Badge tone={SEVERITY_TONE[alert.severity]}>{SEVERITY_LABEL[alert.severity]}</Badge>

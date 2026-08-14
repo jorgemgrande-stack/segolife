@@ -35,6 +35,10 @@ vi.mock("@/lib/trpc", () => ({
 }));
 vi.mock("@/_core/hooks/useAuth", () => ({ useAuth: () => ({ user: { name: "Ana García" } }) }));
 vi.mock("@/components/AdminLayout", () => ({ default: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
+vi.mock("@/contexts/AdminCommunityContext", () => ({
+  useAdminCommunity: () => ({ filter: "all", setFilter: vi.fn(), communities: [], loading: false }),
+  ADMIN_COMMUNITY_FILTER_ALL: "all",
+}));
 
 import AdminDashboard from "./AdminDashboard";
 

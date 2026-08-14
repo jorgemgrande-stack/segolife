@@ -16,7 +16,7 @@ export function LoyaltyAndBenefits({ filters }: { filters: DashboardQueryInput }
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <Panel title="SegoTokens Economy" icon={Coins} action={<Link href="/admin/tokens" className="text-[10px] font-semibold text-violet-500 hover:underline">Ver tokens →</Link>}>
-        <div className="mb-2"><Badge tone="warn">LIVE OFF · simulación</Badge></div>
+        <div className="mb-2"><Badge tone="locked">LIVE OFF · simulación</Badge></div>
         {loyalty.isLoading && <DashboardEmptyState kind="loading" title="" />}
         {loyalty.error && <DashboardEmptyState kind="error" title="No se pudo cargar SegoTokens" detail={loyalty.error.message} />}
         {loyalty.data && (
