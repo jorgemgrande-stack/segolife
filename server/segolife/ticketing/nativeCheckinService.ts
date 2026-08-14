@@ -1,7 +1,8 @@
 /**
  * nativeCheckinService.ts — check-in de un event_ticket NATIVO por parte
- * del STAFF (Fase 8, spec puntos 11-14). Dominio explícitamente distinto
- * de StudentScan (Fase 3) y del scanner de Benefits (Fase 4) — NUNCA se
+ * del STAFF (Fase 8, spec puntos 11-14; búsqueda manual añadida en SEGOLIFE
+ * — Native Ticket Sales, spec §27). Dominio explícitamente distinto de
+ * StudentScan (Fase 3) y del scanner de Benefits (Fase 4) — NUNCA se
  * reutiliza ese QR/flujo (ver comentario de event_attendance en
  * drizzle/schema.ts, ya reservaba `provider='segolife'` para esto).
  *
@@ -14,8 +15,14 @@
  * directamente (spec punto 13) — solo a `ingestAttendance()` del pipeline
  * ya existente de Fase 5, con `resolvedUserId` porque el comprador YA es
  * conocido (event_tickets.user_id), sin heurística de email/teléfono.
+ *
+ * BÚSQUEDA MANUAL (spec §27): `checkInTicketById` es una segunda PUERTA DE
+ * ENTRADA al MISMO código de validación que `checkInTicket` (QR) — nunca un
+ * bypass "marcar asistente" que salte las comprobaciones (spec: "no crear
+ * bypass que evite las protecciones del scanner"). `searchTickets` solo
+ * ENCUENTRA el ticket — nunca lo valida ni lo marca como usado.
  */
-import { eq, and } from "drizzle-orm";
+import { eq, and, or, like } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { eventTickets, events, users, type EventTicket, type SegolifeEvent } from "../../../drizzle/schema";
@@ -59,6 +66,25 @@ export async function checkInTicket(input: CheckInTicketInput, db?: DbHandle): P
   const [ticket] = await conn.select().from(eventTickets).where(eq(eventTickets.qrTokenHash, tokenHash)).limit(1);
   if (!ticket) throw new CheckinError("NOT_FOUND", "Código no válido");
 
+  return performCheckIn(ticket, input.staffUserId, input.staffAuthorizedVenueIds, conn);
+}
+
+export interface CheckInTicketByIdInput {
+  ticketId: number;
+  staffUserId: number;
+  staffAuthorizedVenueIds: number[] | "all";
+}
+
+/** Segunda puerta de entrada al MISMO flujo de validación (spec §27: "búsqueda manual... EXACTAMENTE el mismo backend que el QR") — para cuando el QR no carga o el estudiante no encuentra su entrada. `searchTickets` localiza el `ticketId`; esta función lo valida y lo marca usado con las mismas reglas, sin excepciones. */
+export async function checkInTicketById(input: CheckInTicketByIdInput, db?: DbHandle): Promise<CheckInTicketResult> {
+  const conn = db ?? (await getDb());
+  const [ticket] = await conn.select().from(eventTickets).where(eq(eventTickets.id, input.ticketId)).limit(1);
+  if (!ticket) throw new CheckinError("NOT_FOUND", "Entrada no encontrada");
+
+  return performCheckIn(ticket, input.staffUserId, input.staffAuthorizedVenueIds, conn);
+}
+
+async function performCheckIn(ticket: EventTicket, _staffUserId: number, staffAuthorizedVenueIds: number[] | "all", conn: DbHandle): Promise<CheckInTicketResult> {
   if (ticket.salesChannel !== "native" || ticket.provider !== "segolife_native") {
     throw new CheckinError("NOT_NATIVE", "Este código no corresponde a una entrada nativa de Segolife");
   }
@@ -73,8 +99,8 @@ export async function checkInTicket(input: CheckInTicketInput, db?: DbHandle): P
   // Alcance del staff — ANTES de tocar la fila (mismo criterio que
   // benefitRedemptionService.ts: rechazar por falta de permiso general
   // antes de revelar/mutar nada del ticket concreto).
-  const staffAuthorized = input.staffAuthorizedVenueIds === "all"
-    || (event.venueId != null && input.staffAuthorizedVenueIds.includes(event.venueId));
+  const staffAuthorized = staffAuthorizedVenueIds === "all"
+    || (event.venueId != null && staffAuthorizedVenueIds.includes(event.venueId));
   if (!staffAuthorized) throw new CheckinError("UNAUTHORIZED_STAFF", "No tienes autorización para validar entradas de este evento");
 
   if (!ticket.userId) throw new CheckinError("NO_OWNER", "Esta entrada no tiene un comprador identificado");
@@ -108,4 +134,53 @@ export async function checkInTicket(input: CheckInTicketInput, db?: DbHandle): P
   const [student] = await conn.select({ name: users.name }).from(users).where(eq(users.id, ticket.userId)).limit(1);
 
   return { ticket: updatedTicket, event, studentName: student?.name ?? "—" };
+}
+
+export interface SearchTicketsInput {
+  query: string;
+  staffAuthorizedVenueIds: number[] | "all";
+}
+
+export interface TicketSearchResult {
+  ticketId: number;
+  eventId: number;
+  eventName: string;
+  studentName: string;
+  status: EventTicket["status"];
+}
+
+const SEARCH_MIN_QUERY_LENGTH = 3;
+const SEARCH_RESULT_LIMIT = 10;
+
+/**
+ * Búsqueda manual (spec §27) — SOLO localiza, nunca valida. Acotada a
+ * entradas nativas de eventos en venues autorizados para este staff (mismo
+ * alcance que el check-in real). Nombre/email vía `users`, nunca datos
+ * abiertos de `event_tickets.metadata`. Longitud mínima de consulta para
+ * evitar enumeración trivial (spec §37/§41).
+ */
+export async function searchTickets(input: SearchTicketsInput, db?: DbHandle): Promise<TicketSearchResult[]> {
+  const conn = db ?? (await getDb());
+  const q = input.query.trim();
+  if (q.length < SEARCH_MIN_QUERY_LENGTH) return [];
+
+  const rows = await conn.select({ ticket: eventTickets, event: events, studentName: users.name })
+    .from(eventTickets)
+    .innerJoin(events, eq(eventTickets.eventId, events.id))
+    .innerJoin(users, eq(eventTickets.userId, users.id))
+    .where(and(
+      eq(eventTickets.provider, "segolife_native"),
+      or(like(users.name, `%${q}%`), like(users.email, `%${q}%`))
+    ))
+    .limit(SEARCH_RESULT_LIMIT * 4); // sobre-pedir antes de filtrar por venue en memoria (pocas filas reales esperadas)
+
+  const scoped = rows.filter(r => input.staffAuthorizedVenueIds === "all" || (r.event.venueId != null && input.staffAuthorizedVenueIds.includes(r.event.venueId)));
+
+  return scoped.slice(0, SEARCH_RESULT_LIMIT).map(r => ({
+    ticketId: r.ticket.id,
+    eventId: r.event.id,
+    eventName: r.event.name,
+    studentName: r.studentName ?? "—",
+    status: r.ticket.status,
+  }));
 }

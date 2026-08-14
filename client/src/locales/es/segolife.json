@@ -241,7 +241,15 @@
     "submitting": "Validando…",
     "validTitle": "VÁLIDA",
     "invalidTitle": "NO VÁLIDA",
-    "scanAnother": "Validar otra entrada"
+    "scanAnother": "Validar otra entrada",
+    "searchButton": "Buscar por nombre",
+    "searchPlaceholder": "Nombre o email del estudiante",
+    "searchHint": "Pantalla rota, el QR no carga, o el estudiante no encuentra su entrada",
+    "searchTooShort": "Escribe al menos 3 caracteres",
+    "searchNoResults": "No se encontraron entradas",
+    "searchStatusUsed": "Ya validada",
+    "searchStatusCancelled": "Cancelada",
+    "searchStatusRefunded": "Reembolsada"
   },
   "pos": {
     "title": "POS",

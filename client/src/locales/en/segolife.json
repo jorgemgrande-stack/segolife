@@ -241,7 +241,15 @@
     "submitting": "Checking in…",
     "validTitle": "VALID",
     "invalidTitle": "INVALID",
-    "scanAnother": "Check in another ticket"
+    "scanAnother": "Check in another ticket",
+    "searchButton": "Search by name",
+    "searchPlaceholder": "Student name or email",
+    "searchHint": "Screen broken, QR won't load, or the student can't find their ticket",
+    "searchTooShort": "Type at least 3 characters",
+    "searchNoResults": "No tickets found",
+    "searchStatusUsed": "Already used",
+    "searchStatusCancelled": "Cancelled",
+    "searchStatusRefunded": "Refunded"
   },
   "pos": {
     "title": "POS",

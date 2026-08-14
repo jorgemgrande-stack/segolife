@@ -1,18 +1,20 @@
 /**
  * nativeCheckinService.test.ts — check-in atómico de un ticket nativo
- * (Fase 8, spec puntos 11-14, 35). El scanner NUNCA llama a earnTokens()/
- * evaluateBenefitsForOrigin() directamente — solo a ingestAttendance()
- * (mockeado aquí, ya cubierto por sus propios tests). El test de
- * concurrencia clave: dos check-ins SECUENCIALES del MISMO ticket sobre el
- * mismo estado de fila simulan la carrera real — solo el primero gana
- * (mismo patrón UPDATE condicional + affectedRows que benefitRedemptionService.ts).
+ * (Fase 8, spec puntos 11-14, 35; búsqueda manual + check-in por id
+ * añadidos en SEGOLIFE — Native Ticket Sales, spec §27). El scanner NUNCA
+ * llama a earnTokens()/evaluateBenefitsForOrigin() directamente — solo a
+ * ingestAttendance() (mockeado aquí, ya cubierto por sus propios tests). El
+ * test de concurrencia clave: dos check-ins SECUENCIALES del MISMO ticket
+ * sobre el mismo estado de fila simulan la carrera real — solo el primero
+ * gana (mismo patrón UPDATE condicional + affectedRows que
+ * benefitRedemptionService.ts).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { mockIngestAttendance } = vi.hoisted(() => ({ mockIngestAttendance: vi.fn() }));
 vi.mock("./attendancePipeline", () => ({ ingestAttendance: mockIngestAttendance }));
 
-import { checkInTicket, CheckinError } from "./nativeCheckinService";
+import { checkInTicket, checkInTicketById, searchTickets, CheckinError } from "./nativeCheckinService";
 
 function ticketFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -115,5 +117,60 @@ describe("nativeCheckinService — checkInTicket", () => {
     const db2 = makeMockDb(sharedTicket);
     await expect(checkInTicket({ token: "x", staffUserId: 9, staffAuthorizedVenueIds: "all" }, db2)).rejects.toMatchObject({ code: "ALREADY_USED" });
     expect(mockIngestAttendance).toHaveBeenCalledOnce(); // nunca se procesó loyalty dos veces
+  });
+});
+
+describe("nativeCheckinService — checkInTicketById (spec §27: búsqueda manual, MISMO backend que el QR)", () => {
+  it("valida por ticketId con las MISMAS reglas que checkInTicket — lo marca used y llama a ingestAttendance", async () => {
+    const db = makeMockDb(ticketFixture());
+    const result = await checkInTicketById({ ticketId: 1, staffUserId: 9, staffAuthorizedVenueIds: "all" }, db);
+
+    expect(result.ticket.status).toBe("used");
+    expect(mockIngestAttendance).toHaveBeenCalledOnce();
+  });
+
+  it("un ticket ya usado tampoco puede forzarse vía checkInTicketById — ALREADY_USED, nunca un bypass", async () => {
+    const db = makeMockDb(ticketFixture({ status: "used" }));
+    await expect(checkInTicketById({ ticketId: 1, staffUserId: 9, staffAuthorizedVenueIds: "all" }, db)).rejects.toMatchObject({ code: "ALREADY_USED" });
+  });
+
+  it("staff sin autorización para el venue → UNAUTHORIZED_STAFF, igual que por QR", async () => {
+    const db = makeMockDb(ticketFixture(), { id: 5, venueId: 99 });
+    await expect(checkInTicketById({ ticketId: 1, staffUserId: 9, staffAuthorizedVenueIds: [1, 2, 3] }, db)).rejects.toMatchObject({ code: "UNAUTHORIZED_STAFF" });
+  });
+});
+
+describe("nativeCheckinService — searchTickets (spec §27: solo localiza, nunca valida)", () => {
+  function makeSearchDb(rows: Array<{ ticket: Record<string, unknown>; event: Record<string, unknown>; studentName: string | null }>) {
+    const b: any = {};
+    b.select = () => b;
+    b.from = () => b;
+    b.innerJoin = () => b;
+    b.where = () => b;
+    b.limit = () => Promise.resolve(rows);
+    return b as any;
+  }
+
+  it("consulta demasiado corta (< 3 caracteres) → [] sin llegar a consultar la BD", async () => {
+    const db = makeSearchDb([{ ticket: { id: 1, status: "issued" }, event: { id: 5, name: "Tanker", venueId: 10 }, studentName: "Ana" }]);
+    const results = await searchTickets({ query: "an", staffAuthorizedVenueIds: "all" }, db);
+    expect(results).toEqual([]);
+  });
+
+  it("encuentra tickets nativos por nombre, acotados a los venues autorizados del staff", async () => {
+    const db = makeSearchDb([
+      { ticket: { id: 1, status: "issued" }, event: { id: 5, name: "Tanker", venueId: 10 }, studentName: "Ana García" },
+      { ticket: { id: 2, status: "used" }, event: { id: 6, name: "Otro evento", venueId: 99 }, studentName: "Ana López" },
+    ]);
+    const results = await searchTickets({ query: "Ana", staffAuthorizedVenueIds: [10] }, db);
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ ticketId: 1, eventName: "Tanker", studentName: "Ana García", status: "issued" });
+  });
+
+  it("sin resultados → array vacío, nunca lanza", async () => {
+    const db = makeSearchDb([]);
+    const results = await searchTickets({ query: "nadie existe así", staffAuthorizedVenueIds: "all" }, db);
+    expect(results).toEqual([]);
   });
 });
