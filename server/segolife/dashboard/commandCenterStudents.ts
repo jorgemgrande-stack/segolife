@@ -48,7 +48,7 @@ function daysBetween(from: Date, to: Date): number {
 export async function getStudentIntelligence(communityId: number | null, db: AnyDbHandle, now: Date = new Date()): Promise<StudentIntelligenceSnapshot> {
   const communityJoin = communityId != null ? sql`AND uc.community_id = ${communityId}` : sql``;
   const studentRowsResult = await db.execute(sql`
-    SELECT u.id AS user_id, u.created_at AS created_at, w.lifetime_earned AS tokens_lifetime_earned
+    SELECT u.id AS user_id, u.createdAt AS created_at, w.lifetime_earned AS tokens_lifetime_earned
     FROM users u
     JOIN student_profiles sp ON sp.user_id = u.id
     ${communityId != null ? sql`JOIN user_communities uc ON uc.user_id = u.id` : sql``}
