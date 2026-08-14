@@ -32,6 +32,8 @@ import {
   listHistoricalIdentities, claimHistoricalIdentity, unclaimHistoricalIdentity,
   getHistoricalIdentityStats,
   getHistoricalIdentityStatsByVenue,
+  getMyHistoricalMatchPreview, claimMyHistoricalIdentity, resolveHistoricalIdentityBestEffort,
+  getHistoricalOverviewForStudent, getHistoricalTimelineForStudent,
   HistoricalIdentityError,
 } from "./historicalIdentityService";
 import { UnresolvedOperationError } from "../integrations/unresolvedOperationsService";
@@ -430,5 +432,177 @@ describe("getHistoricalIdentityStatsByVenue — Venue Performance (spec §14, mi
     const db = fakeDb({ unresolvedRows: [], usersRows: [] });
     const byVenue = await getHistoricalIdentityStatsByVenue(db);
     expect(byVenue).toEqual([]);
+  });
+});
+
+describe("resolveHistoricalIdentityBestEffort — SEGURIDAD (Production Safety Gate §8): NUNCA auto-vincula", () => {
+  it("con un historial que coincide exactamente por email+teléfono, SOLO detecta — nunca llama a linkUnresolvedOperation/ingestAttendance/recordStudentAdminAction", async () => {
+    const rows = [unresolvedRow({ id: 1, identityHintEmail: "ana@example.com", identityHintPhone: "+34600111222", status: "unresolved" })];
+    const db = fakeDb({ unresolvedRows: rows, usersRows: [] });
+    await resolveHistoricalIdentityBestEffort(42, "ana@example.com", "+34600111222", db);
+    expect(mockLinkUnresolvedOperation).not.toHaveBeenCalled();
+    expect(mockIngestAttendance).not.toHaveBeenCalled();
+    expect(mockRecordStudentAdminAction).not.toHaveBeenCalled();
+  });
+
+  it("sin ningún historial coincidente -> no hace nada, no lanza", async () => {
+    const db = fakeDb({ unresolvedRows: [], usersRows: [] });
+    await expect(resolveHistoricalIdentityBestEffort(42, "nadie@example.com", "+34600000000", db)).resolves.toBeUndefined();
+    expect(mockLinkUnresolvedOperation).not.toHaveBeenCalled();
+  });
+
+  it("un fallo interno nunca se propaga (best-effort — nunca debe romper el alta)", async () => {
+    const brokenDb = { select: () => { throw new Error("DB caída"); } };
+    await expect(resolveHistoricalIdentityBestEffort(42, "ana@example.com", "+34600111222", brokenDb as never)).resolves.toBeUndefined();
+  });
+});
+
+describe("getMyHistoricalMatchPreview — autoservicio, privacy-safe (spec §7/§9/§30)", () => {
+  it("usuario sin fila en `users` -> NOT_AVAILABLE", async () => {
+    const db = fakeDb({ usersRows: [], unresolvedRows: [] });
+    const result = await getMyHistoricalMatchPreview(42, db);
+    expect(result.status).toBe("NOT_AVAILABLE");
+  });
+
+  it("sin ningún historial coincidente -> NOT_AVAILABLE", async () => {
+    const db = fakeDb({ usersRows: [{ id: 42, email: "ana@example.com", phone: "+34600111222" }], unresolvedRows: [] });
+    const result = await getMyHistoricalMatchPreview(42, db);
+    expect(result.status).toBe("NOT_AVAILABLE");
+  });
+
+  it("historial disponible (nunca reclamado) -> AVAILABLE con agregados, sin exponer email/teléfono histórico", async () => {
+    const rows = [
+      unresolvedRow({ id: 1, identityHintEmail: "ana@example.com", identityHintPhone: "+34600111222", operationType: "order", eventId: 10, venueId: 1, amountCents: 1000, status: "unresolved" }),
+      unresolvedRow({ id: 2, identityHintEmail: "ana@example.com", identityHintPhone: "+34600111222", operationType: "attendance", eventId: 10, venueId: 1, status: "unresolved" }),
+    ];
+    const db = fakeDb({ usersRows: [{ id: 42, email: "ana@example.com", phone: "+34600111222" }], unresolvedRows: rows });
+    const result = await getMyHistoricalMatchPreview(42, db);
+    expect(result).toMatchObject({ status: "AVAILABLE", eventsCount: 1, ticketsCount: 1, attendanceCount: 1 });
+    expect(result).not.toHaveProperty("email");
+    expect(result).not.toHaveProperty("phone");
+  });
+
+  it("identidad ya reclamada por OTRO userId -> NOT_AVAILABLE (nunca revela que pertenece a otra persona, spec §30)", async () => {
+    const rows = [unresolvedRow({ id: 1, identityHintEmail: "ana@example.com", identityHintPhone: "+34600111222", status: "linked", linkedUserId: 99 })];
+    const db = fakeDb({ usersRows: [{ id: 42, email: "ana@example.com", phone: "+34600111222" }], unresolvedRows: rows });
+    const result = await getMyHistoricalMatchPreview(42, db);
+    expect(result.status).toBe("NOT_AVAILABLE");
+  });
+
+  it("identidad ya reclamada por ESTE MISMO userId -> ALREADY_CLAIMED con fecha (spec §37)", async () => {
+    const rows = [unresolvedRow({ id: 1, identityHintEmail: "ana@example.com", identityHintPhone: "+34600111222", status: "linked", linkedUserId: 42, linkedAt: new Date("2026-08-01T10:00:00Z") })];
+    const db = fakeDb({ usersRows: [{ id: 42, email: "ana@example.com", phone: "+34600111222" }], unresolvedRows: rows });
+    const result = await getMyHistoricalMatchPreview(42, db);
+    expect(result.status).toBe("ALREADY_CLAIMED");
+    expect(result.claimedAt).toBe("2026-08-01T10:00:00.000Z");
+  });
+
+  it("identidad en CONFLICT (linked a userIds distintos) -> NOT_AVAILABLE, nunca self-serve (spec §6)", async () => {
+    const rows = [
+      unresolvedRow({ id: 1, identityHintEmail: "ana@example.com", identityHintPhone: "+34600111222", status: "linked", linkedUserId: 10 }),
+      unresolvedRow({ id: 2, identityHintEmail: "ana@example.com", identityHintPhone: "+34600111222", status: "linked", linkedUserId: 20 }),
+    ];
+    const db = fakeDb({ usersRows: [{ id: 42, email: "ana@example.com", phone: "+34600111222" }], unresolvedRows: rows });
+    const result = await getMyHistoricalMatchPreview(42, db);
+    expect(result.status).toBe("NOT_AVAILABLE");
+  });
+
+  it("una fila de otra identidad no contamina el resultado", async () => {
+    const rows = [
+      unresolvedRow({ id: 1, identityHintEmail: "ana@example.com", identityHintPhone: "+34600111222", status: "unresolved" }),
+      unresolvedRow({ id: 2, identityHintEmail: "otra@example.com", identityHintPhone: null, status: "unresolved" }),
+    ];
+    const db = fakeDb({ usersRows: [{ id: 42, email: "ana@example.com", phone: "+34600111222" }], unresolvedRows: rows });
+    const result = await getMyHistoricalMatchPreview(42, db);
+    expect(result.status).toBe("AVAILABLE");
+    expect(result.ticketsCount).toBe(1); // solo la fila de "ana", no la de "otra"
+  });
+});
+
+describe("claimMyHistoricalIdentity — autoservicio autenticado (spec §7/§40)", () => {
+  it("reclama correctamente cuando hay un historial disponible propio", async () => {
+    const rows = [unresolvedRow({ id: 1, identityHintEmail: "ana@example.com", identityHintPhone: "+34600111222", operationType: "order", referenceType: "event_ticket", referenceId: 501, status: "unresolved" })];
+    const db = fakeDb({ usersRows: [{ id: 42, email: "ana@example.com", phone: "+34600111222" }], unresolvedRows: rows, studentProfileRows: [{ id: 55 }] });
+    mockLinkUnresolvedOperation.mockResolvedValue({ ...rows[0], status: "linked", linkedUserId: 42 });
+    const result = await claimMyHistoricalIdentity(42, db);
+    expect(result.status).toBe("CLAIMED");
+    expect(result.userId).toBe(42);
+  });
+
+  it("sin ningún historial disponible -> HistoricalIdentityError NOT_FOUND", async () => {
+    const db = fakeDb({ usersRows: [{ id: 42, email: "ana@example.com", phone: "+34600111222" }], unresolvedRows: [] });
+    await expect(claimMyHistoricalIdentity(42, db)).rejects.toThrow(HistoricalIdentityError);
+  });
+
+  it("identidad en CONFLICT -> NOT_FOUND, nunca reclama un conflicto vía autoservicio", async () => {
+    const rows = [
+      unresolvedRow({ id: 1, identityHintEmail: "ana@example.com", identityHintPhone: "+34600111222", status: "linked", linkedUserId: 10 }),
+      unresolvedRow({ id: 2, identityHintEmail: "ana@example.com", identityHintPhone: "+34600111222", status: "linked", linkedUserId: 20 }),
+    ];
+    const db = fakeDb({ usersRows: [{ id: 42, email: "ana@example.com", phone: "+34600111222" }], unresolvedRows: rows });
+    await expect(claimMyHistoricalIdentity(42, db)).rejects.toThrow(HistoricalIdentityError);
+  });
+
+  it("identidad ya reclamada por OTRO userId -> NOT_FOUND, nunca permite un cross-claim (spec §30/§45)", async () => {
+    const rows = [unresolvedRow({ id: 1, identityHintEmail: "ana@example.com", identityHintPhone: "+34600111222", status: "linked", linkedUserId: 99 })];
+    const db = fakeDb({ usersRows: [{ id: 42, email: "ana@example.com", phone: "+34600111222" }], unresolvedRows: rows });
+    await expect(claimMyHistoricalIdentity(42, db)).rejects.toThrow(HistoricalIdentityError);
+    expect(mockLinkUnresolvedOperation).not.toHaveBeenCalled();
+  });
+
+  it("re-reclamar tras ya haberlo reclamado uno mismo -> ALREADY_CLAIMED_BY_THIS_USER, idempotente (spec §44)", async () => {
+    const rows = [unresolvedRow({ id: 1, identityHintEmail: "ana@example.com", identityHintPhone: "+34600111222", status: "linked", linkedUserId: 42 })];
+    const db = fakeDb({ usersRows: [{ id: 42, email: "ana@example.com", phone: "+34600111222" }], unresolvedRows: rows, studentProfileRows: [] });
+    const result = await claimMyHistoricalIdentity(42, db);
+    expect(result.status).toBe("ALREADY_CLAIMED_BY_THIS_USER");
+  });
+});
+
+describe("getHistoricalOverviewForStudent — Student 360 (spec §17)", () => {
+  it("sin ninguna operación vinculada -> hasHistory:false, todo en 0", async () => {
+    const db = fakeDb({ unresolvedRows: [] });
+    const result = await getHistoricalOverviewForStudent(42, db);
+    expect(result).toEqual({ hasHistory: false, identityKey: null, eventsCount: 0, ticketsCount: 0, attendanceCount: 0, historicalSpendCents: 0, venuesCount: 0, crossVenue: false, firstActivity: null, lastActivity: null, claimedAt: null });
+  });
+
+  it("agrega eventos/tickets/asistencias/gasto/venues/cross-venue/claimedAt desde operaciones linked", async () => {
+    const rows = [
+      unresolvedRow({ id: 1, operationType: "order", eventId: 10, venueId: 1, amountCents: 1000, status: "linked", linkedUserId: 42, linkedAt: new Date("2026-08-01T10:00:00Z") }),
+      unresolvedRow({ id: 2, operationType: "attendance", eventId: 10, venueId: 1, status: "linked", linkedUserId: 42, linkedAt: new Date("2026-08-01T10:00:00Z") }),
+      unresolvedRow({ id: 3, operationType: "order", eventId: 20, venueId: 7, amountCents: 500, status: "linked", linkedUserId: 42, linkedAt: new Date("2026-08-02T10:00:00Z") }),
+    ];
+    const db = fakeDb({ unresolvedRows: rows });
+    const result = await getHistoricalOverviewForStudent(42, db);
+    expect(result.hasHistory).toBe(true);
+    expect(result.eventsCount).toBe(2);
+    expect(result.ticketsCount).toBe(2);
+    expect(result.attendanceCount).toBe(1);
+    expect(result.historicalSpendCents).toBe(1500);
+    expect(result.venuesCount).toBe(2);
+    expect(result.crossVenue).toBe(true);
+    expect(result.claimedAt).toBe("2026-08-01T10:00:00.000Z"); // la PRIMERA vinculación, no la última
+  });
+});
+
+describe("getHistoricalTimelineForStudent — Student 360 (spec §16)", () => {
+  it("ordena por fecha DESC y resuelve nombres de evento/venue", async () => {
+    const rows = [
+      unresolvedRow({ id: 1, eventId: 10, venueId: 1, occurredAt: new Date("2026-01-01T00:00:00Z"), status: "linked", linkedUserId: 42 }),
+      unresolvedRow({ id: 2, eventId: 20, venueId: 7, occurredAt: new Date("2026-06-01T00:00:00Z"), status: "linked", linkedUserId: 42 }),
+    ];
+    const db = fakeDb({ unresolvedRows: rows, eventsRows: [{ id: 10, name: "Fiesta Enero" }, { id: 20, name: "Fiesta Junio" }], venuesRows: [{ id: 1, name: "Casanova" }, { id: 7, name: "Limoncello" }] });
+    const result = await getHistoricalTimelineForStudent(42, 10, 0, db);
+    expect(result.total).toBe(2);
+    expect(result.items[0].eventName).toBe("Fiesta Junio"); // más reciente primero
+    expect(result.items[0].venueName).toBe("Limoncello");
+    expect(result.items[1].eventName).toBe("Fiesta Enero");
+  });
+
+  it("paginación: total refleja todas, items solo la página pedida", async () => {
+    const rows = [1, 2, 3].map(n => unresolvedRow({ id: n, occurredAt: new Date(`2026-0${n}-01T00:00:00Z`), status: "linked", linkedUserId: 42 }));
+    const db = fakeDb({ unresolvedRows: rows, eventsRows: [], venuesRows: [] });
+    const result = await getHistoricalTimelineForStudent(42, 2, 0, db);
+    expect(result.total).toBe(3);
+    expect(result.items).toHaveLength(2);
   });
 });

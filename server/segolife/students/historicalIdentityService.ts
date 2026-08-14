@@ -603,27 +603,274 @@ export async function loadHistoricalSimulationInput(db?: DbHandle): Promise<Simu
   }));
 }
 
-// ─── Hook de registro/login (spec §16-17, §54) ─────────────────────────────
+// ─── Búsqueda indexada acotada a UNA identidad (spec §26) ──────────────────
+
+/**
+ * Lookup indexado y acotado a UNA identidad concreta (spec §26 — O(log n)
+ * con los índices nuevos sobre identity_hint_email/identity_hint_phone,
+ * nunca el escaneo completo de loadAllIdentityGroups). Usado por el hook de
+ * registro y por el autoservicio del estudiante — los dos únicos puntos
+ * donde SÍ importa evitar un full-scan de unresolved_operations en cada
+ * alta/visita al perfil. El directorio admin sigue usando
+ * loadAllIdentityGroups a propósito: necesita el agregado completo para
+ * filtrar/ordenar entre TODAS las identidades a la vez, no resolver una
+ * identidad concreta.
+ */
+async function findHistoricalGroupForContact(
+  email: string | null | undefined, phone: string | null | undefined, db: DbHandle
+): Promise<(HistoricalIdentityListItem & { rows: UnresolvedOperation[] }) | null> {
+  const key = identityKeyFor(email, phone);
+  if (!key) return null;
+  const normEmail = normalizeEmail(email);
+  const normPhone = normalizePhone(phone);
+
+  const contactConditions = [];
+  if (normEmail) contactConditions.push(eq(unresolvedOperations.identityHintEmail, normEmail));
+  if (normPhone) contactConditions.push(eq(unresolvedOperations.identityHintPhone, normPhone));
+  if (contactConditions.length === 0) return null;
+
+  const rows = await db.select().from(unresolvedOperations).where(
+    and(eq(unresolvedOperations.provider, PROVIDER), or(...contactConditions))
+  );
+  // Se acota a las filas que realmente comparten el MISMO identityKey (un
+  // teléfono compartido con otra identidad distinta no debe contaminar el
+  // resultado) — mismo criterio de agrupación que loadAllIdentityGroups.
+  const matchingRows = rows.filter(r => identityKeyFor(r.identityHintEmail, r.identityHintPhone) === key);
+  if (matchingRows.length === 0) return null;
+
+  const g: HistoricalIdentityListItem & { rows: UnresolvedOperation[] } = {
+    identityKey: key, name: null, email: null, phone: null,
+    eventsCount: 0, ticketsCount: 0, attendanceCount: 0, historicalSpendCents: 0,
+    firstActivity: new Date(0).toISOString(), lastActivity: new Date(0).toISOString(),
+    venueIds: [], crossVenue: false, status: "UNREGISTERED", linkedUserId: null, rows: [],
+  };
+  for (const r of matchingRows) {
+    if (g.rows.length === 0) {
+      g.email = r.identityHintEmail ? normalizeEmail(r.identityHintEmail) : null;
+      g.phone = r.identityHintPhone ? normalizePhone(r.identityHintPhone) : null;
+      g.name = r.identityHintName ?? null;
+      g.firstActivity = r.occurredAt?.toISOString() ?? new Date(0).toISOString();
+      g.lastActivity = g.firstActivity;
+    }
+    g.rows.push(r);
+    if (r.operationType === "order") { g.ticketsCount++; g.historicalSpendCents += r.amountCents ?? 0; }
+    if (r.operationType === "attendance") g.attendanceCount++;
+    if (r.venueId && !g.venueIds.includes(r.venueId)) g.venueIds.push(r.venueId);
+    if (r.identityHintName && r.occurredAt && r.occurredAt.toISOString() >= g.lastActivity) g.name = r.identityHintName;
+    const occ = r.occurredAt?.toISOString();
+    if (occ && occ < g.firstActivity) g.firstActivity = occ;
+    if (occ && occ > g.lastActivity) g.lastActivity = occ;
+  }
+  g.eventsCount = new Set(g.rows.map(r => r.eventId).filter((v): v is number => v != null)).size;
+  g.crossVenue = g.venueIds.length > 1;
+
+  const linkedRows = g.rows.filter(r => r.status === "linked" && r.linkedUserId != null);
+  if (linkedRows.length > 0) {
+    const distinctLinkedUsers = new Set(linkedRows.map(r => r.linkedUserId));
+    if (distinctLinkedUsers.size > 1) { g.status = "CONFLICT"; g.linkedUserId = null; }
+    else { g.status = "LINKED"; g.linkedUserId = linkedRows[0].linkedUserId; }
+  }
+  return g;
+}
+
+// ─── Autoservicio del estudiante (spec §7-9, §37-40) ───────────────────────
+
+export type MyHistoricalMatchStatus = "AVAILABLE" | "ALREADY_CLAIMED" | "NOT_AVAILABLE";
+
+export interface MyHistoricalMatchPreview {
+  status: MyHistoricalMatchStatus;
+  eventsCount: number;
+  ticketsCount: number;
+  attendanceCount: number;
+  venuesCount: number;
+  firstActivity: string | null;
+  lastActivity: string | null;
+  /** Solo si status="ALREADY_CLAIMED" (spec §37 — indicador discreto con fecha de claim). */
+  claimedAt: string | null;
+}
+
+const NO_MATCH_PREVIEW: MyHistoricalMatchPreview = {
+  status: "NOT_AVAILABLE", eventsCount: 0, ticketsCount: 0, attendanceCount: 0, venuesCount: 0, firstActivity: null, lastActivity: null, claimedAt: null,
+};
+
+/**
+ * Preview PRIVACY-SAFE (spec §9): solo agregados (nº eventos/tickets/
+ * asistencias/venues + rango de fechas) — NUNCA el email/teléfono histórico
+ * ni ningún detalle identificable como "prueba" antes de reclamar. Nunca
+ * revela si la identidad pertenece a OTRO usuario (spec §30): un CONFLICT o
+ * un LINKED a otro userId se ven exactamente igual que "no hay nada" desde
+ * fuera — la única diferencia visible es si YA está reclamada por este mismo
+ * usuario (ALREADY_CLAIMED).
+ */
+export async function getMyHistoricalMatchPreview(userId: number, db?: DbHandle): Promise<MyHistoricalMatchPreview> {
+  const conn = db ?? (await getDb());
+  const [u] = await conn.select({ email: users.email, phone: users.phone }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!u) return NO_MATCH_PREVIEW;
+
+  const g = await findHistoricalGroupForContact(u.email, u.phone, conn);
+  if (!g) return NO_MATCH_PREVIEW;
+  if (g.status === "CONFLICT") return NO_MATCH_PREVIEW; // spec §6 — conflicto siempre a revisión admin, nunca self-serve
+  if (g.status === "LINKED" && g.linkedUserId !== userId) return NO_MATCH_PREVIEW; // spec §30 — nunca revela que pertenece a otro usuario
+
+  const claimedAt = g.status === "LINKED"
+    ? g.rows.map(r => r.linkedAt?.toISOString() ?? null).filter((v): v is string => !!v).sort()[0] ?? null
+    : null;
+
+  return {
+    status: g.status === "LINKED" ? "ALREADY_CLAIMED" : "AVAILABLE",
+    eventsCount: g.eventsCount, ticketsCount: g.ticketsCount, attendanceCount: g.attendanceCount,
+    venuesCount: g.venueIds.length, firstActivity: g.firstActivity, lastActivity: g.lastActivity,
+    claimedAt,
+  };
+}
+
+/**
+ * CLAIM AUTOSERVICIO (spec §7/§40) — el propio estudiante confirma su
+ * historial. NUNCA acepta un identityKey del cliente: se recalcula SIEMPRE
+ * server-side a partir del email/teléfono YA GUARDADOS del usuario
+ * autenticado (userId viene de ctx.user.id en el router, nunca del body),
+ * igual que getMyHistoricalMatchPreview. Esta es la única vía de
+ * auto-vinculación que queda en pie tras el hallazgo de seguridad de
+ * resolveHistoricalIdentityBestEffort: exige una acción explícita,
+ * autenticada, de la propia persona — nunca ocurre en silencio.
+ */
+export async function claimMyHistoricalIdentity(userId: number, db?: DbHandle): Promise<ClaimResult> {
+  const conn = db ?? (await getDb());
+  const [u] = await conn.select({ email: users.email, phone: users.phone }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!u) throw new HistoricalIdentityError("NOT_FOUND", "No hay ningún historial disponible para reclamar");
+
+  const g = await findHistoricalGroupForContact(u.email, u.phone, conn);
+  if (!g || g.status === "CONFLICT" || (g.status === "LINKED" && g.linkedUserId !== userId)) {
+    throw new HistoricalIdentityError("NOT_FOUND", "No hay ningún historial disponible para reclamar");
+  }
+
+  return claimHistoricalIdentity({ identityKey: g.identityKey, userId, actorUserId: userId, method: "student_claim" }, conn);
+}
+
+// ─── Student 360 — Historical Overview & Timeline (spec §16-18) ───────────
+
+export interface StudentHistoricalOverview {
+  hasHistory: boolean;
+  identityKey: string | null;
+  eventsCount: number;
+  ticketsCount: number;
+  attendanceCount: number;
+  historicalSpendCents: number;
+  venuesCount: number;
+  crossVenue: boolean;
+  firstActivity: string | null;
+  lastActivity: string | null;
+  claimedAt: string | null;
+}
+
+/**
+ * Resumen histórico para Student 360 (spec §17) — lee DIRECTAMENTE de
+ * unresolved_operations por linkedUserId, nunca depende solo de que
+ * event_tickets/event_attendance ya reflejen el claim: una operación tipo
+ * "commerce" (o un "order" sin referenceType="event_ticket") queda marcada
+ * "linked" pero NUNCA se materializa en una tabla nativa — spec §17 pide la
+ * foto histórica COMPLETA, no solo lo que ya tiene tabla propia.
+ */
+export async function getHistoricalOverviewForStudent(userId: number, db?: DbHandle): Promise<StudentHistoricalOverview> {
+  const conn = db ?? (await getDb());
+  const rows = await conn.select().from(unresolvedOperations).where(eq(unresolvedOperations.linkedUserId, userId));
+  if (rows.length === 0) {
+    return { hasHistory: false, identityKey: null, eventsCount: 0, ticketsCount: 0, attendanceCount: 0, historicalSpendCents: 0, venuesCount: 0, crossVenue: false, firstActivity: null, lastActivity: null, claimedAt: null };
+  }
+  const identityKey = identityKeyFor(rows[0].identityHintEmail, rows[0].identityHintPhone);
+  let ticketsCount = 0, attendanceCount = 0, historicalSpendCents = 0;
+  const venueIds = new Set<number>();
+  const eventIds = new Set<number>();
+  let firstActivity: string | null = null, lastActivity: string | null = null, claimedAt: string | null = null;
+  for (const r of rows) {
+    if (r.operationType === "order") { ticketsCount++; historicalSpendCents += r.amountCents ?? 0; }
+    if (r.operationType === "attendance") attendanceCount++;
+    if (r.venueId) venueIds.add(r.venueId);
+    if (r.eventId) eventIds.add(r.eventId);
+    const occ = r.occurredAt?.toISOString() ?? null;
+    if (occ && (!firstActivity || occ < firstActivity)) firstActivity = occ;
+    if (occ && (!lastActivity || occ > lastActivity)) lastActivity = occ;
+    const linked = r.linkedAt?.toISOString() ?? null;
+    if (linked && (!claimedAt || linked < claimedAt)) claimedAt = linked; // primera vinculación real, no la última
+  }
+  return {
+    hasHistory: true, identityKey,
+    eventsCount: eventIds.size, ticketsCount, attendanceCount, historicalSpendCents,
+    venuesCount: venueIds.size, crossVenue: venueIds.size > 1,
+    firstActivity, lastActivity, claimedAt,
+  };
+}
+
+export interface StudentHistoricalTimelineItem {
+  operationId: number; operationType: string; occurredAt: string;
+  eventId: number | null; eventName: string | null;
+  venueId: number | null; venueName: string | null;
+  amountCents: number | null;
+}
+
+/** Timeline paginado en memoria — el volumen por Student individual (decenas de operaciones) nunca justifica paginación en SQL. */
+export async function getHistoricalTimelineForStudent(
+  userId: number, limit: number, offset: number, db?: DbHandle
+): Promise<{ items: StudentHistoricalTimelineItem[]; total: number }> {
+  const conn = db ?? (await getDb());
+  const rows = await conn.select().from(unresolvedOperations).where(eq(unresolvedOperations.linkedUserId, userId));
+  const sorted = rows.slice().sort((a, b) => (b.occurredAt?.getTime() ?? 0) - (a.occurredAt?.getTime() ?? 0));
+
+  const eventIds = Array.from(new Set(sorted.map(r => r.eventId).filter((v): v is number => v != null)));
+  const venueIds = Array.from(new Set(sorted.map(r => r.venueId).filter((v): v is number => v != null)));
+  const [eventRows, venueRows] = await Promise.all([
+    eventIds.length ? conn.select({ id: events.id, name: events.name }).from(events).where(inArray(events.id, eventIds)) : Promise.resolve([]),
+    venueIds.length ? conn.select({ id: venues.id, name: venues.name }).from(venues).where(inArray(venues.id, venueIds)) : Promise.resolve([]),
+  ]);
+  const eventNames = new Map(eventRows.map(e => [e.id, e.name]));
+  const venueNames = new Map(venueRows.map(v => [v.id, v.name]));
+
+  const page = sorted.slice(offset, offset + limit).map(r => ({
+    operationId: r.id, operationType: r.operationType,
+    occurredAt: r.occurredAt?.toISOString() ?? new Date(0).toISOString(),
+    eventId: r.eventId, eventName: r.eventId ? eventNames.get(r.eventId) ?? null : null,
+    venueId: r.venueId, venueName: r.venueId ? venueNames.get(r.venueId) ?? null : null,
+    amountCents: r.amountCents,
+  }));
+  return { items: page, total: sorted.length };
+}
+
+// ─── Hook de registro (spec §16-17, §54, Production Safety Gate §8) ───────
 
 /**
  * Best-effort — llamar DESPUÉS de confirmar la transacción de registro
  * (mismo patrón que grantWelcomeBenefitBestEffort en registrationService.ts:
- * un fallo aquí NUNCA debe romper el alta). Política de auto-link (spec §15):
- * SOLO EXACT_EMAIL_AND_PHONE se vincula automáticamente; el resto
- * (EXACT_EMAIL/EXACT_PHONE = POSSIBLE CLAIM) queda visible en el directorio
- * admin para revisión manual, nunca se vincula solo.
+ * un fallo aquí NUNCA debe romper el alta).
+ *
+ * SEGURIDAD (spec §8 — BLOCKER real encontrado y corregido en esta fase):
+ * esta función ANTES auto-vinculaba en EXACT_EMAIL_AND_PHONE. Pero el alta
+ * de Segolife no verifica la propiedad del email ni del teléfono (no hay
+ * verificación por email/SMS en ningún punto del registro — auditado). Y el
+ * chequeo `classifyMatch(email, phone)` que decidía el auto-link comparaba
+ * el email/teléfono del usuario RECIÉN CREADO contra la tabla `users` — es
+ * decir, contra SU PROPIA fila recién insertada, que siempre resuelve en
+ * macheo consigo mismo. El único filtro real que determinaba si había
+ * vínculo histórico era `identityKeyFor` (prioridad email, sin comprobar
+ * siquiera el teléfono contra el histórico). Resultado: cualquiera que
+ * conociera el email histórico de OTRA persona (Fourvenues nunca exige
+ * probar esa propiedad) heredaba en silencio, sin ninguna confirmación
+ * humana, todo su historial de compras/asistencia con solo registrarse con
+ * ese email. Verificado que nunca se explotó en producción (0 claims reales
+ * existentes antes de este fix), pero el vector estaba desplegado y activo.
+ *
+ * Por eso esta función YA NUNCA auto-vincula: solo detecta (deja constancia
+ * observable en logs, spec §23) y deja el claim a una acción explícita del
+ * propio estudiante (`claimMyHistoricalIdentity`, autoservicio autenticado)
+ * o de un admin (`claimHistoricalIdentity` vía RBAC students.manage). Ver
+ * informe final, sección "Auto-Link Security".
  */
 export async function resolveHistoricalIdentityBestEffort(userId: number, email: string, phone: string, db?: DbHandle): Promise<void> {
   try {
     const conn = db ?? (await getDb());
-    const key = identityKeyFor(email, phone);
-    if (!key) return;
-    const match = await classifyMatch(email, phone, conn);
-    if (match.confidence !== "EXACT_EMAIL_AND_PHONE") return; // resto: visible en directorio, nunca auto-link
-    if (match.candidateUserId !== userId) return; // defensa: el candidato debe ser exactamente este usuario recién creado
-
-    await claimHistoricalIdentity({ identityKey: key, userId, actorUserId: userId, method: "auto_registration" }, conn);
+    const g = await findHistoricalGroupForContact(email, phone, conn);
+    if (!g || g.status === "LINKED" || g.status === "CONFLICT") return;
+    console.log(`[historicalIdentity] Posible historial detectado en registro userId=${userId} identityKey=${g.identityKey} (pendiente de claim explícito — nunca auto-vinculado, spec §8)`);
   } catch (err) {
-    console.error("[resolveHistoricalIdentityBestEffort] No se pudo resolver histórico:", err);
+    console.error("[resolveHistoricalIdentityBestEffort] No se pudo detectar histórico:", err);
   }
 }
