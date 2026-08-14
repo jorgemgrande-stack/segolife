@@ -505,23 +505,23 @@ function AdminLayoutInner({ children, title }: AdminLayoutProps) {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="animate-spin w-8 h-8 border-2 border-accent border-t-transparent rounded-full" />
+        <div className="animate-spin w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full" />
       </div>
     );
   }
 
-  // ── Not authenticated ──
+  // ── Not authenticated ── (identidad Segolife — violeta, nunca el naranja/azul heredado de Náyade)
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-center max-w-sm px-4">
-          <div className="w-16 h-16 rounded-2xl bg-accent/10 flex items-center justify-center mx-auto mb-4">
-            <AlertCircle className="w-8 h-8 text-accent" />
+          <div className="w-16 h-16 rounded-2xl bg-violet-500/10 flex items-center justify-center mx-auto mb-4">
+            <AlertCircle className="w-8 h-8 text-violet-500 dark:text-violet-400" />
           </div>
           <h2 className="text-2xl font-display font-bold text-foreground mb-2">Acceso Restringido</h2>
           <p className="text-muted-foreground mb-6">Debes iniciar sesión para acceder al panel de administración.</p>
           <Button
-            className="bg-primary text-white hover:bg-primary/90 px-8 py-3 text-base font-semibold w-full"
+            className="bg-violet-600 text-white hover:bg-violet-700 px-8 py-3 text-base font-semibold w-full"
             onClick={() => { window.location.href = getLoginUrl(location); }}
           >
             Iniciar Sesión
