@@ -7,13 +7,15 @@
  */
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, permissionProcedure } from "../_core/trpc";
+import { router, permissionProcedure, protectedProcedure } from "../_core/trpc";
 import {
   listHistoricalIdentities,
   getHistoricalIdentityDetail,
   claimHistoricalIdentity,
   unclaimHistoricalIdentity,
   classifyMatch,
+  getMyHistoricalMatchPreview,
+  claimMyHistoricalIdentity,
   HistoricalIdentityError,
 } from "../segolife/students/historicalIdentityService";
 import { getStudentByUserId } from "../db/studentsDb";
@@ -98,4 +100,22 @@ export const historicalIdentitiesRouter = router({
         mapHistoricalIdentityError(err);
       }
     }),
+
+  // ─── AUTOSERVICIO DEL ESTUDIANTE (spec §7/§40, Production Safety Gate) ────
+  // protectedProcedure (cualquier usuario autenticado), NUNCA permissionProcedure
+  // — no hace falta students.view/manage porque el alcance está limitado por
+  // construcción a la PROPIA identidad de ctx.user. Ninguno de los dos
+  // procedures acepta identityKey/userId del cliente: ambos se resuelven
+  // SIEMPRE a partir de ctx.user.id, así que no hay superficie para que un
+  // estudiante reclame o consulte la identidad de otro adivinando un ID.
+
+  myHistoricalMatch: protectedProcedure.query(({ ctx }) => getMyHistoricalMatchPreview(ctx.user.id)),
+
+  claimMyHistory: protectedProcedure.mutation(async ({ ctx }) => {
+    try {
+      return await claimMyHistoricalIdentity(ctx.user.id);
+    } catch (err) {
+      mapHistoricalIdentityError(err);
+    }
+  }),
 });
