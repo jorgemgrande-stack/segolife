@@ -401,7 +401,14 @@
     "identityQrTitle": "Mi código de POS",
     "identityQrDescription": "Muestra esto en un POS de Segolife para que el staff te identifique — nunca autoriza un cargo por sí mismo.",
     "identityQrRegenerate": "Regenerar código",
-    "identityQrRotated": "Código regenerado"
+    "identityQrRotated": "Código regenerado",
+    "historicalBannerTitle": "Hemos encontrado actividad anterior",
+    "historicalBannerDescription": "{{events}} eventos · {{tickets}} entradas · {{venues}} locales",
+    "historicalBannerCta": "Recuperar mi historial",
+    "historicalClaimedBadge": "Historial recuperado",
+    "historicalClaimedSince": "Recuperado el {{date}}",
+    "historicalClaimSuccess": "Historial recuperado correctamente",
+    "historicalClaimError": "No se pudo recuperar el historial"
   },
   "activity": {
     "title": "Actividad",

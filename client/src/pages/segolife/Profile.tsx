@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { toast } from "sonner";
-import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell, Ticket, IdCard, RotateCw } from "lucide-react";
+import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell, Ticket, IdCard, RotateCw, Archive } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
@@ -91,6 +91,58 @@ function StudentIdentitySection() {
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * SEGOLIFE HISTORICAL STUDENT CLAIM (spec §7/§37-38) — indicador discreto,
+ * nunca bloquea el resto del perfil. `myHistoricalMatch` nunca expone el
+ * email/teléfono histórico ni revela si la identidad pertenece a otra
+ * persona (spec §9/§30) — solo agregados (nº eventos/tickets/venues) y, una
+ * vez reclamado, la fecha. El claim es SIEMPRE una acción explícita de la
+ * propia persona autenticada — nunca ocurre en silencio (ver hallazgo de
+ * seguridad corregido en resolveHistoricalIdentityBestEffort).
+ */
+function HistoricalClaimBanner() {
+  const { t, i18n } = useTranslation();
+  const utils = trpc.useUtils();
+  const { data } = trpc.historicalIdentities.myHistoricalMatch.useQuery();
+  const claimMut = trpc.historicalIdentities.claimMyHistory.useMutation({
+    onSuccess: () => {
+      toast.success(t("profile.historicalClaimSuccess"));
+      utils.historicalIdentities.myHistoricalMatch.invalidate();
+    },
+    onError: () => toast.error(t("profile.historicalClaimError")),
+  });
+
+  if (!data || data.status === "NOT_AVAILABLE") return null;
+
+  if (data.status === "ALREADY_CLAIMED") {
+    return (
+      <div className="flex items-center gap-2.5 rounded-2xl bg-secondary px-4 py-3 text-secondary-foreground">
+        <Archive className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{t("profile.historicalClaimedBadge")}</p>
+          {data.claimedAt && (
+            <p className="text-xs text-muted-foreground">
+              {t("profile.historicalClaimedSince", { date: new Date(data.claimedAt).toLocaleDateString(i18n.language) })}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="segolife-card-shadow rounded-2xl border border-primary/30 bg-primary/5 p-4">
+      <p className="text-sm font-semibold text-foreground">{t("profile.historicalBannerTitle")}</p>
+      <p className="mt-1 text-sm text-muted-foreground">
+        {t("profile.historicalBannerDescription", { events: data.eventsCount, tickets: data.ticketsCount, venues: data.venuesCount })}
+      </p>
+      <Button size="sm" className="mt-3 rounded-full" disabled={claimMut.isPending} onClick={() => claimMut.mutate()}>
+        {claimMut.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : t("profile.historicalBannerCta")}
+      </Button>
+    </div>
   );
 }
 
@@ -192,6 +244,8 @@ export default function Profile() {
             </p>
           </div>
         </div>
+
+        <HistoricalClaimBanner />
 
         {!me.profile.profileCompleted && (
           <div className="segolife-card-shadow rounded-2xl border border-accent/30 bg-accent/10 p-4">

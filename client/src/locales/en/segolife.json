@@ -401,7 +401,14 @@
     "identityQrTitle": "My POS code",
     "identityQrDescription": "Show this at a Segolife POS so staff can identify you — it never authorizes a charge by itself.",
     "identityQrRegenerate": "Regenerate code",
-    "identityQrRotated": "Code regenerated"
+    "identityQrRotated": "Code regenerated",
+    "historicalBannerTitle": "We found previous activity",
+    "historicalBannerDescription": "{{events}} events · {{tickets}} tickets · {{venues}} venues",
+    "historicalBannerCta": "Recover my history",
+    "historicalClaimedBadge": "History recovered",
+    "historicalClaimedSince": "Recovered on {{date}}",
+    "historicalClaimSuccess": "History recovered successfully",
+    "historicalClaimError": "Couldn't recover your history"
   },
   "activity": {
     "title": "Activity",
