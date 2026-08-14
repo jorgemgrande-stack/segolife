@@ -330,7 +330,18 @@
     "scanCta": "Scan and earn SegoTokens",
     "comunityTitle": "Comunity",
     "comunityActiveCount": "{{count}} active questions",
-    "comunityActiveCount_one": "{{count}} active question"
+    "comunityActiveCount_one": "{{count}} active question",
+    "forYouTitle": "For You",
+    "ticketReadyKicker": "YOUR TICKET",
+    "crossVenueKicker": "DISCOVER SEGOVIA",
+    "crossVenueTitle": "Visit another Segolife venue",
+    "crossVenueBonus": "+{{count}} SegoTokens",
+    "marketplaceKicker": "UNLOCK WITH SEGOTOKENS",
+    "marketplaceBalance": "You have {{count}} ST",
+    "profileKicker": "YOUR PROFILE",
+    "profileTitle": "{{percent}}% complete",
+    "activityTitle": "Recent Activity",
+    "activityViewAll": "View all"
   },
   "explore": {
     "title": "Explore",

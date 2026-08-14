@@ -237,3 +237,16 @@ export async function listDueScheduledProposals(now: Date, db?: AnyDbHandle): Pr
   return conn.select().from(communityProposals)
     .where(and(eq(communityProposals.status, "scheduled"), lte(communityProposals.startsAt, now)));
 }
+
+/** Cuenta (sin traer las filas) — mismo criterio que community.myActive: propuestas en la audiencia del Student, activas y dentro de ventana. Usado por la Home para priorizar el nudge de Community sin duplicar la query completa. */
+export async function countActiveProposalsForUser(userId: number, db?: AnyDbHandle): Promise<number> {
+  const conn = db ?? (await getDb());
+  const audienceRows = await conn.select({ proposalId: communityProposalAudiences.proposalId })
+    .from(communityProposalAudiences).where(eq(communityProposalAudiences.userId, userId));
+  const proposalIds = audienceRows.map(r => r.proposalId);
+  if (proposalIds.length === 0) return 0;
+  const now = new Date();
+  const rows = await conn.select().from(communityProposals)
+    .where(and(inArray(communityProposals.id, proposalIds), eq(communityProposals.status, "active")));
+  return rows.filter(p => isProposalOpenForResponses(p, now)).length;
+}

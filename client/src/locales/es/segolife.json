@@ -330,7 +330,18 @@
     "scanCta": "Escanear y ganar SegoTokens",
     "comunityTitle": "Comunity",
     "comunityActiveCount": "{{count}} preguntas activas",
-    "comunityActiveCount_one": "{{count}} pregunta activa"
+    "comunityActiveCount_one": "{{count}} pregunta activa",
+    "forYouTitle": "Para ti",
+    "ticketReadyKicker": "TU ENTRADA",
+    "crossVenueKicker": "DESCUBRE SEGOVIA",
+    "crossVenueTitle": "Visita otro venue Segolife",
+    "crossVenueBonus": "+{{count}} SegoTokens",
+    "marketplaceKicker": "DESBLOQUEA CON SEGOTOKENS",
+    "marketplaceBalance": "Tienes {{count}} ST",
+    "profileKicker": "TU PERFIL",
+    "profileTitle": "{{percent}}% completo",
+    "activityTitle": "Actividad reciente",
+    "activityViewAll": "Ver todo"
   },
   "explore": {
     "title": "Explorar",
