@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
   mockResolveIdentity, mockPersistIdentityMapping, mockRecordUnresolvedOperation, mockEarnTokens, mockEvaluateBenefitsForOrigin,
-  mockResolveLoyaltyCutoff, MockTokenEngineError,
+  mockResolveLoyaltyCutoff, MockTokenEngineError, mockObserveShadow,
 } = vi.hoisted(() => {
   class MockTokenEngineError extends Error {
     code: string;
@@ -26,6 +26,7 @@ const {
     mockEvaluateBenefitsForOrigin: vi.fn(),
     mockResolveLoyaltyCutoff: vi.fn(),
     MockTokenEngineError,
+    mockObserveShadow: vi.fn(),
   };
 });
 
@@ -44,6 +45,7 @@ vi.mock("../tokens/loyaltyCutoffService", () => ({
   isBeforeCutoff: (at: Date, cutoff: Date | null) => cutoff != null && at < cutoff,
 }));
 vi.mock("../tokens/tokenLedgerService", () => ({ TokenEngineError: MockTokenEngineError }));
+vi.mock("../tokens/loyaltyShadowService", () => ({ observeShadow: mockObserveShadow }));
 
 import { ingestAttendance } from "./attendancePipeline";
 
@@ -123,6 +125,9 @@ describe("ingestAttendance", () => {
       identityHintEmail: "fixture.attendee@example.invalid",
     });
     expect(mockEarnTokens).not.toHaveBeenCalled();
+    // Loyalty Shadow Mode (spec §2/§33) — identidad histórica sin Student resuelto: observada como NO_STUDENT, nunca omitida.
+    expect(mockObserveShadow).toHaveBeenCalledOnce();
+    expect(mockObserveShadow.mock.calls[0][0]).toMatchObject({ trigger: "EVENT_ATTENDANCE", userId: null });
   });
 
   it("identidad resuelta → crea event_attendance, llama earnTokens con origin='attendance' y evaluateBenefitsForOrigin con type='event_attendance'", async () => {
@@ -143,6 +148,19 @@ describe("ingestAttendance", () => {
     expect(mockEvaluateBenefitsForOrigin).toHaveBeenCalledOnce();
     expect(mockEvaluateBenefitsForOrigin.mock.calls[0][0]).toMatchObject({ type: "event_attendance", userId: 42, eventId: 5 });
     expect(mockPersistIdentityMapping).toHaveBeenCalledOnce();
+    expect(mockObserveShadow).toHaveBeenCalledOnce();
+    expect(mockObserveShadow.mock.calls[0][0]).toMatchObject({ trigger: "EVENT_ATTENDANCE", userId: 42, eventId: 5, venueId: 10 });
+  });
+
+  it("Loyalty Shadow Mode — SIEMPRE observa, incluso con suppressLoyalty=true (los 3 venues reales hoy tienen loyalty_enabled=0, earnTokens real se salta pero Shadow no)", async () => {
+    mockResolveIdentity.mockResolvedValue({ userId: 42, method: "participant_email" });
+    const db = fakeDb();
+
+    await ingestAttendance({ provider: "fourvenues_integrations", eventId: 5, venueId: 10, suppressLoyalty: true, attendance: attendanceFixture() }, db);
+
+    expect(mockEarnTokens).not.toHaveBeenCalled(); // real: suprimido
+    expect(mockObserveShadow).toHaveBeenCalledOnce(); // shadow: observa igual
+    expect(mockObserveShadow.mock.calls[0][0]).toMatchObject({ trigger: "EVENT_ATTENDANCE", userId: 42 });
   });
 
   it("Paymentless Tickets Hardening — cuando el llamador conoce el event_ticket real (con o sin order), ticketId se persiste en event_attendance", async () => {

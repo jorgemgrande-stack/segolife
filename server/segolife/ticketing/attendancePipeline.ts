@@ -42,6 +42,7 @@ import type { NormalizedAttendance } from "../integrations/externalTicketingProv
 import { TokenEngineError } from "../tokens/tokenLedgerService";
 import { resolveLoyaltyCutoff, isBeforeCutoff } from "../tokens/loyaltyCutoffService";
 import { buildNextAttempt, shouldAttemptReward, type RewardAttempt, type DenialReasonCode } from "../tokens/rewardStateMachine";
+import { observeShadow } from "../tokens/loyaltyShadowService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -66,6 +67,19 @@ export interface IngestAttendanceInput {
   resolvedUserId?: number | null;
   /** Import histórico — ver nota arriba. Nunca concede tokens/Benefits; sí persiste event_attendance. */
   suppressLoyalty?: boolean;
+  /**
+   * LOYALTY SHADOW MODE — distinto de `suppressLoyalty` (spec §9: "Shadow
+   * observa tráfico desde su activación... NO procesar 20.000+ tickets
+   * históricos"). `suppressLoyalty` puede ser `true` simplemente porque el
+   * venue tiene `loyalty_enabled=false` en un sync EN VIVO — Shadow SÍ debe
+   * observar ese tráfico (es justo el punto de esta fase: ver qué pasaría
+   * si loyalty estuviera activo). `isHistoricalImport=true` marca en cambio
+   * una reconstrucción retroactiva de datos ya viejos (backfill, claim de
+   * identidad histórica, vinculación manual de un unresolved_operations
+   * antiguo) — Shadow NUNCA debe observar esos casos, aunque tengan un
+   * userId resuelto. Por defecto `false` (tráfico en vivo).
+   */
+  isHistoricalImport?: boolean;
 }
 
 export type IngestAttendanceResult =
@@ -190,6 +204,16 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
         identityHintName: input.attendance.participant.name ?? null,
         amountCents: null,
       }, conn);
+      // Shadow (spec §2/§33) — identidad histórica sin Student resuelto,
+      // observada como NO_STUDENT, nunca como si perteneciera a alguien.
+      if (!input.isHistoricalImport) {
+        await observeShadow({
+          provider: input.provider, externalOperationId: input.attendance.externalAttendanceId, trigger: "EVENT_ATTENDANCE",
+          operationState: "unresolved", userId: null, venueId: input.venueId ?? null, eventId: input.eventId,
+          communityId: input.communityId ?? null, origin: "attendance", occurredAt: input.attendance.occurredAt,
+          integrationId: input.integrationId ?? null,
+        }, conn);
+      }
       return { status: "unresolved" };
     }
 
@@ -229,6 +253,19 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
   });
   const insertId = (insertResult as unknown as { insertId: number }).insertId;
   const [row] = await conn.select().from(eventAttendance).where(eq(eventAttendance.id, insertId)).limit(1);
+
+  // Shadow (spec §6/§9) — se evalúa incluso con suppressLoyalty=true (los 3
+  // venues reales hoy tienen loyalty_enabled=0, Shadow existe para observar
+  // qué habría pasado a pesar de eso) — pero NUNCA si es un import histórico
+  // (backfill/claim/vinculación retroactiva, ver isHistoricalImport arriba).
+  if (!input.isHistoricalImport) {
+    await observeShadow({
+      provider: input.provider, externalOperationId: input.attendance.externalAttendanceId, trigger: "EVENT_ATTENDANCE",
+      operationState: "processed", userId, venueId: input.venueId ?? null, eventId: input.eventId,
+      communityId: input.communityId ?? null, origin: "attendance", occurredAt: input.attendance.occurredAt,
+      integrationId: input.integrationId ?? null,
+    }, conn);
+  }
 
   // evaluateBenefitsForOrigin se llama SIEMPRE que NO sea import histórico
   // (incluso si earnTokens no concedió tokens por límite/horario — un

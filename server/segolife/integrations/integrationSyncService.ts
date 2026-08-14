@@ -455,6 +455,11 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
               resolveTicketTypeId: (externalId) => (externalId ? rateResult.ticketTypeIdByExternalId.get(externalId) ?? null : null),
               loyaltyEffectiveFrom: opts.loyaltyEffectiveFrom ?? null,
               suppressLoyalty,
+              // Loyalty Shadow Mode (spec §9) — distinto de suppressLoyalty:
+              // un sync EN VIVO con loyalty_enabled=false SIGUE siendo tráfico
+              // real que Shadow debe observar; solo un backfill deliberado
+              // (opts.historicalImport=true) no debe generar observaciones.
+              isHistoricalImport: opts.historicalImport === true,
             }, conn);
             if (result.status === "created") { ordersCreated++; ticketsUnresolved += result.unresolvedTickets; }
             else if (result.status === "updated") ordersUpdated++;
@@ -509,6 +514,7 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
               eventId: item.eventId, venueId: integration.venueId, attendance: a,
               ticketId: a.externalTicketId ? ticketIdByExternalId.get(a.externalTicketId) ?? null : null,
               suppressLoyalty,
+              isHistoricalImport: opts.historicalImport === true,
             }, conn);
             if (result.status === "processed") attendanceProcessed++;
             else if (result.status === "unresolved") attendanceUnresolved++;

@@ -12,7 +12,7 @@ const {
   mockResolveIdentity, mockPersistIdentityMapping, mockRecordUnresolvedOperation,
   mockEarnTokens, mockEvaluateBenefitsForOrigin, mockEmitEngagementEvent,
   mockResolveLoyaltyCutoff, mockReverseTransaction, mockIsLedgerEntryReversed,
-  MockTokenEngineError,
+  MockTokenEngineError, mockObserveShadow,
 } = vi.hoisted(() => {
   class MockTokenEngineError extends Error {
     code: string;
@@ -29,6 +29,7 @@ const {
     mockReverseTransaction: vi.fn(),
     mockIsLedgerEntryReversed: vi.fn(),
     MockTokenEngineError,
+    mockObserveShadow: vi.fn(),
   };
 });
 
@@ -52,6 +53,7 @@ vi.mock("../tokens/tokenLedgerService", () => ({
   reverseTransaction: mockReverseTransaction,
   isLedgerEntryReversed: mockIsLedgerEntryReversed,
 }));
+vi.mock("../tokens/loyaltyShadowService", () => ({ observeShadow: mockObserveShadow }));
 
 import { ingestTicketPurchase, ingestPaymentlessTicket } from "./ticketPurchasePipeline";
 
@@ -154,6 +156,9 @@ describe("ingestTicketPurchase — pedido nuevo", () => {
     expect(mockEvaluateBenefitsForOrigin.mock.calls[0][0]).toMatchObject({ type: "ticket", userId: 10 });
     expect(updates.some(u => (u.values.metadata as Record<string, unknown>)?.purchaseLoyaltyLedgerId === 9001)).toBe(true);
     expect(mockEmitEngagementEvent).toHaveBeenCalledWith("ticket_purchased", expect.objectContaining({ userId: 10, eventId: 77 }));
+    // Loyalty Shadow Mode (spec §5) — se observa exactamente en el mismo punto que el reward real, trigger=EVENT_PURCHASE.
+    expect(mockObserveShadow).toHaveBeenCalledOnce();
+    expect(mockObserveShadow.mock.calls[0][0]).toMatchObject({ trigger: "EVENT_PURCHASE", userId: 10, eventId: 77, origin: "ticket" });
   });
 
   it("participante sin identidad resuelta → crea el ticket con userId=null y registra unresolved_operations con operationType='order'", async () => {
@@ -208,6 +213,13 @@ describe("ingestTicketPurchase — pedido nuevo", () => {
     expect(mockEarnTokens).not.toHaveBeenCalled();
     expect(mockEvaluateBenefitsForOrigin).not.toHaveBeenCalled();
     expect(mockEmitEngagementEvent).not.toHaveBeenCalled();
+    // Loyalty Shadow Mode — esta llamada NO está marcada isHistoricalImport
+    // (loyaltyEffectiveFrom es un cutoff normal de sync en vivo, no un
+    // backfill deliberado) — Shadow SÍ observa, y su propio evaluateReward
+    // aplica el MISMO cutoff (loyaltyCutoffAt reenviado) → CUTOFF_BLOCKED,
+    // informativo en vez de silenciosamente omitido.
+    expect(mockObserveShadow).toHaveBeenCalledOnce();
+    expect(mockObserveShadow.mock.calls[0][0]).toMatchObject({ trigger: "EVENT_PURCHASE", loyaltyCutoffAt: new Date("2026-01-01T00:00:00.000Z") });
   });
 
   it("suppressLoyalty=true (Casanova Historical Validation §22/§27) — override explícito, independiente de la fecha: NUNCA concede tokens/Benefits ni emite ticket_purchased, aunque purchasedAt sea reciente", async () => {
@@ -228,12 +240,16 @@ describe("ingestTicketPurchase — pedido nuevo", () => {
       eventId: 77, order: normalizedOrder(), tickets: [normalizedTicket()],
       resolveTicketTypeId: () => 55,
       suppressLoyalty: true, // sin loyaltyEffectiveFrom — el override explícito basta por sí solo
+      isHistoricalImport: true, // Loyalty Shadow Mode (spec §9) — backfill deliberado, misma llamada que un caller real de este flujo debe marcar
     }, db);
 
     expect(result.status).toBe("created");
     expect(mockEarnTokens).not.toHaveBeenCalled();
     expect(mockEvaluateBenefitsForOrigin).not.toHaveBeenCalled();
     expect(mockEmitEngagementEvent).not.toHaveBeenCalled();
+    // Loyalty Shadow Mode (spec §9) — CRÍTICO: un backfill histórico NUNCA
+    // debe generar observaciones Shadow como si fuera tráfico en vivo.
+    expect(mockObserveShadow).not.toHaveBeenCalled();
   });
 });
 
@@ -289,6 +305,8 @@ describe("ingestTicketPurchase — pedido ya existente (spec §58, §79)", () =>
     expect(mockEarnTokens).toHaveBeenCalledOnce();
     expect(mockEarnTokens.mock.calls[0][0]).toMatchObject({ userId: 10, origin: "ticket", eventId: 77 });
     expect(mockEmitEngagementEvent).toHaveBeenCalledWith("ticket_purchased", expect.objectContaining({ userId: 10, orderId: 501 }));
+    expect(mockObserveShadow).toHaveBeenCalledOnce();
+    expect(mockObserveShadow.mock.calls[0][0]).toMatchObject({ trigger: "PENDING_TO_PAID", userId: 10 });
   });
 
   it("pending → pending (sin cambio real) → 'unchanged', nunca intenta la recompensa (no está 'paid')", async () => {
@@ -322,6 +340,11 @@ describe("ingestTicketPurchase — pedido ya existente (spec §58, §79)", () =>
     if (result.status === "updated") expect(result.reconciliationRequired).toBe(false);
     expect(mockReverseTransaction).not.toHaveBeenCalled(); // nada que revertir
     expect(mockEmitEngagementEvent).toHaveBeenCalledWith("order_refunded", expect.objectContaining({ userId: 10, orderId: 501, partial: false }));
+    // Loyalty Shadow Mode (spec §7) — observa el refund independientemente
+    // de si hubo reversión REAL (aquí no la había); busca su propia
+    // observación previa para decidir GRANTED-a-revertir vs nada que revertir.
+    expect(mockObserveShadow).toHaveBeenCalledOnce();
+    expect(mockObserveShadow.mock.calls[0][0]).toMatchObject({ trigger: "EVENT_REFUND", userId: 10 });
   });
 
   it("paid → refunded, CON loyalty ya concedida (spec §6) → reversión AUTOMÁTICA real vía reverseTransaction, sin reconciliación manual", async () => {

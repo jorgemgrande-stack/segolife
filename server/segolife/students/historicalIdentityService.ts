@@ -406,6 +406,9 @@ export async function claimHistoricalIdentity(
         venueId: linked.venueId ?? null,
         resolvedUserId: input.userId,
         suppressLoyalty: true, // spec §32 — INCONDICIONAL, nunca depende de loyaltyEnabled del venue.
+        // Loyalty Shadow Mode (spec §25 de esa fase — "no hacer replay automático"):
+        // un claim histórico nunca debe generar una observación Shadow como si fuera tráfico en vivo.
+        isHistoricalImport: true,
         attendance: {
           externalAttendanceId: linked.externalReferenceId ?? `unresolved:${linked.id}`,
           externalEventId: String(linked.eventId),

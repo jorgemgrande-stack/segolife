@@ -64,6 +64,7 @@ import {
   buildNextAttempt, buildRegeneratedAttempt, shouldAttemptReward,
   type RewardAttempt, type DenialReasonCode,
 } from "../tokens/rewardStateMachine";
+import { observeShadow } from "../tokens/loyaltyShadowService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -93,6 +94,15 @@ export interface IngestTicketPurchaseInput {
   loyaltyEffectiveFrom?: Date | null;
   /** Import histórico — override explícito, ver nota arriba. Nunca concede tokens/Benefits; sí persiste order/tickets. */
   suppressLoyalty?: boolean;
+  /**
+   * LOYALTY SHADOW MODE — distinto de `suppressLoyalty` (spec §9). Ver nota
+   * gemela en attendancePipeline.ts: `suppressLoyalty` puede ser `true` solo
+   * porque el venue tiene `loyalty_enabled=false` en un sync EN VIVO (Shadow
+   * SÍ debe observar ese caso); `isHistoricalImport=true` marca en cambio
+   * una reconstrucción retroactiva de datos ya viejos — Shadow NUNCA debe
+   * observarla. Por defecto `false` (tráfico en vivo).
+   */
+  isHistoricalImport?: boolean;
 }
 
 export type IngestTicketPurchaseResult =
@@ -125,6 +135,25 @@ function buildPurchaseIdempotencyKey(input: IngestTicketPurchaseInput, buyerUser
 
 function toDenialReason(code: string): DenialReasonCode | null {
   return code === "NO_RULE_FOUND" || code === "RULE_LIMIT_EXCEEDED" || code === "OUTSIDE_SCHEDULE" ? code : null;
+}
+
+/**
+ * LOYALTY SHADOW MODE — construye la observación para el pedido, sea cual
+ * sea `order.userId` (incluido `null`: identity gate real, spec §2 — nunca
+ * se llama a evaluateReward para una identidad histórica sin Student
+ * resuelto, loyaltyShadowService.ts registra NO_STUDENT y se detiene ahí).
+ * `observeShadow()` nunca lanza y es un no-op inmediato si Shadow está OFF —
+ * seguro llamarlo incondicionalmente en cada punto de transición real.
+ */
+function buildPurchaseShadowInput(
+  input: IngestTicketPurchaseInput, order: TicketOrder, trigger: "EVENT_PURCHASE" | "PENDING_TO_PAID" | "EVENT_REFUND", operationState: string
+) {
+  return {
+    provider: input.provider, externalOperationId: input.order.externalId, trigger, operationState,
+    userId: order.userId, venueId: input.venueId ?? null, eventId: input.eventId, communityId: input.communityId ?? null,
+    amountSpent: order.totalCents / 100, origin: "ticket" as const, occurredAt: order.purchasedAt ?? new Date(),
+    integrationId: input.integrationId, loyaltyCutoffAt: input.loyaltyEffectiveFrom ?? null,
+  };
 }
 
 /**
@@ -337,6 +366,9 @@ async function createNewOrder(input: IngestTicketPurchaseInput, db: DbHandle): P
       emitEngagementEvent("ticket_purchased", { userId: buyerIdentity.userId, communityId: input.communityId ?? null, orderId, eventId: input.eventId });
     }
   }
+  if (order.status === "paid" && !input.isHistoricalImport) {
+    await observeShadow(buildPurchaseShadowInput(input, order, "EVENT_PURCHASE", order.status));
+  }
 
   const [finalOrder] = await db.select().from(ticketOrders).where(eq(ticketOrders.id, orderId)).limit(1);
   return { status: "created", order: finalOrder, ticketsCreated: input.tickets.length, unresolvedTickets: unresolvedCount };
@@ -419,6 +451,12 @@ async function updateExistingOrder(input: IngestTicketPurchaseInput, existing: T
       }
     }
   }
+  // Shadow PENDING→PAID (spec §9) — solo en una transición REAL hacia "paid"
+  // (statusChanged ya implica esto, ver definición de isPaidNow arriba: si
+  // existing.status ya era "paid" esto nunca se cumple de nuevo).
+  if (isPaidNow && existing.status !== "paid" && !input.isHistoricalImport) {
+    await observeShadow(buildPurchaseShadowInput(input, existing, "PENDING_TO_PAID", newStatus));
+  }
 
   if (!statusChanged) {
     // Ni transición de estado real ni ningún intento de recompensa nuevo — no-op real, sin tocar la fila.
@@ -464,6 +502,13 @@ async function updateExistingOrder(input: IngestTicketPurchaseInput, existing: T
       amountCents: existing.totalCents,
       partial: newStatus === "partially_refunded",
     });
+  }
+  if (becomingRefunded && !input.isHistoricalImport) {
+    // Shadow REFUND (spec §7-8) — busca su propia observación GRANTED previa
+    // (EVENT_PURCHASE/PENDING_TO_PAID) y produce una reversión simulada;
+    // nunca llama a reverseTransaction() real (eso ya ocurrió, si procedía,
+    // en el paso 1 de arriba, sobre el ledger REAL, sin relación con Shadow).
+    await observeShadow(buildPurchaseShadowInput(input, existing, "EVENT_REFUND", newStatus));
   }
 
   return { status: "updated", order: updated, reconciliationRequired };
