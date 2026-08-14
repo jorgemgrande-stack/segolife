@@ -1,6 +1,7 @@
 /**
  * commandCenterOverview.test.ts — KPI Strip principal (spec §7): 6 KPIs,
- * todo agregado en SQL, expiración perezosa de Benefits, LIVE_LOCKED fijo.
+ * todo agregado en SQL, expiración perezosa de Benefits, liveStatus refleja
+ * tokenEngine.ts:LIVE_LOYALTY_ENABLED (SegoTokens Live Activation, spec §19).
  *
  * El fake `db` despacha por IDENTIDAD REAL de la tabla pasada a `.from()`
  * (mismo criterio que historicalIdentityService.test.ts) — nunca por un
@@ -18,6 +19,7 @@ vi.mock("./activitySignals", () => ({ countActiveStudents: (...args: unknown[]) 
 
 import { getOverviewSnapshot } from "./commandCenterOverview";
 import type { DashboardFilterContext } from "./dashboardFilters";
+import { LIVE_LOYALTY_ENABLED } from "../tokens/tokenEngine";
 
 const NOW = new Date("2026-08-14T12:00:00.000Z");
 const CTX: DashboardFilterContext = { communityId: null, from: new Date("2026-07-15T00:00:00.000Z"), to: NOW, rangeLabel: "30d" };
@@ -75,7 +77,7 @@ describe("getOverviewSnapshot", () => {
     mockCountActiveStudents.mockReset();
   });
 
-  it("compone los 6 KPIs reales sin lanzar, con LIVE_LOCKED fijo en SegoTokens", async () => {
+  it("compone los 6 KPIs reales sin lanzar, con liveStatus real en SegoTokens (SegoTokens Live Activation)", async () => {
     mockCountActiveStudents.mockResolvedValue(10);
     const db = fakeDb({
       usersRowsQueue: [[{ n: 500 }], [{ n: 20 }]],
@@ -88,7 +90,7 @@ describe("getOverviewSnapshot", () => {
     expect(snapshot.students).toEqual({ total: 500, newInPeriod: 20 });
     expect(snapshot.tickets.paid).toBe(30);
     expect(snapshot.tickets.ticketRevenueCents).toBe(150000);
-    expect(snapshot.segoTokens).toEqual({ earnedInPeriod: 800, spentInPeriod: 300, circulatingBalance: 5000, liveStatus: "LIVE_LOCKED" });
+    expect(snapshot.segoTokens).toEqual({ earnedInPeriod: 800, spentInPeriod: 300, circulatingBalance: 5000, liveStatus: LIVE_LOYALTY_ENABLED ? "LIVE_ACTIVE" : "LIVE_LOCKED" });
     expect(snapshot.attendance.eligibleTickets).toBe(25);
     expect(snapshot.attendance.unresolvedHistoricalCount).toBe(3);
   });

@@ -1,7 +1,8 @@
 /**
- * LoyaltyAndBenefits.tsx — spec §19 (SegoTokens Economy, READ-ONLY,
- * LIVE_LOCKED fijo, nunca "tokens expirando") + §20 (Benefits Performance,
- * expiración perezosa, expiringWithin48h, ranking de más canjeados).
+ * LoyaltyAndBenefits.tsx — spec §19 (SegoTokens Economy, READ-ONLY, badge
+ * LIVE ON/OFF dinámico desde `loyalty.data.liveStatus`, nunca "tokens
+ * expirando") + §20 (Benefits Performance, expiración perezosa,
+ * expiringWithin48h, ranking de más canjeados).
  */
 import { Link } from "wouter";
 import { Coins, Gift } from "lucide-react";
@@ -18,7 +19,9 @@ export function LoyaltyAndBenefits({ filters }: { filters: DashboardQueryInput }
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <Panel title="SegoTokens Economy" icon={Coins} action={<Link href="/admin/tokens" className="text-[10px] font-semibold text-violet-500 hover:underline">Ver tokens →</Link>}>
         <div className="mb-2 flex flex-wrap gap-1.5">
-          <Badge tone="locked">LIVE OFF · simulación</Badge>
+          <Badge tone={loyalty.data?.liveStatus === "LIVE_ACTIVE" ? "good" : "locked"}>
+            {loyalty.data?.liveStatus === "LIVE_ACTIVE" ? "LIVE ON" : "LIVE OFF · simulación"}
+          </Badge>
           <Badge tone={shadowStatus.data?.enabled ? "good" : "locked"}>SHADOW {shadowStatus.data?.enabled ? "ACTIVE" : "OFF"}</Badge>
         </div>
         {loyalty.isLoading && <DashboardEmptyState kind="loading" title="" />}

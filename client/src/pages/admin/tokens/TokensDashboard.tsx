@@ -3,7 +3,7 @@ import AdminLayout from "@/components/AdminLayout";
 import { trpc } from "@/lib/trpc";
 import { KpiCard } from "@/components/KpiCard";
 import { Badge } from "@/components/ui/badge";
-import { Coins, TrendingUp, TrendingDown, Wallet, Sparkles, Megaphone, Loader2, ArrowRight, ShieldCheck, Lock, Ghost, Users, Undo2, Trophy } from "lucide-react";
+import { Coins, TrendingUp, TrendingDown, Wallet, Sparkles, Megaphone, Loader2, ArrowRight, ShieldCheck, Lock, LockOpen, Ghost, Users, Undo2, Trophy } from "lucide-react";
 
 function fmtDateTime(d: Date | string | null | undefined) {
   if (!d) return "—";
@@ -18,6 +18,8 @@ function fmtEUR(cents: number): string {
  * LECTURA. Deliberadamente NO incluye ningún control para activar loyalty
  * — el flip real de `loyalty_enabled` sigue siendo una acción manual fuera
  * de esta pantalla (edición directa de la integración), nunca un botón aquí.
+ * Badge dinámico desde SegoTokens Live Activation (spec §19) — antes era un
+ * literal "LIVE MODE LOCKED" fijo, desconectado del estado real.
  */
 function ActivationReadinessCard() {
   const { data, isLoading } = trpc.tokens.activationReadiness.useQuery();
@@ -28,7 +30,10 @@ function ActivationReadinessCard() {
       <div className="flex items-center gap-2">
         <ShieldCheck className="w-5 h-5 text-violet-500" />
         <h3 className="text-sm font-semibold text-foreground">Activation Readiness</h3>
-        <Badge variant="outline" className="ml-auto gap-1"><Lock className="w-3 h-3" /> LIVE MODE LOCKED</Badge>
+        <Badge variant={data.liveModeLocked ? "outline" : "default"} className="ml-auto gap-1">
+          {data.liveModeLocked ? <Lock className="w-3 h-3" /> : <LockOpen className="w-3 h-3" />}
+          {data.liveModeLocked ? "LIVE MODE LOCKED" : "LIVE MODE UNLOCKED"}
+        </Badge>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
         <div>
@@ -80,7 +85,10 @@ export default function TokensDashboard() {
           </div>
           {!isLoading && data && (
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="gap-1"><Lock className="w-3 h-3" /> LIVE LOYALTY OFF</Badge>
+              <Badge variant={data.globalLiveEnabled ? "default" : "outline"} className="gap-1">
+                {data.globalLiveEnabled ? <LockOpen className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+                LIVE LOYALTY {data.globalLiveEnabled ? "ON" : "OFF"}
+              </Badge>
               <Badge variant={data.shadowEnabled ? "default" : "secondary"} className="gap-1">
                 <Ghost className="w-3 h-3" /> SHADOW {data.shadowEnabled ? "ACTIVE" : "OFF"}
               </Badge>

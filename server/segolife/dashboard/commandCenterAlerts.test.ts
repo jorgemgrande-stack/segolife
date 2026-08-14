@@ -8,6 +8,7 @@ import type { FourvenuesHealthSnapshot } from "./commandCenterFourvenues";
 import type { BenefitsPerformanceSnapshot } from "./commandCenterLoyalty";
 import type { PlanAndPlaySnapshot } from "./commandCenterPlanAndPlay";
 import type { OverviewSnapshot } from "./commandCenterOverview";
+import { LIVE_LOYALTY_ENABLED } from "../tokens/tokenEngine";
 
 const { mockGetProvider, mockIsFourvenuesSchedulerRunning } = vi.hoisted(() => ({
   mockGetProvider: vi.fn(),
@@ -125,13 +126,13 @@ describe("getSystemHealth — solo lectura de estado ya materializado", () => {
     expect(byKey.get("email")).toBe("ok");
   });
 
-  it("loyalty SIEMPRE 'off' — nunca 'error', es un apagado intencional", async () => {
+  it("loyalty refleja tokenEngine.ts:LIVE_LOYALTY_ENABLED — nunca 'error' (SegoTokens Live Activation, spec §19)", async () => {
     mockGetProvider.mockImplementation(() => ({ capabilities: { configured: false } }));
     mockIsFourvenuesSchedulerRunning.mockReturnValue(false);
     const db = { execute: vi.fn().mockResolvedValue([[], []]) };
     const snapshot = await getSystemHealth(db as never, "none_configured");
     const loyalty = snapshot.items.find(i => i.key === "loyalty");
-    expect(loyalty?.status).toBe("off");
+    expect(loyalty?.status).toBe(LIVE_LOYALTY_ENABLED ? "ok" : "off");
   });
 
   it("un fallo real en SELECT 1 -> db 'error', nunca lanza la excepción hacia arriba", async () => {

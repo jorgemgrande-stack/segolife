@@ -86,6 +86,24 @@ describe("CommandCenterHeader", () => {
     expect(tokensLink).toHaveAttribute("href", "/admin/tokens");
   });
 
+  it("SegoTokens subLabel refleja liveStatus real (SegoTokens Live Activation, spec §19) — LIVE_LOCKED muestra 'LIVE OFF'", () => {
+    mockAuth.mockReturnValue({ user: { name: "Ana García" } });
+    mockOverviewQuery.mockReturnValue({ data: overviewFixture(), isLoading: false, error: null });
+    render(<CommandCenterHeader filters={{}} />);
+    expect(screen.getByText(/LIVE OFF/)).toBeInTheDocument();
+  });
+
+  it("SegoTokens subLabel: LIVE_ACTIVE muestra 'LIVE ON', nunca 'LIVE OFF'", () => {
+    mockAuth.mockReturnValue({ user: { name: "Ana García" } });
+    mockOverviewQuery.mockReturnValue({
+      data: overviewFixture({ segoTokens: { earnedInPeriod: 900, spentInPeriod: 300, circulatingBalance: 5000, liveStatus: "LIVE_ACTIVE" as const } }),
+      isLoading: false, error: null,
+    });
+    render(<CommandCenterHeader filters={{}} />);
+    expect(screen.getByText("LIVE ON")).toBeInTheDocument();
+    expect(screen.queryByText(/LIVE OFF/)).not.toBeInTheDocument();
+  });
+
   it("sin nombre de usuario -> cae a 'Administrador', nunca undefined visible", () => {
     mockAuth.mockReturnValue({ user: null });
     mockOverviewQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });

@@ -18,6 +18,9 @@ describe("isPermanentDenial", () => {
   it("CUTOFF_BLOCKED es permanente — un hecho histórico fijo nunca cambia", () => {
     expect(isPermanentDenial("CUTOFF_BLOCKED")).toBe(true);
   });
+  it("GLOBAL_LIVE_DISABLED es permanente — mismo criterio que CUTOFF_BLOCKED, solo cambia con un commit revisado (SegoTokens Live Activation, spec §19)", () => {
+    expect(isPermanentDenial("GLOBAL_LIVE_DISABLED")).toBe(true);
+  });
   it("OUTSIDE_SCHEDULE, RULE_LIMIT_EXCEEDED, NO_RULE_FOUND, UNKNOWN_IDENTITY son temporales", () => {
     expect(isPermanentDenial("OUTSIDE_SCHEDULE")).toBe(false);
     expect(isPermanentDenial("RULE_LIMIT_EXCEEDED")).toBe(false);

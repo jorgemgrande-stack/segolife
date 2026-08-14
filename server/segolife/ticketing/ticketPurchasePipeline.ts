@@ -134,7 +134,7 @@ function buildPurchaseIdempotencyKey(input: IngestTicketPurchaseInput, buyerUser
 }
 
 function toDenialReason(code: string): DenialReasonCode | null {
-  return code === "NO_RULE_FOUND" || code === "RULE_LIMIT_EXCEEDED" || code === "OUTSIDE_SCHEDULE" ? code : null;
+  return code === "NO_RULE_FOUND" || code === "RULE_LIMIT_EXCEEDED" || code === "OUTSIDE_SCHEDULE" || code === "GLOBAL_LIVE_DISABLED" ? code : null;
 }
 
 /**

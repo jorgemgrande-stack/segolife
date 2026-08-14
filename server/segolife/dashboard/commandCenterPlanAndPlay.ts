@@ -20,6 +20,7 @@ import type { AnyDbHandle } from "../tokens/tokenLedgerService";
 import type { DashboardFilterContext } from "./dashboardFilters";
 import { countActiveStudents, distinctVenuesByStudent } from "./activitySignals";
 import { getHistoricalIdentityStats } from "../students/historicalIdentityService";
+import { LIVE_LOYALTY_ENABLED } from "../tokens/tokenEngine";
 
 function rowsOf<T>(result: unknown): T[] {
   return (result as unknown as [T[]])[0] ?? [];
@@ -182,7 +183,12 @@ export async function getCommunityFunnel(ctx: DashboardFilterContext, db: AnyDbH
     { key: "active_students", label: "Active Students", count: activeStudents, population: "Students registrados con actividad genuina", period: periodLabel },
     { key: "purchasers", label: "Purchasers", count: purchasers, population: "Students registrados con >=1 pedido pagado", period: periodLabel },
     { key: "attendees", label: "Attendees", count: attendees, population: "Students registrados con >=1 asistencia confirmada", period: periodLabel },
-    { key: "loyalty_participants", label: "Loyalty Participants", count: loyaltyParticipants, population: "Students registrados con >=1 movimiento de SegoTokens (LIVE OFF)", period: periodLabel },
+    {
+      key: "loyalty_participants", label: "Loyalty Participants", count: loyaltyParticipants,
+      // SegoTokens Live Activation (spec §19) — el paréntesis solo advierte "LIVE OFF" mientras sea cierto; con LIVE activo estos movimientos pueden ser reward reales, no solo simulación/datos de prueba.
+      population: `Students registrados con >=1 movimiento de SegoTokens${LIVE_LOYALTY_ENABLED ? "" : " (LIVE OFF)"}`,
+      period: periodLabel,
+    },
     { key: "benefit_redeemers", label: "Benefit Redeemers", count: benefitRedeemers, population: "Students registrados que canjearon >=1 Benefit", period: periodLabel },
     { key: "multi_venue", label: "Multi-Venue", count: multiVenue, population: "Students registrados con actividad en >=2 venues", period: "Histórico completo (sin periodo)" },
   ];

@@ -60,6 +60,32 @@ async function getDb(): Promise<DbHandle> {
   return _db;
 }
 
+/**
+ * GLOBAL LIVE SWITCH real (SegoTokens Live Activation, spec §19) —
+ * `earnTokens()` es el ÚNICO punto de entrada real para GANAR tokens (lo
+ * usan ticketPurchasePipeline.ts/attendancePipeline.ts/commercePipeline.ts/
+ * consumptionQrService.ts/nativeCheckinService.ts — nunca lo reimplementan).
+ *
+ * HALLAZGO de esta fase: antes de esto, `rewardEngine.ts:LIVE_MODE_ENABLED`
+ * NO protegía nada real — solo gateaba `evaluateReward(mode="LIVE")`, una
+ * función sin ningún caller en producción (los pipelines reales llaman
+ * `earnTokens()` directamente). La ÚNICA protección real, todo este tiempo,
+ * era `venue_integrations.loyaltyEnabled` por venue (vía `suppressLoyalty`
+ * en cada pipeline) — real, probada, pero única (sin defensa en
+ * profundidad). Esta constante es la segunda capa real que pedía el spec:
+ * incluso si algún caller futuro olvidara resolver `suppressLoyalty`
+ * correctamente, `earnTokens()` sigue exigiendo esta bandera global.
+ *
+ * Literal en código a propósito (mismo criterio que tenía
+ * `LIVE_MODE_ENABLED`, que ahora importa este valor en vez de mantener una
+ * bandera propia desconectada) — activar/desactivar LIVE globalmente exige
+ * un commit revisado, nunca un toggle de un solo clic. El kill switch
+ * RÁPIDO y sin deploy para detener nuevos rewards sigue siendo
+ * `venue_integrations.loyaltyEnabled` (instantáneo desde /admin/tokens o
+ * integraciones) — apagar UN venue no requiere tocar este literal.
+ */
+export const LIVE_LOYALTY_ENABLED = true as boolean;
+
 export interface TokenBreakdown {
   base: number;
   recurrenceBonus: number;
@@ -128,6 +154,10 @@ export interface EarnTokensInput {
 }
 
 export async function earnTokens(input: EarnTokensInput, db?: AnyDbHandle): Promise<EngineResult> {
+  if (!LIVE_LOYALTY_ENABLED) {
+    throw new TokenEngineError("GLOBAL_LIVE_DISABLED", "LIVE loyalty global está desactivado — ver tokenEngine.ts:LIVE_LOYALTY_ENABLED");
+  }
+
   const conn = db ?? (await getDb());
   const at = input.at ?? new Date();
 

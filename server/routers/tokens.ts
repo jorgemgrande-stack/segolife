@@ -43,6 +43,7 @@ import {
 import { getActivationReadinessSnapshot } from "../segolife/tokens/activationReadinessService";
 import { getEconomyOverviewExtras } from "../segolife/tokens/economyOverviewService";
 import { evaluateReward } from "../segolife/tokens/rewardEngine";
+import { LIVE_LOYALTY_ENABLED } from "../segolife/tokens/tokenEngine";
 
 const tokensViewProcedure = permissionProcedure("tokens.view", ["admin"]);
 const tokensManageProcedure = permissionProcedure("tokens.manage", ["admin"]);
@@ -70,6 +71,7 @@ function mapEngineError(err: unknown): never {
       OUTSIDE_SCHEDULE: "BAD_REQUEST",
       NO_RULE_FOUND: "BAD_REQUEST",
       RULE_LIMIT_EXCEEDED: "BAD_REQUEST",
+      GLOBAL_LIVE_DISABLED: "BAD_REQUEST",
     };
     throw new TRPCError({ code: codeMap[err.code] ?? "BAD_REQUEST", message: err.message });
   }
@@ -329,6 +331,8 @@ export const tokensRouter = router({
       ...extras,
       // Estimación analítica (spec §9) — nunca cash value, nunca altera lo que gana un Student.
       estimatedPromotionalLiabilityCents: stats.totalBalance * extras.estimatedTokenValueCents,
+      // SegoTokens Live Activation (spec §19/§26) — estado real, nunca hardcodeado en el frontend.
+      globalLiveEnabled: LIVE_LOYALTY_ENABLED,
     };
   }),
 

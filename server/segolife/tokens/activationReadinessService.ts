@@ -13,6 +13,7 @@ import mysql from "mysql2/promise";
 import { venueIntegrations, venues, tokenRules, tokenCampaigns } from "../../../drizzle/schema";
 import { getSystemSetting } from "../../config";
 import { LOYALTY_GLOBAL_CUTOFF_SETTING_KEY } from "./loyaltyCutoffService";
+import { LIVE_LOYALTY_ENABLED } from "./tokenEngine";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
 const _db = drizzle(_pool);
@@ -32,8 +33,8 @@ export interface VenueLoyaltyReadiness {
 }
 
 export interface ActivationReadinessSnapshot {
-  /** Constante estructural — NUNCA leída de BD, refleja rewardEngine.ts LIVE_MODE_ENABLED (bloqueado en código, no en configuración). */
-  liveModeLocked: true;
+  /** SegoTokens Live Activation (spec §19) — refleja tokenEngine.ts:LIVE_LOYALTY_ENABLED en tiempo real (antes era un literal `true` desconectado). */
+  liveModeLocked: boolean;
   globalCutoffConfigured: boolean;
   venues: VenueLoyaltyReadiness[];
   anyVenueLoyaltyEnabled: boolean;
@@ -70,7 +71,7 @@ export async function getActivationReadinessSnapshot(db?: DbHandle): Promise<Act
   }));
 
   return {
-    liveModeLocked: true,
+    liveModeLocked: !LIVE_LOYALTY_ENABLED,
     globalCutoffConfigured: !!globalCutoffValue.trim(),
     venues: venuesReadiness,
     anyVenueLoyaltyEnabled: venuesReadiness.some(v => v.loyaltyEnabled),

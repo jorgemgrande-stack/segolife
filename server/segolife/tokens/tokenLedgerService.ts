@@ -69,7 +69,9 @@ export type TokenEngineErrorCode =
   | "REASON_REQUIRED"
   | "OUTSIDE_SCHEDULE"
   | "NO_RULE_FOUND"
-  | "RULE_LIMIT_EXCEEDED";
+  | "RULE_LIMIT_EXCEEDED"
+  // SegoTokens Live Activation (spec §19) — GLOBAL LIVE SWITCH real, ver tokenEngine.ts:LIVE_LOYALTY_ENABLED.
+  | "GLOBAL_LIVE_DISABLED";
 
 export class TokenEngineError extends Error {
   code: TokenEngineErrorCode;

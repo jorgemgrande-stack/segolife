@@ -3,14 +3,19 @@
  * la selección de regla/recurrencia/campaña/topes REAL de tokenRuleEngine.ts
  * (mismo patrón de mock por colas FIFO que tokenEngine.test.ts) pero nunca
  * escribe — se comprueba explícitamente que ningún insert/update se invoca.
- * LIVE se comprueba SOLO en su forma bloqueada (spec: debe permanecer
- * inalcanzable esta fase) — no se prueba el camino real desbloqueado porque
- * no hay ningún caller/flag que pueda alcanzarlo en producción todavía.
+ * LIVE (SegoTokens Live Activation, spec §19) ya delega de verdad en
+ * earnTokens() — el corte (isBeforeCutoff) es la MISMA función que
+ * SIMULATION ya prueba exhaustivamente (schedule/regla/recurrencia/campaña/
+ * topes, cubierto arriba vía calculateOnly), así que aquí solo se prueba lo
+ * que es distinto del camino LIVE: que ya no lanza LIVE_MODE_DISABLED, que
+ * delega en earnTokens con un resultado real (wallet+ledger), y que el
+ * corte se sigue respetando también en esta rama (chequeo propio, separado
+ * de calculateOnly).
  */
 import { describe, it, expect } from "vitest";
 import { evaluateReward, RewardEngineError } from "./rewardEngine";
 import {
-  tokenRules, tokenLedger, tokenCampaigns,
+  tokenRules, tokenLedger, tokenWallets, tokenCampaigns,
   campaignCommunities, campaignVenues, campaignEvents, venueTokenSchedules,
   venueIntegrations, systemSettings,
 } from "../../../drizzle/schema";
@@ -71,6 +76,94 @@ function makeReadOnlyMockDb(opts: {
     wroteAnything: () => wroteAnything,
     queueRules: (rows: Array<Record<string, unknown>>) => rulesQueue.push(rows),
     queueLedgerRead: (rows: Array<Record<string, unknown>>) => ledgerReadQueue.push(rows),
+  };
+}
+
+function blankWallet(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 1, userId: 42, balance: 0, lifetimeEarned: 0, lifetimeSpent: 0,
+    status: "active" as const, createdAt: new Date("2026-01-01"), updatedAt: new Date("2026-01-01"),
+    ...overrides,
+  };
+}
+
+/**
+ * Mock de escritura REAL — mismo patrón exacto que tokenEngine.test.ts
+ * (makeEngineMockDb), necesario aquí porque LIVE ya delega en earnTokens()
+ * de verdad (spec §19) y por tanto puede llegar a escribir wallet+ledger.
+ */
+function makeWritableMockDb(opts: {
+  wallet?: Record<string, unknown>;
+  schedules?: Array<Record<string, unknown>>;
+  campaigns?: Array<Record<string, unknown>>;
+  campaignScope?: { communities?: unknown[]; venues?: unknown[]; events?: unknown[] };
+} = {}) {
+  let wallet: Record<string, unknown> = opts.wallet ?? blankWallet();
+  const ledgerWrites: Array<Record<string, unknown>> = [];
+  let nextLedgerId = 1;
+  const rulesQueue: Array<Array<Record<string, unknown>>> = [];
+  const ledgerReadQueue: Array<Array<Record<string, unknown>>> = [];
+
+  function makeReadQueryFor(table: unknown) {
+    const q: Record<string, unknown> = {};
+    q.where = () => q;
+    q.limit = () => q;
+    q.orderBy = () => q;
+    q.then = (resolve: (v: unknown) => void) => {
+      if (table === venueTokenSchedules) return resolve(opts.schedules ?? []);
+      if (table === tokenRules) return resolve(rulesQueue.shift() ?? []);
+      if (table === tokenLedger) return resolve(ledgerReadQueue.shift() ?? []);
+      if (table === tokenCampaigns) return resolve(opts.campaigns ?? []);
+      if (table === campaignCommunities) return resolve(opts.campaignScope?.communities ?? []);
+      if (table === campaignVenues) return resolve(opts.campaignScope?.venues ?? []);
+      if (table === campaignEvents) return resolve(opts.campaignScope?.events ?? []);
+      if (table === venueIntegrations) return resolve([]);
+      if (table === systemSettings) return resolve([]);
+      return resolve([]);
+    };
+    return q;
+  }
+
+  const root: Record<string, unknown> = {
+    select: () => ({ from: (t: unknown) => makeReadQueryFor(t) }),
+  };
+
+  function makeTxBuilder() {
+    let table: unknown = null;
+    let hasInserted = false;
+    let insertedLedgerRow: Record<string, unknown> | null = null;
+    const tx: Record<string, unknown> = {};
+    tx.select = () => tx;
+    tx.from = (t: unknown) => { table = t; return tx; };
+    tx.where = () => tx;
+    tx.limit = () => tx;
+    tx.for = () => tx;
+    tx.insert = (t: unknown) => { table = t; return tx; };
+    tx.update = (t: unknown) => { table = t; return tx; };
+    tx.set = (fields: Record<string, unknown>) => { if (table === tokenWallets) wallet = { ...wallet, ...fields }; return tx; };
+    tx.values = (v: Record<string, unknown>) => {
+      if (table === tokenWallets) { wallet = { id: 1, ...v }; return Promise.resolve([{ insertId: 1 }]); }
+      const row = { id: nextLedgerId++, ...v };
+      ledgerWrites.push(row);
+      insertedLedgerRow = row;
+      hasInserted = true;
+      return Promise.resolve([{ insertId: row.id }]);
+    };
+    tx.then = (resolve: (v: unknown) => void) => {
+      if (table === tokenWallets) return resolve(wallet ? [wallet] : []);
+      if (table === tokenLedger) return resolve(hasInserted && insertedLedgerRow ? [insertedLedgerRow] : []);
+      return resolve([]);
+    };
+    return tx;
+  }
+
+  root.transaction = (cb: (tx: unknown) => Promise<unknown>) => cb(makeTxBuilder());
+
+  return {
+    db: root as unknown as Parameters<typeof evaluateReward>[2],
+    getWallet: () => wallet,
+    getLedgerWrites: () => ledgerWrites,
+    queueRules: (rows: Array<Record<string, unknown>>) => rulesQueue.push(rows),
   };
 }
 
@@ -225,17 +318,38 @@ describe("evaluateReward — modo SIMULATION", () => {
   });
 });
 
-describe("evaluateReward — modo LIVE (debe permanecer bloqueado esta fase)", () => {
-  it("lanza RewardEngineError LIVE_MODE_DISABLED sin tocar la base de datos", async () => {
+describe("evaluateReward — modo LIVE (SegoTokens Live Activation, spec §19 — desbloqueado)", () => {
+  it("ya NO lanza LIVE_MODE_DISABLED — delega en earnTokens y persiste ledger+wallet real", async () => {
+    const { db, getWallet, getLedgerWrites, queueRules } = makeWritableMockDb();
+    queueRules([blankRule({ id: 1, calcMethod: "fixed", fixedAmount: 15 })]); // findApplicableRule
+    queueRules([]); // applyRecurrenceBonus — sin reglas de recurrencia
+
+    const result = await evaluateReward({ userId: 42, origin: "attendance" }, "LIVE", db);
+
+    expect(result.mode).toBe("LIVE");
+    expect(result.explanation).toEqual({
+      eligible: true, reason: "GRANTED", ruleId: 1,
+      breakdown: {
+        base: 15, recurrenceBonus: 0, recurrenceRuleId: null,
+        campaignId: null, campaignMultiplier: null, campaignBonus: null,
+        beforeLimits: 15, final: 15,
+      },
+    });
+    expect(result.ledgerId).not.toBeNull();
+    expect(getLedgerWrites()).toHaveLength(1);
+    expect((getWallet() as { balance: number }).balance).toBe(15);
+  });
+
+  it("una operación anterior al corte también bloquea en LIVE (CUTOFF_BLOCKED), sin llamar a earnTokens", async () => {
     const { db, wroteAnything, queueRules } = makeReadOnlyMockDb();
-    // Ni siquiera se llega a consultar tokenRules — el bloqueo es lo primero que se comprueba.
+    // insert() lanzaría si earnTokens llegara a invocarse — confirma que el corte se comprueba ANTES de delegar.
     await expect(
-      evaluateReward({ userId: 42, origin: "attendance" }, "LIVE", db)
+      evaluateReward({ userId: 42, origin: "attendance", at: new Date("2026-01-01"), loyaltyCutoffAt: new Date("2026-06-01") }, "LIVE", db)
     ).rejects.toBeInstanceOf(RewardEngineError);
     await expect(
-      evaluateReward({ userId: 42, origin: "attendance" }, "LIVE", db)
-    ).rejects.toMatchObject({ code: "LIVE_MODE_DISABLED" });
+      evaluateReward({ userId: 42, origin: "attendance", at: new Date("2026-01-01"), loyaltyCutoffAt: new Date("2026-06-01") }, "LIVE", db)
+    ).rejects.toMatchObject({ code: "CUTOFF_BLOCKED" });
     expect(wroteAnything()).toBe(false);
-    expect(queueRules).toBeDefined(); // nunca se llegó a consumir la cola
+    expect(queueRules).toBeDefined(); // nunca se llegó a consumir la cola de reglas
   });
 });

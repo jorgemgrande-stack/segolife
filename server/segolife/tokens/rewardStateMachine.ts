@@ -24,8 +24,8 @@
 
 export type RewardState = "NOT_EVALUATED" | "ELIGIBLE" | "GRANTED" | "DENIED_TEMPORARY" | "DENIED_PERMANENT" | "REVERSED";
 
-/** Mismos códigos que RewardReason en rewardEngine.ts + UNKNOWN_IDENTITY (gestionado en realidad por unresolved_operations, incluido aquí solo para completar la matriz). */
-export type DenialReasonCode = "CUTOFF_BLOCKED" | "OUTSIDE_SCHEDULE" | "NO_RULE_FOUND" | "RULE_LIMIT_EXCEEDED" | "UNKNOWN_IDENTITY";
+/** Mismos códigos que RewardReason en rewardEngine.ts + UNKNOWN_IDENTITY (gestionado en realidad por unresolved_operations, incluido aquí solo para completar la matriz) + GLOBAL_LIVE_DISABLED (SegoTokens Live Activation, spec §19/§35). */
+export type DenialReasonCode = "CUTOFF_BLOCKED" | "OUTSIDE_SCHEDULE" | "NO_RULE_FOUND" | "RULE_LIMIT_EXCEEDED" | "UNKNOWN_IDENTITY" | "GLOBAL_LIVE_DISABLED";
 
 export const MAX_RETRY_ATTEMPTS = 5;
 
@@ -54,6 +54,10 @@ export function isPermanentDenial(reason: DenialReasonCode): boolean {
     case "RULE_LIMIT_EXCEEDED": return false;
     case "NO_RULE_FOUND": return false; // una regla nueva podría activarse después — nunca se asume no-retroactividad sin una política explícita que aún no existe
     case "UNKNOWN_IDENTITY": return false;
+    // Permanente respecto a ESTE intento concreto (nunca se reintenta solo):
+    // solo cambia con un commit revisado, nunca por sí sola con el tiempo —
+    // mismo criterio que CUTOFF_BLOCKED (spec §19).
+    case "GLOBAL_LIVE_DISABLED": return true;
   }
 }
 

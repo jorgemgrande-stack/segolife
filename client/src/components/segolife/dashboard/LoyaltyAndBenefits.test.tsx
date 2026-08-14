@@ -1,7 +1,8 @@
 /**
- * LoyaltyAndBenefits.test.tsx — spec §40: badge "LIVE OFF" SIEMPRE visible
- * (loyalty read-only), Benefits con expiración perezosa y estado vacío
- * cuando no hay Benefits generados en el periodo.
+ * LoyaltyAndBenefits.test.tsx — spec §40: badge LIVE ON/OFF refleja
+ * `loyalty.data.liveStatus` (SegoTokens Live Activation, spec §19/§26),
+ * Benefits con expiración perezosa y estado vacío cuando no hay Benefits
+ * generados en el periodo.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
@@ -23,14 +24,14 @@ import { LoyaltyAndBenefits } from "./LoyaltyAndBenefits";
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe("LoyaltyAndBenefits — SegoTokens Economy", () => {
-  it("el badge 'LIVE OFF' se muestra SIEMPRE, incluso mientras carga o si hay datos (loyalty es read-only por diseño, spec §36)", () => {
+  it("mientras carga (sin data todavía) se muestra 'LIVE OFF' por defecto, nunca 'LIVE ON' sin confirmación", () => {
     mockLoyaltyQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });
     mockBenefitsQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });
     render(<LoyaltyAndBenefits filters={{}} />);
     expect(screen.getByText(/LIVE OFF/)).toBeInTheDocument();
   });
 
-  it("con datos reales, sigue mostrando LIVE OFF — nunca desaparece ni cambia a 'activo'", () => {
+  it("con liveStatus='LIVE_LOCKED' real, muestra 'LIVE OFF'", () => {
     mockLoyaltyQuery.mockReturnValue({
       data: { liveStatus: "LIVE_LOCKED", earnedInPeriod: 500, spentInPeriod: 100, circulatingBalance: 4000, activeWallets: 20, avgBalance: 200, topEarningRules: [], tokensByVenue: [], tokensByEvent: [] },
       isLoading: false, error: null,
@@ -39,6 +40,17 @@ describe("LoyaltyAndBenefits — SegoTokens Economy", () => {
     render(<LoyaltyAndBenefits filters={{}} />);
     expect(screen.getByText(/LIVE OFF/)).toBeInTheDocument();
     expect(screen.getByText("500")).toBeInTheDocument();
+  });
+
+  it("con liveStatus='LIVE_ACTIVE' real (SegoTokens Live Activation), muestra 'LIVE ON'", () => {
+    mockLoyaltyQuery.mockReturnValue({
+      data: { liveStatus: "LIVE_ACTIVE", earnedInPeriod: 42, spentInPeriod: 0, circulatingBalance: 42, activeWallets: 3, avgBalance: 14, topEarningRules: [], tokensByVenue: [], tokensByEvent: [] },
+      isLoading: false, error: null,
+    });
+    mockBenefitsQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });
+    render(<LoyaltyAndBenefits filters={{}} />);
+    expect(screen.getByText("LIVE ON")).toBeInTheDocument();
+    expect(screen.queryByText(/LIVE OFF/)).not.toBeInTheDocument();
   });
 
   it("nunca renderiza ningún KPI de 'tokens expirando' (spec §19 — no existe expires_at)", () => {

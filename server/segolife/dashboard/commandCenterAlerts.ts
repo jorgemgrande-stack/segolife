@@ -27,6 +27,7 @@ import type { PlanAndPlaySnapshot } from "./commandCenterPlanAndPlay";
 import type { OverviewSnapshot } from "./commandCenterOverview";
 import { getProvider } from "../engagement/providers/providerRegistry";
 import { isFourvenuesSchedulerRunning } from "../integrations/integrationScheduler";
+import { LIVE_LOYALTY_ENABLED } from "../tokens/tokenEngine";
 
 export type AlertSeverity = "critical" | "warning" | "opportunity" | "info";
 export type AlertEntity = "event" | "venue" | "integration" | "benefit" | "proposal" | "historical";
@@ -182,7 +183,12 @@ export async function getSystemHealth(db: AnyDbHandle, fourvenuesOverallStatus: 
   const schedulerRunning = isFourvenuesSchedulerRunning();
   items.push({ key: "scheduler", label: "Scheduler de integraciones", status: schedulerRunning ? "ok" : "off", detail: schedulerRunning ? "En ejecución" : "No arrancado en este proceso" });
 
-  items.push({ key: "loyalty", label: "Loyalty (LIVE)", status: "off", detail: "LIVE_MODE_ENABLED=false — bloqueado a propósito, no es un fallo." });
+  // SegoTokens Live Activation (spec §19) — refleja tokenEngine.ts:LIVE_LOYALTY_ENABLED en tiempo real (antes era un literal "off" fijo).
+  items.push({
+    key: "loyalty", label: "Loyalty (LIVE)",
+    status: LIVE_LOYALTY_ENABLED ? "ok" : "off",
+    detail: LIVE_LOYALTY_ENABLED ? "Activo — venue_integrations.loyalty_enabled decide por venue" : "LIVE_LOYALTY_ENABLED=false — bloqueado a propósito, no es un fallo.",
+  });
 
   for (const [key, label, channel] of [["email", "Email", "email"], ["push", "Push", "push"], ["whatsapp", "WhatsApp", "whatsapp"]] as const) {
     const configured = getProvider(channel).capabilities.configured;

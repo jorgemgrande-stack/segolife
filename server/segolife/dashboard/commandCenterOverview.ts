@@ -13,6 +13,7 @@ import type { AnyDbHandle } from "../tokens/tokenLedgerService";
 import type { DashboardFilterContext } from "./dashboardFilters";
 import { communityUserCondition } from "./dashboardFilters";
 import { countActiveStudents } from "./activitySignals";
+import { LIVE_LOYALTY_ENABLED } from "../tokens/tokenEngine";
 
 function rowsOf<T>(result: unknown): T[] {
   return (result as unknown as [T[]])[0] ?? [];
@@ -49,7 +50,7 @@ export interface SegoTokensKpi {
   earnedInPeriod: number;
   spentInPeriod: number;
   circulatingBalance: number;
-  liveStatus: "LIVE_LOCKED";
+  liveStatus: "LIVE_ACTIVE" | "LIVE_LOCKED";
 }
 
 export interface BenefitsKpi {
@@ -161,7 +162,7 @@ async function getSegoTokensKpi(ctx: DashboardFilterContext, db: AnyDbHandle): P
     earnedInPeriod: Number(earnedRow?.s ?? 0),
     spentInPeriod: Number(spentRow?.s ?? 0),
     circulatingBalance: Number(balanceRow?.s ?? 0),
-    liveStatus: "LIVE_LOCKED",
+    liveStatus: LIVE_LOYALTY_ENABLED ? "LIVE_ACTIVE" : "LIVE_LOCKED",
   };
 }
 

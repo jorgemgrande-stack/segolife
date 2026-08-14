@@ -11,13 +11,15 @@
  * calcula y explica, no persiste nada. Útil para "si evaluara esto ahora
  * mismo con las reglas activas, ¿qué pasaría" sin ningún efecto secundario.
  *
- * LIVE: delegaría en earnTokens() — el mismo camino que ya usan
- * ticketPurchasePipeline.ts/attendancePipeline.ts — pero permanece
- * ESTRUCTURALMENTE BLOQUEADO en esta fase: `LIVE_MODE_ENABLED` es una
- * constante literal `false` sin ningún flag de entorno, endpoint admin ni
- * caller que la alcance. Cambiar esto es una decisión de negocio explícita
- * y futura, nunca un efecto colateral de otra tarea (ver informe de fase,
- * Decision Gate: "LIVE LOYALTY: DO NOT ACTIVATE").
+ * LIVE: delega en earnTokens() — el mismo camino que ya usan
+ * ticketPurchasePipeline.ts/attendancePipeline.ts. `LIVE_MODE_ENABLED`
+ * reexporta tokenEngine.ts:LIVE_LOYALTY_ENABLED (SegoTokens Live
+ * Activation, spec §19) — activado desde esa fase. IMPORTANTE: esta
+ * función (`evaluateReward(ctx, "LIVE")`) sigue sin ningún caller real en
+ * producción — los pipelines reales llaman `earnTokens()` directamente, sin
+ * pasar por aquí. La protección real de "LIVE loyalty" vive en
+ * `earnTokens()` (LIVE_LOYALTY_ENABLED) + `venue_integrations.loyaltyEnabled`
+ * por venue (vía `suppressLoyalty`), no en esta rama del motor.
  *
  * FUERA DE ALCANCE A PROPÓSITO: este motor calcula/concede SegoTokens
  * (origin→regla→importe), nunca Benefits — evaluateBenefitsForOrigin sigue
@@ -34,7 +36,7 @@ import {
   findApplicableCampaign,
   applyCampaignToAmount,
 } from "./tokenRuleEngine";
-import { earnTokens, type EngineResult } from "./tokenEngine";
+import { earnTokens, LIVE_LOYALTY_ENABLED, type EngineResult } from "./tokenEngine";
 import { sumAmountByRuleInWindow, type AnyDbHandle } from "./tokenLedgerService";
 import { isWithinSchedule } from "./tokenScheduleService";
 import { resolveLoyaltyCutoff, isBeforeCutoff as isBeforePersistedCutoff } from "./loyaltyCutoffService";
@@ -122,13 +124,14 @@ export class RewardEngineError extends Error {
 }
 
 /**
- * Bloqueo estructural de esta fase (Live Loyalty Design). Ningún flag de
- * entorno, tabla de configuración ni endpoint admin puede poner esto a
- * `true` — requiere editar este literal en un commit futuro explícito,
- * revisado como una decisión de negocio propia, nunca como parte de otra
- * tarea. Ver Decision Gate del informe de fase.
+ * SegoTokens Live Activation (spec §19) — reexporta tokenEngine.ts:
+ * LIVE_LOYALTY_ENABLED en vez de mantener una bandera propia. Antes de esta
+ * fase, este literal vivía SOLO aquí y no protegía nada real (ver hallazgo
+ * documentado junto a LIVE_LOYALTY_ENABLED en tokenEngine.ts) — ahora hay
+ * UNA sola fuente de verdad para el switch global, y earnTokens() (el
+ * camino real que usan los pipelines) la comprueba directamente.
  */
-const LIVE_MODE_ENABLED = false as boolean;
+const LIVE_MODE_ENABLED = LIVE_LOYALTY_ENABLED;
 
 // Exportadas para loyaltyShadowService.ts — necesita los MISMOS límites de
 // ventana para acumular topes entre observaciones Shadow (nunca redefine su

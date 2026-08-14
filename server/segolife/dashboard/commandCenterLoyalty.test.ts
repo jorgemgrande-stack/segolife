@@ -1,11 +1,13 @@
 /**
- * commandCenterLoyalty.test.ts — SegoTokens Economy (READ-ONLY, LIVE_LOCKED
- * fijo, nunca "tokens expirando") y Benefits Performance (expiración
- * perezosa, expiringWithin48h, ranking de más canjeados).
+ * commandCenterLoyalty.test.ts — SegoTokens Economy (READ-ONLY, liveStatus
+ * refleja tokenEngine.ts:LIVE_LOYALTY_ENABLED, nunca "tokens expirando") y
+ * Benefits Performance (expiración perezosa, expiringWithin48h, ranking de
+ * más canjeados).
  */
 import { describe, it, expect, vi } from "vitest";
 import { getLoyaltyEconomy, getBenefitsPerformance } from "./commandCenterLoyalty";
 import type { DashboardFilterContext } from "./dashboardFilters";
+import { LIVE_LOYALTY_ENABLED } from "../tokens/tokenEngine";
 
 function fakeExecuteDb(queue: unknown[][]) {
   const execute = vi.fn();
@@ -17,14 +19,14 @@ const NOW = new Date("2026-08-14T12:00:00.000Z");
 const CTX: DashboardFilterContext = { communityId: null, from: new Date("2026-07-15T00:00:00.000Z"), to: NOW, rangeLabel: "30d" };
 
 describe("getLoyaltyEconomy", () => {
-  it("liveStatus es SIEMPRE 'LIVE_LOCKED' — nunca consulta LIVE_MODE_ENABLED", async () => {
+  it("liveStatus refleja tokenEngine.ts:LIVE_LOYALTY_ENABLED (SegoTokens Live Activation)", async () => {
     const db = fakeExecuteDb([
       [{ earned: 500, spent: 200 }],
       [{ active_wallets: 30, circulating: 4000, avg_balance: 133.3 }],
       [], [], [],
     ]);
     const snapshot = await getLoyaltyEconomy(CTX, db as never);
-    expect(snapshot.liveStatus).toBe("LIVE_LOCKED");
+    expect(snapshot.liveStatus).toBe(LIVE_LOYALTY_ENABLED ? "LIVE_ACTIVE" : "LIVE_LOCKED");
     expect(snapshot.earnedInPeriod).toBe(500);
     expect(snapshot.spentInPeriod).toBe(200);
     expect(snapshot.circulatingBalance).toBe(4000);

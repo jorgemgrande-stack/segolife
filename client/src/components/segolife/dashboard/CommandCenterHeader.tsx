@@ -75,7 +75,7 @@ export function CommandCenterHeader({ filters }: { filters: DashboardQueryInput 
           <KpiCard label="Asistencias" value={data.attendance.confirmed} icon={CalendarCheck} color="amber"
             subLabel={data.attendance.attendanceRatePct != null ? `${data.attendance.attendanceRatePct}% tasa` : "sin tickets elegibles"} href="/admin/events" />
           <KpiCard label="SegoTokens" value={data.segoTokens.earnedInPeriod} icon={Coins} color="orange"
-            subLabel="LIVE OFF · simulación" href="/admin/tokens" />
+            subLabel={data.segoTokens.liveStatus === "LIVE_ACTIVE" ? "LIVE ON" : "LIVE OFF · simulación"} href="/admin/tokens" />
           <KpiCard label="Benefits" value={data.benefits.generated} icon={Gift} color="rose"
             subLabel={`${data.benefits.redeemed} canjeados`} href="/admin/benefits" />
         </div>

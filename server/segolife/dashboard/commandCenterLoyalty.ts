@@ -5,10 +5,14 @@
  *
  * LOYALTY READ-ONLY (spec §36, absoluto): este módulo NUNCA llama
  * `earnTokens`/`evaluateReward`/ninguna función de escritura del motor de
- * loyalty (Fases 13-14) — solo LEE `token_ledger`/`token_wallets` ya
- * materializados. `liveStatus` es SIEMPRE "LIVE_LOCKED" (no una consulta a
- * `LIVE_MODE_ENABLED`, es un badge fijo — la propia Fase 13/14 confirmó que
- * NADA en el pipeline llama `evaluateReward` en modo LIVE hoy).
+ * loyalty — solo LEE `token_ledger`/`token_wallets` ya materializados.
+ * `liveStatus` refleja `tokenEngine.ts:LIVE_LOYALTY_ENABLED` (SegoTokens
+ * Live Activation, spec §19/§26) — antes era un literal "LIVE_LOCKED" fijo,
+ * cuando esa constante todavía no protegía nada real (ver hallazgo
+ * documentado junto a LIVE_LOYALTY_ENABLED). Seguir leyendo esta constante
+ * (nunca `venue_integrations.loyaltyEnabled` por separado) NO viola
+ * "read-only": es una simple lectura de un valor en memoria, igual que
+ * antes, solo que ahora responde lo que es cierto.
  *
  * Nunca se inventa un KPI de "tokens expirando" (spec §19 — no existe
  * `expires_at` en `token_ledger`/`token_wallets`, confirmado en auditoría
@@ -17,6 +21,7 @@
 import { sql } from "drizzle-orm";
 import type { AnyDbHandle } from "../tokens/tokenLedgerService";
 import type { DashboardFilterContext } from "./dashboardFilters";
+import { LIVE_LOYALTY_ENABLED } from "../tokens/tokenEngine";
 
 const EXPIRING_SOON_HOURS = 48;
 const TOP_N = 10;
@@ -44,7 +49,7 @@ export interface EventTokenBreakdown {
 }
 
 export interface LoyaltyEconomySnapshot {
-  liveStatus: "LIVE_LOCKED";
+  liveStatus: "LIVE_ACTIVE" | "LIVE_LOCKED";
   earnedInPeriod: number;
   spentInPeriod: number;
   circulatingBalance: number;
@@ -104,7 +109,7 @@ export async function getLoyaltyEconomy(ctx: DashboardFilterContext, db: AnyDbHa
   const activeWallets = Number(wallet.active_wallets);
 
   return {
-    liveStatus: "LIVE_LOCKED",
+    liveStatus: LIVE_LOYALTY_ENABLED ? "LIVE_ACTIVE" : "LIVE_LOCKED",
     earnedInPeriod: Number(movement.earned),
     spentInPeriod: Number(movement.spent),
     circulatingBalance: Number(wallet.circulating),
