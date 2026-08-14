@@ -124,7 +124,7 @@ export function getActionCenterAlerts(inputs: ActionCenterInputs): ActionCenterA
     alerts.push({
       severity: "info",
       title: `${inputs.planAndPlay.pendingModerationStudentProposals} propuesta(s) de estudiantes pendientes de moderar`,
-      context: "Ideas enviadas por estudiantes en Plan & Play esperando revisión.",
+      context: "Ideas enviadas por estudiantes en Comunity esperando revisión.",
       ctaEntity: "proposal", ctaEntityId: null,
     });
   }

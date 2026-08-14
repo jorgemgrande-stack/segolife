@@ -45,6 +45,10 @@ describe("community router — ningún endpoint admin es accesible sin sesión",
     await expect(callerWithoutSession().convertToEvent({ id: 1 })).rejects.toThrow(/please login/i);
   });
 
+  it("duplicate rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().duplicate({ id: 1 })).rejects.toThrow(/please login/i);
+  });
+
   it("setResponseValueVisibility (moderación de texto libre) rechaza sin sesión", async () => {
     await expect(callerWithoutSession().setResponseValueVisibility({ responseValueId: 1, isHidden: true })).rejects.toThrow(/please login/i);
   });

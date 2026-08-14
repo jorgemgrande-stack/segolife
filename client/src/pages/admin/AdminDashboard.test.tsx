@@ -60,7 +60,7 @@ describe("AdminDashboard — aislamiento de errores por widget (spec §32)", () 
     expect(screen.getByText("Venue Performance")).toBeInTheDocument();
     expect(screen.getByText("Fourvenues Health")).toBeInTheDocument();
     expect(screen.getByText("SegoTokens Economy")).toBeInTheDocument();
-    expect(screen.getAllByText("Plan & Play").length).toBeGreaterThan(0); // título del Panel + acceso rápido
+    expect(screen.getAllByText("Comunity").length).toBeGreaterThan(0); // título del Panel + acceso rápido (spec §29-30: "Plan & Play" retirado del texto visible)
     expect(screen.getByText("Requiere tu atención")).toBeInTheDocument();
   });
 });

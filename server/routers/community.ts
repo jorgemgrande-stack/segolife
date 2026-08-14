@@ -292,6 +292,45 @@ export const communityRouter = router({
       return { success: true, proposal };
     }),
 
+  /**
+   * Duplicar propuesta (spec punto 60) — el único gap real que dejó la
+   * implementación original de COMUNITY. Crea una copia SIEMPRE en DRAFT
+   * (nunca se publica automáticamente): mismo tipo/opciones/audiencia/
+   * alcance/configuración, pero sin fechas (el admin debe fijar un cierre
+   * nuevo antes de publicar, igual que cualquier borrador) y sin
+   * `sourceStudentProposalId` (una copia es una acción del admin, nunca
+   * hereda la autoría de la idea de estudiante original).
+   */
+  duplicate: communityManageProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
+      await assertProposalAccessible(access, input.id);
+      const source = await getProposalById(input.id);
+      if (!source) throw new TRPCError({ code: "NOT_FOUND", message: "Propuesta no encontrada" });
+      const [options, communityIds] = await Promise.all([listProposalOptions(input.id), getProposalCommunityIds(input.id)]);
+
+      const proposal = await createProposal({
+        title: `Copia de ${source.title}`,
+        description: source.description,
+        questionType: source.questionType,
+        urgencyType: source.urgencyType,
+        startsAt: null,
+        endsAt: null,
+        resultsVisibility: source.resultsVisibility,
+        allowChangeResponse: source.allowChangeResponse,
+        coverImageUrl: source.coverImageUrl,
+        venueId: source.venueId,
+        relatedEventId: source.relatedEventId,
+        audienceDefinition: source.audienceDefinition as Record<string, unknown> | null,
+        minSampleSize: source.minSampleSize,
+        createdByUserId: ctx.user.id,
+        options: options.map(o => o.label),
+        communityIds,
+      });
+      return { success: true, proposal };
+    }),
+
   convertToEvent: communityManageProcedure
     .input(z.object({ id: z.number().int().positive(), startsAt: z.coerce.date().optional(), capacity: z.number().int().positive().nullish() }))
     .mutation(async ({ input, ctx }) => {

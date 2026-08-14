@@ -71,7 +71,7 @@ export default function AdminDashboard() {
           <LoyaltyAndBenefits filters={queryInput} />
         </DashboardErrorBoundary>
 
-        <DashboardErrorBoundary moduleName="Plan & Play y Funnel">
+        <DashboardErrorBoundary moduleName="Comunity y Funnel">
           <PlanAndPlayAndFunnel filters={queryInput} />
         </DashboardErrorBoundary>
 

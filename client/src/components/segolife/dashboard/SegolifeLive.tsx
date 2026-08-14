@@ -11,7 +11,7 @@ import type { DashboardQueryInput } from "./useDashboardFilters";
 const TYPE_LABEL: Record<string, string> = {
   registration: "Registro", login: "Login", ticket_purchase: "Compra de ticket", attendance: "Asistencia",
   commerce: "Consumo", qr_redemption: "QR canjeado", token_earn: "SegoTokens ganados", token_spend: "SegoTokens gastados",
-  benefit_granted: "Benefit generado", benefit_redeemed: "Benefit canjeado", plan_and_play_response: "Respuesta Plan & Play",
+  benefit_granted: "Benefit generado", benefit_redeemed: "Benefit canjeado", plan_and_play_response: "Respuesta Comunity",
   support: "Apoyo a propuesta", student_proposal: "Propuesta de estudiante", historical_claim: "Identidad histórica vinculada",
 };
 
@@ -26,7 +26,7 @@ export function SegolifeLive({ filters }: { filters: DashboardQueryInput }) {
       {isLoading && <DashboardEmptyState kind="loading" title="" />}
       {error && <DashboardEmptyState kind="error" title="No se pudo cargar la actividad" detail={error.message} />}
       {data && data.length === 0 && offset === 0 && (
-        <DashboardEmptyState kind="zero-real" title="Sin actividad registrada en este rango" detail="No hay compras, asistencias, consumos ni interacciones de Plan & Play todavía." />
+        <DashboardEmptyState kind="zero-real" title="Sin actividad registrada en este rango" detail="No hay compras, asistencias, consumos ni interacciones de Comunity todavía." />
       )}
       {data && data.length > 0 && (
         <div className="space-y-1 max-h-[420px] overflow-y-auto">

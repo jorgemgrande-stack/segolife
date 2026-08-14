@@ -1,7 +1,8 @@
 /**
- * PlanAndPlayAndFunnel.tsx — spec §21 (Plan & Play, capa de marca sobre el
- * backend real "Comunity") + §22 (Community Funnel, cada etapa con su propia
- * población/periodo — nunca fusionadas).
+ * PlanAndPlayAndFunnel.tsx — spec §21 (Comunity — "Plan & Play" era solo la
+ * marca antigua de este mismo panel, ya retirada del texto visible, ver
+ * SEGOLIFE — COMMUNITY Production Implementation §30) + §22 (Community
+ * Funnel, cada etapa con su propia población/periodo — nunca fusionadas).
  */
 import { Link } from "wouter";
 import { Vote, Milestone } from "lucide-react";
@@ -15,9 +16,9 @@ export function PlanAndPlayAndFunnel({ filters }: { filters: DashboardQueryInput
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <Panel title="Plan & Play" icon={Vote} action={<Link href="/admin/comunity" className="text-[10px] font-semibold text-violet-500 hover:underline">Ver Plan & Play →</Link>}>
+      <Panel title="Comunity" icon={Vote} action={<Link href="/admin/comunity" className="text-[10px] font-semibold text-violet-500 hover:underline">Ver Comunity →</Link>}>
         {planAndPlay.isLoading && <DashboardEmptyState kind="loading" title="" />}
-        {planAndPlay.error && <DashboardEmptyState kind="error" title="No se pudo cargar Plan & Play" detail={planAndPlay.error.message} />}
+        {planAndPlay.error && <DashboardEmptyState kind="error" title="No se pudo cargar Comunity" detail={planAndPlay.error.message} />}
         {planAndPlay.data && planAndPlay.data.activeProposals === 0 && (
           <DashboardEmptyState kind="zero-real" title="No hay propuestas activas" />
         )}

@@ -46,7 +46,7 @@ const QUICK_ACTIONS = [
   { label: "SegoTokens", icon: Coins, href: "/admin/tokens" },
   { label: "Benefits", icon: Gift, href: "/admin/benefits" },
   { label: "Estudiantes históricos", icon: History, href: "/admin/students/historical" },
-  { label: "Plan & Play", icon: Vote, href: "/admin/comunity" },
+  { label: "Comunity", icon: Vote, href: "/admin/comunity" },
   { label: "Integraciones", icon: Plug, href: "/admin/integrations" },
   { label: "Engagement", icon: Send, href: "/admin/engagement/campaigns" },
 ];

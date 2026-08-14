@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "sonner";
 import {
   ArrowLeft, Loader2, Vote, Users, MessageSquare, Gauge, Send, XCircle, Ban,
-  CalendarPlus, Bell, Eye, EyeOff, Star, ExternalLink, Pencil,
+  CalendarPlus, Bell, Eye, EyeOff, Star, ExternalLink, Pencil, Copy,
 } from "lucide-react";
 import { QUESTION_TYPE_LABEL, STATUS_LABEL, STATUS_VARIANT, fmtDateTime, timeLeftLabel, ATTENDANCE_INTENTION_LABEL, type ComunityQuestionType, type ComunityStatus } from "@/lib/comunity";
 import { ComunityEditDialog } from "@/components/admin/comunity/ComunityEditDialog";
@@ -58,6 +58,10 @@ export default function ComunityDetail() {
     onError: e => toast.error(e.message),
   });
   const notifyMut = trpc.community.notifyInterested.useMutation({ onSuccess: res => toast.success(`Notificados ${res.notified ?? 0} estudiante(s) interesados`), onError: e => toast.error(e.message) });
+  const duplicateMut = trpc.community.duplicate.useMutation({
+    onSuccess: res => { toast.success("Propuesta duplicada como borrador"); navigate(`/admin/comunity/${res.proposal.id}`); },
+    onError: e => toast.error(e.message),
+  });
   const visibilityMut = trpc.community.setResponseValueVisibility.useMutation({
     onSuccess: () => utils.community.getResults.invalidate({ id: proposalId }),
     onError: e => toast.error(e.message),
@@ -203,6 +207,9 @@ export default function ComunityDetail() {
               <Bell className="size-4 mr-1.5" /> Notificar interesados
             </Button>
           )}
+          <Button variant="outline" onClick={() => duplicateMut.mutate({ id: proposalId })} disabled={duplicateMut.isPending}>
+            <Copy className="size-4 mr-1.5" /> Duplicar
+          </Button>
         </div>
       </div>
 
