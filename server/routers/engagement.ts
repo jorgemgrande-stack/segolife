@@ -182,7 +182,16 @@ export const engagementRouter = router({
         sendImmediately: true,
         recipient: { email: input.testEmail },
       });
-      return { ok: true, notificationId: result.notification.id };
+      // "ok" refleja el resultado REAL del envío (Brevo aceptó/rechazó la
+      // petición), nunca solo que createNotification() no lanzó una
+      // excepción — un `status:"pending"` insertado en BD no es una prueba
+      // de que el email salió (diagnóstico Brevo transactional, 2026-08-15).
+      const notificationId = result.status === "created" ? result.notification.id : undefined;
+      const emailResult = result.status === "created" ? result.immediateResults?.email : undefined;
+      if (!emailResult || emailResult.status !== "sent") {
+        return { ok: false, notificationId, message: emailResult?.error ?? "El envío no se pudo confirmar" };
+      }
+      return { ok: true, notificationId, externalMessageId: emailResult.externalMessageId ?? null };
     }),
 
   // ── Notificaciones creadas (solo lectura, spec punto 33) ───────────────────

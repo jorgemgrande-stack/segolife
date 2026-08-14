@@ -16,6 +16,7 @@ import mysql from "mysql2/promise";
 import { notifications, notificationDeliveries, type Notification } from "../../../drizzle/schema";
 import { isChannelAllowed, type NotificationCategory, type NotificationChannel } from "./notificationPreferencesService";
 import { getProvider } from "./providers/providerRegistry";
+import type { DeliveryResult } from "./notificationProvider";
 import { ENGAGEMENT_TEMPLATES, type RenderedTemplate } from "./templates";
 import { resolveCommunicationLocale, pickByLocale } from "./communicationLocale";
 import type { NotificationEmailMetadata } from "./notificationMetadata";
@@ -64,7 +65,7 @@ export interface CreateNotificationInput {
 }
 
 export type CreateNotificationResult =
-  | { status: "created"; notification: Notification }
+  | { status: "created"; notification: Notification; immediateResults?: Partial<Record<NotificationChannel, DeliveryResult>> }
   | { status: "already_exists"; notification: Notification };
 
 export async function createNotification(input: CreateNotificationInput, db?: DbHandle): Promise<CreateNotificationResult> {
@@ -113,16 +114,18 @@ export async function createNotification(input: CreateNotificationInput, db?: Db
   // in_app SIEMPRE se procesa, de forma síncrona (nunca falla, nunca sale del sistema).
   await createAndProcessDelivery(notification, "in_app", input.recipient, conn);
 
+  const immediateResults: Partial<Record<NotificationChannel, DeliveryResult>> = {};
   for (const channel of input.additionalChannels ?? []) {
     if (channel === "in_app") continue; // ya procesado arriba, nunca duplicar
     if (input.sendImmediately) {
-      await createAndProcessDelivery(notification, channel, input.recipient, conn);
+      const result = await createAndProcessDelivery(notification, channel, input.recipient, conn);
+      if (result) immediateResults[channel] = result;
     } else {
       await createDeliveryIfAllowed(notification, channel, input.category, input.audienceType, input.recipient, conn);
     }
   }
 
-  return { status: "created", notification };
+  return { status: "created", notification, immediateResults };
 }
 
 /** Remitente resuelto de forma centralizada (senderRouting.ts, spec §2) — 1) `senderOverride` explícito (envío manual CRM/Student 360, spec §25), 2) por templateKey (adminCategory, más preciso), 3) por category (fallback, cubre campañas manuales sin plantilla). Exportado: engagementScheduler.ts reutiliza esta misma función para las deliveries que procesa en su propio tick, nunca reimplementa el criterio de routing. */
@@ -150,13 +153,19 @@ async function resolveLocalizedContent(notification: Notification, conn: DbHandl
   };
 }
 
-/** Envía AHORA, de forma síncrona — usado para in_app (siempre) y para additionalChannels con sendImmediately:true. */
+/**
+ * Envía AHORA, de forma síncrona — usado para in_app (siempre) y para
+ * additionalChannels con sendImmediately:true. Devuelve el `DeliveryResult`
+ * real (o `null` si no se intentó un envío nuevo — ya existía la fila por
+ * idempotencia) para que el llamador pueda saber si REALMENTE se envió, en
+ * vez de asumir éxito solo porque esta función no lanzó una excepción.
+ */
 async function createAndProcessDelivery(
   notification: Notification,
   channel: NotificationChannel,
   recipient: CreateNotificationInput["recipient"],
   conn: DbHandle
-): Promise<void> {
+): Promise<DeliveryResult | null> {
   const provider = getProvider(channel);
   const [insertResult] = await conn.insert(notificationDeliveries).ignore().values({
     notificationId: notification.id,
@@ -167,11 +176,12 @@ async function createAndProcessDelivery(
     scheduledAt: new Date(),
   });
   const insertId = (insertResult as unknown as { insertId: number }).insertId;
-  if (!insertId) return; // ya existía (unique notification+channel) — no reprocesar
+  if (!insertId) return null; // ya existía (unique notification+channel) — no reprocesar
 
   if (channel !== "in_app" && !provider.capabilities.configured) {
-    await conn.update(notificationDeliveries).set({ status: "skipped", lastError: `${channel} provider not configured` }).where(eq(notificationDeliveries.id, insertId));
-    return;
+    const result: DeliveryResult = { status: "skipped", error: `${channel} provider not configured` };
+    await conn.update(notificationDeliveries).set({ status: result.status, lastError: result.error }).where(eq(notificationDeliveries.id, insertId));
+    return result;
   }
 
   const content = await resolveLocalizedContent(notification, conn);
@@ -196,6 +206,8 @@ async function createAndProcessDelivery(
     lastError: result.error ?? null,
     externalMessageId: result.externalMessageId ?? null,
   }).where(eq(notificationDeliveries.id, insertId));
+
+  return result;
 }
 
 /** Para email/push/whatsapp: crea la fila 'pending' si el canal está permitido y el provider configurado — el envío real lo hace engagementScheduler.ts (respetando kill switches), nunca esta llamada. */

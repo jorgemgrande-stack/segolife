@@ -169,7 +169,10 @@ function mergeGlobalCc(params: MailParams): MailParams {
     ? (Array.isArray(params.cc) ? params.cc : [params.cc])
     : [];
   const merged = [...new Set([...existing, GLOBAL_CC_EMAIL].filter(Boolean))];
-  return { ...params, cc: merged };
+  // Un array vacío es "truthy" en JS — si aquí se devolviera `cc: []` en vez de
+  // `cc: undefined`, sendViaBrevoApiTracked lo trataría como "sí hay cc" y
+  // enviaría `cc: []` a Brevo, que la API rechaza con 400 "cc is missing".
+  return { ...params, cc: merged.length > 0 ? merged : undefined };
 }
 
 // ─── API pública ──────────────────────────────────────────────────────────────

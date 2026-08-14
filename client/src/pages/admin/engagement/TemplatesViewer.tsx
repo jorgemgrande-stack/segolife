@@ -148,7 +148,17 @@ function TemplateDetailDialog({ template, onClose }: { template: TemplateRow; on
   const [testEmail, setTestEmail] = useState("");
   const [confirmSend, setConfirmSend] = useState(false);
   const sendTestMut = trpc.engagement.sendTestForTemplate.useMutation({
-    onSuccess: () => { toast.success(`Prueba enviada a ${testEmail}`); setConfirmSend(false); },
+    // El toast SOLO puede ser de éxito si el provider (Brevo) confirmó el
+    // envío — `data.ok` refleja el resultado real, nunca solo que la
+    // mutation resolvió sin lanzar (diagnóstico Brevo transactional, 2026-08-15).
+    onSuccess: data => {
+      if (data.ok) {
+        toast.success(`Enviado vía Brevo a ${testEmail}${data.externalMessageId ? ` (messageId: ${data.externalMessageId})` : ""}`);
+        setConfirmSend(false);
+      } else {
+        toast.error(data.message ?? "El envío falló");
+      }
+    },
     onError: e => toast.error(e.message),
   });
 
