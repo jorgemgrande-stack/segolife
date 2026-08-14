@@ -15,7 +15,7 @@ import {
   ArrowLeft, Loader2, GraduationCap, MapPin, Tag as TagIcon,
   StickyNote, Plus, X, Pencil, Trash2, Ticket, CalendarCheck, ShoppingBag,
   QrCode, Coins, Gift, Bell, User, ShieldCheck, ChevronDown, ChevronUp,
-  TrendingUp, AlertTriangle, Info, LogIn, History, MessageCircle, Heart, Lightbulb,
+  TrendingUp, AlertTriangle, Info, LogIn, History, MessageCircle, Heart, Lightbulb, Archive,
 } from "lucide-react";
 import type { TimelineEventDTO, TimelineEventType, TimelineCursor } from "@shared/segolife/student360";
 import type { StudentDetail as StudentDetailData } from "../../../../../server/db/studentsDb";
@@ -289,6 +289,76 @@ function EventsTab({ studentProfileId }: { studentProfileId: number }) {
                   {venueName && <span className="text-xs text-muted-foreground ml-2">{venueName}</span>}
                 </div>
                 <span className="text-xs text-muted-foreground">{fmtDateTime(a.occurredAt)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Pestaña: Histórico (SEGOLIFE HISTORICAL STUDENT CLAIM) ────────────────
+// Nunca sustituye al directorio de Identidades Históricas (Students →
+// Históricos): esto es la vista "ya reclamado, atribuido a este Student"; el
+// directorio sigue siendo la vista "sin reclamar / posible / conflicto"
+// sobre TODAS las identidades. La Historical Identity de origen nunca se
+// borra al reclamar (spec §16-18) — sigue viva y auditable ahí.
+
+function HistoricalTab({ studentProfileId }: { studentProfileId: number }) {
+  const { data, isLoading } = trpc.students360.getHistorical.useQuery({ studentProfileId });
+  if (isLoading) return <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+  const overview = data?.overview;
+  const items = data?.timeline.items ?? [];
+
+  if (!overview?.hasHistory) {
+    return (
+      <EmptyState
+        icon={Archive}
+        title="Sin historial Fourvenues reclamado"
+        description="Si este Student tiene actividad histórica pendiente de vincular, aparece en el directorio de Identidades Históricas (Students → Históricos), nunca aquí hasta que se reclame."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-card border border-border rounded-lg p-4">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm font-semibold text-foreground">Historial Fourvenues reclamado</p>
+          {overview.crossVenue && <Badge variant="outline">Multi-venue</Badge>}
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Field label="Eventos" value={overview.eventsCount} />
+          <Field label="Entradas" value={overview.ticketsCount} />
+          <Field label="Asistencias" value={overview.attendanceCount} />
+          <Field label="Gasto histórico" value={fmtCents(overview.historicalSpendCents)} />
+          <Field label="Venues" value={overview.venuesCount} />
+          <Field label="Primera actividad" value={fmtDate(overview.firstActivity)} />
+          <Field label="Última actividad" value={fmtDate(overview.lastActivity)} />
+          <Field label="Reclamado el" value={fmtDate(overview.claimedAt)} />
+        </div>
+        <p className="text-[11px] text-muted-foreground/70 mt-3">
+          Identidad de origen: {overview.identityKey}
+        </p>
+      </div>
+
+      <div className="bg-card border border-border rounded-lg p-4">
+        <p className="text-sm font-semibold text-foreground mb-3">Línea de tiempo histórica</p>
+        {items.length === 0 ? (
+          <EmptyState icon={Archive} title="Sin operaciones en esta página" />
+        ) : (
+          <div className="space-y-1.5">
+            {items.map(op => (
+              <div key={op.operationId} className="flex items-center justify-between text-sm bg-accent/40 rounded-md px-2.5 py-1.5">
+                <div>
+                  <span className="text-foreground">{op.eventName ?? (op.operationType === "attendance" ? "Asistencia" : "Operación")}</span>
+                  {op.venueName && <span className="text-xs text-muted-foreground ml-2">{op.venueName}</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  {op.amountCents !== null && <span className="text-xs text-muted-foreground">{fmtCents(op.amountCents)}</span>}
+                  <span className="text-xs text-muted-foreground">{fmtDateTime(op.occurredAt)}</span>
+                </div>
               </div>
             ))}
           </div>
@@ -913,6 +983,7 @@ export default function StudentDetail() {
               <TabsTrigger value="segotokens" className="gap-1"><Coins className="w-3.5 h-3.5" />SegoTokens</TabsTrigger>
               <TabsTrigger value="benefits" className="gap-1"><Gift className="w-3.5 h-3.5" />Benefits</TabsTrigger>
               <TabsTrigger value="engagement" className="gap-1"><Bell className="w-3.5 h-3.5" />Engagement</TabsTrigger>
+              <TabsTrigger value="historico" className="gap-1"><Archive className="w-3.5 h-3.5" />Histórico</TabsTrigger>
               <TabsTrigger value="perfil" className="gap-1"><User className="w-3.5 h-3.5" />Perfil</TabsTrigger>
               <TabsTrigger value="notas" className="gap-1"><StickyNote className="w-3.5 h-3.5" />Notas</TabsTrigger>
               <TabsTrigger value="administracion" className="gap-1"><ShieldCheck className="w-3.5 h-3.5" />Administración</TabsTrigger>
@@ -926,6 +997,7 @@ export default function StudentDetail() {
           <TabsContent value="segotokens"><StudentTokensTab userId={student.profile.userId} /></TabsContent>
           <TabsContent value="benefits"><BenefitsTab studentProfileId={studentProfileId} userId={student.profile.userId} /></TabsContent>
           <TabsContent value="engagement"><EngagementTab studentProfileId={studentProfileId} /></TabsContent>
+          <TabsContent value="historico"><HistoricalTab studentProfileId={studentProfileId} /></TabsContent>
           <TabsContent value="perfil"><ProfileTab student={student} studentProfileId={studentProfileId} allTags={allTags ?? []} /></TabsContent>
           <TabsContent value="notas"><NotesTab studentProfileId={studentProfileId} /></TabsContent>
           <TabsContent value="administracion"><AdminTab studentProfileId={studentProfileId} /></TabsContent>

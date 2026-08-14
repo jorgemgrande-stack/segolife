@@ -31,6 +31,7 @@ import { getCommerceSpendSummaryByUserId, listCommerceTransactionsByUserId } fro
 import { listQrRedemptionsByUser } from "../db/consumptionQrDb";
 import { listAdminActionsByStudentProfileId } from "../segolife/students/studentAdminActionsDb";
 import { listLoginEventsByUserId } from "../segolife/students/studentLoginEventsDb";
+import { getHistoricalOverviewForStudent, getHistoricalTimelineForStudent } from "../segolife/students/historicalIdentityService";
 import type { StudentSummaryDTO, TimelineFilters, TimelineEventType } from "../../shared/segolife/student360";
 
 const students360ViewProcedure = permissionProcedure("students.view", ["admin"]);
@@ -224,5 +225,27 @@ export const students360Router = router({
         listLoginEventsByUserId(detail.profile.userId, 20),
       ]);
       return { adminActions, logins };
+    }),
+
+  /**
+   * Pestaña Histórico — SEGOLIFE HISTORICAL STUDENT CLAIM (spec §16-18):
+   * "ONE STUDENT 360" con actividad histórica Fourvenues ya reclamada, nunca
+   * borra ni reemplaza la Historical Identity de origen (sigue viva y
+   * auditable en el directorio admin). Vacío ({hasHistory:false}) es un
+   * estado normal — la mayoría de Students no tienen historial reclamado.
+   */
+  getHistorical: students360ViewProcedure
+    .input(z.object({
+      studentProfileId: z.number().int().positive(),
+      limit: z.number().int().min(1).max(100).default(30),
+      offset: z.number().int().min(0).default(0),
+    }))
+    .query(async ({ input, ctx }) => {
+      const detail = await loadAuthorizedStudent(input.studentProfileId, ctx);
+      const [overview, timeline] = await Promise.all([
+        getHistoricalOverviewForStudent(detail.profile.userId),
+        getHistoricalTimelineForStudent(detail.profile.userId, input.limit, input.offset),
+      ]);
+      return { overview, timeline };
     }),
 });

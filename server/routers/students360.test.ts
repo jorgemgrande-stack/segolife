@@ -35,4 +35,8 @@ describe("students360 router — ningún endpoint es público", () => {
   it("getAdminActivity rechaza sin sesión", async () => {
     await expect(callerWithoutSession().getAdminActivity({ studentProfileId: 1 })).rejects.toThrow(/please login/i);
   });
+
+  it("getHistorical rechaza sin sesión (SEGOLIFE HISTORICAL STUDENT CLAIM, spec §16-18/§45)", async () => {
+    await expect(callerWithoutSession().getHistorical({ studentProfileId: 1 })).rejects.toThrow(/please login/i);
+  });
 });
