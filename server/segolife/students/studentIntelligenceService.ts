@@ -26,16 +26,23 @@ import type {
 import { deriveLastActivityAt, deriveActivityCountInWindow } from "./studentActivityAggregator";
 
 // ─── Constantes ajustables (ver cabecera) ──────────────────────────────────
-const MIN_DIMENSIONS_REQUIRED = 3;
-const NEW_STUDENT_GRACE_DAYS = 14; // por debajo de esto, "Datos insuficientes" en vez de penalizar
-const FREQUENCY_WINDOW_DAYS = 90;
+// Exportadas (Admin Command Center, 2026-08-14) para que
+// commandCenterStudents.ts pueda reutilizar los MISMOS umbrales en un
+// agregado SQL poblacional (evita el fan-out N+1 de invocar computeSegment()
+// por cada Student — ver informe de fase) — nunca se duplican estos números
+// en otro sitio, siempre se importan desde aquí.
+export const MIN_DIMENSIONS_REQUIRED = 3;
+export const NEW_STUDENT_GRACE_DAYS = 14; // por debajo de esto, "Datos insuficientes" en vez de penalizar
+export const FREQUENCY_WINDOW_DAYS = 90;
 
 const RECENCY_MAX_DAYS = 60; // 0 días = 100, >=60 días = 0
-const FREQUENCY_TARGET_EVENTS = 10; // 10+ eventos de actividad en 90d = 100
+export const FREQUENCY_TARGET_EVENTS = 10; // 10+ eventos de actividad en 90d = 100
 const EVENTS_TARGET_COUNT = 5; // 5+ (tickets comprados + asistencias) = 100
-const COMMERCE_TARGET_CENTS = 10000; // 100€ acumulados = 100
-const LOYALTY_TARGET_ACTIONS = 10; // 10+ movimientos de ledger/beneficios usados = 100
+export const COMMERCE_TARGET_CENTS = 10000; // 100€ acumulados = 100
+export const LOYALTY_TARGET_ACTIONS = 10; // 10+ movimientos de ledger/beneficios usados = 100
 const ENGAGEMENT_TARGET_INTERACTIONS = 5; // 5+ notificaciones leídas/clicadas = 100
+export const DORMANT_THRESHOLD_DAYS = 60;
+export const AT_RISK_THRESHOLD_DAYS = 30;
 
 const DIMENSION_LABELS: Record<SegoScoreDimensionKey, string> = {
   recency: "Recencia",

@@ -177,6 +177,7 @@ import { eventTicketingRouter } from "./routers/eventTicketing";
 import { commerceRouter } from "./routers/commerce";
 import { studentNotificationsRouter } from "./routers/studentNotifications";
 import { engagementRouter } from "./routers/engagement";
+import { dashboardRouter } from "./routers/dashboard";
 import { ticketPurchaseRouter } from "./routers/ticketPurchase";
 import { staffCheckinRouter } from "./routers/staffCheckin";
 import { restaurantsRouter } from "./routers/restaurants";
@@ -2180,6 +2181,7 @@ export const appRouter = router({
   commerce: commerceRouter,
   studentNotifications: studentNotificationsRouter,
   engagement: engagementRouter,
+  dashboard: dashboardRouter,
   ticketPurchase: ticketPurchaseRouter,
   staffCheckin: staffCheckinRouter,
   restaurants: restaurantsRouter,

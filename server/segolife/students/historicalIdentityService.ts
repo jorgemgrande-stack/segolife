@@ -500,6 +500,68 @@ export class HistoricalIdentityError extends Error {
   }
 }
 
+// ─── Estadísticas agregadas para el Admin Command Center (spec §15) ────────
+// Una SOLA pasada sobre loadAllIdentityGroups (ya calcula status/crossVenue
+// por identidad) — nunca 5 llamadas a listHistoricalIdentities con filtros
+// distintos, que repetiría el escaneo completo de unresolved_operations
+// cinco veces.
+
+export interface HistoricalIdentityStats {
+  total: number;
+  unregistered: number;
+  possibleMatch: number;
+  autoMatchCandidate: number;
+  linked: number;
+  conflict: number;
+  crossVenue: number;
+}
+
+export async function getHistoricalIdentityStats(db?: DbHandle): Promise<HistoricalIdentityStats> {
+  const groups = await loadAllIdentityGroups(db);
+  const stats: HistoricalIdentityStats = { total: 0, unregistered: 0, possibleMatch: 0, autoMatchCandidate: 0, linked: 0, conflict: 0, crossVenue: 0 };
+  for (const g of Array.from(groups.values())) {
+    stats.total++;
+    if (g.crossVenue) stats.crossVenue++;
+    switch (g.status) {
+      case "UNREGISTERED": stats.unregistered++; break;
+      case "POSSIBLE_MATCH": stats.possibleMatch++; break;
+      case "AUTO_MATCH_CANDIDATE": stats.autoMatchCandidate++; break;
+      case "LINKED": stats.linked++; break;
+      case "CONFLICT": stats.conflict++; break;
+    }
+  }
+  return stats;
+}
+
+export interface HistoricalIdentityVenueStat {
+  venueId: number;
+  total: number;
+  crossVenue: number;
+}
+
+/**
+ * Desglose por venue (Command Center §14, Venue Performance) — reutiliza la
+ * MISMA agregación de un solo pase (`loadAllIdentityGroups`) en vez de
+ * llamar a `listHistoricalIdentities({venueId})` una vez por venue, que
+ * repetiría el escaneo completo de `unresolved_operations` por cada venue.
+ * Una identidad cross-venue cuenta en el total de CADA venue que tocó (spec:
+ * mostrar Historical Audience por venue, no forzar una identidad a un único
+ * venue "dueño").
+ */
+export async function getHistoricalIdentityStatsByVenue(db?: DbHandle): Promise<HistoricalIdentityVenueStat[]> {
+  const groups = await loadAllIdentityGroups(db);
+  const byVenue = new Map<number, HistoricalIdentityVenueStat>();
+  for (const g of Array.from(groups.values())) {
+    for (const venueId of g.venueIds) {
+      let v = byVenue.get(venueId);
+      if (!v) { v = { venueId, total: 0, crossVenue: 0 }; byVenue.set(venueId, v); }
+      v.total++;
+      if (g.crossVenue) v.crossVenue++;
+    }
+  }
+  return Array.from(byVenue.values());
+}
+
 // ─── Entrada para el Historical Reward Simulator (Live Loyalty Design) ─────
 // Reutiliza la MISMA agregación canónica (`loadAllIdentityGroups`) en vez de
 // que el simulador vuelva a consultar/agrupar `unresolved_operations` por su

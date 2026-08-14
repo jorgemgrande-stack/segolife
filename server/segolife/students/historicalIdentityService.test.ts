@@ -30,6 +30,8 @@ vi.mock("./studentAdminActionsDb", () => ({ recordStudentAdminAction: mockRecord
 import {
   classifyMatch, normalizePhone, normalizeEmail, identityKeyFor,
   listHistoricalIdentities, claimHistoricalIdentity, unclaimHistoricalIdentity,
+  getHistoricalIdentityStats,
+  getHistoricalIdentityStatsByVenue,
   HistoricalIdentityError,
 } from "./historicalIdentityService";
 import { UnresolvedOperationError } from "../integrations/unresolvedOperationsService";
@@ -375,5 +377,58 @@ describe("unclaimHistoricalIdentity — reversibilidad (spec §45, §52, §60)",
     const db = fakeDb({ unresolvedRows: rows, usersRows: [] });
     await expect(unclaimHistoricalIdentity({ identityKey: "email:ana@example.com", actorUserId: 1, reason: "motivo" }, db))
       .rejects.toThrow(HistoricalIdentityError);
+  });
+});
+
+describe("getHistoricalIdentityStats — Admin Command Center (spec §15, una sola pasada)", () => {
+  it("agrega total/status/cross-venue en una única pasada sobre loadAllIdentityGroups", async () => {
+    const rows = [
+      // identidad 1 — email:ana@example.com — cross-venue (2 venues), UNREGISTERED
+      unresolvedRow({ id: 1, identityHintEmail: "ana@example.com", identityHintPhone: null, venueId: 1, status: "unresolved" }),
+      unresolvedRow({ id: 2, identityHintEmail: "ana@example.com", identityHintPhone: null, venueId: 7, status: "unresolved" }),
+      // identidad 2 — email:carlos@example.com — LINKED a un user real
+      unresolvedRow({ id: 3, identityHintEmail: "carlos@example.com", identityHintPhone: null, venueId: 1, status: "linked", linkedUserId: 42 }),
+    ];
+    const db = fakeDb({ unresolvedRows: rows, usersRows: [{ id: 42, email: "carlos@example.com", phone: null }] });
+
+    const stats = await getHistoricalIdentityStats(db);
+
+    expect(stats.total).toBe(2); // 2 identityKeys distintas, no 3 filas
+    expect(stats.linked).toBe(1);
+    expect(stats.crossVenue).toBe(1);
+    expect(stats.unregistered + stats.possibleMatch + stats.autoMatchCandidate + stats.linked + stats.conflict).toBe(stats.total);
+  });
+
+  it("sin ninguna identidad → todo en 0, nunca lanza", async () => {
+    const db = fakeDb({ unresolvedRows: [], usersRows: [] });
+    const stats = await getHistoricalIdentityStats(db);
+    expect(stats).toEqual({ total: 0, unregistered: 0, possibleMatch: 0, autoMatchCandidate: 0, linked: 0, conflict: 0, crossVenue: 0 });
+  });
+});
+
+describe("getHistoricalIdentityStatsByVenue — Venue Performance (spec §14, misma pasada que getHistoricalIdentityStats)", () => {
+  it("una identidad cross-venue cuenta en el total de CADA venue que tocó", async () => {
+    const rows = [
+      // identidad 1 — presente en venue 1 y venue 7 (cross-venue)
+      unresolvedRow({ id: 1, identityHintEmail: "ana@example.com", identityHintPhone: null, venueId: 1, status: "unresolved" }),
+      unresolvedRow({ id: 2, identityHintEmail: "ana@example.com", identityHintPhone: null, venueId: 7, status: "unresolved" }),
+      // identidad 2 — solo venue 1
+      unresolvedRow({ id: 3, identityHintEmail: "carlos@example.com", identityHintPhone: null, venueId: 1, status: "unresolved" }),
+    ];
+    const db = fakeDb({ unresolvedRows: rows, usersRows: [] });
+
+    const byVenue = await getHistoricalIdentityStatsByVenue(db);
+    const byVenueMap = new Map(byVenue.map(v => [v.venueId, v]));
+
+    expect(byVenueMap.get(1)?.total).toBe(2); // ana + carlos
+    expect(byVenueMap.get(1)?.crossVenue).toBe(1); // solo ana es cross-venue
+    expect(byVenueMap.get(7)?.total).toBe(1); // solo ana
+    expect(byVenueMap.get(7)?.crossVenue).toBe(1);
+  });
+
+  it("sin ninguna identidad → array vacío, nunca lanza", async () => {
+    const db = fakeDb({ unresolvedRows: [], usersRows: [] });
+    const byVenue = await getHistoricalIdentityStatsByVenue(db);
+    expect(byVenue).toEqual([]);
   });
 });
