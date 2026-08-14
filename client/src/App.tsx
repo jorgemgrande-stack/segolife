@@ -24,6 +24,8 @@ const SegolifeEventDetail = lazy(() => import("./pages/segolife/EventDetail"));
 const SegolifeVenueDetail = lazy(() => import("./pages/segolife/VenueDetail"));
 const Rewards = lazy(() => import("./pages/segolife/Rewards"));
 const BenefitDetail = lazy(() => import("./pages/segolife/BenefitDetail"));
+// Fase 7: Benefits Marketplace — canje de SegoTokens por un Benefit.
+const RewardsMarketplaceDetail = lazy(() => import("./pages/segolife/RewardsMarketplaceDetail"));
 const SegolifeProfile = lazy(() => import("./pages/segolife/Profile"));
 const Activity = lazy(() => import("./pages/segolife/Activity"));
 // Fase 7: Engagement Core — inbox de notificaciones + ajustes de preferencias.
@@ -547,6 +549,7 @@ function Router() {
       <Route path="/:community/scan">{() => <Suspense fallback={null}><StudentScan /></Suspense>}</Route>
       <Route path="/:community/benefits/:id">{() => <Suspense fallback={null}><BenefitDetail /></Suspense>}</Route>
       <Route path="/:community/benefits">{() => <Suspense fallback={null}><Rewards /></Suspense>}</Route>
+      <Route path="/:community/rewards/marketplace/:id">{() => <Suspense fallback={null}><RewardsMarketplaceDetail /></Suspense>}</Route>
       <Route path="/:community/rewards">{() => <Suspense fallback={null}><Rewards /></Suspense>}</Route>
       <Route path="/:community/activity">{() => <Suspense fallback={null}><Activity /></Suspense>}</Route>
       <Route path="/:community/settings/notifications">{() => <Suspense fallback={null}><NotificationPreferences /></Suspense>}</Route>

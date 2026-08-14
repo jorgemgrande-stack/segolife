@@ -48,12 +48,18 @@ interface DefinitionForm {
   discountType: string; discountValue: string;
   imageUrl: string; nameEn: string; nameEs: string; descriptionEn: string; descriptionEs: string;
   termsEn: string; termsEs: string;
+  tokenCost: string; isMarketplaceEnabled: boolean;
+  marketplaceInventoryTotal: string; perStudentPurchaseLimit: string;
+  purchaseWindowStart: string; purchaseWindowEnd: string; redemptionValidityDays: string;
 }
 const emptyDefinitionForm: DefinitionForm = {
   name: "", slug: "", description: "", benefitType: "free_entry",
   destinationVenueId: NONE, destinationEventId: NONE,
   discountType: NONE, discountValue: "",
   imageUrl: "", nameEn: "", nameEs: "", descriptionEn: "", descriptionEs: "", termsEn: "", termsEs: "",
+  tokenCost: "", isMarketplaceEnabled: false,
+  marketplaceInventoryTotal: "", perStudentPurchaseLimit: "",
+  purchaseWindowStart: "", purchaseWindowEnd: "", redemptionValidityDays: "",
 };
 
 function DefinitionsTab() {
@@ -100,6 +106,13 @@ function DefinitionsTab() {
       imageUrl: def.imageUrl ?? "", nameEn: def.nameEn ?? "", nameEs: def.nameEs ?? "",
       descriptionEn: def.descriptionEn ?? "", descriptionEs: def.descriptionEs ?? "",
       termsEn: def.termsEn ?? "", termsEs: def.termsEs ?? "",
+      tokenCost: def.tokenCost != null ? String(def.tokenCost) : "",
+      isMarketplaceEnabled: def.isMarketplaceEnabled ?? false,
+      marketplaceInventoryTotal: def.marketplaceInventoryTotal != null ? String(def.marketplaceInventoryTotal) : "",
+      perStudentPurchaseLimit: def.perStudentPurchaseLimit != null ? String(def.perStudentPurchaseLimit) : "",
+      purchaseWindowStart: def.purchaseWindowStart ? new Date(def.purchaseWindowStart).toISOString().slice(0, 16) : "",
+      purchaseWindowEnd: def.purchaseWindowEnd ? new Date(def.purchaseWindowEnd).toISOString().slice(0, 16) : "",
+      redemptionValidityDays: def.redemptionValidityDays != null ? String(def.redemptionValidityDays) : "",
     });
     setCommunityIds(new Set(def.communityIds));
     setOpen(true);
@@ -116,10 +129,20 @@ function DefinitionsTab() {
     nameEn: form.nameEn || undefined, nameEs: form.nameEs || undefined,
     descriptionEn: form.descriptionEn || undefined, descriptionEs: form.descriptionEs || undefined,
     termsEn: form.termsEn || undefined, termsEs: form.termsEs || undefined,
+    tokenCost: form.tokenCost ? Number(form.tokenCost) : null,
+    isMarketplaceEnabled: form.isMarketplaceEnabled,
+    marketplaceInventoryTotal: form.marketplaceInventoryTotal ? Number(form.marketplaceInventoryTotal) : null,
+    perStudentPurchaseLimit: form.perStudentPurchaseLimit ? Number(form.perStudentPurchaseLimit) : null,
+    purchaseWindowStart: form.purchaseWindowStart ? new Date(form.purchaseWindowStart) : null,
+    purchaseWindowEnd: form.purchaseWindowEnd ? new Date(form.purchaseWindowEnd) : null,
+    redemptionValidityDays: form.redemptionValidityDays ? Number(form.redemptionValidityDays) : null,
   });
 
   const handleSubmit = () => {
     if (!form.name.trim() || !form.slug.trim()) { toast.error("Nombre y slug son obligatorios"); return; }
+    if (form.isMarketplaceEnabled && (!form.tokenCost || Number(form.tokenCost) <= 0)) {
+      toast.error("Para habilitar el marketplace, indica un coste en SegoTokens mayor que 0"); return;
+    }
     if (editId) updateMut.mutate({ id: editId, ...buildPayload() });
     else createMut.mutate(buildPayload());
   };
@@ -139,7 +162,7 @@ function DefinitionsTab() {
             <TableHeader>
               <TableRow>
                 <TableHead>Nombre</TableHead><TableHead>Tipo</TableHead><TableHead>Destino</TableHead>
-                <TableHead>Slug</TableHead><TableHead>Activa</TableHead><TableHead></TableHead>
+                <TableHead>Slug</TableHead><TableHead>Marketplace</TableHead><TableHead>Activa</TableHead><TableHead></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -149,6 +172,7 @@ function DefinitionsTab() {
                   <TableCell><Badge variant="secondary">{BENEFIT_TYPE_LABEL[d.benefitType] ?? d.benefitType}</Badge></TableCell>
                   <TableCell className="text-muted-foreground">{(venues ?? []).find(v => v.id === d.destinationVenueId)?.name ?? "—"}</TableCell>
                   <TableCell className="text-muted-foreground text-xs">{d.slug}</TableCell>
+                  <TableCell>{d.isMarketplaceEnabled ? <Badge variant="outline">{d.tokenCost} ST</Badge> : <span className="text-muted-foreground text-xs">—</span>}</TableCell>
                   <TableCell><Switch checked={d.active} onCheckedChange={v => setActiveMut.mutate({ id: d.id, active: v })} /></TableCell>
                   <TableCell><Button size="sm" variant="outline" onClick={() => openEdit(d.id)}><Pencil className="w-3.5 h-3.5" /></Button></TableCell>
                 </TableRow>
@@ -224,6 +248,22 @@ function DefinitionsTab() {
                   </label>
                 ))}
               </div>
+            </div>
+            <div className="space-y-3 pt-3 border-t border-border">
+              <div className="flex items-center justify-between">
+                <Label className="mb-0">Canjeable con SegoTokens (marketplace)</Label>
+                <Switch checked={form.isMarketplaceEnabled} onCheckedChange={v => setForm(f => ({ ...f, isMarketplaceEnabled: v }))} />
+              </div>
+              {form.isMarketplaceEnabled && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div><Label>Coste en SegoTokens *</Label><Input type="number" min={1} value={form.tokenCost} onChange={e => setForm(f => ({ ...f, tokenCost: e.target.value }))} /></div>
+                  <div><Label>Validez tras canje (días)</Label><Input type="number" min={1} placeholder="Sin caducidad" value={form.redemptionValidityDays} onChange={e => setForm(f => ({ ...f, redemptionValidityDays: e.target.value }))} /></div>
+                  <div><Label>Stock total</Label><Input type="number" min={1} placeholder="Ilimitado" value={form.marketplaceInventoryTotal} onChange={e => setForm(f => ({ ...f, marketplaceInventoryTotal: e.target.value }))} /></div>
+                  <div><Label>Límite por Student</Label><Input type="number" min={1} placeholder="Ilimitado" value={form.perStudentPurchaseLimit} onChange={e => setForm(f => ({ ...f, perStudentPurchaseLimit: e.target.value }))} /></div>
+                  <div><Label>Disponible desde</Label><Input type="datetime-local" value={form.purchaseWindowStart} onChange={e => setForm(f => ({ ...f, purchaseWindowStart: e.target.value }))} /></div>
+                  <div><Label>Disponible hasta</Label><Input type="datetime-local" value={form.purchaseWindowEnd} onChange={e => setForm(f => ({ ...f, purchaseWindowEnd: e.target.value }))} /></div>
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-4 pt-2 border-t border-border">
               <div><Label>Nombre EN</Label><Input value={form.nameEn} onChange={e => setForm(f => ({ ...f, nameEn: e.target.value }))} placeholder="Free entry Casanova" /></div>
