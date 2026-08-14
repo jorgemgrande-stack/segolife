@@ -65,6 +65,20 @@ export interface RewardContext {
   loyaltyCutoffAt?: Date | null;
   /** `venue_integrations.id` real — permite resolver el override de corte por venue si existe. `null`/omitido = solo se consulta el corte global. */
   integrationId?: number | null;
+  /**
+   * SOLO SIMULATION (Loyalty Shadow Mode) — topes diario/semanal/mensual/
+   * lifetime de esta MISMA regla ya "consumidos" por evaluaciones Shadow
+   * previas (nunca por token_ledger real, que sumAmountByRuleInWindow ya
+   * cubre). Necesario porque Shadow nunca escribe en token_ledger: sin este
+   * campo, cada evaluación Shadow vería siempre "0 consumido" y los topes
+   * jamás se aplicarían entre varias observaciones Shadow del mismo Student.
+   * El caller (loyaltyShadowService.ts) calcula este valor a partir de SU
+   * PROPIO almacén (loyalty_shadow_evaluations), nunca de datos reales.
+   * Ignorado si se omite — el cálculo LIVE/SIMULATION normal no cambia.
+   */
+  priorSimulatedConsumedByWindow?: { daily?: number; weekly?: number; monthly?: number; lifetime?: number };
+  /** SOLO SIMULATION (Loyalty Shadow Mode) — mismo criterio que priorSimulatedConsumedByWindow, pero para el presupuesto total de una campaña (`token_campaigns.maxTotalTokens`). */
+  priorSimulatedCampaignIssued?: number;
 }
 
 export type RewardReason =
@@ -116,14 +130,17 @@ export class RewardEngineError extends Error {
  */
 const LIVE_MODE_ENABLED = false as boolean;
 
-function dayStart(at: Date): Date {
+// Exportadas para loyaltyShadowService.ts — necesita los MISMOS límites de
+// ventana para acumular topes entre observaciones Shadow (nunca redefine su
+// propio cálculo de día/semana/mes, spec "REUSE FIRST").
+export function dayStart(at: Date): Date {
   const d = new Date(at);
   d.setHours(0, 0, 0, 0);
   return d;
 }
 
 /** Mismo criterio exacto que tokenEngine.ts/tokenRuleEngine.ts — sin abstracción de timezone dedicada todavía (ver docs/SEGOLIFE_BASELINE.md). */
-function weekStart(at: Date): Date {
+export function weekStart(at: Date): Date {
   const d = new Date(at);
   const day = d.getDay();
   const diffToMonday = day === 0 ? 6 : day - 1;
@@ -132,14 +149,14 @@ function weekStart(at: Date): Date {
   return d;
 }
 
-function monthStart(at: Date): Date {
+export function monthStart(at: Date): Date {
   const d = new Date(at);
   d.setDate(1);
   d.setHours(0, 0, 0, 0);
   return d;
 }
 
-function lifetimeStart(): Date {
+export function lifetimeStart(): Date {
   return new Date(0);
 }
 
@@ -188,19 +205,19 @@ async function calculateOnly(ctx: RewardContext, db?: AnyDbHandle): Promise<Rewa
 
   let final = beforeLimits;
   if (rule.dailyLimit != null) {
-    const earnedToday = await sumAmountByRuleInWindow(ctx.userId, rule.id, "credit", dayStart(at), db);
+    const earnedToday = await sumAmountByRuleInWindow(ctx.userId, rule.id, "credit", dayStart(at), db) + (ctx.priorSimulatedConsumedByWindow?.daily ?? 0);
     final = Math.min(final, Math.max(0, rule.dailyLimit - earnedToday));
   }
   if (rule.weeklyLimit != null) {
-    const earnedThisWeek = await sumAmountByRuleInWindow(ctx.userId, rule.id, "credit", weekStart(at), db);
+    const earnedThisWeek = await sumAmountByRuleInWindow(ctx.userId, rule.id, "credit", weekStart(at), db) + (ctx.priorSimulatedConsumedByWindow?.weekly ?? 0);
     final = Math.min(final, Math.max(0, rule.weeklyLimit - earnedThisWeek));
   }
   if (rule.monthlyLimit != null) {
-    const earnedThisMonth = await sumAmountByRuleInWindow(ctx.userId, rule.id, "credit", monthStart(at), db);
+    const earnedThisMonth = await sumAmountByRuleInWindow(ctx.userId, rule.id, "credit", monthStart(at), db) + (ctx.priorSimulatedConsumedByWindow?.monthly ?? 0);
     final = Math.min(final, Math.max(0, rule.monthlyLimit - earnedThisMonth));
   }
   if (rule.lifetimeLimit != null) {
-    const earnedLifetime = await sumAmountByRuleInWindow(ctx.userId, rule.id, "credit", lifetimeStart(), db);
+    const earnedLifetime = await sumAmountByRuleInWindow(ctx.userId, rule.id, "credit", lifetimeStart(), db) + (ctx.priorSimulatedConsumedByWindow?.lifetime ?? 0);
     final = Math.min(final, Math.max(0, rule.lifetimeLimit - earnedLifetime));
   }
 
@@ -213,7 +230,7 @@ async function calculateOnly(ctx: RewardContext, db?: AnyDbHandle): Promise<Rewa
     const issuedRows = conn
       ? await conn.select({ amount: tokenLedger.amount }).from(tokenLedger).where(and(eq(tokenLedger.campaignId, campaign.id), eq(tokenLedger.direction, "credit")))
       : [];
-    const issued = issuedRows.reduce((sum, r) => sum + r.amount, 0);
+    const issued = issuedRows.reduce((sum, r) => sum + r.amount, 0) + (ctx.priorSimulatedCampaignIssued ?? 0);
     const remaining = Math.max(0, campaign.maxTotalTokens - issued);
     final = Math.min(final, remaining);
   }
