@@ -194,14 +194,27 @@ export const integrationsRouter = router({
     .mutation(async ({ input, ctx }) => {
       try {
         const linked = await linkUnresolvedOperation(input.id, input.userId, ctx.user.id);
+        // SEGURIDAD (Loyalty Shadow Mode, spec §40 — auditoría de linkUnresolved):
+        // a diferencia del scheduler real (integrationSyncService.ts:resolveSuppressLoyalty,
+        // que SIEMPRE deriva suppressLoyalty de venueIntegration.loyaltyEnabled), esta
+        // mutation legacy llamaba a processCommerceLoyalty/ingestAttendance sin pasar
+        // ningún suppressLoyalty — con loyaltyEnabled=false en los 3 venues reales,
+        // vincular manualmente una operación de commerce/attendance podía conceder un
+        // SegoToken REAL, saltándose por completo la garantía "LIVE loyalty OFF". Se
+        // resuelve aquí el mismo criterio que el scheduler, solo para esta mutation.
+        const suppressLoyalty = linked.integrationType === "venue_integration" && linked.integrationId
+          ? !(await getVenueIntegrationRaw(linked.integrationId))?.loyaltyEnabled
+          : true; // sin venue_integration identificable -> por defecto, nunca conceder
         // Reprocesamiento idempotente para COMERCIO: la fila commerce_transactions
         // ya existía (user_id era null) — solo hace falta asociarla y procesar loyalty.
         if (linked.operationType === "commerce" && linked.referenceId) {
           const [tx] = await _db.select().from(commerceTransactions).where(eq(commerceTransactions.id, linked.referenceId)).limit(1);
           if (tx) {
             await _db.update(commerceTransactions).set({ userId: input.userId }).where(eq(commerceTransactions.id, tx.id));
-            const [updatedTx] = await _db.select().from(commerceTransactions).where(eq(commerceTransactions.id, tx.id)).limit(1);
-            await processCommerceLoyalty(updatedTx);
+            if (!suppressLoyalty) {
+              const [updatedTx] = await _db.select().from(commerceTransactions).where(eq(commerceTransactions.id, tx.id)).limit(1);
+              await processCommerceLoyalty(updatedTx);
+            }
           }
         }
         // FASE 8 — bloqueador de Fase 5 resuelto: la vinculación manual de
@@ -222,6 +235,10 @@ export const integrationsRouter = router({
             eventId: linked.eventId,
             venueId: linked.venueId ?? null,
             resolvedUserId: input.userId,
+            suppressLoyalty,
+            // Loyalty Shadow Mode (spec §9) — vinculación retroactiva de una
+            // operación histórica, nunca tráfico "en vivo desde activación".
+            isHistoricalImport: true,
             attendance: {
               externalAttendanceId: linked.externalReferenceId ?? `unresolved:${linked.id}`,
               externalEventId: String(linked.eventId),

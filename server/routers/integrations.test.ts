@@ -13,11 +13,12 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockLinkUnresolvedOperation, mockIngestAttendance, mockDbUpdateSet, mockDbUpdateWhere } = vi.hoisted(() => ({
+const { mockLinkUnresolvedOperation, mockIngestAttendance, mockDbUpdateSet, mockDbUpdateWhere, mockGetVenueIntegrationRaw } = vi.hoisted(() => ({
   mockLinkUnresolvedOperation: vi.fn(),
   mockIngestAttendance: vi.fn(),
   mockDbUpdateSet: vi.fn(),
   mockDbUpdateWhere: vi.fn(async () => [{ affectedRows: 1 }]),
+  mockGetVenueIntegrationRaw: vi.fn(),
 }));
 
 vi.mock("../segolife/integrations/unresolvedOperationsService", async (importOriginal) => {
@@ -25,6 +26,10 @@ vi.mock("../segolife/integrations/unresolvedOperationsService", async (importOri
   return { ...actual, linkUnresolvedOperation: mockLinkUnresolvedOperation };
 });
 vi.mock("../segolife/ticketing/attendancePipeline", () => ({ ingestAttendance: mockIngestAttendance }));
+vi.mock("../segolife/integrations/integrationsDb", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/integrations/integrationsDb")>();
+  return { ...actual, getVenueIntegrationRaw: mockGetVenueIntegrationRaw };
+});
 // El router usa su propio `_db` (drizzle(mysql.createPool(...))) inline, sin
 // exportarlo — se mockea `drizzle-orm/mysql2` para poder aserción sobre el
 // UPDATE de la rama "order" (spec §47) sin una conexión MySQL real. select()
@@ -73,6 +78,7 @@ function unresolvedFixture(overrides: Partial<Record<string, unknown>> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockIngestAttendance.mockResolvedValue({ status: "processed", attendance: { id: 900 } });
+  mockGetVenueIntegrationRaw.mockResolvedValue(null); // por defecto: integración no identificable -> nunca conceder (fail-closed)
 });
 
 describe("integrationsRouter.linkUnresolved — bloqueador de Fase 5 (attendance)", () => {
@@ -129,6 +135,56 @@ describe("integrationsRouter.linkUnresolved — bloqueador de Fase 5 (attendance
     await caller.linkUnresolved({ id: 12, userId: 77 });
 
     expect(mockIngestAttendance).not.toHaveBeenCalled();
+  });
+
+  // ─── Loyalty Shadow Mode — auditoría de linkUnresolved (spec §40) ─────────
+  // BLOCKER real encontrado: esta mutation llamaba a ingestAttendance/
+  // processCommerceLoyalty SIN pasar suppressLoyalty — a diferencia del
+  // scheduler real (integrationSyncService.ts:resolveSuppressLoyalty, que
+  // SIEMPRE lo deriva de venueIntegration.loyaltyEnabled), lo que permitía
+  // conceder un SegoToken REAL al vincular manualmente una operación de
+  // attendance aunque el venue tuviera loyalty_enabled=false.
+  describe("integrationsRouter.linkUnresolved — SEGURIDAD: respeta venueIntegration.loyaltyEnabled (Loyalty Shadow Mode, spec §40)", () => {
+    it("venue con loyaltyEnabled=false → ingestAttendance se llama con suppressLoyalty=true (nunca concede tokens reales)", async () => {
+      mockLinkUnresolvedOperation.mockResolvedValue(unresolvedFixture({ integrationType: "venue_integration", integrationId: 1 }));
+      mockGetVenueIntegrationRaw.mockResolvedValue({ id: 1, loyaltyEnabled: false });
+      const caller = callerAsAdmin();
+
+      await caller.linkUnresolved({ id: 10, userId: 77 });
+
+      expect(mockGetVenueIntegrationRaw).toHaveBeenCalledWith(1);
+      expect(mockIngestAttendance.mock.calls[0][0]).toMatchObject({ suppressLoyalty: true });
+    });
+
+    it("venue con loyaltyEnabled=true → ingestAttendance se llama con suppressLoyalty=false (comportamiento histórico preservado cuando SÍ está permitido)", async () => {
+      mockLinkUnresolvedOperation.mockResolvedValue(unresolvedFixture({ integrationType: "venue_integration", integrationId: 1 }));
+      mockGetVenueIntegrationRaw.mockResolvedValue({ id: 1, loyaltyEnabled: true });
+      const caller = callerAsAdmin();
+
+      await caller.linkUnresolved({ id: 10, userId: 77 });
+
+      expect(mockIngestAttendance.mock.calls[0][0]).toMatchObject({ suppressLoyalty: false });
+    });
+
+    it("integración no identificable (getVenueIntegrationRaw devuelve null) → suppressLoyalty=true por defecto (fail-closed, nunca conceder sin poder verificar)", async () => {
+      mockLinkUnresolvedOperation.mockResolvedValue(unresolvedFixture({ integrationType: "venue_integration", integrationId: 999 }));
+      mockGetVenueIntegrationRaw.mockResolvedValue(null);
+      const caller = callerAsAdmin();
+
+      await caller.linkUnresolved({ id: 10, userId: 77 });
+
+      expect(mockIngestAttendance.mock.calls[0][0]).toMatchObject({ suppressLoyalty: true });
+    });
+
+    it("sin integrationType='venue_integration' identificable (p.ej. event_integration) → suppressLoyalty=true por defecto, nunca consulta venueIntegrations a ciegas", async () => {
+      mockLinkUnresolvedOperation.mockResolvedValue(unresolvedFixture({ integrationType: "event_integration", integrationId: 3 }));
+      const caller = callerAsAdmin();
+
+      await caller.linkUnresolved({ id: 10, userId: 77 });
+
+      expect(mockGetVenueIntegrationRaw).not.toHaveBeenCalled();
+      expect(mockIngestAttendance.mock.calls[0][0]).toMatchObject({ suppressLoyalty: true });
+    });
   });
 });
 
