@@ -35,7 +35,7 @@ function overviewFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     students: { total: 500, newInPeriod: 12 },
     active: { activeInPeriod: 184, dau: 30, wau: 90, mau: 150 },
-    tickets: { ordersInPeriod: 40, paid: 35, cancelled: 2, refunded: 1, ticketRevenueCents: 250000 },
+    tickets: { ordersInPeriod: 40, paid: 35, cancelled: 2, refunded: 1, ticketRevenueCents: 250000, nativePaid: 5, nativeRevenueCents: 30000, fourvenuesPaid: 30, fourvenuesRevenueCents: 220000 },
     attendance: { confirmed: 60, eligibleTickets: 80, attendanceRatePct: 75, unresolvedHistoricalCount: 0 },
     segoTokens: { earnedInPeriod: 900, spentInPeriod: 300, circulatingBalance: 5000, liveStatus: "LIVE_LOCKED" as const },
     benefits: { generated: 20, available: 8, redeemed: 10, expired: 2, redemptionRatePct: 50 },

@@ -37,6 +37,11 @@ export interface TicketsKpi {
   cancelled: number;
   refunded: number;
   ticketRevenueCents: number;
+  /** SEGOLIFE — Native Ticket Sales (spec §28): "no atribuir a SEGOLIFE revenue que pertenece a Fourvenues" — desglose real por `ticket_orders.provider`, nunca mezclado en un único total sin distinguir origen. */
+  nativePaid: number;
+  nativeRevenueCents: number;
+  fourvenuesPaid: number;
+  fourvenuesRevenueCents: number;
 }
 
 export interface AttendanceKpi {
@@ -97,19 +102,29 @@ async function getTicketsKpi(ctx: DashboardFilterContext, db: AnyDbHandle): Prom
   const base = and(gte(ticketOrders.purchasedAt, ctx.from), lt(ticketOrders.purchasedAt, ctx.to), communityCond ? communityCond : sql`1=1`);
   const rows = await db.select({
     status: ticketOrders.status,
+    provider: ticketOrders.provider,
     n: count(),
     revenue: sum(ticketOrders.totalCents),
-  }).from(ticketOrders).where(base).groupBy(ticketOrders.status);
+  }).from(ticketOrders).where(base).groupBy(ticketOrders.status, ticketOrders.provider);
 
   let ordersInPeriod = 0, paid = 0, cancelled = 0, refunded = 0, ticketRevenueCents = 0;
+  let nativePaid = 0, nativeRevenueCents = 0, fourvenuesPaid = 0, fourvenuesRevenueCents = 0;
   for (const r of rows) {
     const n = Number(r.n);
+    const revenue = Number(r.revenue ?? 0);
     ordersInPeriod += n;
-    if (r.status === "paid") { paid = n; ticketRevenueCents = Number(r.revenue ?? 0); }
+    if (r.status === "paid") {
+      paid += n;
+      ticketRevenueCents += revenue;
+      // `provider` distingue "segolife" (nativo, ver inventoryHoldService.ts) de "fourvenues" —
+      // spec §28/§45: cada origen es su propio source of truth, nunca se confunden operacionalmente.
+      if (r.provider === "segolife") { nativePaid += n; nativeRevenueCents += revenue; }
+      else if (r.provider === "fourvenues") { fourvenuesPaid += n; fourvenuesRevenueCents += revenue; }
+    }
     if (r.status === "cancelled" || r.status === "failed") cancelled += n;
     if (r.status === "refunded" || r.status === "partially_refunded") refunded += n;
   }
-  return { ordersInPeriod, paid, cancelled, refunded, ticketRevenueCents };
+  return { ordersInPeriod, paid, cancelled, refunded, ticketRevenueCents, nativePaid, nativeRevenueCents, fourvenuesPaid, fourvenuesRevenueCents };
 }
 
 async function getAttendanceKpi(ctx: DashboardFilterContext, db: AnyDbHandle): Promise<AttendanceKpi> {

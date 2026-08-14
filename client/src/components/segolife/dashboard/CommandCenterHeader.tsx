@@ -70,7 +70,7 @@ export function CommandCenterHeader({ filters }: { filters: DashboardQueryInput 
           <KpiCard label="Activos" value={data.active.activeInPeriod} icon={UserCheck} color="emerald"
             subLabel={`DAU ${data.active.dau} · WAU ${data.active.wau} · MAU ${data.active.mau}`} href="/admin/students" />
           <KpiCard label="Tickets" value={data.tickets.paid} icon={Ticket} color="blue"
-            subLabel={new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(data.tickets.ticketRevenueCents / 100)}
+            subLabel={`${new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(data.tickets.ticketRevenueCents / 100)} · SEGOLIFE ${data.tickets.nativePaid} / Fourvenues ${data.tickets.fourvenuesPaid}`}
             href="/admin/events" />
           <KpiCard label="Asistencias" value={data.attendance.confirmed} icon={CalendarCheck} color="amber"
             subLabel={data.attendance.attendanceRatePct != null ? `${data.attendance.attendanceRatePct}% tasa` : "sin tickets elegibles"} href="/admin/events" />

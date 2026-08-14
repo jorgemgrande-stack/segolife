@@ -95,11 +95,12 @@ describe("getOverviewSnapshot", () => {
     expect(snapshot.attendance.unresolvedHistoricalCount).toBe(3);
   });
 
-  it("Tickets: separa paid/cancelled/refunded correctamente desde el GROUP BY status", async () => {
+  it("Tickets: separa paid/cancelled/refunded correctamente desde el GROUP BY status, y paid por provider (SEGOLIFE — Native Ticket Sales, spec §28)", async () => {
     mockCountActiveStudents.mockResolvedValue(0);
     const db = fakeDb({
       ticketOrdersRows: [
-        { status: "paid", n: 10, revenue: 50000 },
+        { status: "paid", provider: "segolife", n: 4, revenue: 20000 },
+        { status: "paid", provider: "fourvenues", n: 6, revenue: 30000 },
         { status: "cancelled", n: 2, revenue: 0 },
         { status: "failed", n: 1, revenue: 0 },
         { status: "refunded", n: 3, revenue: 0 },
@@ -107,7 +108,10 @@ describe("getOverviewSnapshot", () => {
       ],
     });
     const snapshot = await getOverviewSnapshot(CTX, db as never);
-    expect(snapshot.tickets).toEqual({ ordersInPeriod: 17, paid: 10, cancelled: 3, refunded: 4, ticketRevenueCents: 50000 });
+    expect(snapshot.tickets).toEqual({
+      ordersInPeriod: 17, paid: 10, cancelled: 3, refunded: 4, ticketRevenueCents: 50000,
+      nativePaid: 4, nativeRevenueCents: 20000, fourvenuesPaid: 6, fourvenuesRevenueCents: 30000,
+    });
   });
 
   it("Attendance: attendanceRatePct es null sin tickets elegibles, nunca división por cero", async () => {
