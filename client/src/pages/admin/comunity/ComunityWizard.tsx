@@ -65,7 +65,6 @@ export default function ComunityWizard() {
   // Paso 5 — Gamificación
   const [resultsVisibility, setResultsVisibility] = useState<"immediate" | "after_vote" | "after_close" | "never">("after_vote");
   const [allowChangeResponse, setAllowChangeResponse] = useState(true);
-  const [tokenReward, setTokenReward] = useState("");
   const [minSampleSize, setMinSampleSize] = useState("5");
 
   const createMut = trpc.community.create.useMutation({
@@ -99,7 +98,6 @@ export default function ComunityWizard() {
       endsAt: endsAt ? new Date(endsAt) : null,
       resultsVisibility,
       allowChangeResponse,
-      tokenReward: tokenReward ? Number(tokenReward) : null,
       coverImageUrl: coverImageUrl.trim() || null,
       venueId: venueId ? Number(venueId) : null,
       audienceDefinition: toComunityAudienceDefinition(audience),
@@ -262,9 +260,12 @@ export default function ComunityWizard() {
               </label>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label>Recompensa en SegoTokens (opcional)</Label>
-                  <Input type="number" min={0} max={200} value={tokenReward} onChange={e => setTokenReward(e.target.value)} placeholder="0" />
-                  <p className="mt-1 text-xs text-muted-foreground">Se concede una única vez por estudiante, al responder.</p>
+                  <Label>Recompensa en SegoTokens</Label>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Se concede automáticamente según la política vigente de SegoTokens
+                    (regla <span className="font-medium text-foreground">COMMUNITY_RESPONSE</span>) —
+                    ya no se configura por propuesta. Ver <a href="/admin/tokens/rules" className="underline">Reglas de SegoTokens</a>.
+                  </p>
                 </div>
                 <div>
                   <Label>Muestra mínima para comparativas por segmento</Label>
@@ -285,7 +286,7 @@ export default function ComunityWizard() {
               <p><span className="text-muted-foreground">Urgencia:</span> {urgencyType === "flash" ? "Flash" : "Programada"}</p>
               <p><span className="text-muted-foreground">Cierre:</span> {endsAt ? new Date(endsAt).toLocaleString("es-ES") : "—"}</p>
               <p><span className="text-muted-foreground">Resultados:</span> {resultsVisibility}</p>
-              <p><span className="text-muted-foreground">Recompensa:</span> {tokenReward ? `${tokenReward} ST` : "Ninguna"}</p>
+              <p><span className="text-muted-foreground">Recompensa:</span> Según política vigente de SegoTokens (regla COMMUNITY_RESPONSE)</p>
             </div>
           )}
 

@@ -6,6 +6,19 @@
  * (spec punto 27/67); la recompensa de SegoTokens se concede como mucho una
  * vez por (proposal,user) vía el flag `reward_granted` (spec punto 77: "si
  * cambia respuesta, NO volver a premiar").
+ *
+ * SEGOTOKENS (SEGOLIFE — COMMUNITY Production Implementation): la recompensa
+ * pasa SIEMPRE por `earnTokens()` (origin="community_response", regla real
+ * en `token_rules`) — nunca un `postLedgerMovement()` directo. Esto respeta
+ * `LIVE_LOYALTY_ENABLED`, idempotencia estándar, caps diarios/semanales/
+ * mensuales/lifetime y ledger/wallet atómicos, exactamente igual que
+ * attendance/ticket/consumption. El importe YA NO lo decide
+ * `proposal.tokenReward` (campo legacy, ver `communityDb.ts` — se conserva
+ * en schema por los 2 grants históricos ya concedidos con el mecanismo
+ * anterior, nunca tocados) — lo decide la regla activa `COMMUNITY_RESPONSE`,
+ * igual que el resto de orígenes. Best-effort: un fallo del motor de tokens
+ * nunca debe perder la respuesta ya registrada (mismo criterio que
+ * earnTokens en attendancePipeline.ts/commercePipeline.ts).
  */
 import { eq, and, inArray, sql, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -15,7 +28,7 @@ import {
   type CommunityProposal, type CommunityOption, type CommunityResponse, type CommunityResponseValue,
 } from "../../../drizzle/schema";
 import { getProposalById, isProposalOpenForResponses, type AnyDbHandle } from "./communityDb";
-import { postLedgerMovement } from "../tokens/tokenLedgerService";
+import { earnTokens } from "../tokens/tokenEngine";
 import { isPositiveRespondent, attendanceIntentionFromCode, ATTENDANCE_INTENTION_CODES, type AttendanceIntentionValue } from "./communityIntentService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 3 });
@@ -165,24 +178,25 @@ export async function submitResponse(
   }
 
   let rewardGranted = false;
-  if (isFirstResponse && proposal.tokenReward && proposal.tokenReward > 0) {
+  if (isFirstResponse) {
     try {
-      const { ledger } = await postLedgerMovement({
+      const result = await earnTokens({
         userId,
-        direction: "credit",
-        amount: proposal.tokenReward,
-        reason: `Participación en COMUNITY: ${proposal.title}`,
-        sourceType: "community_response",
+        origin: "community_response",
+        venueId: proposal.venueId ?? null,
+        eventId: proposal.relatedEventId ?? null,
         sourceId: proposalId,
         idempotencyKey: `community_response:${proposalId}:${userId}`,
       }, conn as DbHandle);
-      await (conn as DbHandle).update(communityResponses).set({ rewardGranted: true, tokenLedgerId: ledger.id }).where(eq(communityResponses.id, responseId));
+      await (conn as DbHandle).update(communityResponses).set({ rewardGranted: true, tokenLedgerId: result.ledger.id }).where(eq(communityResponses.id, responseId));
       rewardGranted = true;
     } catch (err) {
-      // Best-effort — un fallo del motor de tokens nunca debe perder la
-      // respuesta ya registrada (mismo criterio que earnTokens en
-      // attendancePipeline.ts/commercePipeline.ts).
-      console.error(`[communityResponseService] No se pudo conceder recompensa (proposal=${proposalId}, user=${userId}):`, err);
+      // Best-effort — un fallo/ausencia de regla del motor de tokens nunca
+      // debe perder la respuesta ya registrada (mismo criterio que
+      // earnTokens en attendancePipeline.ts/commercePipeline.ts). Incluye el
+      // caso NO_RULE_FOUND si la regla COMMUNITY_RESPONSE llegara a
+      // desactivarse — no es un error real, solo "hoy no se premia".
+      console.error(`[communityResponseService] No se concedió recompensa (proposal=${proposalId}, user=${userId}):`, err);
     }
   }
 

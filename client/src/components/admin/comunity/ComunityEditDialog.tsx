@@ -55,7 +55,6 @@ export function ComunityEditDialog({ open, onOpenChange, proposal, options, comm
   const [endsAt, setEndsAt] = useState(toLocalInputValue(proposal.endsAt));
   const [resultsVisibility, setResultsVisibility] = useState(proposal.resultsVisibility);
   const [allowChangeResponse, setAllowChangeResponse] = useState(proposal.allowChangeResponse);
-  const [tokenReward, setTokenReward] = useState(proposal.tokenReward != null ? String(proposal.tokenReward) : "");
   const [minSampleSize, setMinSampleSize] = useState(String(proposal.minSampleSize));
   const [optionLabels, setOptionLabels] = useState<string[]>(options.map(o => o.label));
   const [scopeCommunityIds, setScopeCommunityIds] = useState<number[]>(communityIds);
@@ -74,7 +73,6 @@ export function ComunityEditDialog({ open, onOpenChange, proposal, options, comm
     setEndsAt(toLocalInputValue(proposal.endsAt));
     setResultsVisibility(proposal.resultsVisibility);
     setAllowChangeResponse(proposal.allowChangeResponse);
-    setTokenReward(proposal.tokenReward != null ? String(proposal.tokenReward) : "");
     setMinSampleSize(String(proposal.minSampleSize));
     setOptionLabels(options.map(o => o.label));
     setScopeCommunityIds(communityIds);
@@ -109,7 +107,6 @@ export function ComunityEditDialog({ open, onOpenChange, proposal, options, comm
       endsAt: endsAt ? new Date(endsAt) : null,
       resultsVisibility,
       allowChangeResponse,
-      tokenReward: tokenReward ? Number(tokenReward) : null,
       coverImageUrl: coverImageUrl.trim() || null,
       venueId: venueId ? Number(venueId) : null,
       minSampleSize: Number(minSampleSize) || 5,
@@ -214,8 +211,10 @@ export function ComunityEditDialog({ open, onOpenChange, proposal, options, comm
           </label>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label>Recompensa en SegoTokens (opcional)</Label>
-              <Input type="number" min={0} max={200} value={tokenReward} onChange={e => setTokenReward(e.target.value)} placeholder="0" />
+              <Label>Recompensa en SegoTokens</Label>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Según política vigente (regla <span className="font-medium text-foreground">COMMUNITY_RESPONSE</span>).
+              </p>
             </div>
             <div>
               <Label>Muestra mínima para comparativas por segmento</Label>

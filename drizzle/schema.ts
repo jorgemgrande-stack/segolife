@@ -4154,7 +4154,7 @@ export const tokenRules = mysqlTable("token_rules", {
   name:                 varchar("name", { length: 256 }).notNull(),
   description:          text("description"),
   direction:            mysqlEnum("direction", ["earn", "spend"]).notNull(),
-  origin:               mysqlEnum("origin", ["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign"]).notNull(),
+  origin:               mysqlEnum("origin", ["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign", "community_response", "community_proposal_approved"]).notNull(),
   scope:                mysqlEnum("scope", ["global", "community", "venue", "event", "product", "ticket_type"]).notNull().default("global"),
   scopeCommunityId:     int("scope_community_id"),
   scopeVenueId:         int("scope_venue_id"),

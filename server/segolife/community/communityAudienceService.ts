@@ -7,6 +7,18 @@
  * responder queda fijado en ese momento — mismo patrón exacto que
  * engagement_campaigns → engagement_campaign_audiences
  * (server/segolife/engagement/campaignService.ts, sendCampaignNow).
+ *
+ * SEGOTOKENS — COMMUNITY_PROPOSAL_APPROVED (SEGOLIFE — COMMUNITY Production
+ * Implementation): cuando la propuesta que se activa proviene de una idea de
+ * estudiante (`sourceStudentProposalId`), se premia al autor original vía
+ * `earnTokens()` (origin="community_proposal_approved") en el momento en que
+ * la propuesta pasa realmente a `active` — no en el momento de aprobar la
+ * moderación (aprobar solo cambia `community_student_proposals.status`,
+ * todavía no hay nada publicado/visible). Idempotente por
+ * `sourceStudentProposalId` (una propuesta formal solo puede activarse una
+ * vez en su ciclo de vida — `publishProposal` exige status draft/scheduled).
+ * Best-effort: un fallo del motor de tokens nunca debe impedir la
+ * publicación real.
  */
 import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -14,8 +26,10 @@ import mysql from "mysql2/promise";
 import { communityProposals, communityProposalAudiences, communities } from "../../../drizzle/schema";
 import { resolveAudience, type AudienceDefinition } from "../engagement/audienceEngine";
 import { getProposalById, setProposalStatus, type AnyDbHandle } from "./communityDb";
+import { getStudentProposalById } from "./communityStudentProposalDb";
 import { createNotification } from "../engagement/notificationService";
 import { renderTemplate } from "../engagement/templates";
+import { earnTokens } from "../tokens/tokenEngine";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -106,7 +120,27 @@ export async function publishProposal(proposalId: number, publishedByUserId: num
   }, conn);
 
   if (willActivateNow) {
+    if (proposal.sourceStudentProposalId != null) {
+      await rewardStudentProposalApproved(proposal.sourceStudentProposalId, conn);
+    }
     await notifyProposalPublished(proposal.id, proposal.title, userIds, conn);
+  }
+}
+
+/** SegoTokens al autor de la idea original, solo cuando su propuesta convertida se activa de verdad (ver comentario de cabecera). Best-effort — nunca bloquea la publicación. */
+async function rewardStudentProposalApproved(sourceStudentProposalId: number, db: AnyDbHandle): Promise<void> {
+  try {
+    const idea = await getStudentProposalById(sourceStudentProposalId, db);
+    if (!idea) return;
+    await earnTokens({
+      userId: idea.studentUserId,
+      origin: "community_proposal_approved",
+      venueId: idea.venueId ?? null,
+      sourceId: sourceStudentProposalId,
+      idempotencyKey: `community_proposal_approved:${sourceStudentProposalId}`,
+    }, db);
+  } catch (err) {
+    console.error(`[communityAudienceService] No se concedió recompensa de propuesta aprobada (sourceStudentProposalId=${sourceStudentProposalId}):`, err);
   }
 }
 
