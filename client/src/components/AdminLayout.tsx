@@ -30,6 +30,15 @@ const navItems = [
     roles: ["admin", "agente", "monitor"],
   },
   {
+    // SEGOLIFE — RBAC CONSOLIDATION (spec §17/§19): único destino visible
+    // para un Administrador de Local — scoped a sus venues asignados,
+    // nunca el Command Center global ni el resto del nav.
+    label: "Mi local",
+    href: "/admin/mi-local",
+    icon: Store,
+    roles: ["venue_admin"],
+  },
+  {
     // Slideshow/Menús/Páginas siguen ocultos (audit de cierre de Fase 8.5:
     // solo alimentan Home.tsx y módulos legacy desconectados de toda ruta
     // activa). Multimedia se restaura a petición explícita del usuario — es
@@ -353,6 +362,7 @@ const ROLE_META: Record<string, { label: string; color: string }> = {
   monitor:   { label: "Monitor",               color: "text-green-400" },
   adminrest: { label: "Gestor Restaurantes",   color: "text-orange-400" },
   controler: { label: "Controler",             color: "text-purple-400" },
+  venue_admin: { label: "Administrador de local", color: "text-violet-400" },
   user:      { label: "Usuario",               color: "text-gray-400" },
 };
 
@@ -396,6 +406,17 @@ function AdminLayoutInner({ children, title }: AdminLayoutProps) {
     if (!loading && isAuthenticated && userRole === "controler") {
       if (!location.startsWith("/admin/contabilidad/control-diario")) {
         navigate("/admin/contabilidad/control-diario");
+      }
+    }
+  }, [loading, isAuthenticated, userRole, location, navigate]);
+
+  // ── SEGOLIFE — RBAC CONSOLIDATION (spec §19): Venue Admin NUNCA debe ver
+  // el Command Center global ni el resto de /admin — se confina a su propia
+  // vista scoped. Mismo patrón que el guard de adminrest/controler de arriba.
+  useEffect(() => {
+    if (!loading && isAuthenticated && userRole === "venue_admin") {
+      if (!location.startsWith("/admin/mi-local")) {
+        navigate("/admin/mi-local");
       }
     }
   }, [loading, isAuthenticated, userRole, location, navigate]);
@@ -534,7 +555,7 @@ function AdminLayoutInner({ children, title }: AdminLayoutProps) {
   }
 
   // ── Role not allowed for any admin section ──
-  if (!["admin", "agente", "monitor", "adminrest", "controler"].includes(userRole)) {
+  if (!["admin", "agente", "monitor", "adminrest", "controler", "venue_admin"].includes(userRole)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-center max-w-sm px-4">

@@ -29,7 +29,14 @@ export const users = mysqlTable("users", {
   // de añadir esta restricción (ver migración 0140).
   email: varchar("email", { length: 320 }).unique(),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin", "monitor", "agente", "adminrest", "controler", "partner_admin", "partner_user", "supplier", "employee", "gestoria"]).default("user").notNull(),
+  // "venue_admin" (SEGOLIFE — RBAC CONSOLIDATION): Administrador de Local,
+  // scoped a los venues donde tenga fila real en venue_staff (nunca "todos"
+  // por omisión). Necesita ser un valor real del enum (y no solo un rol RBAC
+  // en rbac_user_roles) porque el login actual decide el destino post-login
+  // comparando literalmente users.role (ver client/src/pages/Login.tsx,
+  // homeForRole) — un venue_admin con role="user" aterrizaría en la Student
+  // App por error.
+  role: mysqlEnum("role", ["user", "admin", "monitor", "agente", "adminrest", "controler", "partner_admin", "partner_user", "supplier", "employee", "gestoria", "venue_admin"]).default("user").notNull(),
   partnerId: int("partnerId"),
   supplierId: int("supplierId"), // vínculo a suppliers.id para usuarios con rol "supplier" (portal de proveedor)
   phone: varchar("phone", { length: 32 }),

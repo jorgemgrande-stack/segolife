@@ -3,7 +3,7 @@ import { eq, asc } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, permissionProcedure } from "../_core/trpc";
 import { getCommunityAccess } from "../_core/communityAccess";
-import { getVenueStaffAccess } from "../segolife/benefits/venueStaffAccess";
+import { getVenueStaffAccess, requireVenueAccess } from "../segolife/benefits/venueStaffAccess";
 import {
   listBenefitDefinitions,
   getBenefitDefinitionById,
@@ -274,6 +274,23 @@ export const benefitsRouter = router({
   getVenueStats: benefitsViewProcedure
     .input(z.object({ venueId: z.number().int().positive() }))
     .query(async ({ input }) => getVenueBenefitStats(input.venueId)),
+
+  /**
+   * SEGOLIFE — RBAC CONSOLIDATION (spec §6/§21: "ver métricas Casanova").
+   * Deliberadamente NO reutiliza benefitsViewProcedure (permiso benefits.view
+   * — daría acceso también a listDefinitions/listRules/listGrants globales,
+   * más de lo que un Venue Admin debe ver, spec §22 mínimo privilegio).
+   * En vez de eso: cualquier usuario autenticado puede llamarlo, pero
+   * requireVenueAccess exige una fila real en venue_staff para ESE venueId
+   * (o permiso global) — el mismo IDOR que getVenueStats no comprueba queda
+   * cerrado aquí explícitamente.
+   */
+  getMyVenueStats: protectedProcedure
+    .input(z.object({ venueId: z.number().int().positive() }))
+    .query(async ({ input, ctx }) => {
+      await requireVenueAccess(ctx.user.id, ctx.user.role as string, input.venueId, "benefits.manage");
+      return getVenueBenefitStats(input.venueId);
+    }),
 
   listRedemptionAttempts: benefitsViewProcedure
     .input(z.object({

@@ -16,6 +16,7 @@
 import { eq, and } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
+import { TRPCError } from "@trpc/server";
 import { venueStaff } from "../../../drizzle/schema";
 import { checkRbacOrLegacy } from "../../_core/rbac";
 
@@ -48,4 +49,30 @@ export async function getVenueStaffAccess(userId: number, legacyRole: string, db
   const rows = await conn.select({ venueId: venueStaff.venueId }).from(venueStaff)
     .where(and(eq(venueStaff.userId, userId), eq(venueStaff.active, true)));
   return rows.map(r => r.venueId);
+}
+
+/**
+ * Decisión pura (spec §46, IDOR test CRITICAL): dado un VenueStaffAccess ya
+ * resuelto, ¿puede operar sobre este venueId? Separada de requireVenueAccess
+ * para poder testear la lógica de IDOR sin tocar BD — "all" (admin global)
+ * siempre pasa, cualquier otro venueId fuera de la lista explícita se niega.
+ */
+export function venueAccessAllows(access: VenueStaffAccess, venueId: number): boolean {
+  if (access === "all") return true;
+  return access.includes(venueId);
+}
+
+/**
+ * SEGOLIFE — RBAC CONSOLIDATION (spec §44/§46): guarda genérica para
+ * endpoints que reciben un `venueId` explícito en el input (a diferencia de
+ * benefits/commerce/staffCheckin, que ya derivan el scope internamente).
+ * Lanza FORBIDDEN si el venueId pedido no está entre los accesibles —
+ * IDOR real si un Venue Admin pudiera pasar el venueId de otro local. Un
+ * admin global (`getVenueStaffAccess` devuelve "all") nunca se bloquea aquí.
+ */
+export async function requireVenueAccess(userId: number, legacyRole: string, venueId: number, permissionKey: string, db?: DbHandle): Promise<void> {
+  const access = await getVenueStaffAccess(userId, legacyRole, db, permissionKey);
+  if (!venueAccessAllows(access, venueId)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Sin acceso a este venue" });
+  }
 }

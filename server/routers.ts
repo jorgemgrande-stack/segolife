@@ -56,9 +56,14 @@ import {
   createMediaFile,
   deleteMediaFile,
   getAllUsers,
+  getUserById,
+  countActiveAdmins,
   createInvitedUser,
   changeUserRole,
   toggleUserActive,
+} from "./db";
+import { wouldRemoveLastAdmin } from "./segolife/rbac/adminGuard";
+import {
   getUserByInviteToken,
   setUserPassword,
   resendUserInvite,
@@ -1356,7 +1361,7 @@ export const appRouter = router({
     createUser: adminProcedure.input(z.object({
       name: z.string().min(2),
       email: z.string().email(),
-      role: z.enum(["user", "admin", "monitor", "agente", "adminrest", "controler"]),
+      role: z.enum(["user", "admin", "monitor", "agente", "adminrest", "controler", "venue_admin"]),
       origin: z.string(),
       rbacRoleKeys: z.array(z.string().min(1).max(64)).optional(),
     })).mutation(async ({ input }) => {
@@ -1401,8 +1406,12 @@ export const appRouter = router({
     }),
     changeUserRole: adminProcedure.input(z.object({
       userId: z.number(),
-      role: z.enum(["user", "admin", "monitor", "agente", "adminrest", "controler"]),
+      role: z.enum(["user", "admin", "monitor", "agente", "adminrest", "controler", "venue_admin"]),
     })).mutation(async ({ input }) => {
+      const [target, activeAdmins] = await Promise.all([getUserById(input.userId), countActiveAdmins()]);
+      if (wouldRemoveLastAdmin(input.role, target, activeAdmins)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "No puedes cambiar el rol del único administrador activo. Asigna primero otro administrador general." });
+      }
       return changeUserRole(input.userId, input.role);
     }),
     toggleUserActive: adminProcedure.input(z.object({

@@ -157,6 +157,13 @@ export async function getAllUsers() {
   return db.select().from(users).orderBy(desc(users.createdAt));
 }
 
+export async function getUserById(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  return row;
+}
+
 // --- PUBLIC QUERIES -----------------------------------------------------------
 
 export async function getFeaturedExperiences() {
@@ -1505,7 +1512,7 @@ export async function clonePack(id: number) {
 export async function createInvitedUser(data: {
   name: string;
   email: string;
-  role: "user" | "admin" | "monitor" | "agente" | "adminrest" | "controler";
+  role: "user" | "admin" | "monitor" | "agente" | "adminrest" | "controler" | "venue_admin";
   inviteToken: string;
   inviteTokenExpiry: Date;
 }) {
@@ -1528,11 +1535,19 @@ export async function createInvitedUser(data: {
   return { success: true, id: Number(result[0].insertId) };
 }
 
-export async function changeUserRole(userId: number, role: "user" | "admin" | "monitor" | "agente" | "adminrest" | "controler") {
+export async function changeUserRole(userId: number, role: "user" | "admin" | "monitor" | "agente" | "adminrest" | "controler" | "venue_admin") {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(users).set({ role, updatedAt: new Date() }).where(eq(users.id, userId));
   return { success: true };
+}
+
+/** SEGOLIFE — RBAC CONSOLIDATION (spec §33/§34): usado por changeUserRole en routers.ts para impedir dejar el sistema sin ningún GLOBAL_ADMIN activo — antes solo existía como aviso client-side, sin guardia real en el servidor. */
+export async function countActiveAdmins(): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = await db.select({ id: users.id }).from(users).where(and(eq(users.role, "admin"), eq(users.isActive, true)));
+  return rows.length;
 }
 
 export async function toggleUserActive(userId: number) {

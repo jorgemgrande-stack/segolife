@@ -215,6 +215,7 @@ const UnresolvedOperations = lazy(() => import("./pages/admin/integrations/Unres
 
 // Users & Settings
 const UsersManager = lazy(() => import("./pages/admin/users/UsersManager"));
+const MyVenue = lazy(() => import("./pages/admin/venue/MyVenue"));
 const Settings = lazy(() => import("./pages/admin/settings/Settings"));
 const AdvancedSettings = lazy(() => import("./pages/admin/settings/AdvancedSettings"));
 const ConfigPanel = lazy(() => import("./pages/admin/settings/ConfigPanel"));
@@ -499,6 +500,7 @@ function Router() {
 
       {/* Users & Settings */}
       <Route path="/admin/usuarios">{() => <Suspense fallback={<AdminLoadingFallback />}><UsersManager /></Suspense>}</Route>
+      <Route path="/admin/mi-local">{() => <Suspense fallback={<AdminLoadingFallback />}><MyVenue /></Suspense>}</Route>
       <Route path="/admin/students">{() => <Suspense fallback={<AdminLoadingFallback />}><StudentsManager /></Suspense>}</Route>
       {/* Rutas literales ANTES de /admin/students/:id — wouter hace match en orden y ":id" capturaría "historical" si fuera declarada después. */}
       <Route path="/admin/students/historical">{() => <Suspense fallback={<AdminLoadingFallback />}><HistoricalIdentities /></Suspense>}</Route>

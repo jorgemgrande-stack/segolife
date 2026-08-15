@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, publicProcedure, permissionProcedure } from "../_core/trpc";
+import { router, publicProcedure, protectedProcedure, permissionProcedure } from "../_core/trpc";
 import { getCommunityAccess, resolveCommunityFilter, type CommunityAccess } from "../_core/communityAccess";
+import { getVenueStaffAccess } from "../segolife/benefits/venueStaffAccess";
 import {
   listVenues,
   getVenueById,
@@ -92,6 +93,23 @@ export const venuesRouter = router({
     }),
 
   listCategories: venuesViewProcedure.query(async () => listVenueCategories()),
+
+  /**
+   * SEGOLIFE — RBAC CONSOLIDATION (spec §5/§17/§19): "ver mi(s) local(es)"
+   * para un Administrador de Local. Deliberadamente NO usa venuesViewProcedure
+   * (esa es la vista GLOBAL de catálogo, permiso venues.view que un Venue
+   * Admin nunca tiene) — este es un endpoint de propiedad, como
+   * benefits.myAuthorizedVenues: cada uno ve exactamente sus venue_staff
+   * activos, nunca "todos" por defecto. Un admin global también recibe algo
+   * coherente (permissionKey inexistente para él como venue_admin real, pero
+   * checkRbacOrLegacy ya lo resuelve como global vía el fallback ["admin"]).
+   */
+  myAssignedVenues: protectedProcedure.query(async ({ ctx }) => {
+    const access = await getVenueStaffAccess(ctx.user.id, ctx.user.role as string, undefined, "venues.manage");
+    if (access === "all") return [];
+    const details = await Promise.all(access.map(id => getVenueById(id)));
+    return details.filter((v): v is NonNullable<typeof v> => v != null);
+  }),
 
   // ─── ADMIN — escritura ──────────────────────────────────────────────────────
 
