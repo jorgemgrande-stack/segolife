@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Search, CalendarDays, Store } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { formatCardRewardBadge } from "@/lib/rewardPreview";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
 import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
@@ -65,6 +67,7 @@ function FilterChip({ label, active, onClick }: { label: string; active: boolean
 
 function EventsTab({ slug, communityId, search }: { slug: string; communityId?: number; search: string }) {
   const { t } = useTranslation();
+  const { isAuthenticated } = useAuth();
   const { data: events, isLoading, isError, refetch } = trpc.events.publicActive.useQuery({ communityId });
   const [dateFilter, setDateFilter] = useState<EventDateFilter>("all");
   const now = useMemo(() => new Date(), []);
@@ -75,6 +78,19 @@ function EventsTab({ slug, communityId, search }: { slug: string; communityId?: 
       e => matchesDateFilter(e.startsAt, dateFilter, now) && (!q || e.name.toLowerCase().includes(q))
     );
   }, [events, dateFilter, search, now]);
+
+  // SEGOTOKENS REWARD PREVIEW (Fase 10.6, spec §30/§31) — UN solo request de
+  // red para toda la grilla visible (nunca N por card); solo con sesión, ya
+  // que previewMyEventRewardBatch es autoservicio del propio Student.
+  // Limitado a los primeros 24 eventos visibles (mismo tope que el servidor).
+  const batchItems = useMemo(
+    () => filtered.slice(0, 24).map(e => ({ key: String(e.id), eventId: e.id, venueId: e.venue?.id ?? undefined })),
+    [filtered]
+  );
+  const rewardBatchQ = trpc.tokens.previewMyEventRewardBatch.useQuery(
+    { items: batchItems },
+    { enabled: isAuthenticated && batchItems.length > 0 }
+  );
 
   if (isLoading) return <SegolifeCardGridSkeleton />;
   if (isError) return <SegolifeErrorState onRetry={() => refetch()} />;
@@ -102,7 +118,12 @@ function EventsTab({ slug, communityId, search }: { slug: string; communityId?: 
       ) : (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 xl:grid-cols-4 xl:gap-5">
           {filtered.map(e => (
-            <SegolifeEventCard key={e.id} event={e} slug={slug} />
+            <SegolifeEventCard
+              key={e.id}
+              event={e}
+              slug={slug}
+              rewardBadge={formatCardRewardBadge(rewardBatchQ.data?.[String(e.id)], t)}
+            />
           ))}
         </div>
       )}

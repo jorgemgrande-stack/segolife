@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams, useLocation, Link } from "wouter";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, CalendarDays, Clock, MapPin, Users, Ticket, Minus, Plus, Loader2, ImageOff } from "lucide-react";
+import { ChevronLeft, CalendarDays, Clock, MapPin, Users, Ticket, Minus, Plus, Loader2, ImageOff, Coins } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
@@ -65,6 +65,23 @@ export default function EventDetail() {
   };
 
   const totalQuantity = Object.values(quantities).reduce((a, b) => a + b, 0);
+
+  // SEGOTOKENS REWARD PREVIEW (Fase 10.6, spec §31/§32) — el importe que se
+  // manda es SOLO el total en € ya calculado con los precios reales que ya
+  // muestra esta página (nunca una tasa) — el servidor resuelve cuánto ST da
+  // eso. Solo con sesión (el preview es autoservicio del Student) y solo
+  // para el flujo de venta nativa (origin="ticket" solo se concede ahí).
+  const totalAmountEuros = useMemo(() => {
+    if (data?.purchaseAction?.type !== "native_checkout") return undefined;
+    const cents = data.purchaseAction.ticketTypes.reduce((sum, tt) => sum + (quantities[tt.id] ?? 0) * tt.priceCents, 0);
+    return cents > 0 ? cents / 100 : undefined;
+  }, [data, quantities]);
+
+  const rewardQ = trpc.tokens.previewMyEventReward.useQuery(
+    { eventId: data?.event.id ?? 0, venueId: data?.venue?.id, amountSpent: totalAmountEuros },
+    { enabled: !!user && !!data?.event.id && data?.purchaseAction?.type === "native_checkout" }
+  );
+  const attendanceReward = rewardQ.data?.conditionalRewards.find(r => r.eligible && r.totalTokens > 0);
 
   return (
     <SegolifeAppShell hideNav title={data?.event.name}>
@@ -235,6 +252,29 @@ export default function EventDetail() {
                     );
                   })}
                 </div>
+
+                {!!rewardQ.data && (rewardQ.data.totalGuaranteedTokens > 0 || rewardQ.data.effectiveRate || attendanceReward) && (
+                  <div className="segolife-card-shadow space-y-1.5 rounded-2xl border border-primary/20 bg-primary/5 p-3.5 text-sm">
+                    {rewardQ.data.totalGuaranteedTokens > 0 ? (
+                      <p className="flex items-center gap-1.5 font-medium text-foreground">
+                        <Coins className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                        {t("rewardPreview.guaranteedWithAmount", { amount: rewardQ.data.totalGuaranteedTokens })}
+                        {rewardQ.data.promotionalValue && (
+                          <span className="text-xs font-normal text-muted-foreground">({t("rewardPreview.approxValue", { value: rewardQ.data.promotionalValue.formatted })})</span>
+                        )}
+                      </p>
+                    ) : rewardQ.data.effectiveRate ? (
+                      <p className="flex items-center gap-1.5 font-medium text-foreground">
+                        <Coins className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                        {t("rewardPreview.guaranteedRateOnly", { rate: rewardQ.data.effectiveRate })}
+                      </p>
+                    ) : null}
+                    {attendanceReward && (
+                      <p className="text-xs text-muted-foreground">{t("rewardPreview.conditionalAttendance", { amount: attendanceReward.totalTokens })}</p>
+                    )}
+                  </div>
+                )}
+
                 <Button
                   className="w-full rounded-full py-6 text-sm font-semibold"
                   disabled={totalQuantity === 0 || startCheckoutMut.isPending}

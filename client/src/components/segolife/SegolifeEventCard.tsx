@@ -1,10 +1,11 @@
 import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
-import { MapPin } from "lucide-react";
+import { MapPin, Coins } from "lucide-react";
 import { SegolifeImage } from "./SegolifeImage";
 import { Badge } from "@/components/ui/badge";
 
 export interface SegolifeEventCardData {
+  id?: number;
   slug: string;
   name: string;
   imageUrl: string | null;
@@ -18,8 +19,14 @@ export interface SegolifeEventCardData {
  * punto 9) — calidad de plataforma de eventos: cover, día/hora, título,
  * venue, badge si destacado. Sin datos innecesarios en la card misma (los
  * detalles completos viven en Event Detail).
+ *
+ * `rewardBadge` (Fase 10.6, spec §31) — texto YA FORMATEADO por el llamador
+ * vía formatCardRewardBadge() sobre un StudentRewardPreview real (nunca un
+ * número calculado aquí) — la card sigue siendo puramente presentacional,
+ * no hace ninguna llamada de datos propia (así puede reutilizarse en listas
+ * batched sin duplicar queries).
  */
-export function SegolifeEventCard({ event, slug, className }: { event: SegolifeEventCardData; slug: string; className?: string }) {
+export function SegolifeEventCard({ event, slug, className, rewardBadge }: { event: SegolifeEventCardData; slug: string; className?: string; rewardBadge?: string | null }) {
   const { i18n } = useTranslation();
   const starts = new Date(event.startsAt);
   const day = starts.toLocaleDateString(i18n.language, { weekday: "short", day: "numeric", month: "short" });
@@ -41,6 +48,11 @@ export function SegolifeEventCard({ event, slug, className }: { event: SegolifeE
         {event.venue && (
           <p className="flex items-center gap-1 text-xs text-muted-foreground">
             <MapPin className="size-3" aria-hidden="true" /> {event.venue.name}
+          </p>
+        )}
+        {rewardBadge && (
+          <p className="flex items-center gap-1 text-[11px] font-medium text-primary">
+            <Coins className="size-3" aria-hidden="true" /> {rewardBadge}
           </p>
         )}
       </div>

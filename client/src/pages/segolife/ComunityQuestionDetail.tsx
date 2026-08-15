@@ -25,13 +25,22 @@ type QuestionType =
  */
 export default function ComunityQuestionDetail() {
   const { id } = useParams<{ id: string }>();
-  const { slug } = useCommunity();
+  const { slug, community } = useCommunity();
   const [, navigate] = useLocation();
   const { t } = useTranslation();
   const proposalId = Number(id);
   const utils = trpc.useUtils();
 
   const { data, isLoading } = trpc.community.getPublicById.useQuery({ id: proposalId });
+
+  // SEGOTOKENS REWARD PREVIEW (Fase 10.6) — misma lógica que ComunityHub.tsx:
+  // la regla real (COMMUNITY_RESPONSE, scope global) manda, nunca el campo
+  // legacy proposal.tokenReward.
+  const rewardQ = trpc.tokens.previewMyReward.useQuery(
+    { origin: "community_response", communityId: community?.id },
+    { enabled: !!community?.id }
+  );
+  const responseReward = rewardQ.data?.totalGuaranteedTokens ?? 0;
 
   const [justResponded, setJustResponded] = useState(false);
   const respondMut = trpc.community.respond.useMutation({
@@ -68,8 +77,8 @@ export default function ComunityQuestionDetail() {
           {proposal.description && <p className="mt-1 text-sm text-muted-foreground">{proposal.description}</p>}
           <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
             {isOpen ? <span>⏳ {timeLeftLabel(proposal.endsAt)}</span> : <span>Cerrada</span>}
-            {!!proposal.tokenReward && (
-              <span className="flex items-center gap-1 text-primary"><Coins className="size-3.5" /> +{proposal.tokenReward} ST</span>
+            {responseReward > 0 && (
+              <span className="flex items-center gap-1 text-primary"><Coins className="size-3.5" /> +{responseReward} ST</span>
             )}
           </div>
         </div>

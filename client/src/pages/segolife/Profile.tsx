@@ -156,6 +156,7 @@ export default function Profile() {
   const { data: me, isLoading } = trpc.students.me.useQuery();
   const { data: universities } = trpc.communities.listUniversities.useQuery();
   const { data: wallet } = trpc.tokens.getMyWallet.useQuery();
+  const { data: walletValue } = trpc.tokens.myWalletPromotionalValue.useQuery();
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
 
@@ -261,6 +262,9 @@ export default function Profile() {
                   <Coins className="size-3.5" aria-hidden="true" /> {t("home.walletBalance")}
                 </p>
                 <p className="mt-1 text-4xl font-bold tabular-nums">{(wallet?.balance ?? 0).toLocaleString(i18n.language)}</p>
+                {walletValue?.promotionalValue && (
+                  <p className="mt-1 text-xs text-primary-foreground/80">{t("rewardPreview.approxValue", { value: walletValue.promotionalValue.formatted })}</p>
+                )}
               </div>
               <ChevronRight className="size-5 text-primary-foreground/70" aria-hidden="true" />
             </div>

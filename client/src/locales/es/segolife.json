@@ -478,6 +478,16 @@
     "typeBenefitUnlocked": "Beneficio desbloqueado",
     "typeBenefitUsed": "Beneficio usado"
   },
+  "rewardPreview": {
+    "cardBadgeUpTo": "Hasta +{{amount}} ST",
+    "cardBadgeGuaranteed": "+{{amount}} ST",
+    "cardBadgeRate": "Gana ST · {{rate}}",
+    "guaranteedWithAmount": "Vas a ganar {{amount}} ST con esta compra",
+    "guaranteedRateOnly": "Gana ST en esta compra · {{rate}}",
+    "conditionalAttendance": "+{{amount}} ST más si asistes al evento",
+    "approxValue": "≈ {{value}}",
+    "checkoutEarn": "Vas a ganar {{amount}} ST con este pedido"
+  },
   "ticketing": {
     "selectTickets": "Selecciona tus entradas",
     "soldOut": "Agotado",

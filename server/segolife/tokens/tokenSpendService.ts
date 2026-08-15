@@ -105,8 +105,13 @@ export async function resolveRedemptionPolicy(ctx: PolicyContext, at: Date = new
 
 // ─── 2. VALORACIÓN — ratio entero, nunca float (spec §12) ──────────────────
 
-/** Trunca siempre — nunca da más valor promocional del matemáticamente permitido. */
-function tokensToValueCents(tokens: number, policy: Pick<TokenRedemptionPolicy, "tokensPerUnit" | "valueCentsPerUnit">): number {
+/**
+ * Exportada (Fase 10.6, spec §27) — studentRewardPreviewService.ts la reutiliza
+ * TAL CUAL para traducir "cuánto vas a ganar" a "cuánto vale eso en €" en el
+ * read model de Student, sin reimplementar esta fórmula en ningún otro sitio.
+ * Trunca siempre — nunca da más valor promocional del matemáticamente permitido.
+ */
+export function tokensToValueCents(tokens: number, policy: Pick<TokenRedemptionPolicy, "tokensPerUnit" | "valueCentsPerUnit">): number {
   return Math.floor((tokens * policy.valueCentsPerUnit) / policy.tokensPerUnit);
 }
 /** El MAYOR nº de tokens cuyo valor NO supera maxValueCents — inverso de tokensToValueCents, también conservador. */

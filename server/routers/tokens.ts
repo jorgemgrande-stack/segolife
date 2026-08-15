@@ -62,6 +62,14 @@ import { getEconomyOverviewExtras } from "../segolife/tokens/economyOverviewServ
 import { evaluateReward } from "../segolife/tokens/rewardEngine";
 import { LIVE_LOYALTY_ENABLED } from "../segolife/tokens/tokenEngine";
 import { quoteTokenSpend } from "../segolife/tokens/tokenSpendService";
+import {
+  previewMyReward,
+  previewMyEventReward,
+  previewMyRewardBatch,
+  previewMyEventRewardBatch,
+  previewMyWalletValue,
+  MAX_BATCH_PREVIEW_ITEMS,
+} from "../segolife/tokens/studentRewardPreviewService";
 
 const tokensViewProcedure = permissionProcedure("tokens.view", ["admin"]);
 const tokensManageProcedure = permissionProcedure("tokens.manage", ["admin"]);
@@ -158,6 +166,16 @@ const scheduleInputSchema = z.object({
   validFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   validTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
 });
+
+// SEGOTOKENS REWARD PREVIEW (Fase 10.6) — orígenes previsualizables por un
+// Student sobre SÍ MISMO. Incluye community_response/community_proposal_approved
+// (producción confirma reglas activas reales id=8/9, communityResponseService.ts
+// las usa de verdad) — pero NUNCA "manual" (ajuste discrecional de admin, nada
+// que un Student pueda "previsualizar" antes de que ocurra).
+const PREVIEW_MY_REWARD_ORIGINS = [
+  "attendance", "event", "ticket", "purchase", "consumption", "product",
+  "recurrence", "campaign", "community_response", "community_proposal_approved",
+] as const;
 
 // SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7).
 const redemptionPolicyInputSchema = z.object({
@@ -534,4 +552,58 @@ export const tokensRouter = router({
       reason: z.string().min(1).max(500),
     }))
     .mutation(({ input, ctx }) => setGlobalReferralEconomics({ ...input, actorUserId: ctx.user.id })),
+
+  // ─── SEGOTOKENS REWARD PREVIEW & ECONOMY TRANSPARENCY (Fase 10.6) ──────────
+  // Autoservicio de Student — SIEMPRE protectedProcedure, SIEMPRE
+  // userId=ctx.user.id (nunca un input del cliente, spec §60: "server always
+  // resolves"). Solo lectura — evaluateReward en modo SIMULATION nunca
+  // persiste, igual que previewReward (arriba) pero sin exigir permiso de
+  // admin, para que cualquier Student autenticado pueda previsualizar SU
+  // PROPIA recompensa.
+
+  previewMyReward: protectedProcedure
+    .input(z.object({
+      origin: z.enum(PREVIEW_MY_REWARD_ORIGINS),
+      venueId: z.number().int().positive().optional(),
+      eventId: z.number().int().positive().optional(),
+      communityId: z.number().int().positive().optional(),
+      amountSpent: z.number().nonnegative().optional(),
+    }))
+    .query(({ input, ctx }) => previewMyReward({ ...input, userId: ctx.user.id })),
+
+  previewMyEventReward: protectedProcedure
+    .input(z.object({
+      eventId: z.number().int().positive(),
+      venueId: z.number().int().positive().optional(),
+      communityId: z.number().int().positive().optional(),
+      amountSpent: z.number().nonnegative().optional(),
+    }))
+    .query(({ input, ctx }) => previewMyEventReward({ ...input, userId: ctx.user.id })),
+
+  previewMyRewardBatch: protectedProcedure
+    .input(z.object({
+      items: z.array(z.object({
+        key: z.string().min(1).max(64),
+        origin: z.enum(PREVIEW_MY_REWARD_ORIGINS),
+        venueId: z.number().int().positive().optional(),
+        eventId: z.number().int().positive().optional(),
+        communityId: z.number().int().positive().optional(),
+        amountSpent: z.number().nonnegative().optional(),
+      })).max(MAX_BATCH_PREVIEW_ITEMS),
+    }))
+    .query(({ input, ctx }) => previewMyRewardBatch(ctx.user.id, input.items)),
+
+  previewMyEventRewardBatch: protectedProcedure
+    .input(z.object({
+      items: z.array(z.object({
+        key: z.string().min(1).max(64),
+        eventId: z.number().int().positive(),
+        venueId: z.number().int().positive().optional(),
+        communityId: z.number().int().positive().optional(),
+        amountSpent: z.number().nonnegative().optional(),
+      })).max(MAX_BATCH_PREVIEW_ITEMS),
+    }))
+    .query(({ input, ctx }) => previewMyEventRewardBatch(ctx.user.id, input.items)),
+
+  myWalletPromotionalValue: protectedProcedure.query(({ ctx }) => previewMyWalletValue(ctx.user.id)),
 });

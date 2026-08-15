@@ -162,3 +162,37 @@ describe("tokens router — autoservicio del estudiante (nunca público) rechaza
     await expect(callerWithoutSession().listMyLedger({ limit: 20, offset: 0 })).rejects.toThrow(/please login/i);
   });
 });
+
+describe("tokens router — SEGOTOKENS REWARD PREVIEW & ECONOMY TRANSPARENCY (Fase 10.6)", () => {
+  it("previewMyReward/previewMyEventReward/previewMyRewardBatch/previewMyEventRewardBatch/myWalletPromotionalValue rechazan sin sesión", async () => {
+    await expect(callerWithoutSession().previewMyReward({ origin: "attendance" })).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().previewMyEventReward({ eventId: 1 })).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().previewMyRewardBatch({ items: [] })).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().previewMyEventRewardBatch({ items: [] })).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().myWalletPromotionalValue()).rejects.toThrow(/please login/i);
+  });
+
+  it("un userId inyectado en el input del cliente no rompe el parseo ni sustituye la identidad real (zod lo descarta; el router siempre añade userId: ctx.user.id DESPUÉS del spread del input)", async () => {
+    // El router hace `previewMyRewardBatch(ctx.user.id, input.items)` — el
+    // input nunca declara `userId` en su schema, así que aunque el cliente lo
+    // envíe, zod lo descarta antes de llegar al handler. Con items:[] la
+    // llamada resuelve sin tocar la BD, así que este test verifica el
+    // comportamiento real sin depender de mocks de infraestructura.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await callerAs("user", 7).previewMyRewardBatch({ items: [], userId: 999 } as any);
+    expect(result).toEqual({});
+  });
+
+  it("previewMyRewardBatch/previewMyEventRewardBatch rechazan un lote por encima del tope (protección de payload — spec §30)", async () => {
+    const items = Array.from({ length: 25 }, (_, i) => ({ key: `k${i}`, origin: "attendance" as const }));
+    await expect(callerAs("user").previewMyRewardBatch({ items })).rejects.toThrow();
+    const eventItems = Array.from({ length: 25 }, (_, i) => ({ key: `k${i}`, eventId: i + 1 }));
+    await expect(callerAs("user").previewMyEventRewardBatch({ items: eventItems })).rejects.toThrow();
+  });
+
+  it("un Student (role='user') SÍ puede llegar al handler real (autoservicio, nunca requiere permiso de admin)", async () => {
+    await expect(callerAs("user").previewMyReward({ origin: "attendance" })).rejects.not.toMatchObject({ code: "FORBIDDEN" });
+    await expect(callerAs("user").previewMyRewardBatch({ items: [] })).resolves.toEqual({});
+    await expect(callerAs("user").previewMyEventRewardBatch({ items: [] })).resolves.toEqual({});
+  });
+});

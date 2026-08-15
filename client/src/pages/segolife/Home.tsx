@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { Coins, Gift, ChevronRight, Flame, Sparkles, PartyPopper, Vote, Ticket, Compass, UserRound, Clock3, CheckCircle2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { formatCardRewardBadge } from "@/lib/rewardPreview";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
 import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
@@ -49,6 +50,7 @@ export default function Home() {
   const { community, slug } = useCommunity();
 
   const { data: summary, isLoading } = trpc.home.getSummary.useQuery();
+  const { data: walletValue } = trpc.tokens.myWalletPromotionalValue.useQuery();
   type HomeCardKind = NonNullable<typeof summary>["ranking"]["forYou"][number];
   const { data: me } = trpc.students.me.useQuery();
   const { data: venues } = trpc.venues.publicActive.useQuery({ communityId: community?.id });
@@ -88,6 +90,24 @@ export default function Home() {
   const marketplaceVenueName = summary?.marketplaceRecommendation?.destinationVenueId != null
     ? venues?.find(v => v.id === summary.marketplaceRecommendation!.destinationVenueId)?.name
     : undefined;
+
+  // SEGOTOKENS REWARD PREVIEW (Fase 10.6, spec §31/§33) — un solo lote para
+  // Tonight+Featured (Home ya requiere sesión, nunca necesita el guard
+  // isAuthenticated que sí usa Explore, que es pública).
+  const homeEventBatchItems = useMemo(() => {
+    const seen = new Set<number>();
+    const items: { key: string; eventId: number; venueId?: number }[] = [];
+    for (const e of [...tonightEvents, ...(summary?.featuredEvents ?? [])]) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      items.push({ key: String(e.id), eventId: e.id, venueId: e.venue?.id ?? undefined });
+    }
+    return items.slice(0, 24);
+  }, [tonightEvents, summary?.featuredEvents]);
+  const homeRewardBatchQ = trpc.tokens.previewMyEventRewardBatch.useQuery(
+    { items: homeEventBatchItems },
+    { enabled: homeEventBatchItems.length > 0 }
+  );
 
   function renderCard(kind: HomeCardKind, elevated: boolean) {
     const shell = elevated
@@ -219,6 +239,9 @@ export default function Home() {
                   <Coins className="size-3.5" aria-hidden="true" /> {t("home.walletBalance")}
                 </p>
                 <p className="mt-1 text-4xl font-bold tabular-nums">{(summary?.walletBalance ?? 0).toLocaleString(i18n.language)}</p>
+                {walletValue?.promotionalValue && (
+                  <p className="mt-1 text-xs text-primary-foreground/80">{t("rewardPreview.approxValue", { value: walletValue.promotionalValue.formatted })}</p>
+                )}
                 {!!summary?.earnedThisWeek && (
                   <p className="mt-1.5 text-xs text-primary-foreground/80">{t("home.earnedThisWeek", { count: summary.earnedThisWeek })}</p>
                 )}
@@ -258,7 +281,7 @@ export default function Home() {
             <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
               {tonightEvents.map(e => (
                 <div key={e.id} className="contents" onClick={() => trackCard("event")}>
-                  <SegolifeEventCard event={e} slug={slug!} className="w-36 shrink-0" />
+                  <SegolifeEventCard event={e} slug={slug!} className="w-36 shrink-0" rewardBadge={formatCardRewardBadge(homeRewardBatchQ.data?.[String(e.id)], t)} />
                 </div>
               ))}
             </div>
@@ -273,7 +296,7 @@ export default function Home() {
             <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
               {summary.featuredEvents.map(e => (
                 <div key={e.id} className="contents" onClick={() => trackCard("event")}>
-                  <SegolifeEventCard event={e} slug={slug!} className="w-36 shrink-0" />
+                  <SegolifeEventCard event={e} slug={slug!} className="w-36 shrink-0" rewardBadge={formatCardRewardBadge(homeRewardBatchQ.data?.[String(e.id)], t)} />
                 </div>
               ))}
             </div>

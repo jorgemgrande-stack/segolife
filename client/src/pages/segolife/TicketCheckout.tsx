@@ -41,6 +41,16 @@ export default function TicketCheckout() {
   const { data, isLoading, refetch } = trpc.ticketPurchase.myOrderById.useQuery({ orderId }, { enabled: !!orderId });
   const walletQ = trpc.tokens.getMyWallet.useQuery();
 
+  // SEGOTOKENS REWARD PREVIEW (Fase 10.6, spec §32) — cuánto ST va a ganar
+  // ESTA compra (lado "earn", distinto del input de "pagar con ST" de abajo,
+  // que es el lado "spend") — solo mientras el pedido sigue pagable
+  // (canPay se calcula más abajo; aquí se repite la misma condición porque
+  // `data`/`order` todavía no existen en este punto del componente).
+  const rewardQ = trpc.tokens.previewMyReward.useQuery(
+    { origin: "ticket", eventId: data?.order.eventId, amountSpent: data ? data.order.totalCents / 100 : undefined },
+    { enabled: !!data && (data.order.status === "pending" || data.order.status === "awaiting_payment") }
+  );
+
   const payMut = trpc.ticketPurchase.initiatePayment.useMutation({
     onSuccess: res => {
       if (res.paymentStatus === "succeeded") {
@@ -118,6 +128,18 @@ export default function TicketCheckout() {
                 </div>
               </div>
             )}
+            {!!rewardQ.data && rewardQ.data.totalGuaranteedTokens > 0 && (
+              <div className="segolife-card-shadow mt-4 flex items-center gap-2 rounded-2xl border border-primary/20 bg-primary/5 p-4 text-sm">
+                <Coins className="size-5 shrink-0 text-primary" aria-hidden="true" />
+                <p className="text-foreground">
+                  {t("rewardPreview.checkoutEarn", { amount: rewardQ.data.totalGuaranteedTokens })}
+                  {rewardQ.data.promotionalValue && (
+                    <span className="ml-1 text-xs text-muted-foreground">({t("rewardPreview.approxValue", { value: rewardQ.data.promotionalValue.formatted })})</span>
+                  )}
+                </p>
+              </div>
+            )}
+
             {/* SEGOLIFE — COMMERCE CORE (Fase 9, spec §65): compra 100% con
                 SegoTokens — el servidor rechaza si no cubre el precio
                 entero (nunca un pago mixto online, sin pasarela real). */}
