@@ -54,10 +54,15 @@ const EMPTY_FORM: FormState = {
 };
 
 /**
- * QR de identidad para POS nativo (Fase 8, spec punto 23) — identifica al
- * estudiante frente al staff, nunca autoriza un cargo por sí mismo. Se
- * muestra siempre plegado por defecto para no competir visualmente con
- * SegoTokens (la sección más importante de Profile).
+ * QR permanente de identidad del Student (Fase 8, spec punto 23; ampliado en
+ * SEGOLIFE — STUDENT IDENTITY, UNIVERSAL QR & UNIFIED CHECK-IN: mismo token
+ * `student_identity_tokens`, mismo endpoint, ahora también aceptado por el
+ * check-in de puerta además del POS) — identifica al estudiante frente al
+ * staff, NUNCA autoriza un cargo ni una asistencia por sí mismo sin que el
+ * staff/servidor lo valide. Se muestra siempre plegado por defecto para no
+ * competir visualmente con SegoTokens (la sección más importante de
+ * Profile) — sigue siendo accesible en un toque, como pide el spec.
+ * Tamaño de QR aumentado (200px) para lectura fiable en luz de discoteca.
  */
 function StudentIdentitySection() {
   const { t } = useTranslation();
@@ -81,7 +86,7 @@ function StudentIdentitySection() {
             <Loader2 className="size-6 animate-spin text-primary" aria-hidden="true" />
           ) : (
             <>
-              <div className="rounded-2xl bg-white p-3"><QRCodeSVG value={data.token} size={160} level="M" /></div>
+              <div className="rounded-2xl bg-white p-4"><QRCodeSVG value={data.token} size={200} level="M" /></div>
               <p className="text-center text-xs text-muted-foreground">{t("profile.identityQrDescription")}</p>
               <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" disabled={rotateMut.isPending} onClick={() => rotateMut.mutate()}>
                 <RotateCw className="size-3.5" aria-hidden="true" /> {t("profile.identityQrRegenerate")}

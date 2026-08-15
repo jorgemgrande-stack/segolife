@@ -249,7 +249,13 @@
     "searchNoResults": "No se encontraron entradas",
     "searchStatusUsed": "Ya validada",
     "searchStatusCancelled": "Cancelada",
-    "searchStatusRefunded": "Reembolsada"
+    "searchStatusRefunded": "Reembolsada",
+    "unknownCredential": "Este código no es ni una entrada ni una ID SEGOLIFE válida",
+    "linkIdentityTitle": "Entrada válida — identifica al Student",
+    "linkIdentityDescription": "Esta entrada todavía no tiene un Student vinculado. Escanea su ID permanente de SEGOLIFE para completar el check-in.",
+    "selectVenueTitle": "Selecciona el venue en el que estás operando",
+    "venueOption": "Venue #{{id}}",
+    "selectEventTitle": "Hay más de un evento en curso — selecciona el correcto"
   },
   "pos": {
     "title": "POS",
@@ -444,8 +450,8 @@
     "completeProfileDescription": "Añade tus datos para aprovechar toda la experiencia Segolife.",
     "completeProfileCta": "Completar perfil",
     "viewActivity": "Ver actividad",
-    "identityQrTitle": "Mi código de POS",
-    "identityQrDescription": "Muestra esto en un POS de Segolife para que el staff te identifique — nunca autoriza un cargo por sí mismo.",
+    "identityQrTitle": "Mi ID de SEGOLIFE",
+    "identityQrDescription": "Usa este QR para identificarte en los venues de SEGOLIFE y en el check-in — nunca autoriza un cargo ni un acceso por sí mismo.",
     "identityQrRegenerate": "Regenerar código",
     "identityQrRotated": "Código regenerado",
     "historicalBannerTitle": "Hemos encontrado actividad anterior",

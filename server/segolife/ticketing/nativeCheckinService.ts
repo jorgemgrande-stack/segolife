@@ -40,7 +40,8 @@ async function getDb(): Promise<DbHandle> {
 }
 
 export class CheckinError extends Error {
-  constructor(public code: string, message: string) {
+  /** SEGOLIFE — UNIFIED CHECK-IN (spec §9): en NO_OWNER lleva `{ ticketId }` para que la capa de arriba pueda ofrecer el fallback de dos escaneos (vincular identidad) sin tener que volver a buscar el ticket por token. Vacío/undefined para el resto de códigos — nunca ha llevado datos hasta ahora, cambio puramente aditivo. */
+  constructor(public code: string, message: string, public data?: { ticketId?: number }) {
     super(message);
     this.name = "CheckinError";
   }
@@ -103,7 +104,7 @@ async function performCheckIn(ticket: EventTicket, _staffUserId: number, staffAu
     || (event.venueId != null && staffAuthorizedVenueIds.includes(event.venueId));
   if (!staffAuthorized) throw new CheckinError("UNAUTHORIZED_STAFF", "No tienes autorización para validar entradas de este evento");
 
-  if (!ticket.userId) throw new CheckinError("NO_OWNER", "Esta entrada no tiene un comprador identificado");
+  if (!ticket.userId) throw new CheckinError("NO_OWNER", "Esta entrada no tiene un comprador identificado", { ticketId: ticket.id });
 
   const [updateResult] = await conn.update(eventTickets)
     .set({ status: "used" })

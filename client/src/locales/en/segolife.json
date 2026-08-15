@@ -249,7 +249,13 @@
     "searchNoResults": "No tickets found",
     "searchStatusUsed": "Already used",
     "searchStatusCancelled": "Cancelled",
-    "searchStatusRefunded": "Refunded"
+    "searchStatusRefunded": "Refunded",
+    "unknownCredential": "This code isn't a valid ticket or SEGOLIFE ID",
+    "linkIdentityTitle": "Ticket valid — identify the Student",
+    "linkIdentityDescription": "This ticket doesn't have a Student linked yet. Scan their permanent SEGOLIFE ID to complete check-in.",
+    "selectVenueTitle": "Select the venue you're operating",
+    "venueOption": "Venue #{{id}}",
+    "selectEventTitle": "More than one event is happening now — select the right one"
   },
   "pos": {
     "title": "POS",
@@ -444,8 +450,8 @@
     "completeProfileDescription": "Add your details to get the full Segolife experience.",
     "completeProfileCta": "Complete profile",
     "viewActivity": "View activity",
-    "identityQrTitle": "My POS code",
-    "identityQrDescription": "Show this at a Segolife POS so staff can identify you — it never authorizes a charge by itself.",
+    "identityQrTitle": "My SEGOLIFE ID",
+    "identityQrDescription": "Use this QR to identify yourself at SEGOLIFE venues and at check-in — it never authorizes a charge or grants access by itself.",
     "identityQrRegenerate": "Regenerate code",
     "identityQrRotated": "Code regenerated",
     "historicalBannerTitle": "We found previous activity",
