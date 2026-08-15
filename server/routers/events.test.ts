@@ -4,13 +4,44 @@
  * exigen sesión + permiso `events.view`/`events.manage` (permissionProcedure),
  * así que rechazan ANTES de tocar la BD. Los procedures `public*` (usados por
  * /ie, /uva) son publicProcedure a propósito y no se prueban aquí.
+ *
+ * `myVenueEvents`/`myVenueEventLiveStats` (VENUE & PARTNER APP, spec §22)
+ * usan protectedProcedure + requireVenueAccess, no permissionProcedure — se
+ * prueban aparte con IDOR real. `myVenueEventLiveStats` en particular
+ * resuelve el venueId del EVENTO real server-side antes de autorizar
+ * (spec §31: "manipulated eventId denied") — nunca confía en un venueId que
+ * el cliente pudiera enviar aparte, porque el input ni siquiera lo acepta.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { TRPCError } from "@trpc/server";
+
+// requireVenueAccess llama a getVenueStaffAccess por referencia INTERNA al
+// mismo módulo — mockear solo getVenueStaffAccess no intercepta esa llamada.
+// Se mockea requireVenueAccess directamente, que es lo que events.ts llama.
+const { mockRequireVenueAccess } = vi.hoisted(() => ({ mockRequireVenueAccess: vi.fn() }));
+vi.mock("../segolife/benefits/venueStaffAccess", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/benefits/venueStaffAccess")>();
+  return { ...actual, requireVenueAccess: mockRequireVenueAccess };
+});
+
+const { mockGetVenueEventsView, mockGetEventLiveStats } = vi.hoisted(() => ({
+  mockGetVenueEventsView: vi.fn(),
+  mockGetEventLiveStats: vi.fn(),
+}));
+vi.mock("../segolife/venues/venueAppService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/venues/venueAppService")>();
+  return { ...actual, getVenueEventsView: mockGetVenueEventsView, getEventLiveStats: mockGetEventLiveStats };
+});
+
 import { eventsRouter } from "./events";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function callerWithoutSession() {
   return eventsRouter.createCaller({ user: null } as any);
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function callerAs(userId: number) {
+  return eventsRouter.createCaller({ user: { id: userId, role: "venue_admin" } } as any);
 }
 
 describe("events router — endpoints admin (nunca públicos) rechazan sin sesión", () => {
@@ -45,5 +76,51 @@ describe("events router — endpoints admin (nunca públicos) rechazan sin sesi�
 
   it("events.setCommunities rechaza sin sesión", async () => {
     await expect(callerWithoutSession().setCommunities({ id: 1, communityIds: [1] })).rejects.toThrow(/please login/i);
+  });
+
+  it("events.myVenueEvents rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().myVenueEvents({ venueId: 1 })).rejects.toThrow(/please login/i);
+  });
+
+  it("events.myVenueEventLiveStats rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().myVenueEventLiveStats({ eventId: 1 })).rejects.toThrow(/please login/i);
+  });
+});
+
+describe("events.myVenueEvents/myVenueEventLiveStats — IDOR: Venue Admin de Casanova no puede operar Tía Felisa", () => {
+  const ALLOWED = [1]; // solo Casanova (id=1)
+
+  beforeEach(() => {
+    mockRequireVenueAccess.mockReset();
+    mockGetVenueEventsView.mockReset();
+    mockGetEventLiveStats.mockReset();
+    mockRequireVenueAccess.mockImplementation(async (_userId: number, _role: string, venueId: number) => {
+      if (!ALLOWED.includes(venueId)) throw new TRPCError({ code: "FORBIDDEN", message: "Sin acceso a este venue" });
+    });
+  });
+
+  it("myVenueEvents de su propio venue: permitido", async () => {
+    mockGetVenueEventsView.mockResolvedValue({ current: [], upcoming: [], recentlyCompleted: [] });
+    await expect(callerAs(10).myVenueEvents({ venueId: 1 })).resolves.toBeTruthy();
+  });
+
+  it("myVenueEvents de otro venue (id=2): DENEGADO, nunca compone la vista", async () => {
+    await expect(callerAs(10).myVenueEvents({ venueId: 2 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockGetVenueEventsView).not.toHaveBeenCalled();
+  });
+
+  it("myVenueEventLiveStats: el input NO acepta venueId — el eventId=42 pertenece a Tía Felisa (id=2), DENEGADO por el venueId REAL del evento", async () => {
+    mockGetEventLiveStats.mockResolvedValue({ event: { id: 42, venueId: 2 }, checkInsTotal: 0, checkInsNative: 0, checkInsExternal: 0, ticketsIssued: 0 });
+    await expect(callerAs(10).myVenueEventLiveStats({ eventId: 42 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("myVenueEventLiveStats de un evento de SU venue: permitido", async () => {
+    mockGetEventLiveStats.mockResolvedValue({ event: { id: 43, venueId: 1 }, checkInsTotal: 5, checkInsNative: 5, checkInsExternal: 0, ticketsIssued: 5 });
+    await expect(callerAs(10).myVenueEventLiveStats({ eventId: 43 })).resolves.toBeTruthy();
+  });
+
+  it("myVenueEventLiveStats de un evento inexistente: NOT_FOUND", async () => {
+    mockGetEventLiveStats.mockResolvedValue(null);
+    await expect(callerAs(10).myVenueEventLiveStats({ eventId: 9999 })).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

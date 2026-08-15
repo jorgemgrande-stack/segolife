@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, publicProcedure, protectedProcedure, permissionProcedure } from "../_core/trpc";
 import { getCommunityAccess, resolveCommunityFilter, type CommunityAccess } from "../_core/communityAccess";
-import { getVenueStaffAccess } from "../segolife/benefits/venueStaffAccess";
+import { getVenueStaffAccess, requireVenueAccess } from "../segolife/benefits/venueStaffAccess";
 import {
   listVenues,
   getVenueById,
@@ -110,6 +110,16 @@ export const venuesRouter = router({
     const details = await Promise.all(access.map(id => getVenueById(id)));
     return details.filter((v): v is NonNullable<typeof v> => v != null);
   }),
+
+  /** SEGOLIFE — VENUE & PARTNER APP (spec §21): detalle de UN venue, operativo (no de catálogo). Mismo patrón que getMyVenueStats — requireVenueAccess explícito, nunca venuesViewProcedure (esa es la gestión global). */
+  getMyVenueById: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      await requireVenueAccess(ctx.user.id, ctx.user.role as string, input.id, "venues.manage");
+      const detail = await getVenueById(input.id);
+      if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "Venue no encontrado" });
+      return detail;
+    }),
 
   // ─── ADMIN — escritura ──────────────────────────────────────────────────────
 

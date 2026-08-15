@@ -27,6 +27,13 @@ export async function listCommerceTransactionItems(transactionId: number, db?: D
   return conn.select().from(commerceTransactionItems).where(eq(commerceTransactionItems.transactionId, transactionId));
 }
 
+/** SEGOLIFE — VENUE & PARTNER APP (spec §31 IDOR gate): resuelve el venueId real de una transacción para poder autorizar ANTES de revelar sus líneas — listCommerceTransactionItems no traía venueId por sí sola. */
+export async function getCommerceTransactionVenueId(transactionId: number, db?: DbHandle): Promise<number | null> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select({ venueId: commerceTransactions.venueId }).from(commerceTransactions).where(eq(commerceTransactions.id, transactionId)).limit(1);
+  return row?.venueId ?? null;
+}
+
 // ─── ADMIN (Student 360) — histórico por usuario ───────────────────────────
 // Auditoría previa (docs/students/student-360-audit-and-architecture.md §C):
 // no existía NINGUNA función que listara/agregara commerce_transactions por

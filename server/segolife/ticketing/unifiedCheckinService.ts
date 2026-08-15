@@ -24,6 +24,7 @@ import { hashTicketQrToken } from "./ticketQrService";
 import { lookupStudentByIdentityToken, type IdentifiedStudent } from "../commerce/studentIdentityService";
 import { ingestAttendance } from "./attendancePipeline";
 import { checkInTicket, checkInTicketById, CheckinError, type CheckInTicketResult } from "./nativeCheckinService";
+import { recordVenueVisit } from "../venues/venueVisitService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -147,13 +148,19 @@ export interface CheckInStudentIdentityInput {
 export type CheckInStudentIdentityResult =
   | { status: "checked_in"; studentName: string; event: SegolifeEvent | null }
   | { status: "already_checked_in"; studentName: string; event: SegolifeEvent | null }
+  | { status: "visit_recorded"; studentName: string; event: null }
+  | { status: "visit_already_recorded"; studentName: string; event: null }
   | { status: "event_resolution_required"; studentName: string; candidates: SegolifeEvent[] };
 
 /**
  * Flujo NUEVO — Student sin ticket (spec §10). Nunca toca event_tickets.
  * Autoriza venue ANTES de revelar nada (mismo orden que Benefits/Tickets),
- * resuelve el evento vigente (o usa el explícito si el staff ya lo eligió),
- * y delega el hecho canónico a ingestAttendance() — nunca earnTokens directo.
+ * resuelve el evento vigente (o usa el explícito si el staff ya lo eligió).
+ * Con evento resuelto → event_attendance vía ingestAttendance() (nunca
+ * earnTokens directo). SIN evento vigente (spec §10/§34 VENUE & PARTNER
+ * APP: "create/use Venue Visit if the new canonical model supports it") →
+ * venue_visits vía recordVenueVisit(), el hecho canónico hermano — ya no se
+ * rechaza con NO_CURRENT_EVENT, cierra la limitación documentada en Fase 4.
  */
 export async function checkInStudentIdentity(input: CheckInStudentIdentityInput, db?: DbHandle): Promise<CheckInStudentIdentityResult> {
   const conn = db ?? (await getDb());
@@ -177,15 +184,25 @@ export async function checkInStudentIdentity(input: CheckInStudentIdentityInput,
       return { status: "event_resolution_required", studentName: student.name, candidates: resolution.candidates };
     }
     if (resolution.status === "resolved") event = resolution.event;
-    // status "none": walk-in sin evento vigente — event queda null. La tabla
-    // event_attendance exige eventId NOT NULL (schema actual, ver auditoría de
-    // esta fase) — sin ningún evento vigente en el venue, hoy no existe una
-    // asistencia "solo venue" representable sin migrar ese invariante. Se
-    // documenta como limitación real en el informe final, no se fuerza aquí
-    // un `eventId` inventado.
+    // status "none": sin evento vigente en este venue ahora mismo — cae al
+    // flujo de venue_visits más abajo, no es un error.
   }
 
-  if (!event) throw new UnifiedCheckinError("NO_CURRENT_EVENT", "No hay ningún evento vigente en este venue ahora mismo");
+  if (!event) {
+    const visitResult = await recordVenueVisit({
+      userId: student.userId,
+      venueId: input.venueId,
+      occurredAt: now,
+      source: "segolife_identity",
+    }, conn);
+    // eslint-disable-next-line no-console
+    console.log(`[checkin.success] method=identity_visit userId=${student.userId} venueId=${input.venueId} status=${visitResult.status}`);
+    return {
+      status: visitResult.status === "already_recorded" ? "visit_already_recorded" : "visit_recorded",
+      studentName: student.name,
+      event: null,
+    };
+  }
 
   const result = await ingestAttendance({
     provider: "segolife",
@@ -205,7 +222,7 @@ export async function checkInStudentIdentity(input: CheckInStudentIdentityInput,
 
   // No emite "ticket_checked_in" (spec engagementEvents.ts exige ticketId:
   // number — este flujo, por definición, no tiene ticket). Log estructurado
-  // en su lugar (spec §31) — nunca el token crudo, solo el resultado.
+  // en su lugar (spec §34) — nunca el token crudo, solo el resultado.
   // eslint-disable-next-line no-console
   console.log(`[checkin.success] method=identity userId=${student.userId} eventId=${event.id} venueId=${input.venueId} status=${result.status}`);
 

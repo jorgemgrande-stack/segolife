@@ -32,11 +32,14 @@ const navItems = [
   {
     // SEGOLIFE — RBAC CONSOLIDATION (spec §17/§19): único destino visible
     // para un Administrador de Local — scoped a sus venues asignados,
-    // nunca el Command Center global ni el resto del nav.
+    // nunca el Command Center global ni el resto del nav. VENUE & PARTNER
+    // APP (spec §25): "admin" también lo ve, para poder entrar como
+    // soporte a cualquier venue — reutiliza el mismo ítem, no un nav
+    // duplicado para Global Admin.
     label: "Mi local",
     href: "/admin/mi-local",
     icon: Store,
-    roles: ["venue_admin"],
+    roles: ["venue_admin", "admin"],
   },
   {
     // Slideshow/Menús/Páginas siguen ocultos (audit de cierre de Fase 8.5:

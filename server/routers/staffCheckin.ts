@@ -114,8 +114,21 @@ export const staffCheckinRouter = router({
               candidates: result.candidates.map(e => ({ id: e.id, name: e.name, startsAt: e.startsAt })),
             };
           }
+          // SEGOLIFE — VENUE & PARTNER APP (spec §7/§10/§11): mapeo explícito
+          // 1:1 con los 4 estados reales de checkInStudentIdentity — un
+          // ternario binario (como antes de venue_visits) colapsaba
+          // "visit_already_recorded" en un falso positivo "checked_in", un
+          // reescaneo duplicado (23:55→00:20 del mismo venue) se habría
+          // reportado en puerta como un check-in NUEVO en vez de AMBAR
+          // duplicado.
+          const kindByStatus = {
+            checked_in: "identity_checked_in",
+            already_checked_in: "identity_already_checked_in",
+            visit_recorded: "visit_recorded",
+            visit_already_recorded: "visit_already_recorded",
+          } as const;
           return {
-            kind: result.status === "already_checked_in" ? "identity_already_checked_in" as const : "identity_checked_in" as const,
+            kind: kindByStatus[result.status],
             studentName: result.studentName,
             eventName: result.event?.name ?? null,
           };

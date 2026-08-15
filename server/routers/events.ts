@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, publicProcedure, permissionProcedure } from "../_core/trpc";
+import { router, publicProcedure, protectedProcedure, permissionProcedure } from "../_core/trpc";
 import { getCommunityAccess, resolveCommunityFilter, type CommunityAccess } from "../_core/communityAccess";
 import {
   listEvents,
@@ -17,6 +17,8 @@ import {
   reorderFeaturedEvents,
 } from "../db/eventsDb";
 import { computePurchaseAction } from "../segolife/ticketing/purchaseAction";
+import { requireVenueAccess } from "../segolife/benefits/venueStaffAccess";
+import { getVenueEventsView, getEventLiveStats } from "../segolife/venues/venueAppService";
 
 // Lectura: ver el listado/fichas de eventos.
 const eventsViewProcedure = permissionProcedure("events.view", ["admin"]);
@@ -150,6 +152,26 @@ export const eventsRouter = router({
     .mutation(async ({ input }) => {
       await reorderFeaturedEvents(input.orderedIds);
       return { success: true };
+    }),
+
+  // ─── VENUE APP — operativo, NUNCA events.view/events.manage (spec §22) ──────
+
+  /** Eventos de MI venue, agrupados operativamente (current/upcoming/recentlyCompleted) — nunca el catálogo global. */
+  myVenueEvents: protectedProcedure
+    .input(z.object({ venueId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      await requireVenueAccess(ctx.user.id, ctx.user.role as string, input.venueId, "events.manage");
+      return getVenueEventsView(input.venueId);
+    }),
+
+  /** Pantalla en vivo de UN evento (spec §14) — autoriza por el venueId REAL del evento, nunca confía en un venueId aparte enviado por el cliente. */
+  myVenueEventLiveStats: protectedProcedure
+    .input(z.object({ eventId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      const stats = await getEventLiveStats(input.eventId);
+      if (!stats || stats.event.venueId == null) throw new TRPCError({ code: "NOT_FOUND", message: "Evento no encontrado" });
+      await requireVenueAccess(ctx.user.id, ctx.user.role as string, stats.event.venueId, "events.manage");
+      return stats;
     }),
 
   // ─── PÚBLICO ────────────────────────────────────────────────────────────────

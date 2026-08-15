@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, permissionProcedure } from "../_core/trpc";
-import { listCommerceTransactionsByVenue, listCommerceTransactionItems } from "../segolife/commerce/commerceDb";
+import { listCommerceTransactionsByVenue, listCommerceTransactionItems, getCommerceTransactionVenueId } from "../segolife/commerce/commerceDb";
 import { listPosProducts, recordNativeSale, PosError } from "../segolife/commerce/nativeCommerceService";
 import { refundCommerceTransaction, CommerceError } from "../segolife/commerce/commercePipeline";
 import { lookupStudentByIdentityToken } from "../segolife/commerce/studentIdentityService";
@@ -36,13 +36,26 @@ async function assertVenueAuthorized(userId: number, role: string, venueId: numb
 }
 
 export const commerceRouter = router({
+  // SEGOLIFE — VENUE & PARTNER APP (spec §31, IDOR real encontrado en
+  // auditoría): commerce.view lo tiene también venue_admin (Fase RBAC), pero
+  // permissionProcedure es un check de permiso GLOBAL puro, sin idea de
+  // "cuál venue" — sin este assertVenueAuthorized, cualquier Venue Admin
+  // podía pedir listByVenue de OTRO venue con solo cambiar el venueId.
   listByVenue: commerceViewProcedure
     .input(z.object({ venueId: z.number().int().positive() }))
-    .query(({ input }) => listCommerceTransactionsByVenue(input.venueId)),
+    .query(async ({ ctx, input }) => {
+      await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, input.venueId);
+      return listCommerceTransactionsByVenue(input.venueId);
+    }),
 
   listItems: commerceViewProcedure
     .input(z.object({ transactionId: z.number().int().positive() }))
-    .query(({ input }) => listCommerceTransactionItems(input.transactionId)),
+    .query(async ({ ctx, input }) => {
+      const venueId = await getCommerceTransactionVenueId(input.transactionId);
+      if (venueId == null) throw new TRPCError({ code: "NOT_FOUND", message: "Transacción no encontrada" });
+      await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, venueId);
+      return listCommerceTransactionItems(input.transactionId);
+    }),
 
   refundTransaction: commerceManageProcedure
     .input(z.object({ transactionId: z.number().int().positive(), reason: z.string().min(1).max(500) }))

@@ -5022,6 +5022,52 @@ export const eventAttendance = mysqlTable("event_attendance", {
 export type EventAttendance = typeof eventAttendance.$inferSelect;
 export type InsertEventAttendance = typeof eventAttendance.$inferInsert;
 
+// SEGOLIFE — VENUE & PARTNER APP (Fase 5, spec §10-11). Hecho canónico
+// SEPARADO de event_attendance, nunca un reemplazo — event_attendance sigue
+// siendo la única fuente de verdad de "Student asistió a EVENTO" (eventId
+// NOT NULL, deliberado, ver comentario de esa tabla). venue_visits modela
+// "Student estuvo en VENUE" cuando NO hay ningún evento vigente que
+// resolver — auditado antes de crear: no existía ningún equivalente (ni
+// tabla de check-in de venue, ni "sesión", ni "visita" — solo un valor de
+// enum sin usar en benefit_rules.source_type). Ambos hechos son mutuamente
+// excluyentes por construcción: unifiedCheckinService.ts solo crea una fila
+// aquí cuando resolveCurrentEventForVenue() devuelve "none" — nunca los dos
+// a la vez para el mismo escaneo.
+//
+// IDEMPOTENCIA — día operativo de nightlife, NUNCA fecha de calendario
+// (mismo problema de medianoche que event_attendance ya resolvía vía
+// idempotencyKey por evento, pero aquí no hay evento que ancle nada): el
+// límite de "día" se desplaza a las 06:00 Europe/Madrid en vez de 00:00 —
+// una visita a las 23:55 y un rescan a las 00:20 caen en el MISMO
+// operational_date ("ayer"), así que idempotencyKey =
+// `venue_visit:{venueId}:{userId}:{operationalDate}` los colapsa en una
+// única fila. No existen horarios de apertura configurados por venue
+// todavía (venues.ts auditado, sin columna hours) — 06:00 es el modelo más
+// simple y robusto documentado (spec §11: "choose the smallest robust
+// model and make future configuration possible"), no una tabla de config
+// nueva sin necesidad real todavía.
+export const venueVisits = mysqlTable("venue_visits", {
+  id:                 int("id").autoincrement().primaryKey(),
+  userId:             int("user_id").notNull(),
+  venueId:            int("venue_id").notNull(),
+  /** Relación opcional con event_attendance — reservado para cuando SÍ hubo evento pero además queremos modelar la visita en sí (hoy: siempre null, son mutuamente excluyentes por diseño; ver comentario de arriba). */
+  eventAttendanceId:  int("event_attendance_id"),
+  occurredAt:         timestamp("occurred_at").notNull(),
+  /** YYYY-MM-DD, día operativo (límite 06:00 Europe/Madrid) — NUNCA el día de calendario de occurredAt. */
+  operationalDate:    varchar("operational_date", { length: 10 }).notNull(),
+  source:             varchar("source", { length: 32 }).notNull(),
+  operatorUserId:     int("operator_user_id"),
+  idempotencyKey:     varchar("idempotency_key", { length: 191 }).notNull(),
+  metadata:           json("metadata").$type<Record<string, unknown>>(),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  idempotencyKeyUnique: unique("venue_visits_idempotency_key_unique").on(table.idempotencyKey),
+  userIdIdx: index("venue_visits_user_id_idx").on(table.userId),
+  venueIdIdx: index("venue_visits_venue_id_idx").on(table.venueId),
+}));
+export type VenueVisit = typeof venueVisits.$inferSelect;
+export type InsertVenueVisit = typeof venueVisits.$inferInsert;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // SEGOLIFE FASE 5 — INTEGRATION HUB
 // ═══════════════════════════════════════════════════════════════════════════
