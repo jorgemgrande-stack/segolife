@@ -14,9 +14,9 @@ describe("VENUE_ADMIN_PERMISSION_BUNDLE — invariantes de seguridad (spec §22/
     }
   });
 
-  it("el bundle es exactamente el sembrado en producción (benefits.redeem, commerce.view, commerce.record, attendance.redeem) — ver drizzle rbac_roles.key='venue_admin'", () => {
+  it("el bundle es exactamente el sembrado en producción (Fase 4/8/9 + Fase 10: stock/caja)", () => {
     expect([...VENUE_ADMIN_PERMISSION_BUNDLE].sort()).toEqual(
-      ["attendance.redeem", "benefits.redeem", "commerce.record", "commerce.view"]
+      ["attendance.redeem", "benefits.redeem", "cash.operate", "cash.view", "commerce.record", "commerce.view", "stock.adjust", "stock.view"]
     );
   });
 

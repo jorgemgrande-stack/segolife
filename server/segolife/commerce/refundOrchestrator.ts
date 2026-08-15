@@ -38,6 +38,7 @@ import {
 import { reverseTransaction, isLedgerEntryReversed } from "../tokens/tokenLedgerService";
 import { reverseTokenSpend } from "../tokens/tokenSpendService";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
+import { recordRefundRestock } from "../stock/stockService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 3 });
 const _db = drizzle(_pool);
@@ -75,6 +76,8 @@ export interface RefundPosSaleInput {
   lines: RefundPosLine[];
   reason: string;
   refundedByUserId: number;
+  /** SEGOLIFE — FASE 10 (spec §33): "Refund does NOT always mean stock physically returned" — el operador decide explícitamente, nunca automático. false por defecto (producto consumido, ej. una bebida ya servida). */
+  restock?: boolean;
 }
 
 export interface RefundPosSaleResult {
@@ -115,6 +118,23 @@ export async function refundPosSale(input: RefundPosSaleInput, db?: DbHandle): P
       await tx.update(commerceTransactionItems)
         .set({ refundedQuantity: sql`${commerceTransactionItems.refundedQuantity} + ${line.quantity}` })
         .where(eq(commerceTransactionItems.id, line.itemId));
+    }
+
+    if (input.restock) {
+      // `key` usa el refundedQuantity PRE-actualización de cada línea (leído
+      // arriba, antes del UPDATE de este bloque) — único por evento de
+      // reembolso, estable si esta misma llamada se reintenta (spec §22).
+      const restockLines = input.lines
+        .map(line => {
+          const item = itemById.get(line.itemId);
+          return item?.venueProductId != null
+            ? { venueProductId: item.venueProductId, quantity: line.quantity, key: `${item.id}:${item.refundedQuantity}:${line.quantity}` }
+            : null;
+        })
+        .filter((l): l is { venueProductId: number; quantity: number; key: string } => l != null);
+      if (restockLines.length) {
+        await recordRefundRestock(restockLines, transaction.venueId, "commerce_transaction", transaction.id, input.refundedByUserId, tx);
+      }
     }
 
     const newRefundedTotal = transaction.refundedAmountCents + refundAmountCents;

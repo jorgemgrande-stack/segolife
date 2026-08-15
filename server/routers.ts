@@ -174,6 +174,10 @@ import { loyaltyShadowRouter } from "./routers/loyaltyShadow";
 import { communityRouter } from "./routers/community";
 import { referralsRouter } from "./routers/referrals";
 import { salesOperationsRouter } from "./routers/salesOperations";
+import { fiscalRouter } from "./routers/fiscal";
+import { stockRouter } from "./routers/stock";
+import { cashRouter } from "./routers/cash";
+import { venueSettlementsRouter } from "./routers/settlements";
 import { venuesRouter } from "./routers/venues";
 import { eventsRouter } from "./routers/events";
 import { tokensRouter } from "./routers/tokens";
@@ -2187,6 +2191,10 @@ export const appRouter = router({
   community: communityRouter,
   referrals: referralsRouter,
   salesOperations: salesOperationsRouter,
+  fiscal: fiscalRouter,
+  stock: stockRouter,
+  cash: cashRouter,
+  venueSettlements: venueSettlementsRouter,
   venues: venuesRouter,
   events: eventsRouter,
   tokens: tokensRouter,

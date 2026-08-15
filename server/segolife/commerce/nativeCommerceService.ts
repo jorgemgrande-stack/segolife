@@ -22,6 +22,7 @@ import mysql from "mysql2/promise";
 import { venueProducts, commerceTransactions, type VenueProduct } from "../../../drizzle/schema";
 import { ingestCommerceTransaction, type IngestCommerceResult } from "./commercePipeline";
 import { reserveAndCaptureTokenSpend, reverseTokenSpend, type TokenSpendReservation } from "../tokens/tokenSpendService";
+import { reserveAndDecrementForSale, reverseStockForSale, linkStockMovementsToTransaction, StockError } from "../stock/stockService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -124,31 +125,50 @@ export async function recordNativeSale(input: RecordNativeSaleInput, db?: DbHand
   const conn = db ?? (await getDb());
   const { totalCents, items } = await resolveCartTotalCents(input.venueId, input.items, conn);
 
+  // SEGOLIFE — FASE 10 (spec §32/§40): decremento de stock ANTES de tocar
+  // SegoTokens/dinero — si falta stock de cualquier línea (y el producto no
+  // permite negativo), la venta se aborta AQUÍ, nada se ha cobrado todavía.
+  // Productos sin stockTracked se omiten en silencio (spec §28). Idempotente
+  // por idempotencyKey — un reintento de red nunca decrementa dos veces
+  // (spec §32/§62).
+  const stockKeyPrefix = `pos_sale_stock:${input.idempotencyKey}`;
+  let stockReserved = false;
+  try {
+    await reserveAndDecrementForSale(
+      input.items.map(i => ({ venueProductId: i.venueProductId, quantity: i.quantity })),
+      input.venueId, stockKeyPrefix, input.staffUserId, conn,
+    );
+    stockReserved = true;
+  } catch (err) {
+    if (err instanceof StockError) throw new PosError(err.code, err.message);
+    throw err;
+  }
+
   // SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7): totalCents/subtotalCents
   // de commerce_transactions siguen siendo el precio BRUTO real — nunca se
   // muta para reflejar lo cobrado tras aplicar SegoTokens (spec §10, "do
   // NOT mutate the product price"). El valor promocional/dinero debido vive
   // en token_spend_reservations, enlazada vía token_reservation_id.
   let reservation: TokenSpendReservation | null = null;
-  if (input.tokensToApply != null && input.tokensToApply > 0) {
-    if (!input.identifiedUserId) throw new PosError("STUDENT_REQUIRED", "Se necesita identificar al Student para aplicar SegoTokens");
-    const spendResult = await reserveAndCaptureTokenSpend({
-      userId: input.identifiedUserId,
-      venueId: input.venueId,
-      grossAmountCents: totalCents,
-      requestedTokens: input.tokensToApply,
-      referenceType: "commerce_transaction",
-      idempotencyKey: `pos_sale_tokens:${input.idempotencyKey}`,
-      createdByUserId: input.staffUserId,
-    }, conn);
-    if ("status" in spendResult) {
-      if (spendResult.status === "no_policy") throw new PosError("NO_REDEMPTION_POLICY", "No hay ninguna política de canje de SegoTokens activa para este venue");
-      throw new PosError("INVALID_TOKEN_AMOUNT", "Importe de SegoTokens no válido");
-    }
-    reservation = spendResult.reservation;
-  }
-
   try {
+    if (input.tokensToApply != null && input.tokensToApply > 0) {
+      if (!input.identifiedUserId) throw new PosError("STUDENT_REQUIRED", "Se necesita identificar al Student para aplicar SegoTokens");
+      const spendResult = await reserveAndCaptureTokenSpend({
+        userId: input.identifiedUserId,
+        venueId: input.venueId,
+        grossAmountCents: totalCents,
+        requestedTokens: input.tokensToApply,
+        referenceType: "commerce_transaction",
+        idempotencyKey: `pos_sale_tokens:${input.idempotencyKey}`,
+        createdByUserId: input.staffUserId,
+      }, conn);
+      if ("status" in spendResult) {
+        if (spendResult.status === "no_policy") throw new PosError("NO_REDEMPTION_POLICY", "No hay ninguna política de canje de SegoTokens activa para este venue");
+        throw new PosError("INVALID_TOKEN_AMOUNT", "Importe de SegoTokens no válido");
+      }
+      reservation = spendResult.reservation;
+    }
+
     const result = await ingestCommerceTransaction({
       provider: "segolife",
       venueId: input.venueId,
@@ -173,14 +193,19 @@ export async function recordNativeSale(input: RecordNativeSaleInput, db?: DbHand
       // afectada, solo el atajo de navegación para el reembolso simétrico.
       await conn.update(commerceTransactions).set({ tokenReservationId: reservation.id }).where(eq(commerceTransactions.id, result.transaction.id));
     }
+    await linkStockMovementsToTransaction(stockKeyPrefix, result.transaction.id, conn).catch(() => {});
     return result;
   } catch (err) {
     // Compensación: la venta no se pudo registrar tras capturar SegoTokens
-    // reales — revertir para no dejar tokens gastados sin ninguna venta
-    // asociada (nunca "wallet descontada sin operación", mismo principio
-    // que benefitPurchaseService.ts).
+    // reales y/o decrementar stock — revertir ambos para no dejar tokens
+    // gastados o stock descontado sin ninguna venta asociada (nunca "wallet
+    // descontada sin operación", mismo principio que benefitPurchaseService.ts,
+    // ahora también aplicado a stock).
     if (reservation) {
       await reverseTokenSpend({ reservationId: reservation.id, reason: "Venta no pudo completarse tras capturar SegoTokens", adminUserId: input.staffUserId }, conn).catch(() => {});
+    }
+    if (stockReserved) {
+      await reverseStockForSale(stockKeyPrefix, input.staffUserId, conn).catch(() => {});
     }
     throw err;
   }

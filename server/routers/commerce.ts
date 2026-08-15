@@ -103,10 +103,13 @@ export const commerceRouter = router({
       transactionId: z.number().int().positive(),
       lines: z.array(z.object({ itemId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1),
       reason: z.string().min(1).max(500),
+      // SEGOLIFE — FASE 10 (spec §33): el operador decide explícitamente si
+      // el producto vuelve físicamente al stock — nunca automático.
+      restock: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       try {
-        return await refundPosSale({ transactionId: input.transactionId, lines: input.lines, reason: input.reason, refundedByUserId: ctx.user.id });
+        return await refundPosSale({ transactionId: input.transactionId, lines: input.lines, reason: input.reason, refundedByUserId: ctx.user.id, restock: input.restock });
       } catch (err) {
         mapCommerceError(err);
       }

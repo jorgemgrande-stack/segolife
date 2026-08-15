@@ -6,7 +6,7 @@ import {
   Bell, Search, User, BedDouble, Sparkles, UtensilsCrossed, AlertCircle,
   UserPlus, FileCheck, ChevronRight, Receipt, Truck, Monitor, Tag, Ticket,
   Sun, Moon, ExternalLink, Target, MessageCircle, Bot, Mail, Building2,
-  Briefcase, GraduationCap, Store, CalendarDays, Coins, QrCode, Gift, Vote, Plug, ShoppingBag,
+  Briefcase, GraduationCap, Store, CalendarDays, Coins, QrCode, Gift, Vote, Plug, ShoppingBag, Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -97,6 +97,15 @@ const navItems = [
     label: "Ventas y Operaciones",
     href: "/admin/sales",
     icon: ShoppingBag,
+    roles: ["admin"],
+  },
+  {
+    // SEGOLIFE — FASE 10 (spec §26/§80): capa financiera sobre Ventas y
+    // Operaciones — facturación/stock/caja/liquidaciones. GLOBAL_ADMIN
+    // exclusivo (fiscal/settlements nunca se conceden a venue_admin).
+    label: "Finanzas / Control",
+    href: "/admin/finance",
+    icon: Wallet,
     roles: ["admin"],
   },
   {

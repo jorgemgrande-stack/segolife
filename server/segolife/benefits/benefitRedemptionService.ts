@@ -29,6 +29,7 @@ import {
   type BenefitDefinition,
 } from "../../../drizzle/schema";
 import { BenefitError } from "./benefitGrantService";
+import { recordBenefitRedemptionStock } from "../stock/stockService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 3 });
 const _db = drizzle(_pool);
@@ -154,6 +155,17 @@ export async function redeemBenefit(input: RedeemBenefitInput, db?: DbHandle): P
   }
 
   await logAttempt(conn, { userBenefitId: benefit.id, tokenFingerprint: tokenHash, staffUserId: input.staffUserId, venueId: input.venueId, result: "valid", ipAddress: input.ipAddress, userAgent: input.userAgent });
+
+  // SEGOLIFE — FASE 10 (spec §34): un Benefit "free_product" gratuito sigue
+  // consumiendo stock FÍSICO real si el producto destino lleva control de
+  // stock — el precio pagado (€0) no cambia que el producto se entregó.
+  // Best-effort (nunca bloquea un Benefit ya concedido/prometido al
+  // Student, ni revierte el canje ya confirmado arriba) — si faltara stock
+  // o el producto no llevara stockTracked, la fila de userBenefits queda
+  // igualmente "used" (mismo comportamiento ya probado desde Fase 4).
+  if (definition.benefitType === "free_product" && definition.productId != null) {
+    await recordBenefitRedemptionStock(definition.productId, input.venueId, benefit.id, input.staffUserId, conn).catch(() => {});
+  }
 
   const [updated] = await conn.select().from(userBenefits).where(eq(userBenefits.id, benefit.id)).limit(1);
   const [student] = await conn.select({ name: users.name }).from(users).where(eq(users.id, benefit.userId)).limit(1);

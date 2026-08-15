@@ -33,7 +33,19 @@ function makeMockDb(products: Array<Record<string, unknown>>) {
   b.update = () => { mode = "update"; return b; };
   b.from = () => b;
   b.set = () => b;
-  b.where = () => Promise.resolve(mode === "select" ? products : undefined);
+  b.where = () => b;
+  b.limit = () => b;
+  b.for = () => b;
+  // Chainable Y thenable — así tanto `await ...where(...)` (código legacy de
+  // este archivo) como `await ...where(...).limit(1).for("update")` (nuevo,
+  // stockService.ts) funcionan sobre el mismo builder.
+  b.then = (resolve: (v: unknown) => void) => resolve(mode === "select" ? products : [{ affectedRows: 1 }]);
+  // SEGOLIFE — FASE 10: recordNativeSale ahora llama a reserveAndDecrementForSale
+  // (stockService.ts), que abre su propia conn.transaction() — ninguno de los
+  // productFixture() de este archivo marca stockTracked=true, así que la
+  // decisión real (continue/skip) ocurre antes de tocar nada más; solo hace
+  // falta que `.transaction()` exista y reutilice el mismo builder como tx.
+  b.transaction = (cb: (tx: unknown) => Promise<unknown>) => cb(b);
   return b as any;
 }
 

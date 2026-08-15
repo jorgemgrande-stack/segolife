@@ -4113,6 +4113,17 @@ export const venueProducts = mysqlTable("venue_products", {
   price:        decimal("price", { precision: 10, scale: 2 }),
   isActive:     boolean("is_active").notNull().default(true),
   metadata:     json("metadata").$type<Record<string, unknown>>(),
+  // SEGOLIFE — FASE 10 (spec §7/§28/§39): tipo de IVA configurado (NULL =
+  // sin configurar todavía, nunca se adivina). stockTracked=false por
+  // defecto — la mayoría de conceptos (entrada, servicio) no tienen stock
+  // físico; solo productos consumibles reales lo activan explícitamente.
+  // currentStockCached es solo una caché de lectura — la verdad canónica
+  // siempre es SUM(inventory_movements.delta_quantity) (spec §30).
+  taxRateId:          int("tax_rate_id"),
+  stockTracked:       boolean("stock_tracked").notNull().default(false),
+  currentStockCached: int("current_stock_cached"),
+  lowStockThreshold:  int("low_stock_threshold"),
+  allowNegativeStock: boolean("allow_negative_stock").notNull().default(false),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
@@ -5002,6 +5013,9 @@ export const eventTicketTypes = mysqlTable("event_ticket_types", {
   // máquina de estados, emisión con QR) — spec §18: "prefer minimal safe
   // consolidation", nunca una tabla de "puerta" paralela.
   isDoorEntry:  boolean("is_door_entry").notNull().default(false),
+  // SEGOLIFE — FASE 10 (spec §7): tipo de IVA de la entrada/admisión. NULL =
+  // sin configurar (nunca se adivina un tipo por defecto).
+  taxRateId:    int("tax_rate_id"),
   metadata:     json("metadata").$type<Record<string, unknown>>(),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
@@ -6126,3 +6140,367 @@ export const referrals = mysqlTable("referrals", {
 }));
 export type Referral = typeof referrals.$inferSelect;
 export type InsertReferral = typeof referrals.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEGOLIFE FASE 10 — FISCAL, INVOICING, STOCK & VENUE SETTLEMENTS
+// ═══════════════════════════════════════════════════════════════════════════
+// Auditado antes de crearse (spec §0): no existe ningún `business_entities`/
+// `business_units` en este repo (esa memoria pertenece al proyecto hermano
+// Hotel Nayade, no a Segolife) — se construye desde cero. `invoices` legacy
+// (más arriba en este archivo) sigue existiendo para el CRM turístico
+// heredado y NO se toca — Fase 10 crea una capa fiscal propia de Segolife,
+// paralela, nunca mezclada con quoteId/reservationId de Náyade.
+
+// ─── A. COMMERCIAL ENTITIES (spec §1) — quién puede ser vendedor/cobrador ──────
+// Nunca se deriva el vendedor del nombre del venue (spec §2) — un venue
+// apunta a una entidad mediante venueSellerConfig, nunca al revés.
+export const commercialEntities = mysqlTable("commercial_entities", {
+  id:             int("id").autoincrement().primaryKey(),
+  legalName:      varchar("legal_name", { length: 256 }).notNull(),
+  tradeName:      varchar("trade_name", { length: 256 }),
+  taxId:          varchar("tax_id", { length: 32 }).notNull(),
+  country:        varchar("country", { length: 2 }).notNull().default("ES"),
+  fiscalAddress:  varchar("fiscal_address", { length: 512 }),
+  email:          varchar("email", { length: 256 }),
+  active:         boolean("active").notNull().default(true),
+  currency:       varchar("currency", { length: 8 }).notNull().default("EUR"),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+  updatedAt:      timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type CommercialEntity = typeof commercialEntities.$inferSelect;
+export type InsertCommercialEntity = typeof commercialEntities.$inferInsert;
+
+// ─── B. VENUE ↔ SELLER/COLLECTOR (spec §2/§59) ─────────────────────────────────
+// `collectorEntityId` NULL = el propio vendedor cobra (caso simple). Solo una
+// fila activa por venue — resuelta server-side, nunca confiada al cliente
+// (spec §5/§86).
+export const venueSellerConfig = mysqlTable("venue_seller_config", {
+  id:                 int("id").autoincrement().primaryKey(),
+  venueId:            int("venue_id").notNull(),
+  sellerEntityId:     int("seller_entity_id").notNull(),
+  collectorEntityId:  int("collector_entity_id"),
+  active:             boolean("active").notNull().default(true),
+  updatedByUserId:    int("updated_by_user_id"),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+  updatedAt:          timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  venueIdUnique: unique("venue_seller_config_venue_id_unique").on(table.venueId),
+}));
+export type VenueSellerConfig = typeof venueSellerConfig.$inferSelect;
+export type InsertVenueSellerConfig = typeof venueSellerConfig.$inferInsert;
+
+// ─── C. TAX MODEL (spec §6/§7) ──────────────────────────────────────────────────
+// rateBasisPoints entero (2100 = 21,00%) — nunca decimal flotante, redondeo
+// determinista en fiscalSnapshotService.ts. Nunca se infiere un tipo por
+// texto de categoría (spec §7) — siempre configurado explícitamente.
+export const taxRates = mysqlTable("tax_rates", {
+  id:                int("id").autoincrement().primaryKey(),
+  name:              varchar("name", { length: 128 }).notNull(),
+  rateBasisPoints:   int("rate_basis_points").notNull(),
+  country:           varchar("country", { length: 2 }).notNull().default("ES"),
+  active:            boolean("active").notNull().default(true),
+  createdAt:         timestamp("created_at").defaultNow().notNull(),
+});
+export type TaxRate = typeof taxRates.$inferSelect;
+export type InsertTaxRate = typeof taxRates.$inferInsert;
+
+// ─── D. FISCAL TRANSACTION SNAPSHOT (spec §10) ─────────────────────────────────
+// Fotografía inmutable creada UNA VEZ por cada venta nativa finalizada
+// (commerce_transaction confirmada / ticket_order pagado) — no requiere que
+// se emita una factura (spec §21, "fiscal truth y invoice document lifecycle
+// pueden ser independientes"). unique(sourceType,sourceId) = idempotente.
+// grossAmountCents/promotionalValueCents/moneyDueCents reutilizan EXACTAMENTE
+// la misma fuente que Fase 7 (token_spend_reservations) — nunca recalculados
+// aquí (spec §9: SegoTokens nunca se representan como dinero).
+export const fiscalTransactionSnapshots = mysqlTable("fiscal_transaction_snapshots", {
+  id:                     int("id").autoincrement().primaryKey(),
+  sourceType:             mysqlEnum("source_type", ["commerce_transaction", "ticket_order"]).notNull(),
+  sourceId:               int("source_id").notNull(),
+  venueId:                int("venue_id"),
+  eventId:                int("event_id"),
+  // Snapshot textual, no solo FK — si la entidad cambia de nombre/CIF mañana,
+  // esta venta histórica conserva lo que era CIERTO en el momento (spec §3).
+  sellerEntityId:         int("seller_entity_id"),
+  sellerLegalName:        varchar("seller_legal_name", { length: 256 }),
+  sellerTaxId:            varchar("seller_tax_id", { length: 32 }),
+  collectorEntityId:      int("collector_entity_id"),
+  buyerUserId:            int("buyer_user_id"),
+  occurredAt:             timestamp("occurred_at").notNull(),
+  currency:               varchar("currency", { length: 8 }).notNull().default("EUR"),
+  grossAmountCents:       int("gross_amount_cents").notNull(),
+  promotionalValueCents:  int("promotional_value_cents").notNull().default(0),
+  moneyDueCents:          int("money_due_cents").notNull().default(0),
+  // NULL = sin tipo de IVA configurado todavía (spec §106: producción puede
+  // empezar con 0 tipos configurados) — nunca se adivina un tipo.
+  taxRateBasisPoints:     int("tax_rate_basis_points"),
+  taxBaseCents:           int("tax_base_cents"),
+  taxAmountCents:         int("tax_amount_cents"),
+  itemsSnapshot:          json("items_snapshot").$type<Array<{ description: string; quantity: number; unitAmountCents: number; totalAmountCents: number }>>(),
+  paymentMethod:          varchar("payment_method", { length: 32 }),
+  createdAt:              timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  sourceUnique: unique("fiscal_snapshots_source_unique").on(table.sourceType, table.sourceId),
+  venueIdx: index("fiscal_snapshots_venue_idx").on(table.venueId),
+  occurredAtIdx: index("fiscal_snapshots_occurred_at_idx").on(table.occurredAt),
+}));
+export type FiscalTransactionSnapshot = typeof fiscalTransactionSnapshots.$inferSelect;
+export type InsertFiscalTransactionSnapshot = typeof fiscalTransactionSnapshots.$inferInsert;
+
+// ─── E. BILLING PROFILES (spec §12) — nunca sustituye la identidad Student ─────
+export const billingProfiles = mysqlTable("billing_profiles", {
+  id:          int("id").autoincrement().primaryKey(),
+  userId:      int("user_id").notNull(),
+  legalName:   varchar("legal_name", { length: 256 }).notNull(),
+  taxId:       varchar("tax_id", { length: 32 }).notNull(),
+  address:     varchar("address", { length: 512 }),
+  country:     varchar("country", { length: 2 }).notNull().default("ES"),
+  email:       varchar("email", { length: 256 }),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+  updatedAt:   timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  userIdUnique: unique("billing_profiles_user_id_unique").on(table.userId),
+}));
+export type BillingProfile = typeof billingProfiles.$inferSelect;
+export type InsertBillingProfile = typeof billingProfiles.$inferInsert;
+
+// ─── F. INVOICE SERIES + NUMBERING (spec §14/§15) ──────────────────────────────
+// Paralelo a document_counters (legacy Náyade, server/documentNumbers.ts) —
+// se REUTILIZA su técnica exacta (UPDATE atómico + fallback INSERT con
+// reintento en ER_DUP_ENTRY) en fiscalDocumentService.ts, pero NUNCA su
+// tabla: document_counters está indexada por DocumentType (unión fija,
+// compartida con presupuesto/reserva/tpv de Náyade), mientras que Segolife
+// necesita series dinámicas por entidad fiscal (spec §15, "CAS-2026",
+// "TF-2026", "SEG-2026") creadas por el admin, no una unión de código.
+export const invoiceSeries = mysqlTable("invoice_series", {
+  id:               int("id").autoincrement().primaryKey(),
+  sellerEntityId:   int("seller_entity_id").notNull(),
+  documentType:     mysqlEnum("document_type", ["invoice", "credit_note"]).notNull(),
+  code:             varchar("code", { length: 16 }).notNull(),
+  active:           boolean("active").notNull().default(true),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  entityTypeCodeUnique: unique("invoice_series_entity_type_code_unique").on(table.sellerEntityId, table.documentType, table.code),
+}));
+export type InvoiceSeries = typeof invoiceSeries.$inferSelect;
+export type InsertInvoiceSeries = typeof invoiceSeries.$inferInsert;
+
+export const fiscalDocumentCounters = mysqlTable("fiscal_document_counters", {
+  id:             int("id").autoincrement().primaryKey(),
+  seriesId:       int("series_id").notNull(),
+  year:           int("year").notNull(),
+  currentNumber:  int("current_number").notNull().default(0),
+  updatedAt:      timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  seriesYearUnique: unique("fiscal_document_counters_series_year_unique").on(table.seriesId, table.year),
+}));
+export type FiscalDocumentCounter = typeof fiscalDocumentCounters.$inferSelect;
+export type InsertFiscalDocumentCounter = typeof fiscalDocumentCounters.$inferInsert;
+
+// ─── G. FISCAL DOCUMENTS (invoice / credit note) (spec §13/§17/§18) ────────────
+// Solo existe una fila aquí DESDE EL MOMENTO en que un documento se emite de
+// verdad (spec §16, "never assign final invoice number to draft/failed/
+// cancelled order") — no hay estado "draft" almacenado; emitir = crear la
+// fila con su número ya asignado, atómico. Inmutable tras crearse — una
+// corrección es SIEMPRE un nuevo credit_note con originalDocumentId, nunca
+// un UPDATE sobre las líneas/importes de un documento ya emitido.
+export const fiscalDocuments = mysqlTable("fiscal_documents", {
+  id:                     int("id").autoincrement().primaryKey(),
+  documentType:           mysqlEnum("document_type", ["invoice", "credit_note"]).notNull(),
+  seriesId:               int("series_id").notNull(),
+  documentNumber:         varchar("document_number", { length: 32 }).notNull(),
+  sellerEntityId:         int("seller_entity_id").notNull(),
+  buyerBillingProfileId:  int("buyer_billing_profile_id"),
+  buyerUserId:            int("buyer_user_id"),
+  fiscalSnapshotId:       int("fiscal_snapshot_id"),
+  originalDocumentId:     int("original_document_id"),
+  issueDate:              timestamp("issue_date").notNull(),
+  currency:               varchar("currency", { length: 8 }).notNull().default("EUR"),
+  taxBaseCents:           int("tax_base_cents").notNull(),
+  taxAmountCents:         int("tax_amount_cents").notNull(),
+  totalCents:             int("total_cents").notNull(),
+  pdfKey:                 varchar("pdf_key", { length: 256 }),
+  reason:                 varchar("reason", { length: 500 }),
+  issuedByUserId:         int("issued_by_user_id").notNull(),
+  createdAt:              timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  documentNumberUnique: unique("fiscal_documents_number_unique").on(table.documentNumber),
+  snapshotIdx: index("fiscal_documents_snapshot_idx").on(table.fiscalSnapshotId),
+  buyerIdx: index("fiscal_documents_buyer_user_idx").on(table.buyerUserId),
+}));
+export type FiscalDocument = typeof fiscalDocuments.$inferSelect;
+export type InsertFiscalDocument = typeof fiscalDocuments.$inferInsert;
+
+export const fiscalDocumentLines = mysqlTable("fiscal_document_lines", {
+  id:                 int("id").autoincrement().primaryKey(),
+  documentId:         int("document_id").notNull(),
+  description:        varchar("description", { length: 256 }).notNull(),
+  quantity:           int("quantity").notNull().default(1),
+  unitAmountCents:    int("unit_amount_cents").notNull(),
+  totalAmountCents:   int("total_amount_cents").notNull(),
+  taxRateBasisPoints: int("tax_rate_basis_points").notNull(),
+  taxBaseCents:       int("tax_base_cents").notNull(),
+  taxAmountCents:     int("tax_amount_cents").notNull(),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  documentIdx: index("fiscal_document_lines_document_idx").on(table.documentId),
+}));
+export type FiscalDocumentLine = typeof fiscalDocumentLines.$inferSelect;
+export type InsertFiscalDocumentLine = typeof fiscalDocumentLines.$inferInsert;
+
+// ─── H. PHYSICAL STOCK / INVENTORY (spec §27-43) ───────────────────────────────
+// Distinto de la capacidad de entradas (inventoryHoldService.ts) — nunca se
+// fusionan (spec §27). Verdad canónica = SUM(delta_quantity) de
+// inventory_movements; current_stock_cached en venue_products es solo caché
+// (spec §30), actualizado transaccionalmente junto al movimiento.
+export const inventoryMovements = mysqlTable("inventory_movements", {
+  id:               int("id").autoincrement().primaryKey(),
+  venueProductId:   int("venue_product_id").notNull(),
+  venueId:          int("venue_id").notNull(),
+  type:             mysqlEnum("type", ["opening", "purchase", "sale", "refund", "adjustment_in", "adjustment_out", "waste", "transfer_in", "transfer_out"]).notNull(),
+  deltaQuantity:    int("delta_quantity").notNull(),
+  balanceAfter:     int("balance_after").notNull(),
+  referenceType:    varchar("reference_type", { length: 32 }),
+  referenceId:      int("reference_id"),
+  reason:           varchar("reason", { length: 500 }),
+  actorUserId:       int("actor_user_id"),
+  idempotencyKey:   varchar("idempotency_key", { length: 191 }),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  idempotencyKeyUnique: unique("inventory_movements_idempotency_key_unique").on(table.idempotencyKey),
+  productIdx: index("inventory_movements_product_idx").on(table.venueProductId),
+  venueIdx: index("inventory_movements_venue_idx").on(table.venueId),
+}));
+export type InventoryMovement = typeof inventoryMovements.$inferSelect;
+export type InsertInventoryMovement = typeof inventoryMovements.$inferInsert;
+
+// ─── I. CASH SESSIONS (spec §44-53) ─────────────────────────────────────────────
+// Deliberadamente SIN FK desde commerce_transactions/ticket_orders (spec
+// principle: no tocar pipelines de Fase 9 ya probados) — el efectivo
+// esperado se calcula por RANGO DE TIEMPO (openedAt..closedAt) sobre esas
+// mismas tablas en cashSessionService.ts, igual que salesReadModel normaliza
+// en tiempo de consulta sin nueva tabla de almacenamiento. Solo una sesión
+// "open" por venue a la vez — se aplica en la app con lock, no con índice
+// parcial (MySQL no los soporta).
+//
+// NOMBRE "venue_cash_*" (no "cash_*"): auditoría de Fase 10 encontró que
+// `cash_sessions`/`cash_movements` YA EXISTEN como tablas legacy Náyade (TPV
+// hotel, más arriba en este archivo) — nombre distinto evita colisión real
+// de tabla en MySQL, no solo de identificador TypeScript.
+export const venueCashSessions = mysqlTable("venue_cash_sessions", {
+  id:                  int("id").autoincrement().primaryKey(),
+  venueId:             int("venue_id").notNull(),
+  openedByUserId:      int("opened_by_user_id").notNull(),
+  openedAt:            timestamp("opened_at").defaultNow().notNull(),
+  openingCashCents:    int("opening_cash_cents").notNull().default(0),
+  closedByUserId:      int("closed_by_user_id"),
+  closedAt:            timestamp("closed_at"),
+  expectedCashCents:   int("expected_cash_cents"),
+  countedCashCents:    int("counted_cash_cents"),
+  differenceCents:     int("difference_cents"),
+  status:              mysqlEnum("status", ["open", "closed"]).notNull().default("open"),
+  notes:               varchar("notes", { length: 500 }),
+  createdAt:           timestamp("created_at").defaultNow().notNull(),
+  updatedAt:           timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  venueIdx: index("venue_cash_sessions_venue_idx").on(table.venueId),
+  statusIdx: index("venue_cash_sessions_status_idx").on(table.status),
+}));
+export type VenueCashSession = typeof venueCashSessions.$inferSelect;
+export type InsertVenueCashSession = typeof venueCashSessions.$inferInsert;
+
+export const venueCashMovements = mysqlTable("venue_cash_movements", {
+  id:             int("id").autoincrement().primaryKey(),
+  cashSessionId:  int("cash_session_id").notNull(),
+  type:           mysqlEnum("type", ["cash_in", "cash_out"]).notNull(),
+  amountCents:    int("amount_cents").notNull(),
+  reason:         varchar("reason", { length: 500 }).notNull(),
+  actorUserId:    int("actor_user_id").notNull(),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  sessionIdx: index("venue_cash_movements_session_idx").on(table.cashSessionId),
+}));
+export type VenueCashMovement = typeof venueCashMovements.$inferSelect;
+export type InsertVenueCashMovement = typeof venueCashMovements.$inferInsert;
+
+// ─── J. COMMERCIAL AGREEMENTS & SETTLEMENTS (spec §55-69) ──────────────────────
+// Un único acuerdo ACTIVO por (venueId, eventId opcional) — resuelto por
+// especificidad (evento > venue) en settlementService.ts. Nunca hardcodea un
+// 50/50 ni ningún % (spec §56) — basisPoints entero, 0 = "no configurado
+// todavía" (spec §106, producción puede arrancar sin acuerdos).
+export const commercialAgreements = mysqlTable("commercial_agreements", {
+  id:                    int("id").autoincrement().primaryKey(),
+  venueId:               int("venue_id").notNull(),
+  eventId:               int("event_id"),
+  commissionModel:       mysqlEnum("commission_model", ["platform_commission_percent", "fixed_fee", "venue_net", "no_commission"]).notNull().default("no_commission"),
+  commissionBasisPoints: int("commission_basis_points").notNull().default(0),
+  fixedFeeCents:         int("fixed_fee_cents").notNull().default(0),
+  tokenFundingModel:     mysqlEnum("token_funding_model", ["venue_funded", "platform_funded", "shared", "no_settlement_value"]).notNull().default("no_settlement_value"),
+  benefitFundingModel:   mysqlEnum("benefit_funding_model", ["venue_funded", "platform_funded", "shared", "no_settlement_value"]).notNull().default("no_settlement_value"),
+  active:                boolean("active").notNull().default(true),
+  createdByUserId:       int("created_by_user_id"),
+  createdAt:             timestamp("created_at").defaultNow().notNull(),
+  updatedAt:             timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  venueIdx: index("commercial_agreements_venue_idx").on(table.venueId),
+  eventIdx: index("commercial_agreements_event_idx").on(table.eventId),
+}));
+export type CommercialAgreement = typeof commercialAgreements.$inferSelect;
+export type InsertCommercialAgreement = typeof commercialAgreements.$inferInsert;
+
+// Snapshot de términos EN EL MOMENTO del cálculo (spec §58/§67) — un acuerdo
+// editado mañana nunca cambia una liquidación ya calculada/aprobada/pagada.
+export const settlements = mysqlTable("settlements", {
+  id:                      int("id").autoincrement().primaryKey(),
+  venueId:                 int("venue_id").notNull(),
+  eventId:                 int("event_id"),
+  periodStart:             timestamp("period_start").notNull(),
+  periodEnd:               timestamp("period_end").notNull(),
+  status:                  mysqlEnum("status", ["draft", "calculated", "approved", "paid", "cancelled"]).notNull().default("draft"),
+  sellerEntityId:          int("seller_entity_id"),
+  collectorEntityId:       int("collector_entity_id"),
+  commissionModel:         varchar("commission_model", { length: 32 }),
+  commissionBasisPoints:   int("commission_basis_points").notNull().default(0),
+  fixedFeeCents:           int("fixed_fee_cents").notNull().default(0),
+  tokenFundingModel:       varchar("token_funding_model", { length: 32 }),
+  benefitFundingModel:     varchar("benefit_funding_model", { length: 32 }),
+  grossSalesCents:         int("gross_sales_cents").notNull().default(0),
+  refundsCents:            int("refunds_cents").notNull().default(0),
+  netSalesCents:           int("net_sales_cents").notNull().default(0),
+  commissionCents:         int("commission_cents").notNull().default(0),
+  tokenSubsidyCents:       int("token_subsidy_cents").notNull().default(0),
+  benefitSubsidyCents:     int("benefit_subsidy_cents").notNull().default(0),
+  // Signo: positivo = el cobrador debe pagar al venue; negativo = el venue
+  // debe pagar al cobrador (spec §59, ambos flujos de caja con el mismo motor).
+  netPayableToVenueCents:  int("net_payable_to_venue_cents").notNull().default(0),
+  calculatedAt:            timestamp("calculated_at"),
+  approvedAt:              timestamp("approved_at"),
+  approvedByUserId:        int("approved_by_user_id"),
+  paidAt:                  timestamp("paid_at"),
+  paidByUserId:            int("paid_by_user_id"),
+  notes:                   varchar("notes", { length: 500 }),
+  createdAt:               timestamp("created_at").defaultNow().notNull(),
+  updatedAt:               timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  venueIdx: index("settlements_venue_idx").on(table.venueId),
+  statusIdx: index("settlements_status_idx").on(table.status),
+}));
+export type Settlement = typeof settlements.$inferSelect;
+export type InsertSettlement = typeof settlements.$inferInsert;
+
+// NOMBRE "venue_settlement_lines" (no "settlement_lines"): esa tabla ya
+// existe como legacy Náyade (liquidaciones de proveedores turísticos, más
+// arriba en este archivo) — colisión real de tabla, no solo de identificador.
+export const venueSettlementLines = mysqlTable("venue_settlement_lines", {
+  id:             int("id").autoincrement().primaryKey(),
+  settlementId:   int("settlement_id").notNull(),
+  sourceType:     mysqlEnum("source_type", ["commerce_transaction", "ticket_order", "commerce_refund"]).notNull(),
+  sourceId:       int("source_id").notNull(),
+  grossAmountCents: int("gross_amount_cents").notNull(),
+  commissionCents:  int("commission_cents").notNull().default(0),
+  netCents:         int("net_cents").notNull(),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  settlementIdx: index("venue_settlement_lines_settlement_idx").on(table.settlementId),
+}));
+export type VenueSettlementLine = typeof venueSettlementLines.$inferSelect;
+export type InsertVenueSettlementLine = typeof venueSettlementLines.$inferInsert;

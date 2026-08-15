@@ -175,6 +175,7 @@ const StudentDetail = lazy(() => import("./pages/admin/students/StudentDetail"))
 const HistoricalIdentities = lazy(() => import("./pages/admin/students/HistoricalIdentities"));
 const ReferralsAdmin = lazy(() => import("./pages/admin/students/ReferralsAdmin"));
 const SalesOperationsAdmin = lazy(() => import("./pages/admin/sales/SalesOperationsAdmin"));
+const FinanceAdmin = lazy(() => import("./pages/admin/finance/FinanceAdmin"));
 const HistoricalIdentityDetail = lazy(() => import("./pages/admin/students/HistoricalIdentityDetail"));
 
 // Segolife: Venues / Negocios / Eventos (Fase 1D)
@@ -511,6 +512,7 @@ function Router() {
       <Route path="/admin/students/historical">{() => <Suspense fallback={<AdminLoadingFallback />}><HistoricalIdentities /></Suspense>}</Route>
       <Route path="/admin/students/referrals">{() => <Suspense fallback={<AdminLoadingFallback />}><ReferralsAdmin /></Suspense>}</Route>
       <Route path="/admin/sales">{() => <Suspense fallback={<AdminLoadingFallback />}><SalesOperationsAdmin /></Suspense>}</Route>
+      <Route path="/admin/finance">{() => <Suspense fallback={<AdminLoadingFallback />}><FinanceAdmin /></Suspense>}</Route>
       <Route path="/admin/students/historical/:identityKey">{() => <Suspense fallback={<AdminLoadingFallback />}><HistoricalIdentityDetail /></Suspense>}</Route>
       <Route path="/admin/students/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><StudentDetail /></Suspense>}</Route>
       <Route path="/admin/venues">{() => <Suspense fallback={<AdminLoadingFallback />}><VenuesManager /></Suspense>}</Route>
