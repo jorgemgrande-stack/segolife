@@ -16,6 +16,7 @@ import {
   type StudentNote,
   type University,
 } from "../../drizzle/schema";
+import { evaluateReferralConversionBestEffort } from "../segolife/referrals/referralService";
 
 // Pool persistente top-level — mismo patrón que server/hotelDb.ts,
 // server/db/reviewsDb.ts y server/db/communitiesDb.ts.
@@ -304,6 +305,19 @@ export async function updateStudentProfile(
   const profileCompleted = computeProfileCompleted(merged as unknown as Record<string, unknown>);
   await conn.update(studentProfiles).set({ ...fields, profileCompleted }).where(eq(studentProfiles.userId, userId));
   const [updated] = await conn.select().from(studentProfiles).where(eq(studentProfiles.userId, userId)).limit(1);
+
+  // REFERRAL & INVITE REWARDS ENGINE (Fase 8, spec §83): evalúa la
+  // condición "profile_completed" en CADA guardado donde el perfil quede
+  // completo — nunca solo en la transición, porque no hace falta: la propia
+  // idempotencia de evaluateReferralConversion (UPDATE condicional sobre
+  // referrals.status='registered') ya garantiza que ediciones repetidas
+  // jamás dupliquen la recompensa (spec: "repeated edits = no duplicate
+  // reward"). Best-effort — nunca bloquea el guardado del perfil ya
+  // confirmado.
+  if (profileCompleted) {
+    await evaluateReferralConversionBestEffort(userId, "profile_completed", new Date());
+  }
+
   return updated;
 }
 

@@ -64,6 +64,7 @@ const timelineTypeEnum = z.enum([
   "tag_assigned", "login", "admin_action",
   "community_response", "community_support", "community_proposal_submitted",
   "communication_email",
+  "referral_registered", "referral_converted",
 ]);
 
 export const students360Router = router({

@@ -27,6 +27,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import { isSafeInternalPath } from "@/const";
+import { getStoredReferralAttribution, clearReferralAttribution } from "@/lib/referralAttribution";
 
 const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
 
@@ -191,6 +192,12 @@ export default function Register() {
 
     setLoading(true);
     try {
+      // REFERRAL & INVITE REWARDS ENGINE (Fase 8, spec §5/§31) — invisible
+      // para el estudiante: si abrió un enlace de invitación, el código y el
+      // timestamp del click ya están en localStorage (InviteLanding.tsx); si
+      // no hay nada guardado, el registro sigue siendo un alta normal.
+      const referralAttribution = getStoredReferralAttribution();
+
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -206,6 +213,8 @@ export default function Register() {
           academicYear: academicYear.trim() || undefined,
           marketingConsent,
           website,
+          referralCode: referralAttribution?.code,
+          referralClickedAt: referralAttribution?.clickedAt,
         }),
       });
 
@@ -216,6 +225,10 @@ export default function Register() {
         setLoading(false);
         return;
       }
+
+      // Se use o no (código válido/inválido, ya consumido en el registro),
+      // nunca debe sobrevivir a un alta ya completada.
+      clearReferralAttribution();
 
       // El honeypot (server/localAuth.ts) responde 201 sin crear cuenta ni
       // cookie de sesión para no delatar al bot — pero un 201 sin `id` real

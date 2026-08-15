@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { toast } from "sonner";
-import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell, Ticket, IdCard, Archive } from "lucide-react";
+import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell, Ticket, IdCard, Archive, UserPlus } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -280,6 +280,19 @@ export default function Profile() {
           >
             <span className="flex items-center gap-2 text-sm font-medium">
               <Ticket className="size-4" aria-hidden="true" /> {t("ticketing.viewMyTickets")}
+            </span>
+            <ChevronRight className="size-4" aria-hidden="true" />
+          </Link>
+          {/* REFERRAL & INVITE REWARDS ENGINE (Fase 8, spec §32) — segundo
+              punto de entrada además de Rewards→Invitar, mismo destino
+              (pestaña "invite" de Rewards.tsx), nunca una segunda
+              implementación de enlace/QR/estadísticas. */}
+          <Link
+            href={`/${slug}/rewards?tab=invite`}
+            className="flex items-center justify-between rounded-2xl bg-secondary px-4 py-3 text-secondary-foreground"
+          >
+            <span className="flex items-center gap-2 text-sm font-medium">
+              <UserPlus className="size-4" aria-hidden="true" /> {t("profile.inviteFriends")}
             </span>
             <ChevronRight className="size-4" aria-hidden="true" />
           </Link>

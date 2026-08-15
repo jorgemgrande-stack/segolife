@@ -152,7 +152,7 @@ export function createLocalAuthRouter(): Router {
    * el mismo signSessionToken/cookie que el login real.
    */
   router.post("/api/auth/register", async (req: Request, res: Response) => {
-    const { firstName, lastName, email, phone, password, communitySlug, universityId, academicYear, marketingConsent, website } = req.body ?? {};
+    const { firstName, lastName, email, phone, password, communitySlug, universityId, academicYear, marketingConsent, website, referralCode, referralClickedAt } = req.body ?? {};
 
     // Honeypot anti-bot (spec punto 30): campo oculto que un humano nunca
     // rellena. Presencia de valor → responder OK sin crear nada (no delatar
@@ -184,6 +184,17 @@ export function createLocalAuthRouter(): Router {
         universityId: Number(universityId),
         academicYear: academicYear ? String(academicYear) : undefined,
         marketingConsent: marketingConsent === true,
+        // REFERRAL & INVITE REWARDS ENGINE (Fase 8) — código opcional
+        // capturado por el cliente (localStorage) al abrir un enlace de
+        // invitación; el timestamp se parsea de forma defensiva (nunca
+        // confiar en que el cliente mande una fecha válida ni futura — la
+        // validación real del rango ocurre en referralService.ts).
+        referralCode: typeof referralCode === "string" && referralCode.trim() ? referralCode.trim() : null,
+        referralClickedAt: (() => {
+          if (typeof referralClickedAt !== "string" && typeof referralClickedAt !== "number") return null;
+          const parsed = new Date(referralClickedAt);
+          return Number.isNaN(parsed.getTime()) ? null : parsed;
+        })(),
       });
 
       const token = await signSessionToken(result.userId);

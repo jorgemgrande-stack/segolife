@@ -45,6 +45,7 @@ import { grantBenefit } from "../benefits/benefitGrantService";
 import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/benefitEvents";
 import { resolveHistoricalIdentityBestEffort } from "./historicalIdentityService";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
+import { attributeReferralInTx, evaluateReferralConversionBestEffort } from "../referrals/referralService";
 
 /**
  * Slug del beneficio de bienvenida (recomendación Student 360 §"Bienvenida
@@ -163,6 +164,14 @@ export interface RegisterStudentInput {
   universityId: number;
   academicYear?: string;
   marketingConsent: boolean;
+  // SEGOLIFE — REFERRAL & INVITE REWARDS ENGINE (Fase 8, spec §5/§18): código
+  // opaco resuelto server-side (nunca un referrerUserId directo del
+  // cliente, spec §5) + el timestamp del click persistido en el propio
+  // cliente (localStorage) — límite de confianza documentado, no
+  // criptográfico (ver referralService.ts, cabecera). Ambos opcionales:
+  // un registro sin código sigue siendo un alta normal.
+  referralCode?: string | null;
+  referralClickedAt?: Date | null;
 }
 
 export interface RegisterStudentResult {
@@ -247,13 +256,31 @@ export async function registerStudent(input: RegisterStudentInput, db?: DbHandle
     }
 
     await ensureStudentProfile(insertId, tx);
+    await addUserToCommunity(insertId, community.id, undefined, tx);
+
+    // REFERRAL & INVITE REWARDS ENGINE (Fase 8, spec §18): atribución
+    // atómica dentro de la MISMA transacción de alta — nunca un paso
+    // best-effort aparte, para que un referido nunca pueda quedar "a medias"
+    // (registrado pero sin decidir si tiene o no referrer). Silencioso ante
+    // código inválido/autorreferido/click caducado — nunca bloquea el alta.
+    // DEBE ir ANTES de updateStudentProfile: si el propio alta ya completara
+    // el perfil (raro, pero posible con más campos a futuro),
+    // evaluateReferralConversion("profile_completed") que dispara
+    // updateStudentProfile necesita que la fila de `referrals` ya exista.
+    await attributeReferralInTx(tx, {
+      referredUserId: insertId,
+      referredCommunityId: community.id,
+      referredEmail: email,
+      referredPhone: phone,
+      referralCode: input.referralCode,
+      referralClickedAt: input.referralClickedAt ?? null,
+    });
+
     await updateStudentProfile(
       insertId,
       { firstName, lastName, universityId: university.id, ...(input.academicYear?.trim() ? { academicYear: input.academicYear.trim() } : {}) },
       tx
     );
-
-    await addUserToCommunity(insertId, community.id, undefined, tx);
 
     // notification_preferences ES el registro de consentimiento de
     // marketing (spec punto 27) — se escribe siempre explícitamente (incluso
@@ -273,6 +300,12 @@ export async function registerStudent(input: RegisterStudentInput, db?: DbHandle
   // Fourvenues (spec §15) — cualquier otra confianza queda para revisión
   // manual en el directorio admin, nunca auto-link.
   await resolveHistoricalIdentityBestEffort(userId, email, phone);
+  // REFERRAL & INVITE REWARDS ENGINE (Fase 8) — evalúa la condición
+  // "account_created" (si la campaña resuelta en la atribución la exige)
+  // usando el MISMO pipeline post-commit best-effort que el resto de
+  // hechos productores (spec: "un solo camino de evaluación consistente,
+  // nunca un caso especial síncrono dentro de la transacción").
+  await evaluateReferralConversionBestEffort(userId, "account_created", new Date());
   // WELCOME_STUDENT (Communication Center, spec §27/§4) — este motor de
   // negocio SOLO emite el evento tipado, nunca conoce notificationService.ts
   // ni ningún provider (ver studentRegisteredListener.ts). emitEngagementEvent

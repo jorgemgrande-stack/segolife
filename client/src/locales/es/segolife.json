@@ -412,6 +412,7 @@
     "title": "Recompensas",
     "tabSpend": "Gastar SegoTokens",
     "tabBenefits": "Mis Beneficios",
+    "tabInvite": "Invitar",
     "spendEmptyTitle": "Todavía no hay recompensas canjeables",
     "spendEmptyDescription": "Muy pronto podrás cambiar tus SegoTokens por recompensas reales. Sigue ganando mientras tanto.",
     "balanceLabel": "Tu saldo"
@@ -455,6 +456,7 @@
     "completeProfileDescription": "Añade tus datos para aprovechar toda la experiencia Segolife.",
     "completeProfileCta": "Completar perfil",
     "viewActivity": "Ver actividad",
+    "inviteFriends": "Invitar amigos",
     "identityQrTitle": "Mi ID de SEGOLIFE",
     "identityQrDescription": "Usa este QR para identificarte en los venues de SEGOLIFE y en el check-in — nunca autoriza un cargo ni un acceso por sí mismo.",
     "identityQrRegenerate": "Regenerar código",
@@ -587,5 +589,44 @@
       "NETWORK": "Error de conexión. Comprueba que el servidor está en marcha.",
       "loginCta": "Iniciar sesión"
     }
+  },
+  "inviteLanding": {
+    "meta": { "title": "Te han invitado — SEGOLIFE" },
+    "eyebrow": "Invitación de un amigo",
+    "title": "Te han invitado a SEGOLIFE",
+    "subtitle": "Únete a tu comunidad universitaria. Descubre eventos. Gana SegoTokens. Desbloquea beneficios.",
+    "rewardPreview": "Al registrarte, tú y quien te invitó ganaréis SegoTokens.",
+    "cta": "Unirme a SEGOLIFE",
+    "footer": "¿Ya tienes cuenta?"
+  },
+  "inviteFriends": {
+    "title": "Invita a tus amigos",
+    "subtitle": "Comparte tu enlace — cuando un amigo se una, ambos podéis ganar SegoTokens.",
+    "linkLabel": "Tu enlace de invitación",
+    "copy": "Copiar enlace",
+    "copied": "¡Copiado!",
+    "share": "Compartir",
+    "shareText": "Únete a SEGOLIFE con mi invitación",
+    "qrButton": "Ver código QR",
+    "qrTitle": "Tu código de invitación",
+    "qrSubtitle": "Que lo escaneen para unirse con tu invitación.",
+    "statsTitle": "Tus invitaciones",
+    "statsInvited": "Invitados",
+    "statsConverted": "Convertidos",
+    "statsRewarded": "Recompensados",
+    "tokensEarned": "SegoTokens ganados",
+    "noCampaignTitle": "Sin campaña activa ahora mismo",
+    "noCampaignBody": "Tu enlace sigue funcionando, pero de momento no hay recompensa activa por invitar.",
+    "campaignPromise": "Tú ganas {{inviterAmount}} ST · Ellos ganan {{inviteeAmount}} ST",
+    "conditionPrefix": "Cuando completen:",
+    "condition": {
+      "account_created": "crear su cuenta",
+      "verified_student": "verificar su cuenta",
+      "profile_completed": "completar su perfil",
+      "first_venue_visit": "su primera visita a un local",
+      "first_event_attendance": "su primera asistencia a un evento"
+    },
+    "capReached": "Has alcanzado el máximo de recompensas de esta campaña",
+    "loading": "Cargando tu invitación…"
   }
 }

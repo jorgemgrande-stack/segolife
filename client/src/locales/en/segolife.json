@@ -412,6 +412,7 @@
     "title": "Rewards",
     "tabSpend": "Spend SegoTokens",
     "tabBenefits": "My Benefits",
+    "tabInvite": "Invite",
     "spendEmptyTitle": "No redeemable rewards yet",
     "spendEmptyDescription": "Soon you'll be able to trade your SegoTokens for real rewards. Keep earning in the meantime.",
     "balanceLabel": "Your balance"
@@ -455,6 +456,7 @@
     "completeProfileDescription": "Add your details to get the full Segolife experience.",
     "completeProfileCta": "Complete profile",
     "viewActivity": "View activity",
+    "inviteFriends": "Invite friends",
     "identityQrTitle": "My SEGOLIFE ID",
     "identityQrDescription": "Use this QR to identify yourself at SEGOLIFE venues and at check-in — it never authorizes a charge or grants access by itself.",
     "identityQrRegenerate": "Regenerate code",
@@ -587,5 +589,44 @@
       "NETWORK": "Connection error. Check that the server is running.",
       "loginCta": "Log in"
     }
+  },
+  "inviteLanding": {
+    "meta": { "title": "You're invited — SEGOLIFE" },
+    "eyebrow": "Invitation from a friend",
+    "title": "You've been invited to SEGOLIFE",
+    "subtitle": "Join your university community. Discover events. Earn SegoTokens. Unlock benefits.",
+    "rewardPreview": "When you sign up, you and whoever invited you can both earn SegoTokens.",
+    "cta": "Join SEGOLIFE",
+    "footer": "Already have an account?"
+  },
+  "inviteFriends": {
+    "title": "Invite friends",
+    "subtitle": "Share your link — when a friend joins, you can both earn SegoTokens.",
+    "linkLabel": "Your invite link",
+    "copy": "Copy link",
+    "copied": "Copied!",
+    "share": "Share",
+    "shareText": "Join SEGOLIFE with my invite",
+    "qrButton": "Show QR code",
+    "qrTitle": "Your invite code",
+    "qrSubtitle": "Have them scan it to join with your invitation.",
+    "statsTitle": "Your invites",
+    "statsInvited": "Invited",
+    "statsConverted": "Converted",
+    "statsRewarded": "Rewarded",
+    "tokensEarned": "SegoTokens earned",
+    "noCampaignTitle": "No active campaign right now",
+    "noCampaignBody": "Your link still works, but there's no active reward for invites at the moment.",
+    "campaignPromise": "You get: {{inviterAmount}} ST · They get: {{inviteeAmount}} ST",
+    "conditionPrefix": "When they complete:",
+    "condition": {
+      "account_created": "creating their account",
+      "verified_student": "verifying their account",
+      "profile_completed": "completing their profile",
+      "first_venue_visit": "their first venue visit",
+      "first_event_attendance": "their first event attendance"
+    },
+    "capReached": "You've reached this campaign's reward limit",
+    "loading": "Loading your invite…"
   }
 }

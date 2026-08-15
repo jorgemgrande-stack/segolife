@@ -38,6 +38,7 @@ import { earnTokens } from "../tokens/tokenEngine";
 import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
 import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/benefitEvents";
 import { resolveIdentity, persistIdentityMapping, isConfirmedResolutionMethod } from "../integrations/identityResolver";
+import { evaluateReferralConversionBestEffort } from "../referrals/referralService";
 import { recordUnresolvedOperation } from "../integrations/unresolvedOperationsService";
 import type { NormalizedAttendance } from "../integrations/externalTicketingProvider";
 import { TokenEngineError } from "../tokens/tokenLedgerService";
@@ -293,6 +294,18 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
       occurredAt: input.attendance.occurredAt,
     }, conn).catch(() => []); // un fallo en Benefits nunca debe revertir la asistencia ya registrada.
     for (const u of unlocked) emitBenefitGranted(buildBenefitGrantedPayload(u.userBenefit, u.definition));
+  }
+
+  // REFERRAL & INVITE REWARDS ENGINE (Fase 8, spec §10/§26-27/§58): mismo
+  // criterio de exclusión que earnTokens/evaluateBenefitsForOrigin arriba —
+  // un import histórico (isHistoricalImport) NUNCA califica una conversión
+  // (spec §58: una identidad Fourvenues histórica no es un Student
+  // registrado por invitación real) y suppressLoyalty se respeta igual que
+  // el resto del pipeline. evaluateReferralConversion además comprueba
+  // occurredAt >= referral.registeredAt, así que ninguna asistencia anterior
+  // al alta puede calificar aunque algún futuro llamador lo intentara.
+  if (!input.isHistoricalImport && !input.suppressLoyalty) {
+    await evaluateReferralConversionBestEffort(userId, "first_event_attendance", input.attendance.occurredAt);
   }
 
   return { status: "processed", attendance: row };

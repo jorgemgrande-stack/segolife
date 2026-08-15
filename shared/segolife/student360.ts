@@ -40,7 +40,15 @@ export type TimelineEventType =
   // en el timeline (in_app ya tiene su propia inbox dedicada, ver
   // Notifications.tsx — mostrarlo aquí también sería ruido duplicado, spec
   // §24: "no contaminar el timeline con eventos técnicos irrelevantes").
-  | "communication_email";
+  | "communication_email"
+  // REFERRAL & INVITE REWARDS ENGINE (Fase 8, spec §37-38) — solo los 2
+  // hechos con valor real para un admin en la ficha 360: "este Student
+  // llegó por invitación" (en SU propia ficha, como invitee) y "una de sus
+  // invitaciones se convirtió" (en la ficha del inviter). La recompensa en
+  // sí NUNCA se duplica aquí — ya aparece como token_credit vía el ledger
+  // real (sourceType="referral_inviter"/"referral_invitee" en metadata).
+  | "referral_registered"
+  | "referral_converted";
 
 export interface TimelineEventDTO {
   /** Sintético: `${source}:${sourceRowId}` — único dentro de la ficha, no un id de BD real. */

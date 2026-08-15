@@ -29,6 +29,7 @@ import { listAdminActionsByStudentProfileId } from "./studentAdminActionsDb";
 import { listResponsesByUserId } from "../community/communityResponseService";
 import { listSupportsByUserId, listStudentProposalsByUserId } from "../community/communityStudentProposalDb";
 import { listEmailDeliveriesByUserId } from "../engagement/notificationsDb";
+import { listReferralEventsByUserId } from "../referrals/referralService";
 import type { TimelineEventDTO, TimelineFilters, TimelineCursor, TimelinePage } from "../../../shared/segolife/student360";
 
 const SOURCE_FETCH_LIMIT = 300;
@@ -52,7 +53,7 @@ export async function getStudentActivitySnapshot(userId: number, studentProfileI
 }
 
 async function collectAllEvents(userId: number, studentProfileId: number): Promise<TimelineEventDTO[]> {
-  const [tickets, attendance, commerce, qrRedemptions, ledger, benefits, notes, tagEvents, logins, adminActions, communityResponses, communitySupports, communityStudentProposals, emailDeliveries] =
+  const [tickets, attendance, commerce, qrRedemptions, ledger, benefits, notes, tagEvents, logins, adminActions, communityResponses, communitySupports, communityStudentProposals, emailDeliveries, referralEvents] =
     await Promise.all([
       listMyTickets(userId),
       listAttendanceByUserId(userId),
@@ -68,6 +69,7 @@ async function collectAllEvents(userId: number, studentProfileId: number): Promi
       listSupportsByUserId(userId, SOURCE_FETCH_LIMIT),
       listStudentProposalsByUserId(userId, SOURCE_FETCH_LIMIT),
       listEmailDeliveriesByUserId(userId, SOURCE_FETCH_LIMIT),
+      listReferralEventsByUserId(userId),
     ]);
 
   const events: TimelineEventDTO[] = [];
@@ -383,6 +385,39 @@ async function collectAllEvents(userId: number, studentProfileId: number): Promi
       eventName: null,
       metadata: { status: p.status },
     });
+  }
+
+  // ── REFERRAL & INVITE REWARDS ENGINE (spec §37-38) ──────────────────────
+  for (const r of referralEvents) {
+    if (r.kind === "referral_registered") {
+      events.push({
+        id: `referral_registered:${r.referralId}`,
+        occurredAt: toIso(r.occurredAt)!,
+        type: "referral_registered",
+        title: "Se unió por invitación de un amigo",
+        description: null,
+        source: "referrals",
+        amountCents: null,
+        tokens: null,
+        venueName: null,
+        eventName: null,
+        metadata: { referralId: r.referralId },
+      });
+    } else {
+      events.push({
+        id: `referral_converted:${r.referralId}`,
+        occurredAt: toIso(r.occurredAt)!,
+        type: "referral_converted",
+        title: "Su invitación se convirtió en un nuevo Student",
+        description: null,
+        source: "referrals",
+        amountCents: null,
+        tokens: null,
+        venueName: null,
+        eventName: null,
+        metadata: { referralId: r.referralId },
+      });
+    }
   }
 
   return events;

@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, Link } from "wouter";
-import { Gift, Coins, ChevronRight, Clock } from "lucide-react";
+import { Gift, Coins, ChevronRight, Clock, Copy, Check, UserPlus } from "lucide-react";
+import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
@@ -11,6 +13,8 @@ import { SegolifeImage } from "@/components/segolife/SegolifeImage";
 import { SegolifeRowSkeleton, SegolifeCardGridSkeleton } from "@/components/segolife/SegolifeSkeletons";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ReferralQrButton } from "@/components/segolife/ReferralQr";
 
 /**
  * Rewards — /:community/rewards (Fase 6, marketplace añadido en Fase 7).
@@ -207,11 +211,123 @@ function SpendTab({ slug }: { slug: string }) {
   );
 }
 
+/**
+ * InviteTab — SEGOLIFE REFERRAL & INVITE REWARDS ENGINE (Fase 8, spec
+ * §32-34). Enlace + QR de invitación (NUNCA la QR de identidad, spec §4),
+ * economía de la campaña activa en lenguaje humano (spec §34: "resolver la
+ * campaña antes de prometer nada"), y estadísticas agregadas ligeras del
+ * propio Student — nunca PII de a quién invitó (spec §19).
+ */
+function InviteTab() {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  const { data, isLoading, isError } = trpc.referrals.mySummary.useQuery();
+
+  if (isLoading) return <SegolifeRowSkeleton />;
+  if (isError || !data) return <SegolifeErrorState />;
+
+  const capReached = data.activeCampaign?.maxRewardsPerInviter != null && data.stats.remainingCapThisCampaign === 0;
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(data!.inviteLink);
+      setCopied(true);
+      toast.success(t("inviteFriends.copied"));
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error(t("inviteFriends.copy"));
+    }
+  }
+
+  async function handleShare() {
+    const shareData = { title: "SEGOLIFE", text: t("inviteFriends.shareText"), url: data!.inviteLink };
+    if (navigator.share) {
+      try { await navigator.share(shareData); } catch { /* usuario canceló — no es un error */ }
+    } else {
+      await handleCopy();
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="segolife-card-shadow rounded-2xl bg-card p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-primary">
+            <UserPlus className="size-4" aria-hidden="true" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-foreground">{t("inviteFriends.title")}</p>
+            <p className="text-xs text-muted-foreground">{t("inviteFriends.subtitle")}</p>
+          </div>
+        </div>
+
+        {data.activeCampaign ? (
+          <div className="flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-medium text-foreground">
+            <Coins className="size-3.5 text-primary flex-shrink-0" aria-hidden="true" />
+            <span>
+              {t("inviteFriends.campaignPromise", { inviterAmount: data.activeCampaign.inviterRewardTokens, inviteeAmount: data.activeCampaign.inviteeRewardTokens })}
+              {" — "}{t("inviteFriends.conditionPrefix")} {t(`inviteFriends.condition.${data.activeCampaign.conversionCondition}`)}
+            </span>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+            <p className="font-medium text-foreground">{t("inviteFriends.noCampaignTitle")}</p>
+            <p>{t("inviteFriends.noCampaignBody")}</p>
+          </div>
+        )}
+
+        {capReached && (
+          <p className="text-xs font-medium text-amber-600">{t("inviteFriends.capReached")}</p>
+        )}
+
+        <div className="rounded-xl border border-border bg-secondary/30 px-3 py-2">
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-0.5">{t("inviteFriends.linkLabel")}</p>
+          <p className="truncate text-sm text-foreground">{data.inviteLink}</p>
+        </div>
+
+        <div className="flex gap-2">
+          <Button variant="secondary" className="flex-1 gap-1.5" onClick={handleCopy}>
+            {copied ? <Check className="size-4" aria-hidden="true" /> : <Copy className="size-4" aria-hidden="true" />}
+            {copied ? t("inviteFriends.copied") : t("inviteFriends.copy")}
+          </Button>
+          <Button className="flex-1 gap-1.5" onClick={handleShare}>
+            <UserPlus className="size-4" aria-hidden="true" /> {t("inviteFriends.share")}
+          </Button>
+        </div>
+        <ReferralQrButton inviteLink={data.inviteLink} />
+      </div>
+
+      <div className="segolife-card-shadow rounded-2xl bg-card p-4">
+        <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">{t("inviteFriends.statsTitle")}</p>
+        <div className="grid grid-cols-4 gap-2 text-center">
+          <div>
+            <p className="text-lg font-bold text-foreground">{data.stats.totalReferred}</p>
+            <p className="text-[10px] text-muted-foreground">{t("inviteFriends.statsInvited")}</p>
+          </div>
+          <div>
+            <p className="text-lg font-bold text-foreground">{data.stats.converted}</p>
+            <p className="text-[10px] text-muted-foreground">{t("inviteFriends.statsConverted")}</p>
+          </div>
+          <div>
+            <p className="text-lg font-bold text-foreground">{data.stats.rewarded}</p>
+            <p className="text-[10px] text-muted-foreground">{t("inviteFriends.statsRewarded")}</p>
+          </div>
+          <div>
+            <p className="text-lg font-bold text-primary">{data.stats.tokensEarnedFromReferrals}</p>
+            <p className="text-[10px] text-muted-foreground">{t("inviteFriends.tokensEarned")}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Rewards() {
   const { t } = useTranslation();
   const { slug } = useCommunity();
   const [location] = useLocation();
-  const defaultTab = location.endsWith("/benefits") ? "benefits" : "spend";
+  const tabParam = new URLSearchParams(window.location.search).get("tab");
+  const defaultTab = tabParam === "invite" ? "invite" : location.endsWith("/benefits") ? "benefits" : "spend";
 
   return (
     <SegolifeAppShell requireAuth title={t("rewards.title")}>
@@ -221,9 +337,11 @@ export default function Rewards() {
           <TabsList className="w-full">
             <TabsTrigger value="spend" className="flex-1">{t("rewards.tabSpend")}</TabsTrigger>
             <TabsTrigger value="benefits" className="flex-1">{t("rewards.tabBenefits")}</TabsTrigger>
+            <TabsTrigger value="invite" className="flex-1">{t("rewards.tabInvite")}</TabsTrigger>
           </TabsList>
           <TabsContent value="spend" className="mt-4">{slug && <SpendTab slug={slug} />}</TabsContent>
           <TabsContent value="benefits" className="mt-4">{slug && <BenefitsTab slug={slug} />}</TabsContent>
+          <TabsContent value="invite" className="mt-4"><InviteTab /></TabsContent>
         </Tabs>
       </SegolifePageContainer>
     </SegolifeAppShell>

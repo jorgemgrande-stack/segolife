@@ -3766,10 +3766,19 @@ export const studentProfiles = mysqlTable("student_profiles", {
   city:                   varchar("city", { length: 128 }),
   profileCompleted:       boolean("profile_completed").notNull().default(false),
   status:                 mysqlEnum("status", ["active", "inactive"]).notNull().default("active"),
+  // SEGOLIFE — REFERRAL & INVITE REWARDS ENGINE (Fase 8, spec §2): identidad
+  // pública y permanente de invitación — opaca, no secuencial, sin PII
+  // codificada. Nullable/lazy: se genera bajo demanda (ensureReferralCode en
+  // referralService.ts) en vez de forzar el registro a calcularla siempre —
+  // cubre tanto altas nuevas (generada dentro de la misma transacción de
+  // registerStudent) como estudiantes ya existentes que abren "Invitar
+  // amigos" por primera vez tras este despliegue (nunca backfill masivo).
+  referralCode:           varchar("referral_code", { length: 16 }),
   createdAt:              timestamp("created_at").defaultNow().notNull(),
   updatedAt:              timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
   userIdUnique: unique("student_profiles_user_id_unique").on(table.userId),
+  referralCodeUnique: unique("student_profiles_referral_code_unique").on(table.referralCode),
 }));
 export type StudentProfile = typeof studentProfiles.$inferSelect;
 export type InsertStudentProfile = typeof studentProfiles.$inferInsert;
@@ -5925,3 +5934,107 @@ export const communitySupports = mysqlTable("community_supports", {
 }));
 export type CommunitySupport = typeof communitySupports.$inferSelect;
 export type InsertCommunitySupport = typeof communitySupports.$inferInsert;
+
+// ─── SEGOLIFE: REFERRAL & INVITE REWARDS ENGINE (Fase 8) ───────────────────────
+// Auditado antes de crearse (spec §76-79): dominio de referidos genuinamente
+// nuevo, sin tabla previa equivalente — el único "invite"/"invitation" del
+// repo es el flujo LEGACY de alta de staff (users.inviteToken/
+// createInvitedUser en server/db.ts), sin ninguna relación con esto.
+//
+// SOLO 2 tablas nuevas (spec §76 pide auditar antes de asumir 3-4 por
+// defecto) — deliberadamente NO existe `referral_clicks`: la atribución
+// pre-registro se modela en el propio cliente (localStorage con código +
+// timestamp del click, ver referralAttribution.ts) y se revalida/persiste
+// server-side de forma ATÓMICA dentro de la misma transacción de
+// registerStudent — nunca hay una fila de "click" own su propio ciclo de
+// vida. Esto significa que el estado ATTRIBUTED de spec §17 no existe como
+// tal: en este modelo, atribución = registro (misma operación), así que
+// `referrals.status` arranca directamente en "registered".
+//
+// `referral_campaigns` — economía configurable por campaña (spec §11/§45).
+// `communityId` NULL = todas las comunidades (nunca "ie"/"uva" hardcodeado,
+// regla arquitectónica fundamental de CLAUDE.md). `attribution_window_days`
+// vive aquí (campo pedido explícitamente por el constructor de campaña, spec
+// §45) pero SOLO se usa como ventana efectiva cuando esta campaña es la que
+// resuelve en el momento del registro — sin ninguna campaña activa que
+// encaje, se usa DEFAULT_ATTRIBUTION_WINDOW_DAYS (ver referralService.ts)
+// para decidir si el click sigue siendo válido, y el referido se sigue
+// registrando igualmente sin promesa de recompensa (spec §34).
+
+export const referralCampaigns = mysqlTable("referral_campaigns", {
+  id:                       int("id").autoincrement().primaryKey(),
+  name:                     varchar("name", { length: 256 }).notNull(),
+  status:                   mysqlEnum("status", ["draft", "active", "paused", "ended", "archived"]).notNull().default("draft"),
+  communityId:              int("community_id"),
+  inviterRewardTokens:      int("inviter_reward_tokens").notNull(),
+  inviteeRewardTokens:      int("invitee_reward_tokens").notNull(),
+  // "verified_student" se mantiene en el enum por compatibilidad futura pero
+  // el admin builder NO lo ofrece hoy (spec: auditoría confirmó que no existe
+  // ningún hecho real de verificación de email/teléfono en el repo — ver
+  // referralConversionConditions.ts) — mismo criterio que Fase 6 ocultando
+  // valores de enum sin motor real detrás.
+  conversionCondition:      mysqlEnum("conversion_condition", ["account_created", "verified_student", "profile_completed", "first_venue_visit", "first_event_attendance"]).notNull(),
+  attributionWindowDays:    int("attribution_window_days").notNull().default(30),
+  maxRewardsPerInviter:     int("max_rewards_per_inviter"),
+  maxTotalConversions:      int("max_total_conversions"),
+  budgetTokens:             int("budget_tokens"),
+  priority:                 int("priority").notNull().default(0),
+  startsAt:                 timestamp("starts_at"),
+  endsAt:                   timestamp("ends_at"),
+  createdByUserId:          int("created_by_user_id"),
+  activatedAt:              timestamp("activated_at"),
+  activatedByUserId:        int("activated_by_user_id"),
+  createdAt:                timestamp("created_at").defaultNow().notNull(),
+  updatedAt:                timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  statusIdx: index("referral_campaigns_status_idx").on(table.status),
+  communityIdx: index("referral_campaigns_community_id_idx").on(table.communityId),
+}));
+export type ReferralCampaign = typeof referralCampaigns.$inferSelect;
+export type InsertReferralCampaign = typeof referralCampaigns.$inferInsert;
+
+// `referrals` — relación canónica referrer→referred (spec §17). Creada de
+// forma atómica dentro de la transacción de registerStudent (spec §18: "una
+// vez el registro real tiene éxito, vincular la atribución de forma
+// atómica/idempotente") — nunca en un paso posterior best-effort, para que
+// nunca pueda quedar un registro sin su atribución ya decidida.
+//
+// `referred_user_id` UNIQUE (spec §7, "un usuario referido → un referrer
+// canónico", cerrado por restricción real de MySQL, no solo por lógica de
+// aplicación). `inviter_reward_tokens`/`invitee_reward_tokens`/
+// `required_conversion_condition` son una FOTOGRAFÍA de la campaña resuelta
+// en el momento del registro (spec §46, "LA ATRIBUCIÓN FIJA LA ECONOMÍA DE
+// LA CAMPAÑA") — si el admin edita la campaña después, o si la campaña
+// termina antes de que el amigo complete la condición, esta fila conserva
+// los importes originales prometidos. `community_id` es la comunidad REAL a
+// la que se une el estudiante referido (nunca inferida del inviter, spec
+// §15).
+export const referrals = mysqlTable("referrals", {
+  id:                           int("id").autoincrement().primaryKey(),
+  referrerUserId:               int("referrer_user_id").notNull(),
+  referredUserId:               int("referred_user_id").notNull(),
+  referralCode:                 varchar("referral_code", { length: 16 }).notNull(),
+  campaignId:                   int("campaign_id"),
+  communityId:                  int("community_id"),
+  status:                       mysqlEnum("status", ["registered", "converted", "rewarded", "ineligible", "expired", "cancelled"]).notNull().default("registered"),
+  requiredConversionCondition:  mysqlEnum("required_conversion_condition", ["account_created", "verified_student", "profile_completed", "first_venue_visit", "first_event_attendance"]),
+  convertedVia:                 mysqlEnum("converted_via", ["account_created", "verified_student", "profile_completed", "first_venue_visit", "first_event_attendance"]),
+  inviterRewardTokens:          int("inviter_reward_tokens").notNull().default(0),
+  inviteeRewardTokens:          int("invitee_reward_tokens").notNull().default(0),
+  inviterLedgerId:              int("inviter_ledger_id"),
+  inviteeLedgerId:              int("invitee_ledger_id"),
+  ineligibleReason:             varchar("ineligible_reason", { length: 64 }),
+  metadata:                     json("metadata").$type<Record<string, unknown>>(),
+  registeredAt:                 timestamp("registered_at").defaultNow().notNull(),
+  convertedAt:                  timestamp("converted_at"),
+  rewardedAt:                   timestamp("rewarded_at"),
+  createdAt:                    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:                    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  referredUserIdUnique: unique("referrals_referred_user_id_unique").on(table.referredUserId),
+  referrerIdx: index("referrals_referrer_user_id_idx").on(table.referrerUserId),
+  statusIdx: index("referrals_status_idx").on(table.status),
+  campaignIdx: index("referrals_campaign_id_idx").on(table.campaignId),
+}));
+export type Referral = typeof referrals.$inferSelect;
+export type InsertReferral = typeof referrals.$inferInsert;

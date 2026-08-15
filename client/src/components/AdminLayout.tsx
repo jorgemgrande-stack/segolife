@@ -74,6 +74,7 @@ const navItems = [
     children: [
       { label: "Listado", href: "/admin/students" },
       { label: "Estudiantes históricos", href: "/admin/students/historical" },
+      { label: "Referrals", href: "/admin/students/referrals" },
     ],
   },
   {

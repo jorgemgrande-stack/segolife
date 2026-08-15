@@ -14,6 +14,7 @@ import { venueVisits, userCommunities, type VenueVisit } from "../../../drizzle/
 import { resolveOperationalDate } from "../tokens/tokenScheduleService";
 import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
 import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/benefitEvents";
+import { evaluateReferralConversionBestEffort } from "../referrals/referralService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -105,6 +106,14 @@ export async function recordVenueVisit(input: RecordVenueVisitInput, db?: DbHand
   } catch {
     // Un fallo en Benefits nunca debe revertir la visita ya registrada.
   }
+
+  // REFERRAL & INVITE REWARDS ENGINE (Fase 8, spec §10/§83): SOLO en el
+  // camino "recorded" (nunca en already_recorded — un reescaneo del mismo
+  // día operativo no es una "primera visita" nueva). evaluateReferralConversion
+  // ya comprueba occurredAt >= referral.registeredAt, así que una visita real
+  // anterior al alta (identidad histórica Fourvenues, spec §58) nunca
+  // califica retroactivamente.
+  await evaluateReferralConversionBestEffort(input.userId, "first_venue_visit", input.occurredAt);
 
   return { status: "recorded", visit: row };
 }
