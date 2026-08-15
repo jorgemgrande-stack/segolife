@@ -3,18 +3,22 @@ import { useTranslation } from "react-i18next";
 import { Bell, User } from "lucide-react";
 import { isSupportedLocale, type SupportedLocale } from "@/lib/i18n";
 import { trpc } from "@/lib/trpc";
+import { SegolifeIdentityQrButton } from "./SegolifeIdentityQr";
 
 // Nunca brand_logo_url/brand_name (heredado de Náyade) — mismas claves
 // propias de Segolife que ya usa AdminLayout.tsx, nunca ese fallback.
 const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
 
 /**
- * Header móvil minimalista de Segolife (Fase 6, + campana Fase 7) — logo +
+ * Header móvil minimalista de Segolife (Fase 6, + campana Fase 7, + QR de
+ * identidad en STUDENT IDENTITY, UNIVERSAL QR & UNIFIED CHECK-IN) — logo +
  * selector de idioma (solo si la comunidad tiene más de un idioma disponible,
- * p.ej. IE) + campana de notificaciones + acceso al perfil. Sin sobrecargar:
- * nada de saludo/usuario aquí (eso vive en el contenido de Home, no se repite
- * en cada página). El badge de no-leídas es el único indicador — Home nunca
- * se inunda de notificaciones, el inbox es la fuente de verdad real.
+ * p.ej. IE) + acceso rápido al QR permanente + campana de notificaciones +
+ * acceso al perfil. Sin sobrecargar: nada de saludo/usuario aquí (eso vive
+ * en el contenido de Home, no se repite en cada página). El badge de
+ * no-leídas es el único indicador — Home nunca se inunda de notificaciones,
+ * el inbox es la fuente de verdad real. El QR se abre en un Dialog (nunca
+ * navega) — accesible desde CUALQUIER página, no solo Home/Profile.
  */
 export function SegolifeHeader({
   slug,
@@ -57,6 +61,7 @@ export function SegolifeHeader({
               ))}
             </div>
           )}
+          <SegolifeIdentityQrButton />
           <Link
             href={`/${slug}/notifications`}
             aria-label={t("notifications.bellLabel")}

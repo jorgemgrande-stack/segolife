@@ -2,14 +2,14 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { toast } from "sonner";
-import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell, Ticket, IdCard, RotateCw, Archive } from "lucide-react";
-import { QRCodeSVG } from "qrcode.react";
+import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell, Ticket, IdCard, Archive } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { isSupportedLocale, type SupportedLocale } from "@/lib/i18n";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
 import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
+import { SegolifeIdentityQrContent } from "@/components/segolife/SegolifeIdentityQr";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -55,22 +55,19 @@ const EMPTY_FORM: FormState = {
 
 /**
  * QR permanente de identidad del Student (Fase 8, spec punto 23; ampliado en
- * SEGOLIFE — STUDENT IDENTITY, UNIVERSAL QR & UNIFIED CHECK-IN: mismo token
- * `student_identity_tokens`, mismo endpoint, ahora también aceptado por el
- * check-in de puerta además del POS) — identifica al estudiante frente al
- * staff, NUNCA autoriza un cargo ni una asistencia por sí mismo sin que el
- * staff/servidor lo valide. Se muestra siempre plegado por defecto para no
- * competir visualmente con SegoTokens (la sección más importante de
- * Profile) — sigue siendo accesible en un toque, como pide el spec.
- * Tamaño de QR aumentado (200px) para lectura fiable en luz de discoteca.
+ * SEGOLIFE — STUDENT IDENTITY, UNIVERSAL QR & UNIFIED CHECK-IN) — identifica
+ * al estudiante frente al staff, NUNCA autoriza un cargo ni una asistencia
+ * por sí mismo sin que el staff/servidor lo valide. Contenido delegado a
+ * SegolifeIdentityQrContent (misma fuente que el botón de acceso rápido del
+ * header — nunca dos implementaciones que puedan divergir visualmente). Se
+ * muestra siempre plegado por defecto para no competir visualmente con
+ * SegoTokens (la sección más importante de Profile) — el acceso realmente
+ * rápido de un toque ahora vive en el header (spec: "reach their QR
+ * quickly" desde cualquier página, no solo desde Profile).
  */
 function StudentIdentitySection() {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const { data, isLoading } = trpc.ticketPurchase.myIdentityToken.useQuery(undefined, { enabled: open });
-  const rotateMut = trpc.ticketPurchase.rotateMyIdentityToken.useMutation({
-    onSuccess: () => toast.success(t("profile.identityQrRotated")),
-  });
 
   return (
     <section className="space-y-3">
@@ -81,18 +78,8 @@ function StudentIdentitySection() {
         <ChevronRight className={`size-4 transition-transform ${open ? "rotate-90" : ""}`} aria-hidden="true" />
       </button>
       {open && (
-        <div className="segolife-card-shadow flex flex-col items-center gap-3 rounded-2xl bg-card p-5">
-          {isLoading || !data ? (
-            <Loader2 className="size-6 animate-spin text-primary" aria-hidden="true" />
-          ) : (
-            <>
-              <div className="rounded-2xl bg-white p-4"><QRCodeSVG value={data.token} size={200} level="M" /></div>
-              <p className="text-center text-xs text-muted-foreground">{t("profile.identityQrDescription")}</p>
-              <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" disabled={rotateMut.isPending} onClick={() => rotateMut.mutate()}>
-                <RotateCw className="size-3.5" aria-hidden="true" /> {t("profile.identityQrRegenerate")}
-              </Button>
-            </>
-          )}
+        <div className="segolife-card-shadow rounded-2xl bg-card p-5">
+          <SegolifeIdentityQrContent autoLoad={open} />
         </div>
       )}
     </section>

@@ -10,6 +10,7 @@ import { SegolifeHeader } from "./SegolifeHeader";
 import { SegolifeBottomNav } from "./SegolifeBottomNav";
 import { SegolifeSidebar } from "./SegolifeSidebar";
 import { SegolifeEmptyState } from "./SegolifeEmptyState";
+import { SegolifeIdentityQrButton } from "./SegolifeIdentityQr";
 
 /**
  * Shell definitivo de Segolife (Fase 6) — centraliza CommunityContext, i18n,
@@ -138,14 +139,15 @@ export function SegolifeAppShell({
 }
 
 /**
- * Top bar de escritorio — solo notificaciones + perfil (el resto del header
- * mobile, logo y wordmark, ya vive en el sidebar fijo, repetirlo aquí sería
- * ruido). Visible únicamente junto al sidebar (>=1200px).
+ * Top bar de escritorio — QR de identidad + notificaciones + perfil (el
+ * resto del header mobile, logo y wordmark, ya vive en el sidebar fijo,
+ * repetirlo aquí sería ruido). Visible únicamente junto al sidebar (>=1200px).
  */
 function SegolifeDesktopTopBar({ slug, unreadCount }: { slug: string; unreadCount: number }) {
   const { t } = useTranslation();
   return (
     <header className="hidden h-16 items-center justify-end gap-3 border-b border-border px-8 xl:flex">
+      <SegolifeIdentityQrButton size="size-9" />
       <Link
         href={`/${slug}/notifications`}
         aria-label={t("notifications.bellLabel")}
