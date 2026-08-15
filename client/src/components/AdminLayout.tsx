@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import {
-  LayoutDashboard, Package, FileText, Calendar, BarChart3,
+  LayoutDashboard, Package, FileText, BarChart3,
   Settings, Menu, X, LogOut, Users, Image, ChevronDown,
   Bell, Search, User, BedDouble, Sparkles, UtensilsCrossed, AlertCircle,
   UserPlus, FileCheck, ChevronRight, Receipt, Truck, Monitor, Tag, Ticket,
   Sun, Moon, ExternalLink, Target, MessageCircle, Bot, Mail, Building2,
-  Briefcase, GraduationCap, Store, CalendarDays, Coins, QrCode, Gift, Vote, Plug,
+  Briefcase, GraduationCap, Store, CalendarDays, Coins, QrCode, Gift, Vote, Plug, ShoppingBag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -90,6 +90,16 @@ const navItems = [
     roles: ["admin"],
   },
   {
+    // SEGOLIFE — COMMERCE CORE (Fase 9): nuevo hogar conceptual de la
+    // visibilidad comercial — sustituye a CRM/Operaciones legacy para todo
+    // lo que es Segolife real (spec §28/§75/§78). Eventos sigue siendo la
+    // CONFIGURACIÓN (qué se vende); esto es la OPERACIÓN (qué pasó).
+    label: "Ventas y Operaciones",
+    href: "/admin/sales",
+    icon: ShoppingBag,
+    roles: ["admin"],
+  },
+  {
     label: "Integrations",
     href: "/admin/integrations",
     icon: Plug,
@@ -153,18 +163,22 @@ const navItems = [
     ],
   },
   {
+    // SEGOLIFE — COMMERCE CORE (Fase 9, spec §29/§75): Leads/Presupuestos/
+    // Reservas/Anulaciones eran el embudo comercial de turismo heredado de
+    // Náyade — auditado sin ninguna dependencia real de Segolife (Students/
+    // Venues/Events/Benefits/SegoTokens/Referrals no los tocan) y ya
+    // sustituidos por "Ventas y Operaciones" para todo lo que es Segolife
+    // real. Se OCULTAN del nav (nunca se borran rutas/código/datos) —
+    // Facturas/Clientes/Propuestas se conservan explícitamente porque Fase
+    // 10 (fiscal) puede necesitar reutilizarlos.
     label: "CRM",
-    href: "/admin/crm",
+    href: "/admin/crm/clientes",
     icon: FileText,
     roles: ["admin", "agente"],
     children: [
-      { label: "Leads", href: "/admin/crm?tab=leads", key: "crm-leads" },
       { label: "Propuestas", href: "/admin/crm/propuestas", key: "crm-propuestas" },
-      { label: "Presupuestos", href: "/admin/crm?tab=quotes", key: "crm-presupuestos" },
-      { label: "Reservas", href: "/admin/crm?tab=reservations", key: "crm-reservas" },
       { label: "Facturas", href: "/admin/crm?tab=invoices", key: "crm-facturas" },
       { label: "Clientes", href: "/admin/crm/clientes", key: "crm-clientes" },
-      { label: "Anulaciones", href: "/admin/crm?tab=anulaciones", key: "crm-anulaciones" },
     ],
   },
   {
@@ -194,18 +208,13 @@ const navItems = [
       { label: "Email Comercial", href: "/admin/atencion-comercial/email", key: "ac-email", icon: Mail, flagKey: "commercial_email_enabled" },
     ],
   },
-  {
-    label: "Operaciones",
-    href: "/admin/operaciones",
-    icon: Calendar,
-    roles: ["admin", "agente", "monitor"],
-    children: [
-      { label: "Calendario", href: "/admin/operaciones/calendario" },
-      { label: "Actividades del Día", href: "/admin/operaciones/actividades" },
-      // La gestión de personal se trasladó a la sección "Personal" (módulo RRHH).
-      // Reseñas se movió al módulo "Marketing".
-    ],
-  },
+  // "Operaciones" (Calendario/Actividades del Día, spec Fase 9 §30/§76)
+  // oculto del nav: su modelo de datos es 100% turismo heredado
+  // (reservations/reservationOperational, Monitor/Pax/Hora de llegada) sin
+  // ninguna dependencia de Segolife — "Operación diaria" + "Calendario
+  // operativo" dentro de "Ventas y Operaciones" cubren el mismo hueco real
+  // con datos de Segolife. Código/rutas/tablas intactos, mismo criterio que
+  // la ocultación de "Productos"/CMS legacy en fases anteriores.
   {
     label: "Personal",
     href: "/admin/personal",

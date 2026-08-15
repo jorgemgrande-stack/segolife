@@ -1,13 +1,15 @@
+import { useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { ChevronLeft, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ChevronLeft, Loader2, AlertTriangle, CheckCircle2, Coins } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
 import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 
 const STATUS_KEY: Record<string, string> = {
   pending: "ticketing.orderStatusPending",
@@ -34,8 +36,10 @@ export default function TicketCheckout() {
   const [, navigate] = useLocation();
   const orderId = Number(params.orderId);
   const utils = trpc.useUtils();
+  const [tokensInput, setTokensInput] = useState("");
 
   const { data, isLoading, refetch } = trpc.ticketPurchase.myOrderById.useQuery({ orderId }, { enabled: !!orderId });
+  const walletQ = trpc.tokens.getMyWallet.useQuery();
 
   const payMut = trpc.ticketPurchase.initiatePayment.useMutation({
     onSuccess: res => {
@@ -114,6 +118,24 @@ export default function TicketCheckout() {
                 </div>
               </div>
             )}
+            {/* SEGOLIFE — COMMERCE CORE (Fase 9, spec §65): compra 100% con
+                SegoTokens — el servidor rechaza si no cubre el precio
+                entero (nunca un pago mixto online, sin pasarela real). */}
+            {walletQ.data && walletQ.data.balance > 0 && (
+              <div className="segolife-card-shadow mt-4 space-y-2 rounded-2xl bg-card p-4 text-sm">
+                <p className="flex items-center gap-1.5 font-medium text-foreground">
+                  <Coins className="size-4 text-primary" aria-hidden="true" /> {t("ticketing.payWithTokens")}
+                </p>
+                <p className="text-xs text-muted-foreground">{t("ticketing.payWithTokensHint")} ({walletQ.data.balance} ST)</p>
+                <div className="flex gap-2">
+                  <Input type="number" min={0} value={tokensInput} onChange={e => setTokensInput(e.target.value)} placeholder="0" />
+                  <Button variant="secondary" disabled={payMut.isPending || !Number(tokensInput)} onClick={() => payMut.mutate({ orderId, tokensToApply: Number(tokensInput) })}>
+                    {t("ticketing.payWithTokensButton")}
+                  </Button>
+                </div>
+              </div>
+            )}
+
             <Button className="mt-4 w-full rounded-full py-6 text-sm font-semibold" disabled={payMut.isPending} onClick={() => payMut.mutate({ orderId })}>
               {payMut.isPending ? <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" /> : null}
               {t("ticketing.payButton")} · {(order.totalCents / 100).toFixed(2)} {order.currency}

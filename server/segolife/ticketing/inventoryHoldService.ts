@@ -61,13 +61,22 @@ export interface HoldItemInput {
 
 export interface CreateHoldInput {
   eventId: number;
-  userId: number;
+  // SEGOLIFE — COMMERCE CORE (Fase 9, spec §17): nullable — una venta de
+  // puerta puede ocurrir sin Student identificado (comprador anónimo en
+  // efectivo, spec "Student optional/identified"). El checkout online
+  // autenticado sigue pasando siempre un userId real, comportamiento sin
+  // cambios.
+  userId: number | null;
   items: HoldItemInput[];
   buyerName?: string | null;
   buyerEmail?: string | null;
   buyerPhone?: string | null;
   salesChannelId?: number | null;
   idempotencyKey: string;
+  /** Fase 9 — spec §4: "online" (autoservicio, default) vs "door" (venta de puerta por staff). */
+  channel?: "online" | "door";
+  /** Fase 9 — staff que operó una venta de puerta (spec §60). */
+  operatorUserId?: number | null;
 }
 
 export type CreateHoldResult =
@@ -145,6 +154,8 @@ export async function createHold(input: CreateHoldInput, db?: DbHandle): Promise
       buyerPhone: input.buyerPhone ?? null,
       expiresAt,
       idempotencyKey: input.idempotencyKey,
+      channel: input.channel ?? "online",
+      operatorUserId: input.operatorUserId ?? null,
       metadata: {},
     });
     const orderId = (insertResult as unknown as { insertId: number }).insertId;

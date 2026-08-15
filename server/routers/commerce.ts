@@ -4,6 +4,8 @@ import { router, permissionProcedure } from "../_core/trpc";
 import { listCommerceTransactionsByVenue, listCommerceTransactionItems, getCommerceTransactionVenueId } from "../segolife/commerce/commerceDb";
 import { listPosProducts, recordNativeSale, resolveCartTotalCents, PosError } from "../segolife/commerce/nativeCommerceService";
 import { refundCommerceTransaction, CommerceError } from "../segolife/commerce/commercePipeline";
+import { refundPosSale, RefundOrchestratorError } from "../segolife/commerce/refundOrchestrator";
+import { quoteDoorEntry, recordDoorSale, refundDoorSale, listDoorEntryTicketTypesForVenue, DoorSaleError } from "../segolife/commerce/doorSaleService";
 import { lookupStudentByIdentityToken } from "../segolife/commerce/studentIdentityService";
 import { getVenueStaffAccess } from "../segolife/benefits/venueStaffAccess";
 import { quoteTokenSpend, TokenSpendError } from "../segolife/tokens/tokenSpendService";
@@ -31,6 +33,22 @@ function mapPosError(err: unknown): never {
 function mapCommerceError(err: unknown): never {
   if (err instanceof CommerceError) {
     const codeMap: Record<string, "NOT_FOUND" | "BAD_REQUEST" | "CONFLICT"> = { NOT_FOUND: "NOT_FOUND", INVALID_STATE: "CONFLICT", REASON_REQUIRED: "BAD_REQUEST" };
+    throw new TRPCError({ code: codeMap[err.code] ?? "BAD_REQUEST", message: err.message, cause: err });
+  }
+  if (err instanceof RefundOrchestratorError) {
+    const codeMap: Record<string, "NOT_FOUND" | "BAD_REQUEST" | "CONFLICT"> = { NOT_FOUND: "NOT_FOUND", INVALID_STATE: "CONFLICT", INVALID_LINE: "BAD_REQUEST", INVALID_QUANTITY: "BAD_REQUEST", REASON_REQUIRED: "BAD_REQUEST", EMPTY_LINES: "BAD_REQUEST" };
+    throw new TRPCError({ code: codeMap[err.code] ?? "BAD_REQUEST", message: err.message, cause: err });
+  }
+  throw err;
+}
+
+function mapDoorSaleError(err: unknown): never {
+  if (err instanceof DoorSaleError) {
+    const codeMap: Record<string, "NOT_FOUND" | "BAD_REQUEST" | "CONFLICT"> = {
+      NOT_FOUND: "NOT_FOUND", NOT_DOOR_ENTRY: "BAD_REQUEST", INACTIVE: "BAD_REQUEST", INVALID_QUANTITY: "BAD_REQUEST",
+      STUDENT_REQUIRED: "BAD_REQUEST", NO_REDEMPTION_POLICY: "BAD_REQUEST", INVALID_TOKEN_AMOUNT: "BAD_REQUEST",
+      NOT_DOOR_SALE: "BAD_REQUEST", INVALID_STATE: "CONFLICT", REASON_REQUIRED: "BAD_REQUEST", SOLD_OUT: "CONFLICT",
+    };
     throw new TRPCError({ code: codeMap[err.code] ?? "BAD_REQUEST", message: err.message, cause: err });
   }
   throw err;
@@ -72,6 +90,102 @@ export const commerceRouter = router({
         return await refundCommerceTransaction({ transactionId: input.transactionId, reason: input.reason, refundedByUserId: ctx.user.id });
       } catch (err) {
         mapCommerceError(err);
+      }
+    }),
+
+  // SEGOLIFE — COMMERCE CORE (Fase 9, spec §21): reembolso total o parcial
+  // POR LÍNEA de una venta de POS — sustituye a refundTransaction para el
+  // flujo real del admin (refundTransaction se conserva sin cambios, sigue
+  // siendo un reembolso total válido, útil para integraciones que no
+  // necesiten desglose por línea).
+  refundTransactionLines: commerceManageProcedure
+    .input(z.object({
+      transactionId: z.number().int().positive(),
+      lines: z.array(z.object({ itemId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1),
+      reason: z.string().min(1).max(500),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await refundPosSale({ transactionId: input.transactionId, lines: input.lines, reason: input.reason, refundedByUserId: ctx.user.id });
+      } catch (err) {
+        mapCommerceError(err);
+      }
+    }),
+
+  // ─── Venta de puerta (Fase 9, spec §14-15/§44-45) ───────────────────────────
+  doorEntryTicketTypes: commerceRecordProcedure
+    .input(z.object({ venueId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, input.venueId);
+      return listDoorEntryTicketTypesForVenue(input.venueId);
+    }),
+
+  quoteDoorEntry: commerceRecordProcedure
+    .input(z.object({
+      venueId: z.number().int().positive(),
+      eventId: z.number().int().positive(),
+      ticketTypeId: z.number().int().positive(),
+      quantity: z.number().int().positive().default(1),
+      identifiedUserId: z.number().int().positive().optional(),
+      requestedTokens: z.number().int().min(0).optional(),
+    }))
+    .query(async ({ ctx, input }) => {
+      await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, input.venueId);
+      try {
+        return await quoteDoorEntry(input);
+      } catch (err) {
+        mapDoorSaleError(err);
+      }
+    }),
+
+  recordDoorSale: commerceRecordProcedure
+    .input(z.object({
+      venueId: z.number().int().positive(),
+      eventId: z.number().int().positive(),
+      ticketTypeId: z.number().int().positive(),
+      quantity: z.number().int().positive().default(1),
+      identifiedUserId: z.number().int().positive().nullish(),
+      idempotencyKey: z.string().min(8).max(191),
+      tokensToApply: z.number().int().positive().optional(),
+      /** Mismo criterio de re-verificación fresca del QR que posRecordSale (spec §33/§34) — identidad no autoriza gasto de SegoTokens por sí sola. */
+      identityToken: z.string().min(16).max(256).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, input.venueId);
+
+      let spendAuthorizedUserId: number | null = null;
+      if (input.tokensToApply != null && input.tokensToApply > 0) {
+        if (!input.identityToken) throw new TRPCError({ code: "BAD_REQUEST", message: "Escanea el QR del Student para aplicar SegoTokens" });
+        const student = await lookupStudentByIdentityToken(input.identityToken);
+        if (!student) throw new TRPCError({ code: "NOT_FOUND", message: "Código no reconocido" });
+        if (input.identifiedUserId != null && student.userId !== input.identifiedUserId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "El QR escaneado no corresponde al Student identificado para esta venta" });
+        }
+        spendAuthorizedUserId = student.userId;
+      }
+
+      try {
+        return await recordDoorSale({
+          eventId: input.eventId,
+          ticketTypeId: input.ticketTypeId,
+          quantity: input.quantity,
+          identifiedUserId: spendAuthorizedUserId ?? input.identifiedUserId ?? null,
+          operatorUserId: ctx.user.id,
+          tokensToApply: input.tokensToApply ?? null,
+          idempotencyKey: input.idempotencyKey,
+        });
+      } catch (err) {
+        mapDoorSaleError(err);
+      }
+    }),
+
+  refundDoorSale: commerceManageProcedure
+    .input(z.object({ orderId: z.number().int().positive(), reason: z.string().min(1).max(500) }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await refundDoorSale({ orderId: input.orderId, refundedByUserId: ctx.user.id, reason: input.reason });
+      } catch (err) {
+        mapDoorSaleError(err);
       }
     }),
 

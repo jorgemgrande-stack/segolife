@@ -39,6 +39,7 @@ type TicketTypeRow = {
   id: number; eventId: number; name: string; description: string | null;
   priceCents: number; currency: string; capacity: number | null;
   salesStart: string | Date | null; salesEnd: string | Date | null; status: string;
+  isDoorEntry?: boolean;
 };
 
 function centsToEuroStr(cents: number): string {
@@ -519,6 +520,7 @@ function TicketTypeDialog({ eventId, ticketType, onClose, onSaved }: { eventId: 
   const [salesStart, setSalesStart] = useState(toDatetimeLocal(ticketType?.salesStart));
   const [salesEnd, setSalesEnd] = useState(toDatetimeLocal(ticketType?.salesEnd));
   const [active, setActive] = useState(ticketType?.status !== "inactive");
+  const [isDoorEntry, setIsDoorEntry] = useState(ticketType?.isDoorEntry ?? false);
 
   const createMut = trpc.eventTicketing.createTicketType.useMutation({
     onSuccess: () => { toast.success("Tipo de entrada creado"); onSaved(); },
@@ -542,6 +544,7 @@ function TicketTypeDialog({ eventId, ticketType, onClose, onSaved }: { eventId: 
       salesStart: salesStart ? new Date(salesStart) : null,
       salesEnd: salesEnd ? new Date(salesEnd) : null,
       status: (active ? "active" : "inactive") as "active" | "inactive",
+      isDoorEntry,
     };
     if (ticketType) updateMut.mutate({ id: ticketType.id, ...fields });
     else createMut.mutate({ eventId, ...fields });
@@ -589,6 +592,13 @@ function TicketTypeDialog({ eventId, ticketType, onClose, onSaved }: { eventId: 
           <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
             <Label className="mb-0">Activo</Label>
             <Switch checked={active} onCheckedChange={setActive} />
+          </div>
+          <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+            <div>
+              <Label className="mb-0">Venta en puerta</Label>
+              <p className="text-xs text-muted-foreground">Vendible por staff en Venue App — nunca aparece en la compra online pública.</p>
+            </div>
+            <Switch checked={isDoorEntry} onCheckedChange={setIsDoorEntry} />
           </div>
         </div>
         <DialogFooter>

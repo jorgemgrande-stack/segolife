@@ -71,6 +71,7 @@ export async function computePurchaseAction(eventId: number, eventTiming: EventT
     const [types, inventory] = await Promise.all([listTicketTypes(eventId, conn), getTicketTypeInventory(eventId, conn)]);
     const onSale = types.filter(t =>
       t.status === "active"
+      && !t.isDoorEntry // SEGOLIFE — COMMERCE CORE (Fase 9, spec §14): un tipo de entrada de puerta nunca aparece en la compra online pública, solo en el picker de venta de puerta de Venue App.
       && (!t.salesStart || t.salesStart <= now)
       && (!t.salesEnd || t.salesEnd >= now)
     );

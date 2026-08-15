@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
-import { Loader2, AlertCircle, Home, QrCode, CalendarDays, Activity, Store, LogOut } from "lucide-react";
+import { Loader2, AlertCircle, Home, QrCode, CalendarDays, Activity, Store, LogOut, DoorOpen } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import VenueAppToday from "./VenueAppToday";
@@ -8,6 +8,7 @@ import VenueAppScan from "./VenueAppScan";
 import VenueAppEvents from "./VenueAppEvents";
 import VenueAppActivity from "./VenueAppActivity";
 import VenueAppVenue from "./VenueAppVenue";
+import VenueAppSales from "./VenueAppSales";
 
 /**
  * VenueApp.tsx — SEGOLIFE VENUE & PARTNER APP (spec §1/§2/§3). Shell
@@ -28,11 +29,12 @@ import VenueAppVenue from "./VenueAppVenue";
 
 const LAST_VENUE_KEY = "segolife.venueApp.lastVenueId";
 
-type Tab = "today" | "scan" | "events" | "activity" | "venue";
+type Tab = "today" | "scan" | "sales" | "events" | "activity" | "venue";
 
 const TABS: Array<{ key: Tab; label: string; icon: typeof Home }> = [
   { key: "today", label: "Hoy", icon: Home },
   { key: "scan", label: "Escanear", icon: QrCode },
+  { key: "sales", label: "Ventas", icon: DoorOpen },
   { key: "events", label: "Eventos", icon: CalendarDays },
   { key: "activity", label: "Actividad", icon: Activity },
   { key: "venue", label: "Venue", icon: Store },
@@ -171,12 +173,13 @@ export default function VenueApp() {
       <main className="flex-1 overflow-y-auto pb-20 md:pb-6">
         {tab === "today" && <VenueAppToday venueId={selectedVenueId} onScan={() => setTab("scan")} onSeeAllActivity={() => setTab("activity")} />}
         {tab === "scan" && <VenueAppScan venueId={selectedVenueId} />}
+        {tab === "sales" && <VenueAppSales venueId={selectedVenueId} />}
         {tab === "events" && <VenueAppEvents venueId={selectedVenueId} />}
         {tab === "activity" && <VenueAppActivity venueId={selectedVenueId} />}
         {tab === "venue" && <VenueAppVenue venueId={selectedVenueId} venueName={venueName} />}
       </main>
 
-      <nav className="md:hidden fixed bottom-0 inset-x-0 border-t border-border bg-card grid grid-cols-5 pb-[env(safe-area-inset-bottom)]">
+      <nav className="md:hidden fixed bottom-0 inset-x-0 border-t border-border bg-card grid grid-cols-6 pb-[env(safe-area-inset-bottom)]">
         {TABS.map(({ key, label, icon: Icon }) => (
           <button
             key={key}

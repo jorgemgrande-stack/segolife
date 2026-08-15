@@ -107,7 +107,7 @@ export async function getTicketTypeById(id: number, db?: AnyDbHandle): Promise<E
 
 export async function updateTicketType(
   id: number,
-  fields: Partial<Pick<InsertEventTicketType, "name" | "description" | "priceCents" | "currency" | "capacity" | "salesStart" | "salesEnd" | "status" | "metadata">>,
+  fields: Partial<Pick<InsertEventTicketType, "name" | "description" | "priceCents" | "currency" | "capacity" | "salesStart" | "salesEnd" | "status" | "metadata" | "isDoorEntry">>,
   db?: AnyDbHandle
 ): Promise<EventTicketType | null> {
   const conn = db ?? (await getDb());

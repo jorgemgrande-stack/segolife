@@ -28,7 +28,7 @@ export function isGlobalScopePermission(key: string): boolean {
 
 /** Dominios explícitamente fuera del alcance de VENUE_ADMIN (spec §22/§28/§29/§30): CRM, Communication Center, Fourvenues/integrations, Student 360, economía de SegoTokens. "referrals" añadido en Fase 8 (Referral & Invite Rewards Engine, spec §75) — mismo criterio que "tokens": economía adyacente, GLOBAL_ADMIN exclusivamente. */
 export const VENUE_ADMIN_FORBIDDEN_MODULES = [
-  "settings", "crm", "engagement", "integrations", "students360", "roles", "tokens", "referrals",
+  "settings", "crm", "engagement", "integrations", "students360", "roles", "tokens", "referrals", "sales",
 ] as const;
 
 export function isForbiddenModule(key: string): boolean {

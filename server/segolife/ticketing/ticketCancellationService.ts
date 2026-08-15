@@ -98,8 +98,8 @@ export async function refundOrder(orderId: number, refundedByUserId: number, rea
   return { order: refunded, reconciliationRequired: false };
 }
 
-/** Reversión automática (spec §21) de la recompensa de COMPRA concedida por `checkoutService.grantNativePurchaseReward` — nunca llamada si algún ticket ya se usó (ese caso queda en reconciliation_required más arriba). Best-effort: un fallo aquí nunca deshace el reembolso real ya confirmado con el provider. */
-async function reverseNativePurchaseReward(order: TicketOrder, refundedByUserId: number, conn: DbHandle): Promise<void> {
+/** Reversión automática (spec §21) de la recompensa de COMPRA concedida por `checkoutService.grantNativePurchaseReward` — nunca llamada si algún ticket ya se usó (ese caso queda en reconciliation_required más arriba). Best-effort: un fallo aquí nunca deshace el reembolso real ya confirmado con el provider. Exportada (Fase 9 §20/§56): doorSaleService.ts reutiliza la MISMA reversión — mismo origin="ticket" del ledger, misma idempotencia por sourceId=orderId. */
+export async function reverseNativePurchaseReward(order: TicketOrder, refundedByUserId: number, conn: DbHandle): Promise<void> {
   if (!order.userId) return;
   try {
     const [purchaseLedgerEntry] = await conn.select().from(tokenLedger)

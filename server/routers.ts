@@ -173,6 +173,7 @@ import { historicalIdentitiesRouter } from "./routers/historicalIdentities";
 import { loyaltyShadowRouter } from "./routers/loyaltyShadow";
 import { communityRouter } from "./routers/community";
 import { referralsRouter } from "./routers/referrals";
+import { salesOperationsRouter } from "./routers/salesOperations";
 import { venuesRouter } from "./routers/venues";
 import { eventsRouter } from "./routers/events";
 import { tokensRouter } from "./routers/tokens";
@@ -2185,6 +2186,7 @@ export const appRouter = router({
   loyaltyShadow: loyaltyShadowRouter,
   community: communityRouter,
   referrals: referralsRouter,
+  salesOperations: salesOperationsRouter,
   venues: venuesRouter,
   events: eventsRouter,
   tokens: tokensRouter,

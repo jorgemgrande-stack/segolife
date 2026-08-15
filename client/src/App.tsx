@@ -174,6 +174,7 @@ const StudentDetail = lazy(() => import("./pages/admin/students/StudentDetail"))
 // Segolife: Historical Fourvenues Identity Claim
 const HistoricalIdentities = lazy(() => import("./pages/admin/students/HistoricalIdentities"));
 const ReferralsAdmin = lazy(() => import("./pages/admin/students/ReferralsAdmin"));
+const SalesOperationsAdmin = lazy(() => import("./pages/admin/sales/SalesOperationsAdmin"));
 const HistoricalIdentityDetail = lazy(() => import("./pages/admin/students/HistoricalIdentityDetail"));
 
 // Segolife: Venues / Negocios / Eventos (Fase 1D)
@@ -509,6 +510,7 @@ function Router() {
       {/* Rutas literales ANTES de /admin/students/:id — wouter hace match en orden y ":id" capturaría "historical" si fuera declarada después. */}
       <Route path="/admin/students/historical">{() => <Suspense fallback={<AdminLoadingFallback />}><HistoricalIdentities /></Suspense>}</Route>
       <Route path="/admin/students/referrals">{() => <Suspense fallback={<AdminLoadingFallback />}><ReferralsAdmin /></Suspense>}</Route>
+      <Route path="/admin/sales">{() => <Suspense fallback={<AdminLoadingFallback />}><SalesOperationsAdmin /></Suspense>}</Route>
       <Route path="/admin/students/historical/:identityKey">{() => <Suspense fallback={<AdminLoadingFallback />}><HistoricalIdentityDetail /></Suspense>}</Route>
       <Route path="/admin/students/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><StudentDetail /></Suspense>}</Route>
       <Route path="/admin/venues">{() => <Suspense fallback={<AdminLoadingFallback />}><VenuesManager /></Suspense>}</Route>

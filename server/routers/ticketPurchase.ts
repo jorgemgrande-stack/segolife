@@ -61,12 +61,18 @@ export const ticketPurchaseRouter = router({
     }),
 
   initiatePayment: protectedProcedure
-    .input(z.object({ orderId: z.number().int().positive() }))
+    .input(z.object({
+      orderId: z.number().int().positive(),
+      // SEGOLIFE — COMMERCE CORE (Fase 9, spec §65): compra 100% con
+      // SegoTokens — el servidor recalcula/rechaza si no cubre el precio
+      // entero, nunca confía en que el cliente ya "sabe" que cubre.
+      tokensToApply: z.number().int().positive().optional(),
+    }))
     .mutation(async ({ ctx, input }) => {
       const owned = await getMyOrderById(input.orderId, ctx.user.id);
       if (!owned) throw new TRPCError({ code: "NOT_FOUND", message: "Pedido no encontrado" });
       try {
-        return await initiatePayment(input.orderId);
+        return await initiatePayment(input.orderId, input.tokensToApply);
       } catch (err) {
         mapCheckoutError(err);
       }

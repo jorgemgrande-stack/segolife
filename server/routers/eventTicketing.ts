@@ -154,6 +154,10 @@ export const eventTicketingRouter = router({
       capacity: z.number().int().positive().nullish(),
       salesStart: z.date().nullish(),
       salesEnd: z.date().nullish(),
+      // SEGOLIFE — COMMERCE CORE (Fase 9, spec §14): marca este tipo de
+      // entrada como vendible EN PUERTA por staff (nunca en el listado
+      // público de compra online — ver EventTicketingTab.tsx).
+      isDoorEntry: z.boolean().optional(),
     }))
     .mutation(({ input }) => createTicketType(input)),
 
@@ -168,6 +172,7 @@ export const eventTicketingRouter = router({
       salesStart: z.date().nullish(),
       salesEnd: z.date().nullish(),
       status: z.enum(["active", "inactive"]).optional(),
+      isDoorEntry: z.boolean().optional(),
     }))
     .mutation(({ input }) => {
       const { id, ...fields } = input;

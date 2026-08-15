@@ -70,7 +70,7 @@ describe("checkoutService — initiatePayment", () => {
       .mockResolvedValueOnce(orderFixture({ status: "paid" }));           // awaiting_payment -> paid
 
     const db = makeMockDb({ order: orderFixture() });
-    const result = await initiatePayment(1, db);
+    const result = await initiatePayment(1, undefined, db);
 
     expect(result.paymentStatus).toBe("succeeded");
     expect(result.tickets).toHaveLength(1);
@@ -85,7 +85,7 @@ describe("checkoutService — initiatePayment", () => {
       .mockResolvedValueOnce(orderFixture({ status: "pending" })); // vuelta a pending tras el fallo
 
     const db = makeMockDb({ order: orderFixture() });
-    const result = await initiatePayment(1, db);
+    const result = await initiatePayment(1, undefined, db);
 
     expect(result.paymentStatus).toBe("failed");
     expect(mockIssueTicketsForOrder).not.toHaveBeenCalled();
@@ -96,7 +96,7 @@ describe("checkoutService — initiatePayment", () => {
     mockGetPaymentProvider.mockReturnValue({ providerKey: "mock", createPayment: vi.fn() });
     const db = makeMockDb({ order: orderFixture(), existingPayment: { orderId: 1, status: "succeeded" } });
 
-    const result = await initiatePayment(1, db);
+    const result = await initiatePayment(1, undefined, db);
 
     expect(result.paymentStatus).toBe("succeeded");
     expect(mockGetPaymentProvider().createPayment).not.toHaveBeenCalled();
@@ -112,7 +112,7 @@ describe("checkoutService — initiatePayment", () => {
       .mockResolvedValueOnce(orderFixture({ status: "paid" }));
 
     const db = makeMockDb({ order: orderFixture({ totalCents: 2000 }) });
-    await initiatePayment(1, db);
+    await initiatePayment(1, undefined, db);
 
     expect(mockEarnTokens).toHaveBeenCalledOnce();
     expect(mockEarnTokens.mock.calls[0][0]).toMatchObject({
@@ -131,7 +131,7 @@ describe("checkoutService — initiatePayment", () => {
     mockEarnTokens.mockRejectedValue(new Error("NO_RULE_FOUND"));
 
     const db = makeMockDb({ order: orderFixture() });
-    const result = await initiatePayment(1, db);
+    const result = await initiatePayment(1, undefined, db);
 
     expect(result.paymentStatus).toBe("succeeded");
     expect(result.tickets).toHaveLength(1);
@@ -148,7 +148,7 @@ describe("checkoutService — initiatePayment", () => {
       .mockResolvedValueOnce(orderFixture({ status: "paid", totalCents: 0 }));
 
     const db = makeMockDb({ order: orderFixture({ totalCents: 0 }) });
-    const result = await initiatePayment(1, db);
+    const result = await initiatePayment(1, undefined, db);
 
     expect(createPayment).not.toHaveBeenCalled();
     expect(result.paymentStatus).toBe("succeeded");

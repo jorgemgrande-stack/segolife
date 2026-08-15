@@ -59,6 +59,37 @@ function EventMediaTab({ eventId, imageUrl }: { eventId: number; imageUrl: strin
   );
 }
 
+/** Pestaña Ventas — SEGOLIFE COMMERCE CORE (Fase 9, spec §33). Único sitio donde un admin ve ingresos/canal reales de ESTE evento — antes solo existía un recuento crudo de asistencia (ver EventAttendanceTab). Reutiliza salesOperations.eventOperationsDetail, nunca una query nueva paralela. */
+function EventSalesTab({ eventId }: { eventId: number }) {
+  const { data, isLoading } = trpc.salesOperations.eventOperationsDetail.useQuery({ eventId });
+  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+  if (!data) return null;
+
+  const euro = (c: number) => (c / 100).toLocaleString("es-ES", { style: "currency", currency: "EUR" });
+
+  const cards = [
+    { label: "Entradas vendidas", value: data.ticketsSoldTotal },
+    { label: "SEGOLIFE", value: data.ticketsSoldSegolife },
+    { label: "Fourvenues", value: data.ticketsSoldFourvenues },
+    { label: "Ventas de puerta", value: data.doorSalesCount },
+    { label: "Check-ins", value: data.checkInsTotal },
+    { label: "Devoluciones", value: data.refundsCount },
+    { label: "Ingresos brutos", value: euro(data.grossSalesCents) },
+    { label: "SEGOLIFE / Fourvenues (€)", value: `${euro(data.segolifeSalesCents)} / ${euro(data.fourvenuesSalesCents)}` },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {cards.map(c => (
+        <div key={c.label} className="bg-card border border-border rounded-lg p-4">
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">{c.label}</p>
+          <p className="text-xl font-semibold text-foreground">{c.value}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Pestaña Attendance — REUSE: eventTicketing.listEventAttendance ya existe (Fase 8). */
 function EventAttendanceTab({ eventId }: { eventId: number }) {
   const { data, isLoading } = trpc.eventTicketing.listEventAttendance.useQuery({ eventId });
@@ -262,6 +293,7 @@ export default function EventDetail() {
             <TabsTrigger value="media">Media</TabsTrigger>
             <TabsTrigger value="comunidades">Comunidades</TabsTrigger>
             <TabsTrigger value="ticketing">Ticketing / Sales</TabsTrigger>
+            <TabsTrigger value="ventas">Ventas</TabsTrigger>
             <TabsTrigger value="attendance">Attendance</TabsTrigger>
             <TabsTrigger value="integrations">Integrations</TabsTrigger>
           </TabsList>
@@ -332,6 +364,10 @@ export default function EventDetail() {
 
           <TabsContent value="ticketing" className="bg-card border border-border rounded-lg p-5">
             <EventTicketingTab eventId={eventId} eventStartsAt={detail.event.startsAt} eventEndsAt={detail.event.endsAt} />
+          </TabsContent>
+
+          <TabsContent value="ventas">
+            <EventSalesTab eventId={eventId} />
           </TabsContent>
 
           <TabsContent value="attendance">

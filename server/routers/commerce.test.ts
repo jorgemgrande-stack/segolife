@@ -53,6 +53,30 @@ vi.mock("../segolife/tokens/tokenSpendService", async (importOriginal) => {
   return { ...actual, quoteTokenSpend: mockQuoteTokenSpend };
 });
 
+// SEGOLIFE — COMMERCE CORE (Fase 9): venta de puerta + reembolso parcial POS.
+const { mockQuoteDoorEntry, mockRecordDoorSale, mockRefundDoorSale, mockListDoorEntryTicketTypesForVenue } = vi.hoisted(() => ({
+  mockQuoteDoorEntry: vi.fn(),
+  mockRecordDoorSale: vi.fn(),
+  mockRefundDoorSale: vi.fn(),
+  mockListDoorEntryTicketTypesForVenue: vi.fn(),
+}));
+vi.mock("../segolife/commerce/doorSaleService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/commerce/doorSaleService")>();
+  return {
+    ...actual,
+    quoteDoorEntry: mockQuoteDoorEntry,
+    recordDoorSale: mockRecordDoorSale,
+    refundDoorSale: mockRefundDoorSale,
+    listDoorEntryTicketTypesForVenue: mockListDoorEntryTicketTypesForVenue,
+  };
+});
+
+const { mockRefundPosSale } = vi.hoisted(() => ({ mockRefundPosSale: vi.fn() }));
+vi.mock("../segolife/commerce/refundOrchestrator", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/commerce/refundOrchestrator")>();
+  return { ...actual, refundPosSale: mockRefundPosSale };
+});
+
 import { commerceRouter } from "./commerce";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -191,5 +215,70 @@ describe("commerce.posQuoteTokenSpend — previsualización de solo lectura (spe
     await expect(callerAs(10).posQuoteTokenSpend({ venueId: TIA_FELISA, items: [{ venueProductId: 1, quantity: 1 }], identifiedUserId: 42, requestedTokens: 100 }))
       .rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(mockResolveCartTotalCents).not.toHaveBeenCalled();
+  });
+});
+
+// SEGOLIFE — COMMERCE CORE (Fase 9, spec §85): misma protección IDOR real
+// (assertVenueAuthorized) ya probada arriba para POS, ahora sobre las
+// nuevas procedures de venta de puerta — MISMA función, nuevos call sites.
+describe("commerce router — venta de puerta (Fase 9, IDOR + RBAC)", () => {
+  beforeEach(() => {
+    mockGetVenueStaffAccess.mockReset();
+    mockQuoteDoorEntry.mockReset();
+    mockRecordDoorSale.mockReset();
+    mockRefundDoorSale.mockReset();
+    mockListDoorEntryTicketTypesForVenue.mockReset();
+    mockLookupStudentByIdentityToken.mockReset();
+    mockGetVenueStaffAccess.mockResolvedValue([CASANOVA]);
+  });
+
+  it("doorEntryTicketTypes de SU propio venue: permitido", async () => {
+    mockListDoorEntryTicketTypesForVenue.mockResolvedValue([]);
+    await expect(callerAs(10).doorEntryTicketTypes({ venueId: CASANOVA })).resolves.toEqual([]);
+  });
+
+  it("IDOR: doorEntryTicketTypes de OTRO venue (Tía Felisa) denegado", async () => {
+    await expect(callerAs(10).doorEntryTicketTypes({ venueId: TIA_FELISA })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockListDoorEntryTicketTypesForVenue).not.toHaveBeenCalled();
+  });
+
+  it("IDOR: recordDoorSale en OTRO venue denegado, nunca llega al servicio", async () => {
+    await expect(callerAs(10).recordDoorSale({ venueId: TIA_FELISA, eventId: 1, ticketTypeId: 1, quantity: 1, idempotencyKey: "door-idem-1" }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockRecordDoorSale).not.toHaveBeenCalled();
+  });
+
+  it("recordDoorSale con SegoTokens sin identityToken: rechazado antes del servicio (mismo criterio que posRecordSale)", async () => {
+    await expect(callerAs(10).recordDoorSale({ venueId: CASANOVA, eventId: 1, ticketTypeId: 1, quantity: 1, idempotencyKey: "door-idem-2", tokensToApply: 50 }))
+      .rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(mockRecordDoorSale).not.toHaveBeenCalled();
+  });
+
+  it("recordDoorSale sin SegoTokens no exige identityToken — venta anónima/en efectivo sigue funcionando", async () => {
+    mockRecordDoorSale.mockResolvedValue({ order: { id: 1 }, tickets: [] });
+    await callerAs(10).recordDoorSale({ venueId: CASANOVA, eventId: 1, ticketTypeId: 1, quantity: 1, idempotencyKey: "door-idem-3" });
+    expect(mockLookupStudentByIdentityToken).not.toHaveBeenCalled();
+    expect(mockRecordDoorSale).toHaveBeenCalledOnce();
+  });
+
+  it("refundDoorSale es commerceManageProcedure (admin), no commerceRecordProcedure — un simple operador de puerta no puede reembolsar", async () => {
+    // fallback legacy: ambos procedimientos caen a ["admin"] si RBAC falla,
+    // así que aquí se prueba la FORMA del gate (permiso distinto), no un
+    // rol de staff real — ver referrals.test.ts para el mismo patrón.
+    mockRefundDoorSale.mockResolvedValue({ id: 1, status: "refunded" });
+    await expect(callerAs(10).refundDoorSale({ orderId: 1, reason: "motivo" })).resolves.toMatchObject({ status: "refunded" });
+  });
+});
+
+describe("commerce router — refundTransactionLines (reembolso parcial POS, Fase 9 spec §21)", () => {
+  it("delega en refundPosSale (Commerce Core) — nunca reimplementa el cálculo en el router", async () => {
+    mockRefundPosSale.mockResolvedValue({ transaction: { id: 1 }, isFullRefund: false, refundedAmountCents: 500, tokensReversed: false, purchaseRewardReversed: false });
+    const result = await callerAs(10).refundTransactionLines({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "motivo real" });
+    expect(result.isFullRefund).toBe(false);
+    expect(mockRefundPosSale).toHaveBeenCalledWith(expect.objectContaining({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }] }));
+  });
+
+  it("rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().refundTransactionLines({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "x" })).rejects.toThrow(/please login/i);
   });
 });

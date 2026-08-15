@@ -4993,6 +4993,15 @@ export const eventTicketTypes = mysqlTable("event_ticket_types", {
   salesStart:   timestamp("sales_start"),
   salesEnd:     timestamp("sales_end"),
   status:       mysqlEnum("status", ["active", "inactive"]).notNull().default("active"),
+  // SEGOLIFE — COMMERCE CORE / DOOR SALES (Fase 9, spec §14): marca un tipo
+  // de entrada como vendible EN PUERTA por staff — nunca en el listado
+  // público de compra online (client/src/pages/segolife/EventDetail.tsx
+  // filtra por este flag), solo elegible en el picker de venta de puerta de
+  // Venue App. Reutiliza TODA la infraestructura de event_ticket_types/
+  // ticket_orders/event_tickets ya existente (aforo con locking real,
+  // máquina de estados, emisión con QR) — spec §18: "prefer minimal safe
+  // consolidation", nunca una tabla de "puerta" paralela.
+  isDoorEntry:  boolean("is_door_entry").notNull().default(false),
   metadata:     json("metadata").$type<Record<string, unknown>>(),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
@@ -5041,6 +5050,25 @@ export const ticketOrders = mysqlTable("ticket_orders", {
   cancelledAt:        timestamp("cancelled_at"),
   refundedAt:         timestamp("refunded_at"),
   idempotencyKey:     varchar("idempotency_key", { length: 191 }),
+  // ─── SEGOLIFE — COMMERCE CORE (Fase 9) ────────────────────────────────────
+  // `channel` distingue CÓMO se originó un pedido nativo (spec §4: source
+  // != channel) — solo tiene sentido para provider="segolife" ("online" =
+  // autoservicio del Student vía checkoutService.ts, "door" = venta de
+  // puerta por staff vía doorSaleService.ts); null para pedidos Fourvenues,
+  // cuyo canal externo es irrelevante aquí (el `provider` ya lo dice todo).
+  channel:            mysqlEnum("channel", ["online", "door"]),
+  // Staff que operó una venta de puerta (spec §60, auditoría de operador) —
+  // null para autoservicio online y para Fourvenues.
+  operatorUserId:     int("operator_user_id"),
+  // Método de pago SOLO para canales confirmados por staff (spec §46/§47:
+  // "CASH"/"CARD_EXTERNAL"/"SEGOTOKENS"/"MIXED", nunca inventado) — un
+  // pedido online gated por PaymentProvider deja esto null (su detalle real
+  // vive en ticket_payments, con su propio proveedor/estado).
+  paymentMethod:      varchar("payment_method", { length: 32 }),
+  // Enlace opcional a la reserva que aplicó SegoTokens Universal Spend
+  // (Fase 7) contra este pedido — mismo patrón exacto que
+  // commerce_transactions.token_reservation_id, nunca muta subtotal/total.
+  tokenReservationId: int("token_reservation_id"),
   metadata:           json("metadata").$type<Record<string, unknown>>(),
   createdAt:          timestamp("created_at").defaultNow().notNull(),
   updatedAt:          timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
@@ -5431,7 +5459,12 @@ export const commerceTransactions = mysqlTable("commerce_transactions", {
   integrationId:          int("integration_id"),
   salesChannelId:         int("sales_channel_id"),
   externalTransactionId:  varchar("external_transaction_id", { length: 128 }),
-  status:                 mysqlEnum("status", ["pending", "confirmed", "cancelled", "refunded", "reconciliation_required"]).notNull().default("pending"),
+  // "partially_refunded" añadido en Fase 9 (Commerce Core) — aditivo, mismo
+  // criterio que ticket_orders.status en Fase 8: ningún valor existente se
+  // quita. refundedAmountCents/commerce_transaction_items.refundedQuantity
+  // son la fuente de verdad de CUÁNTO se ha devuelto ya; el status solo
+  // resume si queda algo por devolver.
+  status:                 mysqlEnum("status", ["pending", "confirmed", "cancelled", "refunded", "partially_refunded", "reconciliation_required"]).notNull().default("pending"),
   subtotalCents:          int("subtotal_cents").notNull().default(0),
   feesCents:              int("fees_cents").notNull().default(0),
   totalCents:             int("total_cents").notNull().default(0),
@@ -5443,6 +5476,16 @@ export const commerceTransactions = mysqlTable("commerce_transactions", {
   loyaltyLedgerId:        int("loyalty_ledger_id"),
   /** SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7): enlace opcional a la reserva que aplicó SegoTokens a esta venta — nunca muta subtotal_cents/total_cents (siguen siendo el precio bruto real, spec §10), el valor promocional/dinero debido vive en token_spend_reservations. refundCommerceTransaction() la usa para revertir el canje simétricamente al reembolso. */
   tokenReservationId:     int("token_reservation_id"),
+  // SEGOLIFE — COMMERCE CORE (Fase 9, spec §60): staff que registró la
+  // venta — nativeCommerceService.recordNativeSale ya recibía staffUserId
+  // pero nunca lo persistía en la propia fila (solo como createdByUserId
+  // del movimiento de ledger de SegoTokens); auditoría real de "quién
+  // vendió" lo necesita en la propia transacción.
+  operatorUserId:         int("operator_user_id"),
+  // Total ya devuelto en céntimos (spec §21, reembolso parcial) — running
+  // total sobre posibles varios reembolsos parciales de la misma venta;
+  // nunca puede superar totalCents (aplicación lo valida antes de escribir).
+  refundedAmountCents:    int("refunded_amount_cents").notNull().default(0),
   metadata:               json("metadata").$type<Record<string, unknown>>(),
   createdAt:              timestamp("created_at").defaultNow().notNull(),
   updatedAt:              timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
@@ -5462,10 +5505,55 @@ export const commerceTransactionItems = mysqlTable("commerce_transaction_items",
   quantity:           int("quantity").notNull().default(1),
   unitAmountCents:    int("unit_amount_cents").notNull(),
   totalAmountCents:   int("total_amount_cents").notNull(),
+  // SEGOLIFE — COMMERCE CORE (Fase 9, spec §21): cuántas unidades de ESTA
+  // línea ya se han reembolsado — nunca puede superar `quantity`. Permite
+  // reembolso parcial determinista por línea (p.ej. "1 de las 2 cervezas")
+  // sin inventar una tabla de auditoría de líneas aparte — la propia fila
+  // ya es la unidad de reembolso más pequeña que existe hoy en el POS.
+  refundedQuantity:   int("refunded_quantity").notNull().default(0),
   createdAt:          timestamp("created_at").defaultNow().notNull(),
 });
 export type CommerceTransactionItem = typeof commerceTransactionItems.$inferSelect;
 export type InsertCommerceTransactionItem = typeof commerceTransactionItems.$inferInsert;
+
+// ─── SEGOLIFE: COMMERCE_REFUNDS (Fase 9) ───────────────────────────────────────
+// Auditado antes de crearse (spec §59/§92): ni commerce_transactions ni
+// ticket_orders llevan un historial de CADA reembolso — solo su estado
+// actual + un `metadata.refund` de un único objeto (se sobrescribiría en un
+// segundo reembolso parcial). Tabla mínima y genérica (nunca dos tablas de
+// auditoría de reembolso paralelas, una por dominio) — un evento por
+// reembolso real, completo o parcial, de cualquiera de los dos dominios.
+// Es el feed que alimenta la vista admin "Devoluciones" (spec §59) y el
+// contador de actividad reciente de Daily Operations (spec §73) — nunca la
+// fuente de verdad del propio reembolso (esa sigue siendo
+// commerce_transactions/ticket_orders + event_tickets, cada una revertida
+// por su propio servicio de dominio ya existente y probado).
+export const commerceRefunds = mysqlTable("commerce_refunds", {
+  id:                   int("id").autoincrement().primaryKey(),
+  sourceType:           mysqlEnum("source_type", ["commerce_transaction", "ticket_order"]).notNull(),
+  sourceId:             int("source_id").notNull(),
+  venueId:              int("venue_id"),
+  eventId:              int("event_id"),
+  userId:               int("user_id"),
+  amountCents:          int("amount_cents").notNull(),
+  tokensRestored:       int("tokens_restored").notNull().default(0),
+  // "completed" = dinero real devuelto (staff-confirmado o provider real);
+  // "provider_unavailable" = spec §21, "calcular/registrar sin fingir que
+  // el proveedor completó el reembolso" — el importe queda auditado pero
+  // NUNCA se marca como devuelto de verdad si no lo fue.
+  moneyRefundStatus:    mysqlEnum("money_refund_status", ["completed", "provider_unavailable"]).notNull(),
+  reason:               varchar("reason", { length: 500 }).notNull(),
+  partial:              boolean("partial").notNull().default(false),
+  refundedByUserId:     int("refunded_by_user_id").notNull(),
+  idempotencyKey:       varchar("idempotency_key", { length: 191 }),
+  createdAt:            timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  idempotencyKeyUnique: unique("commerce_refunds_idempotency_key_unique").on(table.idempotencyKey),
+  sourceIdx: index("commerce_refunds_source_idx").on(table.sourceType, table.sourceId),
+  createdAtIdx: index("commerce_refunds_created_at_idx").on(table.createdAt),
+}));
+export type CommerceRefund = typeof commerceRefunds.$inferSelect;
+export type InsertCommerceRefund = typeof commerceRefunds.$inferInsert;
 
 // ─── STUDENT_IDENTITY_TOKENS (Fase 8) ─────────────────────────────────────────
 // QR de identidad para POS nativo — auditado antes de crear (spec punto 23):

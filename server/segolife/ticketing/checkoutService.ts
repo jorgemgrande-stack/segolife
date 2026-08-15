@@ -33,6 +33,7 @@ import { issueTicketsForOrder } from "./ticketIssuanceService";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
 import { earnTokens } from "../tokens/tokenEngine";
 import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
+import { reserveAndCaptureTokenSpend, reverseTokenSpend, type TokenSpendReservation } from "../tokens/tokenSpendService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 3 });
 const _db = drizzle(_pool);
@@ -57,7 +58,8 @@ export async function startCheckout(input: CreateHoldInput, db?: DbHandle) {
  * ningún caso especial aquí (spec §33). Best-effort: nunca bloquea el
  * pedido ya pagado ni la emisión de tickets.
  */
-async function grantNativePurchaseReward(order: TicketOrder, conn: DbHandle): Promise<void> {
+/** Exportada (Fase 9, Commerce Core §14): doorSaleService.ts reutiliza la MISMA recompensa de compra "ticket" — una venta de puerta es, económicamente, una compra nativa más, solo confirmada por staff en vez de por PaymentProvider. */
+export async function grantNativePurchaseReward(order: TicketOrder, conn: DbHandle): Promise<void> {
   if (!order.userId) return;
   const [event] = await conn.select({ venueId: events.venueId }).from(events).where(eq(events.id, order.eventId)).limit(1);
   const venueId = event?.venueId ?? null;
@@ -128,12 +130,50 @@ export interface InitiatePaymentResult {
  * de idempotencia de más abajo (`existingPayment?.status === "succeeded"`)
  * funcione exactamente igual que para un pago real.
  */
-export async function initiatePayment(orderId: number, db?: DbHandle): Promise<InitiatePaymentResult> {
+/**
+ * `tokensToApply` (Fase 9, Commerce Core, spec §65): oportunidad controlada
+ * de compra 100% con SegoTokens — SOLO se acepta si cubre el precio ENTERO
+ * (moneyDueCents=0 tras aplicar la política de canje). Nunca una
+ * combinación ST+dinero online: no existe pasarela de pago real (spec §13/
+ * §48), así que un pedido con dinero pendiente NUNCA puede completarse
+ * igual que uno gratuito. Reutiliza el MISMO primitivo que POS/puerta
+ * (`reserveAndCaptureTokenSpend`), nunca una segunda vía de gasto.
+ */
+export async function initiatePayment(orderId: number, tokensToApply?: number, db?: DbHandle): Promise<InitiatePaymentResult> {
   const conn = db ?? (await getDb());
   const [order] = await conn.select().from(ticketOrders).where(eq(ticketOrders.id, orderId)).limit(1);
   if (!order) throw new CheckoutError("NOT_FOUND", "Order no encontrado");
 
-  const isFree = order.totalCents === 0;
+  let tokenReservation: TokenSpendReservation | null = null;
+  if (tokensToApply != null && tokensToApply > 0 && order.totalCents > 0) {
+    if (!order.userId) throw new CheckoutError("STUDENT_REQUIRED", "Se necesita un Student identificado para aplicar SegoTokens");
+    const [event] = await conn.select({ venueId: events.venueId }).from(events).where(eq(events.id, order.eventId)).limit(1);
+    const spendResult = await reserveAndCaptureTokenSpend({
+      userId: order.userId,
+      venueId: event?.venueId ?? null,
+      eventId: order.eventId,
+      grossAmountCents: order.totalCents,
+      requestedTokens: tokensToApply,
+      referenceType: "ticket_order",
+      referenceId: order.id,
+      idempotencyKey: `ticket_order_tokens:${orderId}`,
+      createdByUserId: order.userId,
+    }, conn);
+    if (!("reservation" in spendResult)) {
+      throw new CheckoutError("TOKEN_SPEND_FAILED", "No se pudo aplicar SegoTokens a esta compra");
+    }
+    if (spendResult.reservation.moneyDueCents > 0) {
+      // No cubre el 100% — liberar inmediatamente, nunca dejar SegoTokens
+      // capturados para una compra online que no puede completarse sin
+      // pasarela de pago (spec §13, "no ST permanently captured unless
+      // architecture can safely reserve and later capture").
+      await reverseTokenSpend({ reservationId: spendResult.reservation.id, reason: "SegoTokens insuficientes para cubrir el 100% online — no hay pasarela de pago para el resto", adminUserId: order.userId }, conn).catch(() => {});
+      throw new CheckoutError("INSUFFICIENT_TOKENS_FOR_FULL_COVERAGE", "Los SegoTokens aplicados no cubren el precio completo — sin pasarela de pago no es posible completar esta compra con un pago mixto");
+    }
+    tokenReservation = spendResult.reservation;
+  }
+
+  const isFree = order.totalCents === 0 || tokenReservation != null;
   const provider = getPaymentProvider();
   const paymentIdempotencyKey = `ticket_payment:${orderId}:attempt`;
 
@@ -152,6 +192,7 @@ export async function initiatePayment(orderId: number, db?: DbHandle): Promise<I
   try {
     awaitingOrder = await transitionOrderStatus(orderId, ["pending"], "awaiting_payment", {}, conn);
   } catch (err) {
+    if (tokenReservation) await reverseTokenSpend({ reservationId: tokenReservation.id, reason: "Pedido no pudo transicionar a awaiting_payment", adminUserId: order.userId }, conn).catch(() => {});
     if (err instanceof OrderStateError) throw new CheckoutError(err.code, err.message);
     throw err;
   }
@@ -168,7 +209,7 @@ export async function initiatePayment(orderId: number, db?: DbHandle): Promise<I
   if (!existingPayment) {
     await conn.insert(ticketPayments).ignore().values({
       orderId,
-      provider: isFree ? "segolife_native_free" : provider.providerKey,
+      provider: tokenReservation ? "segolife_native_segotokens" : isFree ? "segolife_native_free" : provider.providerKey,
       externalPaymentId: result.externalPaymentId ?? null,
       amountCents: order.totalCents,
       currency: order.currency,
@@ -180,7 +221,12 @@ export async function initiatePayment(orderId: number, db?: DbHandle): Promise<I
   }
 
   if (result.status === "succeeded") {
-    const paidOrder = await transitionOrderStatus(orderId, ["awaiting_payment"], "paid", { purchasedAt: new Date(), externalPaymentId: result.externalPaymentId ?? null }, conn);
+    const paidOrder = await transitionOrderStatus(orderId, ["awaiting_payment"], "paid", {
+      purchasedAt: new Date(),
+      externalPaymentId: result.externalPaymentId ?? null,
+      paymentMethod: tokenReservation ? "segotokens" : null,
+      tokenReservationId: tokenReservation?.id ?? null,
+    }, conn);
     const tickets = await finalizePaidOrder(paidOrder, conn);
     return { order: paidOrder, paymentStatus: "succeeded", tickets };
   }
@@ -194,6 +240,7 @@ export async function initiatePayment(orderId: number, db?: DbHandle): Promise<I
   // Sin proveedor real (o rechazo) — vuelve a pending para no dejar el hold
   // atrapado en awaiting_payment sin ninguna vía de completar el pago; el
   // hold sigue vigente hasta expiresAt, el estudiante puede reintentar.
+  if (tokenReservation) await reverseTokenSpend({ reservationId: tokenReservation.id, reason: "Pago no pudo completarse tras aplicar SegoTokens", adminUserId: order.userId }, conn).catch(() => {});
   await transitionOrderStatus(orderId, ["awaiting_payment"], "pending", {}, conn).catch(() => null);
   return { order, paymentStatus: "failed", error: result.error ?? "No se pudo iniciar el pago" };
 }

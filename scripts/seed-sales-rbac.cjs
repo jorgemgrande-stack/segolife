@@ -1,0 +1,51 @@
+// Siembra puntual e idempotente de los permisos RBAC sales.view / sales.manage
+// (Fase 9) — mismo criterio exacto que server/_core/rbacSeed.ts (INSERT
+// IGNORE, seguro de re-ejecutar). Concedidos EXCLUSIVAMENTE al rol admin
+// (nunca venue_admin — spec §80, GLOBAL_ADMIN only).
+const mysql = require("mysql2/promise");
+const DB_URL = process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL || process.env.MYSQL_URL;
+if (!DB_URL) { console.error("ABORTADO: sin URL MySQL"); process.exit(1); }
+
+const PERMS = [
+  ["sales.view", "sales", "view", "Ver Ventas y Operaciones: ventas unificadas, pedidos, pagos, reembolsos, operación diaria, calendario operativo"],
+  ["sales.manage", "sales", "manage", "Gestión avanzada de Ventas y Operaciones (reservado para uso futuro)"],
+];
+
+(async () => {
+  const c = await mysql.createConnection({ uri: DB_URL });
+  const permissionsAdded = [];
+  const grantsEnsured = [];
+
+  for (const [key, module, action, description] of PERMS) {
+    const [result] = await c.execute(
+      "INSERT IGNORE INTO rbac_permissions (`key`, module, action, description) VALUES (?, ?, ?, ?)",
+      [key, module, action, description]
+    );
+    if (result.affectedRows > 0) permissionsAdded.push(key);
+  }
+
+  for (const [key] of PERMS) {
+    const [result] = await c.execute(
+      `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
+       SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p
+       WHERE r.\`key\` = 'admin' AND p.\`key\` = ?`,
+      [key]
+    );
+    if (result.affectedRows > 0) grantsEnsured.push(`admin -> ${key}`);
+  }
+
+  console.log("Permisos nuevos:", permissionsAdded.join(", ") || "ninguno (ya existían)");
+  console.log("Grants nuevos:", grantsEnsured.join(", ") || "ninguno (ya existían)");
+
+  const [check] = await c.query(`
+    SELECT rr.\`key\` AS role, p.\`key\` AS perm
+    FROM rbac_role_permissions rrp
+    JOIN rbac_roles rr ON rr.id = rrp.role_id
+    JOIN rbac_permissions p ON p.id = rrp.permission_id
+    WHERE p.\`key\` LIKE 'sales.%'
+  `);
+  console.log("[POST] grants reales:", JSON.stringify(check));
+
+  await c.end();
+  console.log("FIN");
+})().catch(e => { console.error("ERR", e); process.exit(1); });
