@@ -5,7 +5,7 @@ import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, ShoppingCart, Minus, Plus, QrCode, X, User, CheckCircle2 } from "lucide-react";
+import { Loader2, ShoppingCart, Minus, Plus, QrCode, X, User, CheckCircle2, Coins } from "lucide-react";
 
 /**
  * POS nativo mínimo — /staff/pos (Fase 8, spec puntos 19-24). NO es un ERP:
@@ -27,6 +27,7 @@ export default function StaffPos() {
   const [identifyMode, setIdentifyMode] = useState<"idle" | "scanning" | "manual">("idle");
   const [manualToken, setManualToken] = useState("");
   const [lastSaleAt, setLastSaleAt] = useState<number | null>(null);
+  const [tokensToApply, setTokensToApply] = useState("");
   const scannerRef = useRef<{ stop: () => Promise<void>; clear: () => void } | null>(null);
 
   const { data: authorized } = trpc.commerce.myAuthorizedVenuesForPos.useQuery();
@@ -50,6 +51,7 @@ export default function StaffPos() {
       toast.success(t("pos.saleRecorded"));
       setCart({});
       setIdentifiedToken(null);
+      setTokensToApply("");
       setLastSaleAt(Date.now());
     },
     onError: e => toast.error(e.message),
@@ -95,6 +97,15 @@ export default function StaffPos() {
     return sum + Math.round(Number(product?.price ?? "0") * 100) * item.quantity;
   }, 0);
 
+  // SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7, spec §22/§36): previsualización
+  // en vivo del canje contra ESTE carrito — nunca calculado en el cliente,
+  // siempre recalculado en el servidor desde el catálogo real.
+  const requestedTokensNum = Number(tokensToApply) || 0;
+  const { data: tokenQuote, isFetching: quoting } = trpc.commerce.posQuoteTokenSpend.useQuery(
+    { venueId: Number(venueId), items: cartItems, identifiedUserId: identifiedStudent?.userId ?? 0, requestedTokens: requestedTokensNum },
+    { enabled: !!venueId && !!identifiedStudent && cartItems.length > 0 && requestedTokensNum > 0 }
+  );
+
   const handleRecordSale = () => {
     if (!venueId || !cartItems.length) return;
     recordSaleMut.mutate({
@@ -102,6 +113,8 @@ export default function StaffPos() {
       items: cartItems,
       identifiedUserId: identifiedStudent?.userId ?? null,
       idempotencyKey: `pos:${venueId}:${crypto.randomUUID()}`,
+      tokensToApply: requestedTokensNum > 0 ? requestedTokensNum : undefined,
+      identityToken: requestedTokensNum > 0 ? (identifiedToken ?? undefined) : undefined,
     });
   };
 
@@ -182,9 +195,32 @@ export default function StaffPos() {
               <p className="mt-1.5 text-[11px] text-muted-foreground">{t("pos.studentOptionalNote")}</p>
             </div>
 
+            {identifiedStudent && cartItems.length > 0 && (
+              <div className="rounded-lg border border-dashed border-border p-3">
+                <div className="flex items-center justify-between text-sm font-medium">
+                  <span className="flex items-center gap-1.5"><Coins className="size-4 text-amber-500" /> {t("pos.applyTokensLabel")}</span>
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <Input type="number" min={0} placeholder="0" value={tokensToApply} onChange={e => setTokensToApply(e.target.value)} />
+                </div>
+                {quoting ? (
+                  <p className="mt-1.5 text-xs text-muted-foreground">{t("common.loading")}</p>
+                ) : tokenQuote && !tokenQuote.eligible && requestedTokensNum > 0 ? (
+                  <p className="mt-1.5 text-xs text-destructive">{t("pos.noTokenPolicy")}</p>
+                ) : tokenQuote && tokenQuote.eligible && requestedTokensNum > 0 ? (
+                  <div className="mt-1.5 space-y-0.5 text-xs">
+                    <p className="text-muted-foreground">{t("pos.tokensApplied", { tokens: tokenQuote.tokensToSpend })}: <span className="font-medium text-foreground">−{(tokenQuote.promotionalValueCents / 100).toFixed(2)} €</span></p>
+                    <p className="font-semibold text-foreground">{t("pos.moneyDue")}: {(tokenQuote.moneyDueCents / 100).toFixed(2)} €</p>
+                  </div>
+                ) : null}
+              </div>
+            )}
+
             <div className="flex items-center justify-between border-t border-border pt-3 text-sm font-semibold">
               <span>{t("ticketing.orderTotal")}</span>
-              <span className="tabular-nums">{(totalCents / 100).toFixed(2)} €</span>
+              <span className="tabular-nums">
+                {tokenQuote?.eligible && requestedTokensNum > 0 ? (tokenQuote.moneyDueCents / 100).toFixed(2) : (totalCents / 100).toFixed(2)} €
+              </span>
             </div>
 
             <Button className="w-full h-12" disabled={!cartItems.length || recordSaleMut.isPending} onClick={handleRecordSale}>

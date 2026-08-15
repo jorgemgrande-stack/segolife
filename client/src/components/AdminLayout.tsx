@@ -107,6 +107,7 @@ const navItems = [
       { label: "Dashboard", href: "/admin/tokens" },
       { label: "Reglas", href: "/admin/tokens/rules" },
       { label: "Campañas", href: "/admin/tokens/campaigns" },
+      { label: "Políticas de canje", href: "/admin/tokens/redemption" },
       { label: "Shadow", href: "/admin/tokens/shadow" },
     ],
   },

@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
   mockResolveIdentity, mockPersistIdentityMapping, mockRecordUnresolvedOperation, mockEarnTokens, mockEvaluateBenefitsForOrigin,
-  mockResolveLoyaltyCutoff, MockTokenEngineError, mockReverseTransaction, mockIsLedgerEntryReversed,
+  mockResolveLoyaltyCutoff, MockTokenEngineError, mockReverseTransaction, mockIsLedgerEntryReversed, mockReverseTokenSpend,
 } = vi.hoisted(() => {
   class MockTokenEngineError extends Error {
     code: string;
@@ -25,6 +25,7 @@ const {
     MockTokenEngineError,
     mockReverseTransaction: vi.fn(),
     mockIsLedgerEntryReversed: vi.fn(),
+    mockReverseTokenSpend: vi.fn(),
   };
 });
 
@@ -47,6 +48,7 @@ vi.mock("../tokens/tokenLedgerService", () => ({
   reverseTransaction: mockReverseTransaction,
   isLedgerEntryReversed: mockIsLedgerEntryReversed,
 }));
+vi.mock("../tokens/tokenSpendService", () => ({ reverseTokenSpend: mockReverseTokenSpend }));
 
 import { ingestCommerceTransaction, processCommerceLoyalty, refundCommerceTransaction, CommerceError } from "./commercePipeline";
 import { benefitEvents, type BenefitGrantedPayload } from "../benefits/benefitEvents";
@@ -98,6 +100,7 @@ beforeEach(() => {
   mockResolveLoyaltyCutoff.mockResolvedValue(null); // estado neutro real de producción — sin corte configurado
   mockIsLedgerEntryReversed.mockResolvedValue(false);
   mockReverseTransaction.mockResolvedValue({ wallet: {}, ledger: { id: 9003 } });
+  mockReverseTokenSpend.mockResolvedValue({ id: 1, status: "reversed" });
 });
 
 describe("ingestCommerceTransaction", () => {
@@ -276,6 +279,40 @@ describe("refundCommerceTransaction", () => {
 
     expect(result.tokensReversed).toBe(false);
     expect(mockReverseTransaction).not.toHaveBeenCalled();
+  });
+
+  // SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7, spec §27): un reembolso
+  // debe devolver el valor promocional aplicado exactamente igual que
+  // revierte el ledgerId de loyalty — de lo contrario el Student pierde el
+  // producto Y los SegoTokens que aplicó a la vez.
+  it("transacción con SegoTokens aplicados (tokenReservationId) → revierte también la reserva, no solo el ledger de loyalty", async () => {
+    const { db } = fakeRefundDb({ id: 701, status: "confirmed", loyaltyLedgerId: null, tokenReservationId: 501, metadata: {} });
+
+    const result = await refundCommerceTransaction({ transactionId: 701, reason: "Cliente insatisfecho", refundedByUserId: 5 }, db);
+
+    expect(result.spendReversed).toBe(true);
+    expect(mockReverseTokenSpend).toHaveBeenCalledOnce();
+    expect(mockReverseTokenSpend.mock.calls[0][0]).toMatchObject({ reservationId: 501, adminUserId: 5 });
+  });
+
+  it("transacción SIN SegoTokens aplicados (tokenReservationId null) → spendReversed=false, nunca llama a reverseTokenSpend", async () => {
+    const { db } = fakeRefundDb({ id: 701, status: "confirmed", loyaltyLedgerId: null, tokenReservationId: null, metadata: {} });
+
+    const result = await refundCommerceTransaction({ transactionId: 701, reason: "x", refundedByUserId: 5 }, db);
+
+    expect(result.spendReversed).toBe(false);
+    expect(mockReverseTokenSpend).not.toHaveBeenCalled();
+  });
+
+  it("reembolso con AMBOS (loyalty + SegoTokens aplicados) revierte ambos independientemente", async () => {
+    const { db } = fakeRefundDb({ id: 701, status: "confirmed", loyaltyLedgerId: 9002, tokenReservationId: 501, metadata: {} });
+
+    const result = await refundCommerceTransaction({ transactionId: 701, reason: "x", refundedByUserId: 5 }, db);
+
+    expect(result.tokensReversed).toBe(true);
+    expect(result.spendReversed).toBe(true);
+    expect(mockReverseTransaction).toHaveBeenCalledOnce();
+    expect(mockReverseTokenSpend).toHaveBeenCalledOnce();
   });
 
   it("una transacción NO confirmed (pending/cancelled/ya refunded) es INVALID_STATE — nunca se reinterpreta silenciosamente", async () => {

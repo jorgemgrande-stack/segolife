@@ -22,6 +22,7 @@ import { resolveIdentity, persistIdentityMapping, isConfirmedResolutionMethod } 
 import { recordUnresolvedOperation } from "../integrations/unresolvedOperationsService";
 import type { NormalizedCommerceTransaction } from "../integrations/externalTicketingProvider";
 import { TokenEngineError, reverseTransaction, isLedgerEntryReversed } from "../tokens/tokenLedgerService";
+import { reverseTokenSpend } from "../tokens/tokenSpendService";
 import { resolveLoyaltyCutoff, isBeforeCutoff } from "../tokens/loyaltyCutoffService";
 import { buildNextAttempt, shouldAttemptReward, type RewardAttempt, type DenialReasonCode } from "../tokens/rewardStateMachine";
 
@@ -239,6 +240,8 @@ export interface RefundCommerceTransactionResult {
   transaction: CommerceTransaction;
   /** false si la transacción nunca llegó a conceder tokens (identidad no resuelta, NO_RULE_FOUND, cutoff...) — no hay nada que revertir, y eso es correcto, no un fallo. */
   tokensReversed: boolean;
+  /** SEGOTOKENS UNIVERSAL SPEND (Fase 7) — false si esta venta nunca aplicó SegoTokens contra su precio (token_reservation_id null); reverseTokenSpend es en sí idempotente, así que un segundo intento sobre la MISMA reserva ya reembolsada nunca duplica la devolución. */
+  spendReversed: boolean;
 }
 
 /**
@@ -284,6 +287,22 @@ export async function refundCommerceTransaction(input: RefundCommerceTransaction
     tokensReversed = true;
   }
 
+  // SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7, spec §27 "reversals"):
+  // si esta venta aplicó SegoTokens contra su precio, el reembolso debe
+  // devolverlos simétricamente — de lo contrario el Student pierde el
+  // producto Y los tokens a la vez. Solo reembolso TOTAL (spec §28: "defer
+  // PARTIAL mixed refunds to Phase 9/10" — esta función siempre reembolsa
+  // la transacción entera, nunca una cantidad parcial).
+  let spendReversed = false;
+  if (transaction.tokenReservationId != null) {
+    await reverseTokenSpend({
+      reservationId: transaction.tokenReservationId,
+      reason: `Reembolso de consumición — transacción #${transaction.id}: ${input.reason}`,
+      adminUserId: input.refundedByUserId,
+    }, conn);
+    spendReversed = true;
+  }
+
   const [refunded] = await conn.select().from(commerceTransactions).where(eq(commerceTransactions.id, input.transactionId)).limit(1);
-  return { transaction: refunded, tokensReversed };
+  return { transaction: refunded, tokensReversed, spendReversed };
 }

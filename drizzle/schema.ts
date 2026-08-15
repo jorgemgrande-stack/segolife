@@ -4222,6 +4222,105 @@ export const tokenCampaigns = mysqlTable("token_campaigns", {
 export type TokenCampaign = typeof tokenCampaigns.$inferSelect;
 export type InsertTokenCampaign = typeof tokenCampaigns.$inferInsert;
 
+// ─── SEGOLIFE: TOKEN_REDEMPTION_POLICIES (Fase 7) ───────────────────────────
+// SegoTokens Universal Spend & Mixed Payments. Responde "¿cuántos céntimos de
+// valor promocional da 1 SegoToken al aplicarse contra un precio real?" —
+// una pregunta que NINGUNA tabla existente contestaba: token_rules define
+// tarifas de GANANCIA (earn), no de canje monetario; el analítico
+// system_settings.estimated_token_value_cents es solo una estimación de
+// pasivo para el dashboard admin (server/segolife/tokens/economyOverviewService.ts),
+// nunca la tasa de conversión real — ver auditoría de fase.
+//
+// TASA como RATIO ENTERO, nunca decimal/float (spec §12): tokensPerUnit=100,
+// valueCentsPerUnit=100 significa "100 ST = 100 céntimos" (1 ST = 1 céntimo).
+// promotionalValueCents = floor(tokensToSpend * valueCentsPerUnit / tokensPerUnit)
+// — TRUNCA, nunca redondea al alza (spec: "never give more promotional value
+// than mathematically allowed").
+//
+// ALCANCE (event_id/venue_id/community_id, todos nullable = comodín) —
+// mismo criterio que benefit_rules, pero la RESOLUCIÓN es distinta: aquí
+// gana LA MÁS ESPECÍFICA (una sola política aplica), nunca todas las que
+// encajan (ver tokenSpendService.ts::resolveRedemptionPolicy) — spec §6
+// exige determinismo, no aditividad.
+export const tokenRedemptionPolicies = mysqlTable("token_redemption_policies", {
+  id:                       int("id").autoincrement().primaryKey(),
+  name:                     varchar("name", { length: 256 }).notNull(),
+  description:              text("description"),
+  active:                   boolean("active").notNull().default(true),
+  communityId:              int("community_id"),
+  venueId:                  int("venue_id"),
+  eventId:                  int("event_id"),
+  tokensPerUnit:            int("tokens_per_unit").notNull().default(1),
+  valueCentsPerUnit:        int("value_cents_per_unit").notNull(),
+  minTokenSpend:            int("min_token_spend"),
+  maxTokenSpend:            int("max_token_spend"),
+  /** 0-100 — porcentaje máximo del importe bruto pagable con SegoTokens. NULL = sin tope de porcentaje (solo limitado por maxTokenSpend/saldo). */
+  maxPercentage:            int("max_percentage"),
+  allowFullTokenPayment:    boolean("allow_full_token_payment").notNull().default(false),
+  startsAt:                 timestamp("starts_at"),
+  endsAt:                   timestamp("ends_at"),
+  /** Desempate explícito cuando dos políticas tienen el mismo grado de especificidad (spec §6: "test conflicts explicitly"). */
+  priority:                 int("priority").notNull().default(0),
+  createdByUserId:          int("created_by_user_id"),
+  createdAt:                timestamp("created_at").defaultNow().notNull(),
+  updatedAt:                timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  activeIdx: index("token_redemption_policies_active_idx").on(table.active),
+}));
+export type TokenRedemptionPolicy = typeof tokenRedemptionPolicies.$inferSelect;
+export type InsertTokenRedemptionPolicy = typeof tokenRedemptionPolicies.$inferInsert;
+
+// ─── SEGOLIFE: TOKEN_SPEND_RESERVATIONS (Fase 7) ────────────────────────────
+// Ciclo de vida RESERVED → CAPTURED (gasto real en token_ledger) | RELEASED
+// | EXPIRED | REVERSED. Reservar NUNCA mueve el ledger — solo "aparta"
+// tokens restando de countActiveReservations() al calcular saldo disponible
+// (tokenSpendService.ts), dentro de la MISMA transacción que bloquea
+// token_wallets vía FOR UPDATE (mismo patrón que postLedgerMovementInTx) —
+// así dos reservas concurrentes del mismo wallet nunca sobre-comprometen el
+// saldo. El movimiento real de ledger solo ocurre al CAPTURAR — por eso un
+// pago externo fallido nunca necesita revertir nada en el ledger, solo
+// liberar la reserva (spec §15/§30).
+//
+// reference_type/reference_id apuntan al registro propio del dominio
+// llamador (p.ej. commerce_transactions.id) cuando existe — deliberadamente
+// genérico para que Fase 9 (puerta/consumo/eventos) pueda reutilizar esta
+// misma tabla sin una migración nueva por dominio.
+//
+// Snapshot económico completo en el momento de la reserva
+// (gross/tokens/promo/money) — spec §51: cambiar la política mañana NUNCA
+// debe alterar el significado de una reserva ya capturada.
+export const tokenSpendReservations = mysqlTable("token_spend_reservations", {
+  id:                   int("id").autoincrement().primaryKey(),
+  userId:               int("user_id").notNull(),
+  walletId:             int("wallet_id").notNull(),
+  policyId:             int("policy_id"),
+  venueId:              int("venue_id"),
+  eventId:              int("event_id"),
+  communityId:          int("community_id"),
+  referenceType:        varchar("reference_type", { length: 64 }).notNull(),
+  referenceId:          int("reference_id"),
+  grossAmountCents:     int("gross_amount_cents").notNull(),
+  tokensReserved:       int("tokens_reserved").notNull(),
+  promotionalValueCents: int("promotional_value_cents").notNull(),
+  moneyDueCents:        int("money_due_cents").notNull(),
+  status:               mysqlEnum("status", ["reserved", "captured", "released", "expired", "reversed"]).notNull().default("reserved"),
+  idempotencyKey:       varchar("idempotency_key", { length: 191 }).notNull(),
+  ledgerId:             int("ledger_id"),
+  reversalLedgerId:     int("reversal_ledger_id"),
+  expiresAt:            timestamp("expires_at").notNull(),
+  createdByUserId:      int("created_by_user_id"),
+  createdAt:            timestamp("created_at").defaultNow().notNull(),
+  capturedAt:           timestamp("captured_at"),
+  releasedAt:           timestamp("released_at"),
+  reversedAt:           timestamp("reversed_at"),
+}, (table) => ({
+  idempotencyKeyUnique: unique("token_spend_reservations_idempotency_key_unique").on(table.idempotencyKey),
+  userIdIdx: index("token_spend_reservations_user_id_idx").on(table.userId),
+  statusIdx: index("token_spend_reservations_status_idx").on(table.status),
+}));
+export type TokenSpendReservation = typeof tokenSpendReservations.$inferSelect;
+export type InsertTokenSpendReservation = typeof tokenSpendReservations.$inferInsert;
+
 // ─── SEGOLIFE: CAMPAIGN_COMMUNITIES / CAMPAIGN_VENUES / CAMPAIGN_EVENTS (Fase 2) ─
 // Tablas puente M2M del alcance de una campaña — mismo patrón exacto que
 // community_venues/community_events. Una campaña puede afectar a varias
@@ -5333,6 +5432,8 @@ export const commerceTransactions = mysqlTable("commerce_transactions", {
   idempotencyKey:         varchar("idempotency_key", { length: 191 }).notNull(),
   loyaltyProcessedAt:     timestamp("loyalty_processed_at"),
   loyaltyLedgerId:        int("loyalty_ledger_id"),
+  /** SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7): enlace opcional a la reserva que aplicó SegoTokens a esta venta — nunca muta subtotal_cents/total_cents (siguen siendo el precio bruto real, spec §10), el valor promocional/dinero debido vive en token_spend_reservations. refundCommerceTransaction() la usa para revertir el canje simétricamente al reembolso. */
+  tokenReservationId:     int("token_reservation_id"),
   metadata:               json("metadata").$type<Record<string, unknown>>(),
   createdAt:              timestamp("created_at").defaultNow().notNull(),
   updatedAt:              timestamp("updated_at").defaultNow().onUpdateNow().notNull(),

@@ -2,10 +2,11 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, permissionProcedure } from "../_core/trpc";
 import { listCommerceTransactionsByVenue, listCommerceTransactionItems, getCommerceTransactionVenueId } from "../segolife/commerce/commerceDb";
-import { listPosProducts, recordNativeSale, PosError } from "../segolife/commerce/nativeCommerceService";
+import { listPosProducts, recordNativeSale, resolveCartTotalCents, PosError } from "../segolife/commerce/nativeCommerceService";
 import { refundCommerceTransaction, CommerceError } from "../segolife/commerce/commercePipeline";
 import { lookupStudentByIdentityToken } from "../segolife/commerce/studentIdentityService";
 import { getVenueStaffAccess } from "../segolife/benefits/venueStaffAccess";
+import { quoteTokenSpend, TokenSpendError } from "../segolife/tokens/tokenSpendService";
 
 const commerceViewProcedure = permissionProcedure("commerce.view", ["admin"]);
 // Fase 8 — POS nativo de staff (mirroring benefits.redeem/attendance.redeem).
@@ -16,6 +17,13 @@ const commerceManageProcedure = permissionProcedure("commerce.manage", ["admin"]
 function mapPosError(err: unknown): never {
   if (err instanceof PosError) {
     throw new TRPCError({ code: err.code === "PRODUCT_UNAVAILABLE" ? "CONFLICT" : "BAD_REQUEST", message: err.message, cause: err });
+  }
+  if (err instanceof TokenSpendError) {
+    const codeMap: Record<string, "NOT_FOUND" | "CONFLICT" | "BAD_REQUEST"> = {
+      NOT_FOUND: "NOT_FOUND", ALREADY_CAPTURED: "CONFLICT", ALREADY_RELEASED: "CONFLICT",
+      ALREADY_REVERSED: "CONFLICT", RESERVATION_EXPIRED: "CONFLICT",
+    };
+    throw new TRPCError({ code: codeMap[err.code] ?? "BAD_REQUEST", message: err.message, cause: err });
   }
   throw err;
 }
@@ -89,22 +97,70 @@ export const commerceRouter = router({
       return student;
     }),
 
+  /**
+   * SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7, spec §36 "checkout UX
+   * contract"): previsualización de solo lectura antes de confirmar la
+   * venta — recalcula el carrito desde el catálogo real (nunca confía en
+   * un importe del cliente) y devuelve el mismo quote que posRecordSale
+   * aplicaría, sin comprometer ningún token todavía.
+   */
+  posQuoteTokenSpend: commerceRecordProcedure
+    .input(z.object({
+      venueId: z.number().int().positive(),
+      items: z.array(z.object({ venueProductId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1),
+      identifiedUserId: z.number().int().positive(),
+      requestedTokens: z.number().int().min(0),
+    }))
+    .query(async ({ ctx, input }) => {
+      await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, input.venueId);
+      const { totalCents } = await resolveCartTotalCents(input.venueId, input.items).catch(err => { mapPosError(err); });
+      return quoteTokenSpend({
+        userId: input.identifiedUserId, venueId: input.venueId,
+        grossAmountCents: totalCents, requestedTokens: input.requestedTokens,
+      });
+    }),
+
   posRecordSale: commerceRecordProcedure
     .input(z.object({
       venueId: z.number().int().positive(),
       items: z.array(z.object({ venueProductId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1),
       identifiedUserId: z.number().int().positive().nullish(),
       idempotencyKey: z.string().min(8).max(191),
+      /** SegoTokens Universal Spend (Fase 7) — ambos opcionales, pero si se aplica alguno, ambos son obligatorios (validado abajo). */
+      tokensToApply: z.number().int().positive().optional(),
+      /**
+       * Mismo QR de identidad ya escaneado para posIdentifyStudent — se
+       * vuelve a verificar AQUÍ, en el momento de gastar SegoTokens (spec
+       * §33/§34: "identidad no autoriza gasto ilimitado por sí sola"). El
+       * staff no puede aplicar tokens de un Student solo porque conoce su
+       * userId — tiene que haber un escaneo fresco de SU QR en esta misma
+       * operación, y ese escaneo debe resolver EXACTAMENTE al mismo
+       * Student ya identificado para el resto de la venta.
+       */
+      identityToken: z.string().min(16).max(256).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, input.venueId);
+
+      let spendAuthorizedUserId: number | null = null;
+      if (input.tokensToApply != null && input.tokensToApply > 0) {
+        if (!input.identityToken) throw new TRPCError({ code: "BAD_REQUEST", message: "Escanea el QR del Student para aplicar SegoTokens" });
+        const student = await lookupStudentByIdentityToken(input.identityToken);
+        if (!student) throw new TRPCError({ code: "NOT_FOUND", message: "Código no reconocido" });
+        if (input.identifiedUserId != null && student.userId !== input.identifiedUserId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "El QR escaneado no corresponde al Student identificado para esta venta" });
+        }
+        spendAuthorizedUserId = student.userId;
+      }
+
       try {
         return await recordNativeSale({
           venueId: input.venueId,
           items: input.items,
-          identifiedUserId: input.identifiedUserId ?? null,
+          identifiedUserId: spendAuthorizedUserId ?? input.identifiedUserId ?? null,
           staffUserId: ctx.user.id,
           idempotencyKey: input.idempotencyKey,
+          tokensToApply: input.tokensToApply ?? null,
         });
       } catch (err) {
         mapPosError(err);

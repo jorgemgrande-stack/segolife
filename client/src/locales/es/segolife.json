@@ -271,7 +271,11 @@
     "identifyConfirm": "Confirmar",
     "recordSaleButton": "Registrar venta en efectivo",
     "cashOnlyNote": "Venta en efectivo registrada por el staff — todavía no hay ningún proveedor de pago digital conectado.",
-    "saleRecorded": "Venta registrada"
+    "saleRecorded": "Venta registrada",
+    "applyTokensLabel": "Aplicar SegoTokens",
+    "noTokenPolicy": "No hay ninguna política de canje activa para este venue",
+    "tokensApplied": "{{tokens}} SegoTokens aplicados",
+    "moneyDue": "A cobrar"
   },
   "common": {
     "errorTitle": "Algo ha ido mal",

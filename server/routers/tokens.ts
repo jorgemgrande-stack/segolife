@@ -35,6 +35,13 @@ import {
   setVenueProductActive,
 } from "../db/venueProductsDb";
 import {
+  listTokenRedemptionPolicies,
+  getTokenRedemptionPolicyById,
+  createTokenRedemptionPolicy,
+  updateTokenRedemptionPolicy,
+  setTokenRedemptionPolicyActive,
+} from "../db/tokenRedemptionPoliciesDb";
+import {
   listSchedulesByVenue,
   createSchedule,
   deleteSchedule,
@@ -44,6 +51,7 @@ import { getActivationReadinessSnapshot } from "../segolife/tokens/activationRea
 import { getEconomyOverviewExtras } from "../segolife/tokens/economyOverviewService";
 import { evaluateReward } from "../segolife/tokens/rewardEngine";
 import { LIVE_LOYALTY_ENABLED } from "../segolife/tokens/tokenEngine";
+import { quoteTokenSpend } from "../segolife/tokens/tokenSpendService";
 
 const tokensViewProcedure = permissionProcedure("tokens.view", ["admin"]);
 const tokensManageProcedure = permissionProcedure("tokens.manage", ["admin"]);
@@ -139,6 +147,24 @@ const scheduleInputSchema = z.object({
   timezone: z.string().max(64).optional(),
   validFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   validTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+});
+
+// SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7).
+const redemptionPolicyInputSchema = z.object({
+  name: z.string().min(1).max(256),
+  description: z.string().max(4000).nullish(),
+  communityId: z.number().int().positive().nullish(),
+  venueId: z.number().int().positive().nullish(),
+  eventId: z.number().int().positive().nullish(),
+  tokensPerUnit: z.number().int().positive().default(1),
+  valueCentsPerUnit: z.number().int().positive(),
+  minTokenSpend: z.number().int().positive().nullish(),
+  maxTokenSpend: z.number().int().positive().nullish(),
+  maxPercentage: z.number().int().min(0).max(100).nullish(),
+  allowFullTokenPayment: z.boolean().default(false),
+  startsAt: z.coerce.date().nullish(),
+  endsAt: z.coerce.date().nullish(),
+  priority: z.number().int().default(0),
 });
 
 export const tokensRouter = router({
@@ -265,6 +291,38 @@ export const tokensRouter = router({
       return { success: true };
     }),
 
+  // ─── ADMIN — políticas de canje (SegoTokens Universal Spend, Fase 7) ────────
+  // Financieramente sensible (spec §46: "changing ST value is financially
+  // sensitive") — mismo permiso tokensManageProcedure que campañas, NUNCA
+  // añadido a VENUE_ADMIN_PERMISSION_BUNDLE.
+
+  listRedemptionPolicies: tokensViewProcedure.query(async () => listTokenRedemptionPolicies()),
+  getRedemptionPolicyById: tokensViewProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const policy = await getTokenRedemptionPolicyById(input.id);
+      if (!policy) throw new TRPCError({ code: "NOT_FOUND", message: "Política no encontrada" });
+      return policy;
+    }),
+  createRedemptionPolicy: tokensManageProcedure
+    .input(redemptionPolicyInputSchema)
+    .mutation(async ({ ctx, input }) => ({ success: true, policy: await createTokenRedemptionPolicy({ ...input, createdByUserId: ctx.user.id }) })),
+  updateRedemptionPolicy: tokensManageProcedure
+    .input(z.object({ id: z.number().int().positive() }).merge(redemptionPolicyInputSchema.partial()))
+    .mutation(async ({ input }) => {
+      const { id, ...fields } = input;
+      const policy = await updateTokenRedemptionPolicy(id, fields);
+      if (!policy) throw new TRPCError({ code: "NOT_FOUND", message: "Política no encontrada" });
+      return { success: true, policy };
+    }),
+  setRedemptionPolicyActive: tokensManageProcedure
+    .input(z.object({ id: z.number().int().positive(), active: z.boolean() }))
+    .mutation(async ({ input }) => {
+      const policy = await setTokenRedemptionPolicyActive(input.id, input.active);
+      if (!policy) throw new TRPCError({ code: "NOT_FOUND", message: "Política no encontrada" });
+      return { success: true, policy };
+    }),
+
   // ─── ADMIN — productos del venue ────────────────────────────────────────────
 
   listVenueProducts: tokensViewProcedure
@@ -376,5 +434,27 @@ export const tokensRouter = router({
     .input(z.object({ limit: z.number().int().min(1).max(100).default(20), offset: z.number().int().min(0).default(0) }))
     .query(async ({ input, ctx }) => {
       return listLedgerByUserId(ctx.user.id, { limit: input.limit, offset: input.offset });
+    }),
+
+  /**
+   * SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7, spec §35/§36):
+   * previsualización de autoservicio para el propio Student — nunca expone
+   * "500 ST = X€ en todas partes" (las políticas pueden variar por venue/
+   * evento), solo el valor EXACTO para ESTE contexto concreto. userId
+   * siempre viene de ctx.user.id — un Student nunca puede previsualizar (ni
+   * mucho menos comprometer) el saldo de otro.
+   */
+  myQuoteTokenSpend: protectedProcedure
+    .input(z.object({
+      venueId: z.number().int().positive().nullish(),
+      eventId: z.number().int().positive().nullish(),
+      grossAmountCents: z.number().int().min(0),
+      requestedTokens: z.number().int().min(0),
+    }))
+    .query(async ({ input, ctx }) => {
+      return quoteTokenSpend({
+        userId: ctx.user.id, venueId: input.venueId, eventId: input.eventId,
+        grossAmountCents: input.grossAmountCents, requestedTokens: input.requestedTokens,
+      });
     }),
 });

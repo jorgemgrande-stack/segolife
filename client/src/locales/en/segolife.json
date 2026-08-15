@@ -271,7 +271,11 @@
     "identifyConfirm": "Confirm",
     "recordSaleButton": "Record cash sale",
     "cashOnlyNote": "Cash payment recorded by staff — no digital payment provider is connected yet.",
-    "saleRecorded": "Sale recorded"
+    "saleRecorded": "Sale recorded",
+    "applyTokensLabel": "Apply SegoTokens",
+    "noTokenPolicy": "No active redemption policy for this venue",
+    "tokensApplied": "{{tokens}} SegoTokens applied",
+    "moneyDue": "Amount due"
   },
   "common": {
     "errorTitle": "Something went wrong",

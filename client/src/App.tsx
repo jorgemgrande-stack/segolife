@@ -185,6 +185,7 @@ const EventDetail = lazy(() => import("./pages/admin/events/EventDetail"));
 const TokensDashboard = lazy(() => import("./pages/admin/tokens/TokensDashboard"));
 const TokensRulesManager = lazy(() => import("./pages/admin/tokens/RulesManager"));
 const TokensCampaignsManager = lazy(() => import("./pages/admin/tokens/CampaignsManager"));
+const TokensRedemptionPoliciesManager = lazy(() => import("./pages/admin/tokens/RedemptionPoliciesManager"));
 const LoyaltyShadow = lazy(() => import("./pages/admin/tokens/LoyaltyShadow"));
 
 // Segolife: QR de consumición (Fase 3)
@@ -514,6 +515,7 @@ function Router() {
       <Route path="/admin/tokens">{() => <Suspense fallback={<AdminLoadingFallback />}><TokensDashboard /></Suspense>}</Route>
       <Route path="/admin/tokens/rules">{() => <Suspense fallback={<AdminLoadingFallback />}><TokensRulesManager /></Suspense>}</Route>
       <Route path="/admin/tokens/campaigns">{() => <Suspense fallback={<AdminLoadingFallback />}><TokensCampaignsManager /></Suspense>}</Route>
+      <Route path="/admin/tokens/redemption">{() => <Suspense fallback={<AdminLoadingFallback />}><TokensRedemptionPoliciesManager /></Suspense>}</Route>
       <Route path="/admin/tokens/shadow">{() => <Suspense fallback={<AdminLoadingFallback />}><LoyaltyShadow /></Suspense>}</Route>
       <Route path="/admin/qr">{() => <Suspense fallback={<AdminLoadingFallback />}><QrManager /></Suspense>}</Route>
       <Route path="/admin/benefits">{() => <Suspense fallback={<AdminLoadingFallback />}><BenefitsManager /></Suspense>}</Route>
