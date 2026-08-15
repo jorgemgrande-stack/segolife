@@ -295,7 +295,8 @@ function DefinitionsTab() {
 interface RuleForm {
   name: string; description: string; sourceType: string;
   sourceVenueId: string; sourceEventId: string; sourceProductId: string; communityId: string;
-  minAmountCents: string; minVisits: string; recurrenceWindow: string;
+  minAmountCents: string; recurrenceWindow: string;
+  aggregateMetric: string; aggregateThreshold: string;
   conditionStartTime: string; conditionEndTime: string;
   startsAt: string; endsAt: string; priority: string;
   benefitDefinitionId: string; quantity: string;
@@ -307,7 +308,8 @@ interface RuleForm {
 const emptyRuleForm: RuleForm = {
   name: "", description: "", sourceType: "consumption",
   sourceVenueId: NONE, sourceEventId: NONE, sourceProductId: NONE, communityId: NONE,
-  minAmountCents: "", minVisits: "", recurrenceWindow: NONE,
+  minAmountCents: "", recurrenceWindow: NONE,
+  aggregateMetric: NONE, aggregateThreshold: "",
   conditionStartTime: "", conditionEndTime: "",
   startsAt: "", endsAt: "", priority: "0",
   benefitDefinitionId: "", quantity: "1",
@@ -321,12 +323,72 @@ const SOURCE_TYPE_LABEL: Record<string, string> = {
   event_attendance: "Asistencia a evento", token_earning: "Ganancia de tokens", recurrence: "Recurrencia",
   campaign: "Campaña", manual: "Manual", ticket: "Ticket", future_external: "Externo futuro",
 };
+/**
+ * SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6): solo estos
+ * sourceType tienen un productor real que las dispare (ver auditoría de
+ * fase) — consumption_product/token_earning/recurrence/campaign/
+ * future_external existen en el enum de BD pero ningún módulo las emite
+ * todavía, y "manual" tampoco pasa nunca por evaluateBenefitsForOrigin (la
+ * concesión manual llama a grantBenefit directamente, ver manualGrant).
+ * Ofrecerlas en el selector crearía reglas silenciosamente muertas — se
+ * ocultan de "Nueva regla" (nunca del histórico: una regla ya creada con
+ * uno de esos tipos se sigue mostrando/editando igual).
+ */
+const WIRED_SOURCE_TYPES = ["consumption", "event_attendance", "venue_visit", "ticket"];
+const AGGREGATE_METRIC_LABEL: Record<string, string> = {
+  attendance_count: "Nº de asistencias a eventos",
+  venue_visit_count: "Nº de visitas al venue",
+  distinct_venues: "Nº de venues distintos visitados",
+  commerce_count: "Nº de compras confirmadas",
+  commerce_quantity: "Nº de unidades compradas",
+  spend_cents: "Importe gastado (céntimos)",
+};
+const AGGREGATE_METRIC_SUPPORTS_VENUE: Record<string, boolean> = {
+  attendance_count: true, venue_visit_count: true, distinct_venues: false, commerce_count: true, commerce_quantity: true, spend_cents: true,
+};
+const WINDOW_LABEL: Record<string, string> = { day: "esta noche", week: "esta semana", month: "este mes" };
+
+/** SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §21): resumen legible antes de activar — evita errores de configuración que un formulario de campos sueltos no deja ver de un vistazo. */
+function buildRulePreview(form: RuleForm, venueName: (id: string) => string | null, definitionName: (id: string) => string | null): string {
+  const parts: string[] = ["Cuando un Student"];
+  const originLabel = SOURCE_TYPE_LABEL[form.sourceType]?.toLowerCase() ?? form.sourceType;
+  parts.push(originLabel + (form.sourceVenueId !== NONE ? ` en ${venueName(form.sourceVenueId) ?? "…"}` : ""));
+
+  if (form.aggregateMetric !== NONE && form.aggregateThreshold) {
+    const metricLabel = AGGREGATE_METRIC_LABEL[form.aggregateMetric]?.toLowerCase() ?? form.aggregateMetric;
+    const windowLabel = WINDOW_LABEL[form.recurrenceWindow] ?? WINDOW_LABEL.day;
+    parts.push(`, y alcanza ${form.aggregateThreshold} (${metricLabel}) ${windowLabel}`);
+  }
+  if (form.conditionStartTime && form.conditionEndTime) {
+    parts.push(`, entre las ${form.conditionStartTime} y las ${form.conditionEndTime}`);
+  }
+
+  const benefitName = form.benefitDefinitionId ? (definitionName(form.benefitDefinitionId) ?? "…") : "…";
+  parts.push(` → recibe automáticamente "${benefitName}"`);
+
+  if (form.validityType === "day_anchored" && form.validityDaysOffset) {
+    const days = Number(form.validityDaysOffset);
+    parts.push(days === 0 ? " (válido esta misma noche" : days === 1 ? " (válido mañana" : ` (válido en ${days} días`);
+    if (form.validityStartTime) parts.push(` desde las ${form.validityStartTime}`);
+    if (form.validityEndTime) parts.push(` hasta las ${form.validityEndTime}`);
+    parts.push(")");
+  }
+
+  const limits: string[] = [];
+  if (form.oncePerRule) limits.push("máximo 1 vez por Student");
+  if (form.maxPerUser) limits.push(`máx. ${form.maxPerUser} por Student`);
+  if (form.maxTotal) limits.push(`máx. ${form.maxTotal} en total`);
+  if (limits.length > 0) parts.push(`. Límite: ${limits.join(", ")}`);
+
+  return parts.join("") + ".";
+}
 
 function RulesTab() {
   const utils = trpc.useUtils();
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState<RuleForm>(emptyRuleForm);
+  const [statsRuleId, setStatsRuleId] = useState<number | null>(null);
 
   const { data: rules, isLoading } = trpc.benefits.listRules.useQuery();
   const { data: definitions } = trpc.benefits.listDefinitions.useQuery();
@@ -356,8 +418,9 @@ function RulesTab() {
       sourceProductId: r.sourceProductId != null ? String(r.sourceProductId) : NONE,
       communityId: r.communityId != null ? String(r.communityId) : NONE,
       minAmountCents: r.minAmountCents != null ? String(r.minAmountCents) : "",
-      minVisits: r.minVisits != null ? String(r.minVisits) : "",
       recurrenceWindow: r.recurrenceWindow ?? NONE,
+      aggregateMetric: r.aggregateMetric ?? NONE,
+      aggregateThreshold: r.aggregateThreshold != null ? String(r.aggregateThreshold) : "",
       conditionStartTime: r.conditionStartTime ?? "", conditionEndTime: r.conditionEndTime ?? "",
       startsAt: r.startsAt ? new Date(r.startsAt).toISOString().slice(0, 16) : "",
       endsAt: r.endsAt ? new Date(r.endsAt).toISOString().slice(0, 16) : "",
@@ -383,8 +446,9 @@ function RulesTab() {
     sourceProductId: form.sourceProductId !== NONE ? Number(form.sourceProductId) : null,
     communityId: form.communityId !== NONE ? Number(form.communityId) : null,
     minAmountCents: form.minAmountCents ? Number(form.minAmountCents) : null,
-    minVisits: form.minVisits ? Number(form.minVisits) : null,
     recurrenceWindow: form.recurrenceWindow !== NONE ? (form.recurrenceWindow as "day" | "week" | "month") : null,
+    aggregateMetric: form.aggregateMetric !== NONE ? (form.aggregateMetric as "attendance_count" | "venue_visit_count" | "distinct_venues" | "commerce_count" | "commerce_quantity" | "spend_cents") : null,
+    aggregateThreshold: form.aggregateThreshold ? Number(form.aggregateThreshold) : null,
     conditionStartTime: form.conditionStartTime || null, conditionEndTime: form.conditionEndTime || null,
     startsAt: form.startsAt ? new Date(form.startsAt) : undefined,
     endsAt: form.endsAt ? new Date(form.endsAt) : undefined,
@@ -434,7 +498,10 @@ function RulesTab() {
                   <TableCell className="text-muted-foreground text-xs">{r.validityType}</TableCell>
                   <TableCell className="text-muted-foreground">{r.priority}</TableCell>
                   <TableCell><Switch checked={r.active} onCheckedChange={v => setActiveMut.mutate({ id: r.id, active: v })} /></TableCell>
-                  <TableCell><Button size="sm" variant="outline" onClick={() => openEdit(r)}><Pencil className="w-3.5 h-3.5" /></Button></TableCell>
+                  <TableCell className="flex gap-1.5">
+                    <Button size="sm" variant="outline" onClick={() => setStatsRuleId(r.id)}>Resultados</Button>
+                    <Button size="sm" variant="outline" onClick={() => openEdit(r)}><Pencil className="w-3.5 h-3.5" /></Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -455,8 +522,15 @@ function RulesTab() {
                 <Label>Tipo de origen *</Label>
                 <Select value={form.sourceType} onValueChange={v => setForm(f => ({ ...f, sourceType: v }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{Object.entries(SOURCE_TYPE_LABEL).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}</SelectContent>
+                  <SelectContent>
+                    {Object.entries(SOURCE_TYPE_LABEL)
+                      .filter(([k]) => WIRED_SOURCE_TYPES.includes(k) || k === form.sourceType)
+                      .map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
+                  </SelectContent>
                 </Select>
+                {!WIRED_SOURCE_TYPES.includes(form.sourceType) && (
+                  <p className="text-xs text-amber-600 mt-1">Este origen no tiene ningún productor todavía — la regla nunca se disparará.</p>
+                )}
               </div>
               <div>
                 <Label>Venue origen (vacío = cualquiera)</Label>
@@ -482,6 +556,35 @@ function RulesTab() {
               <div><Label>Hora inicio condición (HH:MM)</Label><Input value={form.conditionStartTime} onChange={e => setForm(f => ({ ...f, conditionStartTime: e.target.value }))} placeholder="22:00" /></div>
               <div><Label>Hora fin condición (HH:MM)</Label><Input value={form.conditionEndTime} onChange={e => setForm(f => ({ ...f, conditionEndTime: e.target.value }))} placeholder="23:59" /></div>
             </div>
+
+            <p className="text-xs font-semibold text-muted-foreground uppercase pt-1">Repetición (opcional — "solo tras N veces")</p>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label>Métrica</Label>
+                <Select value={form.aggregateMetric} onValueChange={v => setForm(f => ({ ...f, aggregateMetric: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>Sin condición de repetición</SelectItem>
+                    {Object.entries(AGGREGATE_METRIC_LABEL).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div><Label>Umbral</Label><Input type="number" min={1} value={form.aggregateThreshold} onChange={e => setForm(f => ({ ...f, aggregateThreshold: e.target.value }))} disabled={form.aggregateMetric === NONE} /></div>
+              <div>
+                <Label>Ventana</Label>
+                <Select value={form.recurrenceWindow} onValueChange={v => setForm(f => ({ ...f, recurrenceWindow: v }))} disabled={form.aggregateMetric === NONE}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>Esta noche (día operativo)</SelectItem>
+                    <SelectItem value="week">Esta semana</SelectItem>
+                    <SelectItem value="month">Este mes</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            {form.aggregateMetric !== NONE && !AGGREGATE_METRIC_SUPPORTS_VENUE[form.aggregateMetric] && form.sourceVenueId !== NONE && (
+              <p className="text-xs text-amber-600">Esta métrica cuenta en todos los venues — el "Venue origen" de arriba no la filtra.</p>
+            )}
 
             <p className="text-xs font-semibold text-muted-foreground uppercase pt-1">Resultado</p>
             <div className="grid grid-cols-2 gap-4">
@@ -532,6 +635,17 @@ function RulesTab() {
               <label className="flex items-center gap-2 text-sm"><Checkbox checked={form.oncePerOrigin} onCheckedChange={v => setForm(f => ({ ...f, oncePerOrigin: !!v }))} /> Una vez por origen</label>
               <label className="flex items-center gap-2 text-sm"><Checkbox checked={form.oncePerRule} onCheckedChange={v => setForm(f => ({ ...f, oncePerRule: !!v }))} /> Una vez por usuario (esta regla)</label>
             </div>
+
+            {form.benefitDefinitionId && (
+              <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-foreground">
+                <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Resumen</p>
+                {buildRulePreview(
+                  form,
+                  id => (venues ?? []).find(v => String(v.id) === id)?.name ?? null,
+                  id => (definitions ?? []).find(d => String(d.id) === id)?.name ?? null
+                )}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
@@ -539,6 +653,36 @@ function RulesTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={statsRuleId != null} onOpenChange={v => !v && setStatsRuleId(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Resultados de la regla</DialogTitle></DialogHeader>
+          {statsRuleId != null && <RuleStatsView ruleId={statsRuleId} venueName={id => (venues ?? []).find(v => v.id === id)?.name ?? `#${id}`} />}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+/** SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §27/§28): concedidos/canjeados/conversión, y si origen≠destino (cross-venue) lo muestra explícitamente — la relación real "Casanova → Tía Felisa" que el negocio quiere poder ver. */
+function RuleStatsView({ ruleId, venueName }: { ruleId: number; venueName: (id: number) => string }) {
+  const { data: stats, isLoading } = trpc.benefits.getRuleStats.useQuery({ id: ruleId });
+
+  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+  if (!stats) return <p className="text-sm text-muted-foreground py-4">Sin datos.</p>;
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm font-medium text-foreground">{stats.ruleName}</p>
+      {stats.crossVenue && stats.sourceVenueId != null && stats.destinationVenueId != null && (
+        <p className="text-xs text-muted-foreground">Cross-venue: {venueName(stats.sourceVenueId)} → {venueName(stats.destinationVenueId)}</p>
+      )}
+      <div className="grid grid-cols-3 gap-3 text-center">
+        <div><p className="text-2xl font-bold text-foreground tabular-nums">{stats.grantedCount}</p><p className="text-xs text-muted-foreground">Concedidos</p></div>
+        <div><p className="text-2xl font-bold text-foreground tabular-nums">{stats.usedCount}</p><p className="text-xs text-muted-foreground">Canjeados</p></div>
+        <div><p className="text-2xl font-bold text-foreground tabular-nums">{Math.round(stats.usageRate * 100)}%</p><p className="text-xs text-muted-foreground">Conversión</p></div>
+      </div>
+      <p className="text-xs text-muted-foreground text-center">{stats.uniqueStudents} Students distintos</p>
     </div>
   );
 }

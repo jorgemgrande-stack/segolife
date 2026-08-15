@@ -7,11 +7,13 @@
  * el razonamiento completo de por qué es una tabla nueva y no una
  * reutilización forzada de event_attendance.
  */
-import { eq } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { venueVisits, type VenueVisit } from "../../../drizzle/schema";
-import { resolveMadridMoment } from "../tokens/tokenScheduleService";
+import { venueVisits, userCommunities, type VenueVisit } from "../../../drizzle/schema";
+import { resolveOperationalDate } from "../tokens/tokenScheduleService";
+import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
+import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/benefitEvents";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -22,17 +24,10 @@ async function getDb(): Promise<DbHandle> {
   return _db;
 }
 
-/**
- * Día operativo de nightlife — límite a las 06:00 Europe/Madrid, NUNCA
- * medianoche de calendario. Una visita a las 23:55 y un rescan a las 00:20
- * devuelven el MISMO operationalDate ("ayer") — ver comentario de schema.
- */
-const OPERATIONAL_DAY_BOUNDARY_HOURS = 6;
-
-export function resolveOperationalDate(at: Date): string {
-  const shifted = new Date(at.getTime() - OPERATIONAL_DAY_BOUNDARY_HOURS * 60 * 60 * 1000);
-  return resolveMadridMoment(shifted).date;
-}
+// resolveOperationalDate ahora vive en tokenScheduleService.ts (ver su
+// comentario) — se re-exporta aquí para no romper ningún import existente
+// (unifiedCheckinService.ts, venueAppService.ts, venueVisitService.test.ts).
+export { resolveOperationalDate };
 
 export interface RecordVenueVisitInput {
   userId: number;
@@ -47,12 +42,28 @@ export type RecordVenueVisitResult =
   | { status: "recorded"; visit: VenueVisit }
   | { status: "already_recorded"; visit: VenueVisit };
 
+/** Primera comunidad por antigüedad de alta — mismo criterio que resolveMyCommunityId en server/routers/benefits.ts, nunca inferida por venue/email. */
+async function resolveVisitorCommunityId(userId: number, conn: DbHandle): Promise<number | null> {
+  const [membership] = await conn.select({ communityId: userCommunities.communityId })
+    .from(userCommunities).where(eq(userCommunities.userId, userId)).orderBy(asc(userCommunities.joinedAt)).limit(1);
+  return membership?.communityId ?? null;
+}
+
 /**
  * Idempotente vía UNIQUE(idempotency_key) + insert().ignore() — dos
  * escaneos concurrentes del mismo Student en el mismo venue dentro del
  * mismo día operativo nunca crean dos filas (mismo patrón que
  * ingestAttendance/attendancePipeline.ts, nunca un motor paralelo de
  * asistencia — este es su hermano venue-only, no un sustituto).
+ *
+ * SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §5/§16): cierra
+ * la laguna de Fase 5 — hasta ahora `venue_visit` era un sourceType
+ * seleccionable en el admin pero sin ningún productor real, así que una
+ * regla configurada con él nunca disparaba. Solo se evalúa para una visita
+ * REALMENTE NUEVA (nunca en el camino already_recorded — un reescaneo
+ * duplicado del mismo día operativo no debe re-evaluar ni re-notificar). Un
+ * fallo en la evaluación de Benefits NUNCA revierte la visita ya
+ * commiteada (mismo patrón .catch(() => []) que ingestAttendance).
  */
 export async function recordVenueVisit(input: RecordVenueVisitInput, db?: DbHandle): Promise<RecordVenueVisitResult> {
   const conn = db ?? (await getDb());
@@ -79,5 +90,21 @@ export async function recordVenueVisit(input: RecordVenueVisitInput, db?: DbHand
     return { status: "already_recorded", visit: row };
   }
   const [row] = await conn.select().from(venueVisits).where(eq(venueVisits.id, insertId)).limit(1);
+
+  try {
+    const communityId = await resolveVisitorCommunityId(input.userId, conn);
+    const unlocked = await evaluateBenefitsForOrigin({
+      type: "venue_visit",
+      userId: input.userId,
+      venueId: input.venueId,
+      communityId,
+      sourceId: row.id,
+      occurredAt: input.occurredAt,
+    }, conn);
+    for (const u of unlocked) emitBenefitGranted(buildBenefitGrantedPayload(u.userBenefit, u.definition));
+  } catch {
+    // Un fallo en Benefits nunca debe revertir la visita ya registrada.
+  }
+
   return { status: "recorded", visit: row };
 }

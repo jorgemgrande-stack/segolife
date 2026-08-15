@@ -198,6 +198,7 @@
     "validUntilLabel": "Válido hasta",
     "availableTomorrow": "Disponible mañana",
     "availableFrom": "Disponible desde {{date}}",
+    "unlockedBy": "Desbloqueado por: {{rule}}",
     "showQrHint": "Muestra este código en el local",
     "showQrAtEntrance": "Muestra este QR en la entrada",
     "destinationLabel": "Local",

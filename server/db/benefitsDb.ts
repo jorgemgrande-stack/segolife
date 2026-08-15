@@ -331,21 +331,25 @@ export async function listGrantedBenefits(filters: GrantedBenefitFilters, db?: D
 /** Forma "de listado" — SIN qrToken/qrTokenHash. Usada por myBenefits (varios beneficios a la vez). */
 export interface UserBenefitListItemWithDefinition extends UserBenefitSafeFields {
   definition: BenefitDefinition;
+  /** SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §25/§30): nombre de la regla que concedió este beneficio, si vino de una — nunca expone la regla completa (condiciones/límites son detalle de admin), solo el nombre legible para "Desbloqueado por…" en Mis Beneficios. */
+  ruleName: string | null;
 }
 
 /** Forma "de detalle" — SÍ incluye qrToken/qrTokenHash (fila completa). Solo debe usarla getUserBenefitWithDefinition, consumida por un único endpoint gateado por ownership (server/routers/benefits.ts, getMyBenefit). */
 export interface UserBenefitWithDefinition extends UserBenefit {
   definition: BenefitDefinition;
+  ruleName: string | null;
 }
 
 /** "Mis Beneficios" — estudiante, sus propios beneficios únicamente. Listado: nunca lleva el secreto del QR. */
 export async function listUserBenefits(userId: number, db?: DbHandle): Promise<UserBenefitListItemWithDefinition[]> {
   const conn = db ?? (await getDb());
-  const rows = await conn.select({ ub: userBenefits, def: benefitDefinitions }).from(userBenefits)
+  const rows = await conn.select({ ub: userBenefits, def: benefitDefinitions, ruleName: benefitRules.name }).from(userBenefits)
     .innerJoin(benefitDefinitions, eq(userBenefits.benefitDefinitionId, benefitDefinitions.id))
+    .leftJoin(benefitRules, eq(userBenefits.benefitRuleId, benefitRules.id))
     .where(eq(userBenefits.userId, userId))
     .orderBy(desc(userBenefits.grantedAt));
-  return rows.map(r => ({ ...omitQrSecret(r.ub), definition: r.def }));
+  return rows.map(r => ({ ...omitQrSecret(r.ub), definition: r.def, ruleName: r.ruleName ?? null }));
 }
 
 /**
@@ -356,11 +360,12 @@ export async function listUserBenefits(userId: number, db?: DbHandle): Promise<U
  */
 export async function getUserBenefitWithDefinition(id: number, db?: DbHandle): Promise<UserBenefitWithDefinition | null> {
   const conn = db ?? (await getDb());
-  const [row] = await conn.select({ ub: userBenefits, def: benefitDefinitions }).from(userBenefits)
+  const [row] = await conn.select({ ub: userBenefits, def: benefitDefinitions, ruleName: benefitRules.name }).from(userBenefits)
     .innerJoin(benefitDefinitions, eq(userBenefits.benefitDefinitionId, benefitDefinitions.id))
+    .leftJoin(benefitRules, eq(userBenefits.benefitRuleId, benefitRules.id))
     .where(eq(userBenefits.id, id)).limit(1);
   if (!row) return null;
-  return { ...row.ub, definition: row.def };
+  return { ...row.ub, definition: row.def, ruleName: row.ruleName ?? null };
 }
 
 // ─── VENUE DETAIL — generados (origen) vs canjeados (destino) ──────────────
@@ -380,6 +385,55 @@ export async function getVenueBenefitStats(venueId: number, db?: DbHandle): Prom
     conn.select({ id: userBenefits.id }).from(userBenefits).where(eq(userBenefits.usedAtVenueId, venueId)),
   ]);
   return { generatedCount: generatedRows.length, redeemedCount: redeemedRows.length };
+}
+
+// ─── RULE ANALYTICS — SEGOLIFE BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §27/§28) ──
+// "granted" = filas de user_benefits con este benefit_rule_id (cualquier
+// estado — granted es un hecho histórico, no depende de si sigue activo).
+// "used" = de esas, las que ya están en status='used'. usageRate = used/granted
+// (0 si granted=0, nunca división por cero). crossVenue = true cuando el
+// venue de ORIGEN de la regla (source_venue_id) difiere del venue de DESTINO
+// de la definición del beneficio (benefit_definitions.destination_venue_id)
+// — la relación real "Casanova → Tía Felisa" que spec §28 pide poder ver.
+
+export interface BenefitRuleStats {
+  ruleId: number;
+  ruleName: string;
+  sourceVenueId: number | null;
+  destinationVenueId: number | null;
+  crossVenue: boolean;
+  grantedCount: number;
+  usedCount: number;
+  usageRate: number;
+  uniqueStudents: number;
+}
+
+export async function getBenefitRuleStats(ruleId: number, db?: DbHandle): Promise<BenefitRuleStats | null> {
+  const conn = db ?? (await getDb());
+  const [rule] = await conn.select().from(benefitRules).where(eq(benefitRules.id, ruleId)).limit(1);
+  if (!rule) return null;
+  const [definition] = await conn.select({ destinationVenueId: benefitDefinitions.destinationVenueId })
+    .from(benefitDefinitions).where(eq(benefitDefinitions.id, rule.benefitDefinitionId)).limit(1);
+
+  const grants = await conn.select({ userId: userBenefits.userId, status: userBenefits.status })
+    .from(userBenefits).where(eq(userBenefits.benefitRuleId, ruleId));
+
+  const grantedCount = grants.length;
+  const usedCount = grants.filter(g => g.status === "used").length;
+  const uniqueStudents = new Set(grants.map(g => g.userId)).size;
+  const destinationVenueId = definition?.destinationVenueId ?? null;
+
+  return {
+    ruleId: rule.id,
+    ruleName: rule.name,
+    sourceVenueId: rule.sourceVenueId,
+    destinationVenueId,
+    crossVenue: rule.sourceVenueId != null && destinationVenueId != null && rule.sourceVenueId !== destinationVenueId,
+    grantedCount,
+    usedCount,
+    usageRate: grantedCount > 0 ? usedCount / grantedCount : 0,
+    uniqueStudents,
+  };
 }
 
 // ─── REDEMPTION ATTEMPTS — auditoría antifraude ────────────────────────────

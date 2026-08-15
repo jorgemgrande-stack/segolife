@@ -17,6 +17,7 @@ import mysql from "mysql2/promise";
 import { commerceTransactions, commerceTransactionItems, type CommerceTransaction } from "../../../drizzle/schema";
 import { earnTokens } from "../tokens/tokenEngine";
 import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
+import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/benefitEvents";
 import { resolveIdentity, persistIdentityMapping, isConfirmedResolutionMethod } from "../integrations/identityResolver";
 import { recordUnresolvedOperation } from "../integrations/unresolvedOperationsService";
 import type { NormalizedCommerceTransaction } from "../integrations/externalTicketingProvider";
@@ -99,7 +100,11 @@ export async function processCommerceLoyalty(transaction: CommerceTransaction, d
     }
     attempt = buildNextAttempt(outcome, existingAttempt, transaction.occurredAt);
 
-    await evaluateBenefitsForOrigin({
+    // SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6): igual que en
+    // attendancePipeline.ts — el resultado se descartaba por completo,
+    // así que un Benefit desbloqueado por consumo nunca notificaba al
+    // Student. Se emite tras la confirmación real de grantBenefit().
+    const unlockedBenefits = await evaluateBenefitsForOrigin({
       type: "consumption",
       userId: transaction.userId,
       venueId: transaction.venueId,
@@ -110,6 +115,7 @@ export async function processCommerceLoyalty(transaction: CommerceTransaction, d
       ledgerId: attempt.ledgerId,
       occurredAt: transaction.occurredAt,
     }, conn).catch(() => []);
+    for (const u of unlockedBenefits) emitBenefitGranted(buildBenefitGrantedPayload(u.userBenefit, u.definition));
   }
 
   await conn.update(commerceTransactions)

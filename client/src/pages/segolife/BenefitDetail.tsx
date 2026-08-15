@@ -58,6 +58,7 @@ export default function BenefitDetail() {
                   {i18n.language === "en" ? benefit.definition.descriptionEn : benefit.definition.descriptionEs}
                 </p>
               )}
+              {benefit.ruleName && <p className="mt-1 text-xs text-primary/80">{t("benefits.unlockedBy", { rule: benefit.ruleName })}</p>}
             </div>
 
             <div className="segolife-card-shadow space-y-2.5 rounded-2xl bg-card p-4 text-sm">

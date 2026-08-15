@@ -141,6 +141,39 @@ describe("benefits router — reglas (admin) rechazan sin sesión", () => {
   it("benefits.setRuleActive rechaza sin sesión", async () => {
     await expect(callerWithoutSession().setRuleActive({ id: 1, active: true })).rejects.toThrow(/please login/i);
   });
+  it("benefits.getRuleStats rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().getRuleStats({ id: 1 })).rejects.toThrow(/please login/i);
+  });
+});
+
+// SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §22): validación
+// server-side de combinaciones que Zod solo no puede expresar — nunca
+// confiar solo en que el builder del admin las evite.
+describe("benefits router — createRule/updateRule: validación de aggregate_metric/aggregate_threshold (spec §22)", () => {
+  // role "admin" satisface benefitsManageProcedure (permissionProcedure("benefits.manage", ["admin"])) sin tocar BD real — lo que se prueba aquí es la validación, no el gate RBAC.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function callerAsAdmin() {
+    return benefitsRouter.createCaller({ user: { id: 1, role: "admin" } } as any);
+  }
+
+  it("createRule rechaza aggregateMetric sin aggregateThreshold", async () => {
+    await expect(callerAsAdmin().createRule({
+      name: "x", sourceType: "consumption", benefitDefinitionId: 1,
+      aggregateMetric: "commerce_count",
+    } as any)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+  it("createRule rechaza aggregateThreshold sin aggregateMetric", async () => {
+    await expect(callerAsAdmin().createRule({
+      name: "x", sourceType: "consumption", benefitDefinitionId: 1,
+      aggregateThreshold: 5,
+    } as any)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+  it("createRule rechaza endsAt anterior o igual a startsAt", async () => {
+    await expect(callerAsAdmin().createRule({
+      name: "x", sourceType: "consumption", benefitDefinitionId: 1,
+      startsAt: new Date("2026-06-01"), endsAt: new Date("2026-05-01"),
+    } as any)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
 });
 
 describe("benefits router — concedidos (admin) rechazan sin sesión", () => {

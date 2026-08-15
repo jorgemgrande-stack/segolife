@@ -4637,7 +4637,18 @@ export type InsertBenefitCommunity = typeof benefitCommunities.$inferInsert;
 //
 // Límites (max_per_user/max_per_day/max_total/once_per_origin/once_per_rule)
 // nunca se hardcodean — ver benefitGrantService.ts, paso "límites".
-
+//
+// SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6): `aggregate_metric`/
+// `aggregate_threshold` son EXTENSIÓN aditiva de la condición de recurrencia
+// existente (min_visits/recurrence_window), no un reemplazo — min_visits ya
+// contaba eventos de earn en token_ledger (aproximación razonable cuando
+// consumo≈ganancia de tokens, pero contamina el conteo si el Student gana
+// tokens en el mismo venue por otro origen a la vez, p.ej. asistencia Y
+// consumo la misma noche). aggregate_metric, cuando está presente, hace que
+// el motor cuente sobre la tabla de hechos REAL (event_attendance/
+// venue_visits/commerce_transactions/commerce_transaction_items) en vez del
+// ledger — ver benefitAggregateMetrics.ts. Con aggregate_metric=null (todas
+// las reglas ya existentes), el comportamiento no cambia ni un bit.
 export const benefitRules = mysqlTable("benefit_rules", {
   id:                       int("id").autoincrement().primaryKey(),
   name:                     varchar("name", { length: 256 }).notNull(),
@@ -4653,6 +4664,10 @@ export const benefitRules = mysqlTable("benefit_rules", {
   minAmountCents:           int("min_amount_cents"),
   minVisits:                int("min_visits"),
   recurrenceWindow:         mysqlEnum("recurrence_window", ["day", "week", "month"]),
+  aggregateMetric:          mysqlEnum("aggregate_metric", [
+    "attendance_count", "venue_visit_count", "distinct_venues", "commerce_count", "commerce_quantity", "spend_cents",
+  ]),
+  aggregateThreshold:       int("aggregate_threshold"),
   conditionDaysOfWeek:      json("condition_days_of_week").$type<number[]>(),
   conditionStartTime:       varchar("condition_start_time", { length: 5 }),
   conditionEndTime:         varchar("condition_end_time", { length: 5 }),
@@ -4675,7 +4690,9 @@ export const benefitRules = mysqlTable("benefit_rules", {
   oncePerRule:              boolean("once_per_rule").notNull().default(false),
   createdAt:                timestamp("created_at").defaultNow().notNull(),
   updatedAt:                timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
-});
+}, (table) => ({
+  sourceTypeActiveIdx: index("benefit_rules_source_type_active_idx").on(table.sourceType, table.active),
+}));
 export type BenefitRule = typeof benefitRules.$inferSelect;
 export type InsertBenefitRule = typeof benefitRules.$inferInsert;
 
@@ -4756,6 +4773,12 @@ export const userBenefits = mysqlTable("user_benefits", {
 }, (table) => ({
   idempotencyKeyUnique: unique("user_benefits_idempotency_key_unique").on(table.idempotencyKey),
   qrTokenHashUnique: unique("user_benefits_qr_token_hash_unique").on(table.qrTokenHash),
+  // SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6): passesLimits() ya
+  // consultaba estas columnas sin índice (countGrantsByRuleForUser* /
+  // hasGrantForOrigin) — cada evaluación de regla en cada asistencia/consumo
+  // hacía un table scan completo de user_benefits.
+  userIdIdx: index("user_benefits_user_id_idx").on(table.userId),
+  benefitRuleIdIdx: index("user_benefits_benefit_rule_id_idx").on(table.benefitRuleId),
 }));
 export type UserBenefit = typeof userBenefits.$inferSelect;
 export type InsertUserBenefit = typeof userBenefits.$inferInsert;

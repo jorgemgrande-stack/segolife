@@ -37,6 +37,8 @@ interface BenefitListItem {
   status: "active" | "used" | "expired" | "cancelled";
   validFrom: string | Date;
   validUntil: string | Date | null;
+  /** SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §25/§30): nombre de la regla automática que lo concedió, si vino de una — null para beneficios manuales/marketplace. */
+  ruleName: string | null;
   definition: LocalizedNameSource & {
     id: number; benefitType: string; imageUrl: string | null;
   };
@@ -65,6 +67,7 @@ function BenefitCard({ b, lang, slug }: { b: BenefitListItem; lang: string; slug
               ? `${t("benefits.validUntilLabel")} ${fmtDateTime(b.validUntil, lang)}`
               : fmtDateTime(b.validFrom, lang)}
         </p>
+        {b.ruleName && <p className="truncate text-xs text-primary/80">{t("benefits.unlockedBy", { rule: b.ruleName })}</p>}
       </div>
       <Badge variant={b.status === "active" ? "default" : b.status === "used" ? "secondary" : "outline"}>{t(`benefits.${statusLabel}`)}</Badge>
       <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />

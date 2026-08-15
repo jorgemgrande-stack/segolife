@@ -25,6 +25,7 @@ import {
   addVenueStaff,
   removeVenueStaff,
   getVenueBenefitStats,
+  getBenefitRuleStats,
   listMarketplaceBenefits,
   getMarketplaceBenefitById,
 } from "../db/benefitsDb";
@@ -102,6 +103,9 @@ const ruleInputSchema = z.object({
   minAmountCents: z.number().int().positive().nullish(),
   minVisits: z.number().int().positive().nullish(),
   recurrenceWindow: z.enum(["day", "week", "month"]).nullish(),
+  // SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §7/§22).
+  aggregateMetric: z.enum(["attendance_count", "venue_visit_count", "distinct_venues", "commerce_count", "commerce_quantity", "spend_cents"]).nullish(),
+  aggregateThreshold: z.number().int().positive().nullish(),
   conditionDaysOfWeek: z.array(z.number().int().min(0).max(6)).nullish(),
   conditionStartTime: z.string().regex(/^\d{2}:\d{2}$/).nullish(),
   conditionEndTime: z.string().regex(/^\d{2}:\d{2}$/).nullish(),
@@ -122,6 +126,26 @@ const ruleInputSchema = z.object({
   oncePerOrigin: z.boolean().default(false),
   oncePerRule: z.boolean().default(false),
 });
+
+/**
+ * SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §22): validación
+ * server-side de combinaciones que Zod por sí solo no puede expresar (Zod
+ * ya cubre negativos/cero vía .positive() en cada campo numérico). No usa
+ * `.refine()` sobre ruleInputSchema a propósito — eso rompería
+ * ruleInputSchema.partial() (ZodEffects no tiene .partial()), que
+ * updateRule necesita para aceptar actualizaciones parciales.
+ */
+function assertValidRuleInput(input: { aggregateMetric?: string | null; aggregateThreshold?: number | null; startsAt?: Date | null; endsAt?: Date | null }) {
+  if (input.aggregateMetric != null && input.aggregateThreshold == null) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Una métrica de agregado requiere un umbral" });
+  }
+  if (input.aggregateThreshold != null && input.aggregateMetric == null) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Un umbral de agregado requiere seleccionar una métrica" });
+  }
+  if (input.startsAt && input.endsAt && input.startsAt >= input.endsAt) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "La fecha de fin debe ser posterior a la de inicio" });
+  }
+}
 
 /** Resuelve la comunidad real del Student (primera por antigüedad, mismo criterio que ticketPurchasedListener.ts/notifyProposalPublished) — nunca inferida por venue/email. */
 async function resolveMyCommunityId(userId: number): Promise<number | null> {
@@ -183,11 +207,15 @@ export const benefitsRouter = router({
     }),
   createRule: benefitsManageProcedure
     .input(ruleInputSchema)
-    .mutation(async ({ input }) => ({ success: true, rule: await createBenefitRule(input) })),
+    .mutation(async ({ input }) => {
+      assertValidRuleInput(input);
+      return { success: true, rule: await createBenefitRule(input) };
+    }),
   updateRule: benefitsManageProcedure
     .input(z.object({ id: z.number().int().positive() }).merge(ruleInputSchema.partial()))
     .mutation(async ({ input }) => {
       const { id, ...fields } = input;
+      assertValidRuleInput(fields);
       const rule = await updateBenefitRule(id, fields);
       if (!rule) throw new TRPCError({ code: "NOT_FOUND", message: "Regla no encontrada" });
       return { success: true, rule };
@@ -198,6 +226,15 @@ export const benefitsRouter = router({
       const rule = await setBenefitRuleActive(input.id, input.active);
       if (!rule) throw new TRPCError({ code: "NOT_FOUND", message: "Regla no encontrada" });
       return { success: true, rule };
+    }),
+
+  /** SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §27/§28): resultados de una regla — concedidos/canjeados/conversión/cross-venue. Solo lectura, mismo permiso que ver el resto del módulo de reglas. */
+  getRuleStats: benefitsViewProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const stats = await getBenefitRuleStats(input.id);
+      if (!stats) throw new TRPCError({ code: "NOT_FOUND", message: "Regla no encontrada" });
+      return stats;
     }),
 
   // ─── ADMIN — concedidos ─────────────────────────────────────────────────────

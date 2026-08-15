@@ -57,6 +57,27 @@ export function resolveMadridMoment(at: Date = new Date()): ScheduleMoment {
   };
 }
 
+/**
+ * Día operativo de nightlife — límite a las 06:00 Europe/Madrid, NUNCA
+ * medianoche de calendario (spec VENUE & PARTNER APP §11). Una visita a las
+ * 23:55 y un rescan a las 00:20 devuelven el MISMO operationalDate ("ayer").
+ *
+ * Vive aquí (no en venueVisitService.ts, su ubicación original en Fase 5) —
+ * BEHAVIORAL BENEFITS RULE ENGINE (Fase 6) necesita el mismo cálculo desde
+ * benefits/ (benefitValidityEngine.ts/benefitAggregateMetrics.ts), y
+ * venueVisitService.ts pasa a depender DE benefits/ (evaluateBenefitsForOrigin
+ * al registrar una visita nueva) — mantenerlo en venues/ habría creado un
+ * ciclo de imports (benefits → venues → benefits). tokenScheduleService.ts
+ * ya es el hogar neutral de las utilidades de tiempo Europe/Madrid que
+ * ambos dominios importan sin depender el uno del otro.
+ */
+const OPERATIONAL_DAY_BOUNDARY_HOURS = 6;
+
+export function resolveOperationalDate(at: Date): string {
+  const shifted = new Date(at.getTime() - OPERATIONAL_DAY_BOUNDARY_HOURS * 60 * 60 * 1000);
+  return resolveMadridMoment(shifted).date;
+}
+
 function timeToMinutes(t: string): number {
   const [h, m] = t.split(":").map(Number);
   return h * 60 + m;

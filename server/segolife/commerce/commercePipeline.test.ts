@@ -49,6 +49,7 @@ vi.mock("../tokens/tokenLedgerService", () => ({
 }));
 
 import { ingestCommerceTransaction, processCommerceLoyalty, refundCommerceTransaction, CommerceError } from "./commercePipeline";
+import { benefitEvents, type BenefitGrantedPayload } from "../benefits/benefitEvents";
 
 function transactionFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -130,6 +131,26 @@ describe("ingestCommerceTransaction", () => {
     expect(mockEarnTokens).toHaveBeenCalledOnce();
     expect(mockEarnTokens.mock.calls[0][0]).toMatchObject({ userId: 42, venueId: 10, amountSpent: 15, origin: "consumption" });
     expect(mockEvaluateBenefitsForOrigin.mock.calls[0][0]).toMatchObject({ type: "consumption", userId: 42, amountCents: 1500 });
+  });
+
+  // SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §29): mismo
+  // gap que attendancePipeline.ts — un Benefit desbloqueado por consumo
+  // nunca notificaba al Student. Listener real, mismo patrón establecido.
+  it("un Benefit desbloqueado por evaluateBenefitsForOrigin emite BenefitGranted (Communication Center) — spec §29", async () => {
+    mockResolveIdentity.mockResolvedValue({ userId: 42, method: "buyer_email" });
+    mockEvaluateBenefitsForOrigin.mockResolvedValue([
+      { userBenefit: { id: 901 }, definition: { id: 2, name: "Copa gratis mañana" } },
+    ]);
+    const received: BenefitGrantedPayload[] = [];
+    const listener = (p: BenefitGrantedPayload) => { received.push(p); };
+    benefitEvents.onTyped("BenefitGranted", listener);
+
+    await ingestCommerceTransaction({ provider: "fourvenues", venueId: 10, transaction: transactionFixture() }, fakeDb());
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(received).toHaveLength(1);
+    benefitEvents.removeListener("BenefitGranted", listener);
+    mockEvaluateBenefitsForOrigin.mockReset();
   });
 
   it("transacción externa duplicada (mismo provider+external_transaction_id) es idempotente", async () => {

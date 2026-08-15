@@ -48,6 +48,7 @@ vi.mock("../tokens/tokenLedgerService", () => ({ TokenEngineError: MockTokenEngi
 vi.mock("../tokens/loyaltyShadowService", () => ({ observeShadow: mockObserveShadow }));
 
 import { ingestAttendance } from "./attendancePipeline";
+import { benefitEvents, type BenefitGrantedPayload } from "../benefits/benefitEvents";
 
 function attendanceFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -150,6 +151,28 @@ describe("ingestAttendance", () => {
     expect(mockPersistIdentityMapping).toHaveBeenCalledOnce();
     expect(mockObserveShadow).toHaveBeenCalledOnce();
     expect(mockObserveShadow.mock.calls[0][0]).toMatchObject({ trigger: "EVENT_ATTENDANCE", userId: 42, eventId: 5, venueId: 10 });
+  });
+
+  // SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §29): el
+  // resultado de evaluateBenefitsForOrigin se descartaba por completo antes
+  // de esta fase — un Benefit desbloqueado por asistencia nunca notificaba
+  // al Student. Se registra un listener REAL (mismo patrón que
+  // benefitRuleEngine.test.ts) para probar que ahora sí se emite.
+  it("un Benefit desbloqueado por evaluateBenefitsForOrigin emite BenefitGranted (Communication Center) — spec §29", async () => {
+    mockResolveIdentity.mockResolvedValue({ userId: 42, method: "participant_email" });
+    mockEvaluateBenefitsForOrigin.mockResolvedValue([
+      { userBenefit: { id: 900 }, definition: { id: 1, name: "Entrada gratis mañana" } },
+    ]);
+    const received: BenefitGrantedPayload[] = [];
+    const listener = (p: BenefitGrantedPayload) => { received.push(p); };
+    benefitEvents.onTyped("BenefitGranted", listener);
+
+    await ingestAttendance({ provider: "weezevent", eventId: 5, venueId: 10, attendance: attendanceFixture() }, fakeDb());
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(received).toHaveLength(1);
+    benefitEvents.removeListener("BenefitGranted", listener);
+    mockEvaluateBenefitsForOrigin.mockReset();
   });
 
   it("Loyalty Shadow Mode — SIEMPRE observa, incluso con suppressLoyalty=true (los 3 venues reales hoy tienen loyalty_enabled=0, earnTokens real se salta pero Shadow no)", async () => {

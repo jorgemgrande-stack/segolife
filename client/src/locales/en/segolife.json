@@ -198,6 +198,7 @@
     "validUntilLabel": "Valid until",
     "availableTomorrow": "Available tomorrow",
     "availableFrom": "Available from {{date}}",
+    "unlockedBy": "Unlocked by: {{rule}}",
     "showQrHint": "Show this code at the venue",
     "showQrAtEntrance": "Show this QR at the entrance",
     "destinationLabel": "Venue",

@@ -36,6 +36,7 @@ import {
 import { type AnyDbHandle, countRecentEarnEvents } from "../tokens/tokenLedgerService";
 import { isWithinTimeRange, resolveMadridMoment } from "../tokens/tokenScheduleService";
 import { computeValidityWindow } from "./benefitValidityEngine";
+import { evaluateAggregateMetric } from "./benefitAggregateMetrics";
 import {
   grantBenefit,
   countGrantsByRuleForUser,
@@ -98,6 +99,17 @@ function windowStart(window: "day" | "week" | "month", at: Date): Date {
 }
 
 function ruleMatchesOrigin(rule: BenefitRule, origin: BenefitOrigin, moment: { dayOfWeek: number; time: string }): boolean {
+  // SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §17/§18,
+  // "NO HISTORICAL REWARD BLAST"): un hecho real cuyo occurredAt es ANTERIOR
+  // a la creación de la regla nunca puede desencadenarla — sin este guard,
+  // una sincronización tardía de Fourvenues que ingiera HOY una asistencia
+  // de hace 3 semanas (idempotencyKey nueva porque nunca se había visto)
+  // calificaría retroactivamente para una regla creada esta mañana, aunque
+  // el evento ya hubiera pasado antes de que la regla existiera. No depende
+  // de rule.startsAt (eso es la ventana de campaña que el admin configura a
+  // propósito) — este corte es SIEMPRE implícito, usando una columna que ya
+  // existe (created_at), sin migración adicional.
+  if (origin.occurredAt < rule.createdAt) return false;
   if (rule.sourceVenueId != null && rule.sourceVenueId !== origin.venueId) return false;
   if (rule.sourceEventId != null && rule.sourceEventId !== origin.eventId) return false;
   if (rule.sourceProductId != null && rule.sourceProductId !== origin.productId) return false;
@@ -125,8 +137,24 @@ async function isDefinitionAllowedForCommunity(benefitDefinitionId: number, comm
   return rows.some(r => r.communityId === communityId);
 }
 
-/** Únicamente para uso interno del motor — comprueba min_visits/recurrence_window si la regla los define. */
+/**
+ * Únicamente para uso interno del motor — comprueba la condición de
+ * recurrencia/agregado de la regla, si la define.
+ *
+ * SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6): `aggregate_metric`
+ * (nuevo, spec §6/§7) tiene PRIORIDAD sobre `min_visits`/`recurrence_window`
+ * (legacy, Fase 4) cuando ambos están presentes — cuenta sobre la tabla de
+ * hechos real correspondiente (ver benefitAggregateMetrics.ts), nunca sobre
+ * token_ledger. El hecho que dispara esta evaluación YA está commiteado en
+ * su propia tabla en este punto (a diferencia del ledger legacy, que se
+ * escribe en un paso posterior) — por eso aquí NO se suma +1, el conteo ya
+ * incluye el hecho actual.
+ */
 async function passesRecurrenceCondition(rule: BenefitRule, origin: BenefitOrigin, conn: AnyDbHandle): Promise<boolean> {
+  if (rule.aggregateMetric != null && rule.aggregateThreshold != null) {
+    const window = rule.recurrenceWindow ?? "day";
+    return evaluateAggregateMetric(rule.aggregateMetric, window, rule.aggregateThreshold, origin.userId, origin.venueId, origin.occurredAt, conn);
+  }
   if (rule.minVisits == null || rule.recurrenceWindow == null) return true;
   const since = windowStart(rule.recurrenceWindow, origin.occurredAt);
   const visits = await countRecentEarnEvents(origin.userId, since, origin.venueId ?? undefined, conn);
@@ -155,8 +183,32 @@ async function passesLimits(rule: BenefitRule, origin: BenefitOrigin, conn: AnyD
   return true;
 }
 
-/** Idempotencia legible — ver drizzle/schema.ts (comentario de user_benefits) y el informe de fase para el razonamiento de por qué se usa origin.type/origin.sourceId en vez del literal "consumption_qr" sugerido en el enunciado (el motor es deliberadamente agnóstico del módulo origen concreto). */
+/**
+ * Idempotencia legible — ver drizzle/schema.ts (comentario de user_benefits)
+ * y el informe de fase para el razonamiento de por qué se usa
+ * origin.type/origin.sourceId en vez del literal "consumption_qr" sugerido
+ * en el enunciado (el motor es deliberadamente agnóstico del módulo origen
+ * concreto).
+ *
+ * SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §13/§14,
+ * "THRESHOLD CROSSING — CRITICAL"): cuando `rule.once_per_rule` es true, la
+ * clave YA NO incluye `origin.sourceId` — con reglas de agregado (p.ej. "5
+ * consumiciones"), dos hechos DISTINTOS (transacción #5 y #6, o dos
+ * evaluaciones concurrentes de la misma) podrían cruzar el umbral casi a la
+ * vez; con una clave por-hecho, `passesLimits()` (check-then-act sobre
+ * countGrantsByRuleForUser) tiene una ventana de carrera real donde ambas
+ * lecturas ven "0 concedidos todavía" antes de que cualquiera confirme. Con
+ * una clave FIJA por (regla, usuario) — sin sourceId — cualquier intento
+ * concurrente de conceder colisiona en el MISMO unique constraint que
+ * grantBenefit() ya resuelve de forma segura (captura errno 1062 y
+ * re-consulta, ver benefitGrantService.ts) — la base de datos, no una
+ * condición de carrera en memoria, es quien decide cuál gana.
+ */
 function buildIdempotencyKey(rule: BenefitRule, origin: BenefitOrigin, index: number): string | null {
+  if (rule.oncePerRule) {
+    const base = `benefit_rule:${rule.id}:once:user:${origin.userId}`;
+    return rule.quantity > 1 ? `${base}:${index}` : base;
+  }
   if (origin.sourceId == null) return null;
   const base = `benefit_rule:${rule.id}:${origin.type}:${origin.sourceId}:user:${origin.userId}`;
   return rule.quantity > 1 ? `${base}:${index}` : base;

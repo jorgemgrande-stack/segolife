@@ -5,7 +5,14 @@
  * tokenRuleEngine.test.ts) — el filtrado bajo test es el que hace el propio
  * motor en JS (venue/producto/comunidad/importe/fecha/día-semana/límites).
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const { mockEvaluateAggregateMetric } = vi.hoisted(() => ({ mockEvaluateAggregateMetric: vi.fn() }));
+vi.mock("./benefitAggregateMetrics", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./benefitAggregateMetrics")>();
+  return { ...actual, evaluateAggregateMetric: mockEvaluateAggregateMetric };
+});
+
 import { evaluateBenefitsForOrigin, type BenefitOrigin } from "./benefitRuleEngine";
 import { benefitRules, benefitDefinitions, benefitCommunities, userBenefits, tokenLedger } from "../../../drizzle/schema";
 import { emitBenefitGranted, buildBenefitGrantedPayload, benefitEvents, type BenefitGrantedPayload } from "./benefitEvents";
@@ -15,6 +22,7 @@ function blankRule(overrides: Partial<Record<string, unknown>> = {}) {
     id: 1, name: "Regla", description: null, sourceType: "consumption",
     sourceVenueId: null, sourceEventId: null, sourceProductId: null, communityId: null,
     minAmountCents: null, minVisits: null, recurrenceWindow: null,
+    aggregateMetric: null, aggregateThreshold: null,
     conditionDaysOfWeek: null, conditionStartTime: null, conditionEndTime: null,
     startsAt: null, endsAt: null, active: true, priority: 0,
     benefitDefinitionId: 1, quantity: 1,
@@ -376,5 +384,136 @@ describe("evaluateBenefitsForOrigin — varias reglas simultáneas (aditivo, no 
     });
     const result = await evaluateBenefitsForOrigin(blankOrigin(), db);
     expect(result).toHaveLength(2);
+  });
+});
+
+// SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §17/§18, "NO
+// HISTORICAL REWARD BLAST" — CRITICAL): un hecho real anterior a la
+// creación de la regla nunca puede desencadenarla, ni siquiera si la fila
+// de event_attendance/venue_visit/commerce_transaction es genuinamente
+// NUEVA en la base de datos (p.ej. una sincronización tardía de Fourvenues
+// que ingiere hoy un evento de hace 3 semanas).
+describe("evaluateBenefitsForOrigin — protección histórica (spec §41 test #5)", () => {
+  it("un hecho cuyo occurredAt es ANTERIOR a la creación de la regla NUNCA la dispara, aunque la regla no tenga startsAt configurado", async () => {
+    const { db } = makeRuleEngineMockDb({
+      rules: [blankRule({ createdAt: new Date("2026-06-13T00:00:00Z") })], // regla creada HOY
+      definition: blankDefinition(),
+    });
+    // Un hecho genuinamente nuevo en BD, pero cuyo occurredAt real es de hace 3 semanas (sync tardía).
+    const result = await evaluateBenefitsForOrigin(blankOrigin({ occurredAt: new Date("2026-05-22T21:00:00Z") }), db);
+    expect(result).toEqual([]);
+  });
+
+  it("un hecho posterior a la creación de la regla sí la dispara con normalidad", async () => {
+    const { db } = makeRuleEngineMockDb({
+      rules: [blankRule({ createdAt: new Date("2026-06-01T00:00:00Z") })],
+      definition: blankDefinition(),
+    });
+    const result = await evaluateBenefitsForOrigin(blankOrigin({ occurredAt: new Date("2026-06-12T21:00:00Z") }), db);
+    expect(result).toHaveLength(1);
+  });
+});
+
+// SEGOLIFE — VENUE VISIT como trigger real (Fase 6, spec §5/§41 test #8) —
+// cierra la laguna de Fase 5 (venue_visit existía en el enum pero sin
+// productor). El motor en sí es agnóstico del sourceType concreto — este
+// test prueba que "venue_visit" fluye exactamente igual que cualquier otro
+// origen ya cubierto arriba, sin caso especial.
+describe("evaluateBenefitsForOrigin — venue_visit como origen real (spec §5)", () => {
+  it("una regla con sourceType='venue_visit' concede al recibir un origen de ese tipo", async () => {
+    const { db } = makeRuleEngineMockDb({
+      rules: [blankRule({ sourceType: "venue_visit" })],
+      definition: blankDefinition(),
+    });
+    const result = await evaluateBenefitsForOrigin(blankOrigin({ type: "venue_visit", eventId: null, amountCents: null }), db);
+    expect(result).toHaveLength(1);
+  });
+});
+
+// SEGOLIFE — MÉTRICAS DE AGREGADO (Fase 6, spec §6/§7/§14, Example B "5
+// consumiciones"). aggregateMetric tiene prioridad sobre minVisits/
+// recurrenceWindow legacy y usa las tablas de hechos reales
+// (benefitAggregateMetrics.ts, mockeado aquí — su lógica de conteo se
+// prueba por separado en benefitAggregateMetrics.test.ts).
+describe("evaluateBenefitsForOrigin — aggregate_metric (umbral sobre hechos reales, spec §6/§7)", () => {
+  beforeEach(() => { mockEvaluateAggregateMetric.mockReset(); });
+
+  it("umbral alcanzado (evaluateAggregateMetric=true) → concede", async () => {
+    mockEvaluateAggregateMetric.mockResolvedValue(true);
+    const { db } = makeRuleEngineMockDb({
+      rules: [blankRule({ aggregateMetric: "commerce_count", aggregateThreshold: 5, recurrenceWindow: "day" })],
+      definition: blankDefinition(),
+    });
+    const result = await evaluateBenefitsForOrigin(blankOrigin(), db);
+    expect(result).toHaveLength(1);
+    expect(mockEvaluateAggregateMetric).toHaveBeenCalledWith("commerce_count", "day", 5, 42, 10, expect.any(Date), expect.anything());
+  });
+
+  it("umbral NO alcanzado (evaluateAggregateMetric=false) → no concede (spec §41 test #14: 'below threshold → no grant')", async () => {
+    mockEvaluateAggregateMetric.mockResolvedValue(false);
+    const { db } = makeRuleEngineMockDb({
+      rules: [blankRule({ aggregateMetric: "commerce_count", aggregateThreshold: 5 })],
+      definition: blankDefinition(),
+    });
+    const result = await evaluateBenefitsForOrigin(blankOrigin(), db);
+    expect(result).toEqual([]);
+  });
+
+  it("aggregate_metric tiene prioridad sobre min_visits/recurrence_window legacy cuando ambos están presentes", async () => {
+    mockEvaluateAggregateMetric.mockResolvedValue(true);
+    const { db } = makeRuleEngineMockDb({
+      // min_visits=999 haría fallar la condición legacy si se evaluara — la aggregate gana y nunca se llega a mirar min_visits.
+      rules: [blankRule({ aggregateMetric: "venue_visit_count", aggregateThreshold: 3, minVisits: 999, recurrenceWindow: "day" })],
+      definition: blankDefinition(),
+    });
+    const result = await evaluateBenefitsForOrigin(blankOrigin(), db);
+    expect(result).toHaveLength(1);
+  });
+
+  it("sin ventana configurada, usa 'day' por defecto", async () => {
+    mockEvaluateAggregateMetric.mockResolvedValue(true);
+    const { db } = makeRuleEngineMockDb({
+      rules: [blankRule({ aggregateMetric: "commerce_count", aggregateThreshold: 5, recurrenceWindow: null })],
+      definition: blankDefinition(),
+    });
+    await evaluateBenefitsForOrigin(blankOrigin(), db);
+    expect(mockEvaluateAggregateMetric).toHaveBeenCalledWith("commerce_count", "day", 5, 42, 10, expect.any(Date), expect.anything());
+  });
+});
+
+// SEGOLIFE — THRESHOLD CROSSING / IDEMPOTENCIA CONCURRENTE (Fase 6, spec
+// §13/§14 — CRITICAL, "concurrent 5th does not duplicate"). Con
+// once_per_rule=true la clave de idempotencia YA NO depende de sourceId
+// (ver buildIdempotencyKey) — dos hechos DISTINTOS que ambos crucen el
+// umbral colisionan en la MISMA clave, así que el segundo nunca duplica
+// aunque "aparente" que el motor todavía no había concedido nada cuando se
+// evaluó (el unique constraint de la BD, no una lectura en memoria, es
+// quien decide).
+describe("evaluateBenefitsForOrigin — once_per_rule con clave fija (spec §14, umbral cruzado por hechos DISTINTOS)", () => {
+  it("dos hechos distintos (sourceId diferente) que ambos cumplen el umbral con once_per_rule=true producen UN solo beneficio, nunca dos", async () => {
+    mockEvaluateAggregateMetric.mockResolvedValue(true);
+    const { db, getUserBenefitRows } = makeRuleEngineMockDb({
+      rules: [blankRule({ aggregateMetric: "commerce_count", aggregateThreshold: 5, oncePerRule: true })],
+      definition: blankDefinition(),
+    });
+    // Transacción #5 cruza el umbral — concede.
+    const first = await evaluateBenefitsForOrigin(blankOrigin({ sourceId: 5005 }), db);
+    // Transacción #6, evaluada de nuevo (p.ej. reintento tardío o llegada casi simultánea) — sourceId DISTINTO.
+    const second = await evaluateBenefitsForOrigin(blankOrigin({ sourceId: 5006 }), db);
+    expect(first).toHaveLength(1);
+    expect(second).toEqual([]); // bloqueado por la MISMA clave de idempotencia (once:user:42), no por sourceId
+    expect(getUserBenefitRows()).toHaveLength(1);
+  });
+
+  it("la clave de idempotencia de una regla once_per_rule=true NUNCA incluye el sourceId del origen", async () => {
+    mockEvaluateAggregateMetric.mockResolvedValue(true);
+    const { db, getUserBenefitRows } = makeRuleEngineMockDb({
+      rules: [blankRule({ id: 7, oncePerRule: true, aggregateMetric: "commerce_count", aggregateThreshold: 5 })],
+      definition: blankDefinition(),
+    });
+    await evaluateBenefitsForOrigin(blankOrigin({ sourceId: 12345 }), db);
+    const key = getUserBenefitRows()[0].idempotencyKey as string;
+    expect(key).toBe("benefit_rule:7:once:user:42");
+    expect(key).not.toContain("12345");
   });
 });

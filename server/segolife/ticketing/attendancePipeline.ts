@@ -36,6 +36,7 @@ import mysql from "mysql2/promise";
 import { eventAttendance, type EventAttendance } from "../../../drizzle/schema";
 import { earnTokens } from "../tokens/tokenEngine";
 import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
+import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/benefitEvents";
 import { resolveIdentity, persistIdentityMapping, isConfirmedResolutionMethod } from "../integrations/identityResolver";
 import { recordUnresolvedOperation } from "../integrations/unresolvedOperationsService";
 import type { NormalizedAttendance } from "../integrations/externalTicketingProvider";
@@ -272,8 +273,16 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
   // Benefit puede tener sus propias condiciones independientes de las de
   // SegoTokens, mismo criterio que consumptionQrService.ts en Fase 3/4).
   // suppressLoyalty=true: nunca se intenta, por el mismo motivo que earnTokens arriba.
+  //
+  // SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6): hasta ahora el
+  // resultado de evaluateBenefitsForOrigin se descartaba por completo —
+  // un Benefit concedido automáticamente por asistir a un evento nunca
+  // emitía BenefitGranted, así que Communication Center/notificaciones
+  // in-app nunca se disparaban (a diferencia de consumptionQrService.ts,
+  // que sí lo hace). Mismo patrón exacto que ese llamador: emitir DESPUÉS
+  // de que evaluateBenefitsForOrigin ya haya confirmado la concesión.
   if (!input.suppressLoyalty) {
-    await evaluateBenefitsForOrigin({
+    const unlocked = await evaluateBenefitsForOrigin({
       type: "event_attendance",
       userId,
       venueId: input.venueId ?? null,
@@ -283,6 +292,7 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
       ledgerId: attempt?.ledgerId ?? null,
       occurredAt: input.attendance.occurredAt,
     }, conn).catch(() => []); // un fallo en Benefits nunca debe revertir la asistencia ya registrada.
+    for (const u of unlocked) emitBenefitGranted(buildBenefitGrantedPayload(u.userBenefit, u.definition));
   }
 
   return { status: "processed", attendance: row };

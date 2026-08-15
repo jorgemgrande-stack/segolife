@@ -103,14 +103,40 @@ describe("benefitValidityEngine", () => {
       expect(validFrom.toISOString()).toBe("2026-06-12T22:00:00.000Z"); // 2026-06-13T00:00 Madrid
     });
 
-    it("trigger justo tras medianoche Madrid (00:00:01), daysOffset=0 ancla al mismo día ya iniciado", () => {
-      // 2026-06-13T00:00:01 Madrid (CEST) = 2026-06-12T22:00:01Z.
+    // SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §10): esta
+    // aserción se corrigió a propósito. Antes anclaba al día de CALENDARIO
+    // del trigger (Fase 4) — un trigger a las 00:00:01 "ya" pertenecía al
+    // sábado. Pero un check-in a esa hora sigue siendo, operativamente, la
+    // noche del VIERNES (no ha pasado el corte de las 06:00) — el ejemplo
+    // de negocio del spec de Fase 6 exige exactamente este criterio ("un
+    // Student que entra a las 00:45 pertenece a la noche del viernes,
+    // 'mañana' debe significar sábado, no domingo"). daysOffset=0 ahora
+    // ancla al día OPERATIVO en curso (viernes), no al de calendario que
+    // acaba de empezar (sábado).
+    it("trigger justo tras medianoche Madrid (00:00:01) sigue perteneciendo a la noche operativa ANTERIOR (viernes), no al día de calendario que acaba de empezar", () => {
+      // 2026-06-13T00:00:01 Madrid (CEST) = 2026-06-12T22:00:01Z — calendario
+      // ya es sábado 13, pero el día OPERATIVO (corte 06:00) sigue siendo
+      // viernes 12.
       const trigger = new Date("2026-06-12T22:00:01Z");
       const { validFrom } = computeValidityWindow(
         { validityType: "day_anchored", validityDaysOffset: 0, validityStartTime: "00:00" },
         trigger
       );
-      expect(validFrom.toISOString()).toBe("2026-06-12T22:00:00.000Z"); // 2026-06-13T00:00 Madrid, mismo día
+      expect(validFrom.toISOString()).toBe("2026-06-11T22:00:00.000Z"); // 2026-06-12T00:00 Madrid (viernes, día operativo en curso)
+    });
+
+    it("caso de negocio spec §10: check-in 00:45 (noche del viernes) + daysOffset=1 ('mañana') ancla al SÁBADO, no al domingo", () => {
+      // 2026-06-13T00:45:00 Madrid (CEST) = 2026-06-12T22:45:00Z. Día
+      // operativo = viernes 12 (antes del corte de 06:00). "Mañana"
+      // (days_offset=1) debe ser sábado 13 — el día de calendario que ya
+      // había empezado NO cuenta como "mañana" otra vez.
+      const trigger = new Date("2026-06-12T22:45:00Z");
+      const { validFrom, validUntil } = computeValidityWindow(
+        { validityType: "day_anchored", validityDaysOffset: 1, validityStartTime: "00:00", validityEndTime: "06:00" },
+        trigger
+      );
+      expect(validFrom.toISOString()).toBe("2026-06-12T22:00:00.000Z"); // sábado 2026-06-13 00:00 Madrid
+      expect(validUntil?.toISOString()).toBe("2026-06-13T04:00:00.000Z"); // sábado 2026-06-13 06:00 Madrid
     });
   });
 

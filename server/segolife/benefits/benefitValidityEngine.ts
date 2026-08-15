@@ -19,6 +19,7 @@
  * casos de medianoche/DST verificados.
  */
 import { resolveMadridMoment } from "../tokens/tokenScheduleService";
+import { resolveOperationalDate } from "../venues/venueVisitService";
 
 export type ValidityType = "immediate" | "offset" | "day_anchored";
 
@@ -65,8 +66,17 @@ export function madridWallTimeToUtc(dateStr: string, timeStr: string): Date {
 }
 
 function computeDayAnchoredWindow(rule: ValidityRuleInput, triggerAt: Date): ValidityWindow {
-  const moment = resolveMadridMoment(triggerAt);
-  const anchorDate = addDaysToDateStr(moment.date, rule.validityDaysOffset ?? 0);
+  // SEGOLIFE — BEHAVIORAL BENEFITS RULE ENGINE (Fase 6, spec §10, "TARGET
+  // VENUE / TARGET EVENT" y el ejemplo de "mañana" resuelto explícitamente):
+  // el ancla usa el día OPERATIVO (corte 06:00 Europe/Madrid, mismo criterio
+  // que venue_visits.operational_date), NUNCA el día de calendario plano del
+  // instante del trigger. Antes de esta corrección, un check-in a las 00:45
+  // del sábado (que pertenece a la noche del viernes) calculaba
+  // days_offset=1 como domingo — un día de más — porque partía del día de
+  // calendario (sábado) en vez del día operativo al que realmente pertenece
+  // el hecho (viernes). Con el día operativo como ancla: viernes + 1 =
+  // sábado, que es lo que el negocio realmente quiere decir con "mañana".
+  const anchorDate = addDaysToDateStr(resolveOperationalDate(triggerAt), rule.validityDaysOffset ?? 0);
 
   const validFrom = rule.validityStartTime
     ? madridWallTimeToUtc(anchorDate, rule.validityStartTime)
