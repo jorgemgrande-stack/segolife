@@ -48,6 +48,16 @@ import {
   setScheduleActive,
 } from "../segolife/tokens/tokenScheduleService";
 import { getActivationReadinessSnapshot } from "../segolife/tokens/activationReadinessService";
+import {
+  getEconomyGovernanceOverview,
+  detectEconomyConflicts,
+  previewRuleForScope,
+  listEconomyConfigChanges,
+  applyTokenRuleValueChange,
+  setGlobalRedemptionConversion,
+  setGlobalReferralEconomics,
+  EconomyGovernanceError,
+} from "../segolife/tokens/economyGovernanceService";
 import { getEconomyOverviewExtras } from "../segolife/tokens/economyOverviewService";
 import { evaluateReward } from "../segolife/tokens/rewardEngine";
 import { LIVE_LOYALTY_ENABLED } from "../segolife/tokens/tokenEngine";
@@ -457,4 +467,71 @@ export const tokensRouter = router({
         grossAmountCents: input.grossAmountCents, requestedTokens: input.requestedTokens,
       });
     }),
+
+  // ─── SEGOTOKENS ECONOMY CONTROL CENTER (Fase 10.5) ──────────────────────────
+  // Capa de GOBIERNO sobre token_rules/token_campaigns/
+  // token_redemption_policies/referral_campaigns — reutiliza tokens.view/
+  // tokens.manage (mismo dominio RBAC, nunca un permiso nuevo duplicado).
+
+  economyGovernanceOverview: tokensViewProcedure.query(() => getEconomyGovernanceOverview()),
+
+  economyConflicts: tokensViewProcedure.query(() => detectEconomyConflicts()),
+
+  economyConfigChanges: tokensViewProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(200).optional() }))
+    .query(({ input }) => listEconomyConfigChanges(input.limit)),
+
+  /**
+   * "¿Qué regla ganaría para este alcance EN GENERAL?" (spec §25/§26) — SIN
+   * Student, distinto de previewReward (que exige un Student real para
+   * topes/recurrencia). Útil para que el admin entienda la PRECEDENCIA antes
+   * de tocar nada.
+   */
+  previewRuleForScope: tokensViewProcedure
+    .input(z.object({
+      direction: z.enum(["earn", "spend"]),
+      origin: z.enum(["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign", "community_response", "community_proposal_approved"]),
+      venueId: z.number().int().positive().optional(),
+      eventId: z.number().int().positive().optional(),
+      communityId: z.number().int().positive().optional(),
+      productId: z.number().int().positive().optional(),
+    }))
+    .query(({ input }) => previewRuleForScope(input)),
+
+  applyTokenRuleValueChange: tokensManageProcedure
+    .input(z.object({
+      ruleId: z.number().int().positive(),
+      fixedAmount: z.number().int().min(0).nullish(),
+      rate: z.string().regex(/^\d+(\.\d{1,4})?$/).nullish(),
+      reason: z.string().min(1).max(500),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const { ruleId, reason, ...fields } = input;
+        return await applyTokenRuleValueChange(ruleId, fields, ctx.user.id, reason);
+      } catch (err) {
+        if (err instanceof EconomyGovernanceError) throw new TRPCError({ code: err.code === "NOT_FOUND" ? "NOT_FOUND" : "BAD_REQUEST", message: err.message });
+        throw err;
+      }
+    }),
+
+  setGlobalRedemptionConversion: tokensManageProcedure
+    .input(z.object({
+      tokensPerUnit: z.number().int().positive(),
+      valueCentsPerUnit: z.number().int().positive(),
+      maxPercentage: z.number().int().min(0).max(100).optional(),
+      allowFullTokenPayment: z.boolean().optional(),
+      reason: z.string().min(1).max(500),
+    }))
+    .mutation(({ input, ctx }) => setGlobalRedemptionConversion({ ...input, actorUserId: ctx.user.id })),
+
+  setGlobalReferralEconomics: tokensManageProcedure
+    .input(z.object({
+      inviterRewardTokens: z.number().int().min(0),
+      inviteeRewardTokens: z.number().int().min(0),
+      // "verified_student" excluido a propósito — sin hecho real de verificación (ver economyGovernanceService.ts).
+      conversionCondition: z.enum(["account_created", "profile_completed", "first_venue_visit", "first_event_attendance"]),
+      reason: z.string().min(1).max(500),
+    }))
+    .mutation(({ input, ctx }) => setGlobalReferralEconomics({ ...input, actorUserId: ctx.user.id })),
 });

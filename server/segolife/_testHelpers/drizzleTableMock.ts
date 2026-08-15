@@ -89,11 +89,12 @@ export class MockTable<T extends Record<string, unknown>> {
     this.rows = seed.map(r => ({ ...r }));
     this.nextId = (Math.max(0, ...this.rows.map(r => Number(r.id ?? 0))) || 0) + 1;
   }
+  /** Devuelve COPIAS (nunca las referencias vivas de this.rows) — una SELECT real es una fotografía; un UPDATE posterior sobre la misma fila nunca debe mutar retroactivamente un resultado ya leído por el llamador. */
   select(cond: MockCond): T[] {
-    return this.rows.filter(r => evalCond(cond, r, this.tableObj));
+    return this.rows.filter(r => evalCond(cond, r, this.tableObj)).map(r => ({ ...r }));
   }
   insert(values: Partial<T>): T {
-    const row = { id: this.nextId++, ...values } as T;
+    const row = { id: this.nextId++, ...values } as unknown as T;
     this.rows.push(row);
     return row;
   }
@@ -179,7 +180,18 @@ export function createMockDb(tables: Map<unknown, MockTable<Record<string, unkno
     };
     return b;
   }
-  const outer = builder();
-  outer.transaction = (cb: (tx: unknown) => Promise<unknown>) => runMockTransaction([...tables.values()], () => cb(builder()));
+  // `outer` es un DISPATCHER puro — cada llamada a select/insert/update/delete
+  // arranca un builder() NUEVO, nunca comparte mode/table/cond entre cadenas
+  // concurrentes. Necesario porque el código real usa Promise.all([conn.select()...,
+  // conn.select()...]) sobre el MISMO handle — con un único builder compartido,
+  // la segunda llamada síncrona pisaría el `table`/`mode` de la primera antes
+  // de que su `.then()` (microtask) llegara a leerlo.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const outer: any = {};
+  outer.select = (...args: unknown[]) => builder().select(...args);
+  outer.insert = (t: unknown) => builder().insert(t);
+  outer.update = (t: unknown) => builder().update(t);
+  outer.delete = (t: unknown) => builder().delete(t);
+  outer.transaction = (cb: (tx: unknown) => Promise<unknown>) => runMockTransaction(Array.from(tables.values()), () => cb(builder()));
   return outer;
 }

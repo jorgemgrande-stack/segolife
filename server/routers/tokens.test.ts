@@ -17,6 +17,10 @@ import { tokensRouter } from "./tokens";
 function callerWithoutSession() {
   return tokensRouter.createCaller({ user: null } as any);
 }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function callerAs(role: string, id = 1) {
+  return tokensRouter.createCaller({ user: { id, role } } as any);
+}
 
 describe("tokens router — wallet/ledger de un usuario (admin) rechazan sin sesión", () => {
   it("tokens.getWallet rechaza sin sesión", async () => {
@@ -117,6 +121,36 @@ describe("tokens router — dashboard (admin) rechaza sin sesión", () => {
 describe("tokens router — SEGOTOKENS ECONOMY: Rule Preview (spec §26) rechaza sin sesión", () => {
   it("tokens.previewReward rechaza sin sesión", async () => {
     await expect(callerWithoutSession().previewReward({ userId: 42, origin: "attendance" })).rejects.toThrow(/please login/i);
+  });
+});
+
+describe("tokens router — SEGOTOKENS ECONOMY CONTROL CENTER (Fase 10.5, spec §57/§58/§74)", () => {
+  it("economyGovernanceOverview/economyConflicts/economyConfigChanges/previewRuleForScope rechazan sin sesión", async () => {
+    await expect(callerWithoutSession().economyGovernanceOverview()).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().economyConflicts()).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().economyConfigChanges({})).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().previewRuleForScope({ direction: "earn", origin: "consumption" })).rejects.toThrow(/please login/i);
+  });
+
+  it("applyTokenRuleValueChange/setGlobalRedemptionConversion/setGlobalReferralEconomics rechazan sin sesión", async () => {
+    await expect(callerWithoutSession().applyTokenRuleValueChange({ ruleId: 1, reason: "x" })).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().setGlobalRedemptionConversion({ tokensPerUnit: 100, valueCentsPerUnit: 100, reason: "x" })).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().setGlobalReferralEconomics({ inviterRewardTokens: 500, inviteeRewardTokens: 250, conversionCondition: "profile_completed", reason: "x" })).rejects.toThrow(/please login/i);
+  });
+
+  it("un Venue Admin nunca puede cambiar la economía global (spec §46, reutiliza tokens.manage — solo GLOBAL_ADMIN)", async () => {
+    await expect(callerAs("venue_admin").applyTokenRuleValueChange({ ruleId: 1, rate: "99", reason: "intento no autorizado" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(callerAs("venue_admin").setGlobalRedemptionConversion({ tokensPerUnit: 1, valueCentsPerUnit: 1, reason: "x" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("un Student (role='user') nunca puede ver ni cambiar la economía global", async () => {
+    await expect(callerAs("user").economyGovernanceOverview()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(callerAs("user").applyTokenRuleValueChange({ ruleId: 1, reason: "x" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("GLOBAL_ADMIN llega al handler real (middleware no lo bloquea)", async () => {
+    await expect(callerAs("admin").economyGovernanceOverview()).rejects.not.toMatchObject({ code: "FORBIDDEN" });
+    await expect(callerAs("admin").economyGovernanceOverview()).rejects.not.toMatchObject({ code: "UNAUTHORIZED" });
   });
 });
 

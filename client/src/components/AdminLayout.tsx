@@ -125,6 +125,7 @@ const navItems = [
     roles: ["admin"],
     children: [
       { label: "Dashboard", href: "/admin/tokens" },
+      { label: "Economía", href: "/admin/tokens/economy" },
       { label: "Reglas", href: "/admin/tokens/rules" },
       { label: "Campañas", href: "/admin/tokens/campaigns" },
       { label: "Políticas de canje", href: "/admin/tokens/redemption" },

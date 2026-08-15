@@ -6504,3 +6504,29 @@ export const venueSettlementLines = mysqlTable("venue_settlement_lines", {
 }));
 export type VenueSettlementLine = typeof venueSettlementLines.$inferSelect;
 export type InsertVenueSettlementLine = typeof venueSettlementLines.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEGOLIFE FASE 10.5 — SEGOTOKENS ECONOMY CONTROL CENTER
+// ═══════════════════════════════════════════════════════════════════════════
+// Auditado antes de crearse (spec §0): token_rules/token_campaigns/
+// token_redemption_policies/referral_campaigns YA existen y siguen siendo la
+// ÚNICA fuente de verdad económica — esta tabla es SOLO el registro de
+// auditoría de cambios (spec §56), nunca un motor paralelo. Genérica
+// (entityType+entityId+fieldName) para no crear una tabla de auditoría
+// distinta por cada uno de los 4 tipos de entidad configurable.
+export const economyConfigChanges = mysqlTable("economy_config_changes", {
+  id:             int("id").autoincrement().primaryKey(),
+  entityType:     mysqlEnum("entity_type", ["token_rule", "redemption_policy", "campaign", "referral_campaign"]).notNull(),
+  entityId:       int("entity_id").notNull(),
+  fieldName:      varchar("field_name", { length: 64 }).notNull(),
+  oldValue:       varchar("old_value", { length: 256 }),
+  newValue:       varchar("new_value", { length: 256 }),
+  reason:         varchar("reason", { length: 500 }),
+  actorUserId:    int("actor_user_id").notNull(),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  entityIdx: index("economy_config_changes_entity_idx").on(table.entityType, table.entityId),
+  createdAtIdx: index("economy_config_changes_created_at_idx").on(table.createdAt),
+}));
+export type EconomyConfigChange = typeof economyConfigChanges.$inferSelect;
+export type InsertEconomyConfigChange = typeof economyConfigChanges.$inferInsert;
