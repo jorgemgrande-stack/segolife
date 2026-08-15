@@ -70,9 +70,17 @@ function CashSection({ venueId }: { venueId: number }) {
 
   return (
     <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+      {/* SEGOLIFE — VENUE BAR POS & LIVE COMMERCE TERMINAL (Fase 10.7, spec
+          §16): desglose real — tarjeta y SegoTokens se muestran aparte, NUNCA
+          sumados al efectivo esperado (ver cashSessionService.ts). */}
       <div className="grid grid-cols-2 gap-2 text-sm">
         <p>Apertura: <strong>{centsToEuro(current.session.openingCashCents)}</strong></p>
-        <p>Esperado: <strong>{centsToEuro(current.expectedCashCents)}</strong></p>
+        <p>Ventas en efectivo: <strong>{centsToEuro(current.salesCashCents)}</strong></p>
+        <p>Ventas con tarjeta: <strong>{centsToEuro(current.salesCardCents)}</strong></p>
+        <p>SegoTokens aplicados: <strong>{centsToEuro(current.salesTokensValueCents)}</strong></p>
+        <p>Reembolsos: <strong>−{centsToEuro(current.refundsCashCents)}</strong></p>
+        <p>Movimientos manuales: <strong>{centsToEuro(current.cashInCents - current.cashOutCents)}</strong></p>
+        <p className="col-span-2 border-t border-border pt-2">Efectivo esperado: <strong>{centsToEuro(current.expectedCashCents)}</strong></p>
       </div>
       <div className="flex gap-2">
         <Input type="number" placeholder="Efectivo contado (€)" value={countedCash} onChange={e => setCountedCash(e.target.value)} />

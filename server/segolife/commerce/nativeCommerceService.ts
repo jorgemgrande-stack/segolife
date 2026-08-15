@@ -1,16 +1,23 @@
 /**
- * nativeCommerceService.ts — POS nativo mínimo (Fase 8, spec puntos 19-24).
- * NO es un ERP: sin fiscalidad, sin IVA/REAV, sin factura, sin caja/cierres
- * — solo registrar una venta real de consumiciones en un venue. REUTILIZA
- * `commerceTransactions`/`commerceTransactionItems` con `provider="segolife"`
- * (reservado desde Fase 5, ver comentario en drizzle/schema.ts) y
- * `venue_products` para el catálogo — nunca tablas paralelas.
+ * nativeCommerceService.ts — POS nativo (Fase 8, endurecido en Fase 10.7
+ * "Venue Bar POS & Live Commerce Terminal"). NO es un ERP: sin IVA/REAV
+ * propios, sin factura — solo registrar una venta real de consumiciones en
+ * un venue. REUTILIZA `commerceTransactions`/`commerceTransactionItems` con
+ * `provider="segolife"` (reservado desde Fase 5, ver comentario en
+ * drizzle/schema.ts) y `venue_products` para el catálogo — nunca tablas
+ * paralelas.
  *
- * PAGO: solo `paymentMethod="cash"` — el staff registra manualmente una
- * venta en efectivo que YA presenció en persona (no es "fingir un pago": no
- * se invoca ningún PaymentProvider digital, el staff es el testigo real de
- * la transacción, igual que cualquier POS físico del mundo). Nunca se
- * ofrece un método de pago digital sin un PaymentProvider real conectado.
+ * PAGO: el staff registra manualmente un cobro que YA presenció en persona
+ * (no es "fingir un pago": no se invoca ningún PaymentProvider digital, el
+ * staff es el testigo real de la transacción, igual que cualquier POS
+ * físico del mundo). `moneyPaymentMethod` ("cash"|"card", Fase 10.7)
+ * distingue HONESTAMENTE cómo se cobró la parte en dinero — nunca verifica
+ * un datáfono real (SEGOLIFE no lo controla), solo registra lo que el
+ * operador confirma. El `paymentMethod` final persistido combina esto con
+ * si hubo SegoTokens aplicados: "cash"|"card"|"mixed_cash"|"mixed_card"|
+ * "segotokens" — mismo patrón de composición que ya usa doorSaleService.ts
+ * (cash/segotokens/mixed), extendido con la distinción cash/card que Fase 9
+ * documentó explícitamente como pendiente (ver cashSessionService.ts).
  *
  * `commercePipeline.ingestCommerceTransaction()` sigue siendo el ÚNICO
  * punto de entrada a loyalty — este servicio nunca llama a earnTokens()/
@@ -64,6 +71,17 @@ export interface RecordNativeSaleInput {
    * del código base).
    */
   tokensToApply?: number | null;
+  /** Fase 10.7 — cómo se cobró la porción en DINERO (nunca la porción en SegoTokens). Por defecto "cash" (compatibilidad con el comportamiento previo a esta fase). */
+  moneyPaymentMethod?: "cash" | "card" | null;
+}
+
+/** Combina si hubo SegoTokens con cómo se cobró el dinero restante — mismo criterio de composición que doorSaleService.ts, extendido con la distinción cash/card (Fase 10.7). */
+export function resolvePaymentMethod(reservation: TokenSpendReservation | null, moneyDueCents: number, moneyPaymentMethod: "cash" | "card"): string {
+  if (reservation) {
+    if (moneyDueCents === 0) return "segotokens";
+    return moneyPaymentMethod === "card" ? "mixed_card" : "mixed_cash";
+  }
+  return moneyPaymentMethod === "card" ? "card" : "cash";
 }
 
 /** Catálogo de productos activos de un venue para el carrito del POS — misma tabla que /admin (VenueSegoTokensTab), lectura directa sin pasar por el permiso admin `tokens.view`. */
@@ -169,6 +187,9 @@ export async function recordNativeSale(input: RecordNativeSaleInput, db?: DbHand
       reservation = spendResult.reservation;
     }
 
+    const moneyDueCents = totalCents - (reservation?.promotionalValueCents ?? 0);
+    const paymentMethod = resolvePaymentMethod(reservation, moneyDueCents, input.moneyPaymentMethod ?? "cash");
+
     const result = await ingestCommerceTransaction({
       provider: "segolife",
       venueId: input.venueId,
@@ -180,7 +201,7 @@ export async function recordNativeSale(input: RecordNativeSaleInput, db?: DbHand
         feesCents: 0,
         totalCents,
         currency: "EUR",
-        paymentMethod: "cash",
+        paymentMethod,
         buyer: { email: null, phone: null, name: null },
         occurredAt: new Date(),
         items,

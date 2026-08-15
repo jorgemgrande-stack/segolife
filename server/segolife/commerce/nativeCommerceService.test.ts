@@ -20,7 +20,7 @@ vi.mock("../tokens/tokenSpendService", () => ({
   reverseTokenSpend: mockReverseTokenSpend,
 }));
 
-import { recordNativeSale, PosError } from "./nativeCommerceService";
+import { recordNativeSale, PosError, resolvePaymentMethod } from "./nativeCommerceService";
 
 function productFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return { id: 1, venueId: 10, name: "Cóctel", price: "8.50", isActive: true, ...overrides };
@@ -140,5 +140,38 @@ describe("nativeCommerceService — recordNativeSale", () => {
   it("rechaza un carrito vacío", async () => {
     const db = makeMockDb([]);
     await expect(recordNativeSale({ venueId: 10, items: [], staffUserId: 9, idempotencyKey: "k6" }, db)).rejects.toBeInstanceOf(PosError);
+  });
+
+  it("moneyPaymentMethod='card' sin SegoTokens: paymentMethod final es 'card', nunca 'cash' (Fase 10.7)", async () => {
+    const db = makeMockDb([productFixture()]);
+    await recordNativeSale({ venueId: 10, items: [{ venueProductId: 1, quantity: 1 }], staffUserId: 9, idempotencyKey: "k12", moneyPaymentMethod: "card" }, db);
+    expect(mockIngestCommerceTransaction.mock.calls[0][0].transaction.paymentMethod).toBe("card");
+  });
+});
+
+// SEGOLIFE — VENUE BAR POS & LIVE COMMERCE TERMINAL (Fase 10.7, spec §10):
+// distinción honesta cash/card/mixed_cash/mixed_card/segotokens — nunca
+// cuenta tarjeta como efectivo (ver cashSessionService.test.ts para el lado
+// del arqueo de caja).
+describe("nativeCommerceService — resolvePaymentMethod (Fase 10.7 §10)", () => {
+  it("sin reserva de ST, dinero en efectivo → 'cash'", () => {
+    expect(resolvePaymentMethod(null, 2000, "cash")).toBe("cash");
+  });
+  it("sin reserva de ST, dinero con tarjeta → 'card'", () => {
+    expect(resolvePaymentMethod(null, 2000, "card")).toBe("card");
+  });
+  it("con reserva de ST y moneyDueCents=0 (100% SegoTokens) → 'segotokens', sin importar moneyPaymentMethod", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(resolvePaymentMethod({ id: 1 } as any, 0, "card")).toBe("segotokens");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(resolvePaymentMethod({ id: 1 } as any, 0, "cash")).toBe("segotokens");
+  });
+  it("con reserva de ST y resto en efectivo → 'mixed_cash'", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(resolvePaymentMethod({ id: 1 } as any, 1400, "cash")).toBe("mixed_cash");
+  });
+  it("con reserva de ST y resto con tarjeta → 'mixed_card'", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(resolvePaymentMethod({ id: 1 } as any, 1400, "card")).toBe("mixed_card");
   });
 });

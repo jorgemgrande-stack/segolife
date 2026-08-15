@@ -11,12 +11,15 @@
  * que siempre existe, en vez de un índice único parcial (MySQL no los
  * soporta).
  *
- * CASH vs CARD vs SEGOTOKENS (spec §47): hoy Fase 9 solo distingue
- * paymentMethod "cash"/"segotokens"/"mixed" — no existe todavía un flujo de
- * tarjeta física distinta (CARD_EXTERNAL, spec §51) porque Fase 9 nunca lo
- * construyó (auditado, sin datáfono conectado). Por eso "cash"/"mixed" se
- * tratan aquí como dinero en efectivo a efectos de arqueo — limitación
- * documentada explícitamente en el informe final, no una confusión.
+ * CASH vs CARD vs SEGOTOKENS (spec §47, endurecido Fase 10.7 "Venue Bar POS"):
+ * el POS nativo (nativeCommerceService.ts) ahora persiste honestamente
+ * "cash"|"card"|"mixed_cash"|"mixed_card"|"segotokens" en lugar de asumir
+ * siempre efectivo — así que el arqueo separa dinero-en-caja real (cash/
+ * mixed_cash) de tarjeta (card/mixed_card, que nunca debe sumar al efectivo
+ * esperado, igual que SegoTokens). La venta de puerta (doorSaleService.ts)
+ * sigue sin distinguir tarjeta (solo "cash"/"segotokens"/"mixed" — sin
+ * datáfono conectado ahí tampoco) — "mixed" (sin sufijo) se sigue tratando
+ * como efectivo por retrocompatibilidad con esas filas ya existentes/futuras.
  */
 import { eq, and, gte, lte, or, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -67,17 +70,50 @@ export async function openCashSession(venueId: number, openedByUserId: number, o
   });
 }
 
-/** Porción en efectivo de una venta — "cash"/"mixed" cuentan (spec §47, limitación documentada: no hay todavía CARD_EXTERNAL distinto); "segotokens" nunca aporta (spec §9/§35). */
-async function resolveCashPortionCents(totalCents: number, paymentMethod: string | null, tokenReservationId: number | null, conn: DbHandle): Promise<number> {
-  if (paymentMethod === "segotokens") return 0;
-  if (tokenReservationId == null) return totalCents;
-  const [reservation] = await conn.select({ moneyDueCents: tokenSpendReservations.moneyDueCents }).from(tokenSpendReservations).where(eq(tokenSpendReservations.id, tokenReservationId)).limit(1);
-  return reservation?.moneyDueCents ?? totalCents;
+const CARD_PAYMENT_METHODS = new Set(["card", "mixed_card"]);
+
+interface PaymentBreakdown {
+  cashCents: number;
+  /** Fase 10.7 — informativa, NUNCA incluida en expectedCashCents (tarjeta no es efectivo físico en caja). */
+  cardCents: number;
+  /** Fase 10.7 — valor promocional de SegoTokens aplicado (spec §16), informativo, nunca dinero real. */
+  tokensValueCents: number;
+}
+
+/**
+ * Desglosa UNA venta en efectivo/tarjeta/SegoTokens con una sola consulta de
+ * la reserva (spec §47/§9/§35/Fase 10.7 §16) — "segotokens" nunca aporta
+ * dinero; "card"/"mixed_card" cuentan como tarjeta, nunca como efectivo;
+ * "cash"/"mixed_cash"/"mixed" (venta de puerta, sin distinción de tarjeta
+ * todavía) cuentan como efectivo. Exportada para test unitario aislado
+ * (cashSessionService.test.ts) — el resto del archivo sigue sin cambios.
+ */
+export async function resolvePaymentBreakdown(totalCents: number, paymentMethod: string | null, tokenReservationId: number | null, conn: DbHandle): Promise<PaymentBreakdown> {
+  const isCard = paymentMethod != null && CARD_PAYMENT_METHODS.has(paymentMethod);
+  const isPureTokens = paymentMethod === "segotokens";
+
+  let moneyDueCents = totalCents;
+  let tokensValueCents = 0;
+  if (tokenReservationId != null) {
+    const [reservation] = await conn.select({ moneyDueCents: tokenSpendReservations.moneyDueCents, promotionalValueCents: tokenSpendReservations.promotionalValueCents })
+      .from(tokenSpendReservations).where(eq(tokenSpendReservations.id, tokenReservationId)).limit(1);
+    moneyDueCents = reservation?.moneyDueCents ?? totalCents;
+    tokensValueCents = reservation?.promotionalValueCents ?? 0;
+  }
+  if (isPureTokens) return { cashCents: 0, cardCents: 0, tokensValueCents: tokensValueCents || totalCents };
+
+  return isCard
+    ? { cashCents: 0, cardCents: moneyDueCents, tokensValueCents }
+    : { cashCents: moneyDueCents, cardCents: 0, tokensValueCents };
 }
 
 export interface CashSessionSummary {
   session: CashSession;
   salesCashCents: number;
+  /** Fase 10.7 — informativa, NUNCA incluida en expectedCashCents (tarjeta no es efectivo físico en caja). */
+  salesCardCents: number;
+  /** Fase 10.7 (spec §16) — valor promocional de SegoTokens aplicado en ventas de esta sesión, informativo. */
+  salesTokensValueCents: number;
   refundsCashCents: number;
   cashInCents: number;
   cashOutCents: number;
@@ -101,8 +137,13 @@ export async function computeSessionSummary(session: CashSession, db?: DbHandle)
     or(eq(commerceTransactions.status, "confirmed"), eq(commerceTransactions.status, "refunded"), eq(commerceTransactions.status, "partially_refunded")),
   ));
   let salesCashCents = 0;
+  let salesCardCents = 0;
+  let salesTokensValueCents = 0;
   for (const tx of sales) {
-    salesCashCents += await resolveCashPortionCents(tx.totalCents, tx.paymentMethod, tx.tokenReservationId, conn);
+    const breakdown = await resolvePaymentBreakdown(tx.totalCents, tx.paymentMethod, tx.tokenReservationId, conn);
+    salesCashCents += breakdown.cashCents;
+    salesCardCents += breakdown.cardCents;
+    salesTokensValueCents += breakdown.tokensValueCents;
   }
 
   // ticket_orders no lleva venue_id directo — se une con events para acotar
@@ -117,7 +158,10 @@ export async function computeSessionSummary(session: CashSession, db?: DbHandle)
       inArray(ticketOrders.status, ["paid", "refunded", "partially_refunded"]),
     ));
   for (const { order } of doorSales) {
-    salesCashCents += await resolveCashPortionCents(order.totalCents, order.paymentMethod, order.tokenReservationId, conn);
+    const breakdown = await resolvePaymentBreakdown(order.totalCents, order.paymentMethod, order.tokenReservationId, conn);
+    salesCashCents += breakdown.cashCents;
+    salesCardCents += breakdown.cardCents;
+    salesTokensValueCents += breakdown.tokensValueCents;
   }
 
   const refunds = await conn.select().from(commerceRefunds).where(and(
@@ -142,7 +186,7 @@ export async function computeSessionSummary(session: CashSession, db?: DbHandle)
   const cashOutCents = movements.filter(m => m.type === "cash_out").reduce((s, m) => s + m.amountCents, 0);
 
   const expectedCashCents = session.openingCashCents + salesCashCents - refundsCashCents + cashInCents - cashOutCents;
-  return { session, salesCashCents, refundsCashCents, cashInCents, cashOutCents, expectedCashCents };
+  return { session, salesCashCents, salesCardCents, salesTokensValueCents, refundsCashCents, cashInCents, cashOutCents, expectedCashCents };
 }
 
 export async function closeCashSession(sessionId: number, closedByUserId: number, countedCashCents: number, notes: string | null, db?: DbHandle): Promise<CashSessionSummary> {

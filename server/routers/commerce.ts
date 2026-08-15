@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, permissionProcedure } from "../_core/trpc";
-import { listCommerceTransactionsByVenue, listCommerceTransactionItems, getCommerceTransactionVenueId } from "../segolife/commerce/commerceDb";
+import { listCommerceTransactionsByVenue, listCommerceTransactionsByVenueWithNames, listCommerceTransactionItems, getCommerceTransactionVenueId } from "../segolife/commerce/commerceDb";
 import { listPosProducts, recordNativeSale, resolveCartTotalCents, PosError } from "../segolife/commerce/nativeCommerceService";
 import { refundCommerceTransaction, CommerceError } from "../segolife/commerce/commercePipeline";
 import { refundPosSale, RefundOrchestratorError } from "../segolife/commerce/refundOrchestrator";
@@ -9,6 +9,9 @@ import { quoteDoorEntry, recordDoorSale, refundDoorSale, listDoorEntryTicketType
 import { lookupStudentByIdentityToken } from "../segolife/commerce/studentIdentityService";
 import { getVenueStaffAccess } from "../segolife/benefits/venueStaffAccess";
 import { quoteTokenSpend, TokenSpendError } from "../segolife/tokens/tokenSpendService";
+import { ensureWallet, getLedgerById } from "../segolife/tokens/tokenLedgerService";
+import { previewMyReward, previewMyWalletValue } from "../segolife/tokens/studentRewardPreviewService";
+import { listUserBenefits } from "../db/benefitsDb";
 
 const commerceViewProcedure = permissionProcedure("commerce.view", ["admin"]);
 // Fase 8 — POS nativo de staff (mirroring benefits.redeem/attendance.redeem).
@@ -81,6 +84,17 @@ export const commerceRouter = router({
       if (venueId == null) throw new TRPCError({ code: "NOT_FOUND", message: "Transacción no encontrada" });
       await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, venueId);
       return listCommerceTransactionItems(input.transactionId);
+    }),
+
+  // SEGOLIFE — VENUE BAR POS & LIVE COMMERCE TERMINAL (Fase 10.7, spec §23):
+  // historial de ventas para el propio TPV — variante enriquecida de
+  // listByVenue (que se deja intacto, VenueCommerceTab.tsx sigue usándolo
+  // sin cambios) con nombre de Student/operador resueltos server-side.
+  listByVenueWithNames: commerceViewProcedure
+    .input(z.object({ venueId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, input.venueId);
+      return listCommerceTransactionsByVenueWithNames(input.venueId);
     }),
 
   refundTransaction: commerceManageProcedure
@@ -206,12 +220,60 @@ export const commerceRouter = router({
       return products.filter(p => p.isActive);
     }),
 
+  /**
+   * Fase 10.7 (spec §7 "Student panel"): enriquece la identificación con lo
+   * MÍNIMO operativamente útil — saldo real, su valor en € (si hay política
+   * de canje activa) y cuántos Benefits tiene activos ahora mismo. Reutiliza
+   * ensureWallet/previewMyWalletValue/listUserBenefits TAL CUAL (Fase 10.6/
+   * anteriores) — nunca recalcula nada de esto aquí.
+   */
   posIdentifyStudent: commerceRecordProcedure
     .input(z.object({ token: z.string().min(16).max(256) }))
     .query(async ({ input }) => {
       const student = await lookupStudentByIdentityToken(input.token);
       if (!student) throw new TRPCError({ code: "NOT_FOUND", message: "Código no reconocido" });
-      return student;
+      const [wallet, activeBenefitsCount] = await Promise.all([
+        previewMyWalletValue(student.userId),
+        listUserBenefits(student.userId).then(items => items.filter(b => b.status === "active").length),
+      ]);
+      return { ...student, walletBalance: wallet.balance, promotionalValue: wallet.promotionalValue, activeBenefitsCount };
+    }),
+
+  /**
+   * Fase 10.7 (spec §11 "Reward preview integration"): preview de solo
+   * lectura para el Student YA IDENTIFICADO en este POS — reutiliza
+   * EXACTAMENTE el mismo read model de Fase 10.6 (studentRewardPreviewService),
+   * solo que aquí el userId lo aporta el STAFF (ya verificado vía QR de
+   * identidad) en vez de ctx.user.id, porque quien previsualiza es el
+   * operador, no el propio Student. origin="consumption" fijo — un TPV de
+   * venue siempre es una compra de consumición, nunca otro origen.
+   */
+  /**
+   * Fase 10.7 (spec §21 "receipt") — variante de `listItems` gateada por
+   * `commerce.record` (no `commerce.view`, distinto permiso): un operador de
+   * TPV puro necesita poder ver el recibo de SU PROPIA venta recién
+   * confirmada sin depender de tener también permiso de admin de comercio.
+   * Misma protección IDOR exacta que listItems, mismo dato — nunca
+   * reimplementa el listado.
+   */
+  posReceiptItems: commerceRecordProcedure
+    .input(z.object({ transactionId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      const venueId = await getCommerceTransactionVenueId(input.transactionId);
+      if (venueId == null) throw new TRPCError({ code: "NOT_FOUND", message: "Transacción no encontrada" });
+      await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, venueId);
+      return listCommerceTransactionItems(input.transactionId);
+    }),
+
+  posPreviewReward: commerceRecordProcedure
+    .input(z.object({
+      venueId: z.number().int().positive(),
+      identifiedUserId: z.number().int().positive(),
+      amountSpent: z.number().nonnegative().optional(),
+    }))
+    .query(async ({ ctx, input }) => {
+      await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, input.venueId);
+      return previewMyReward({ userId: input.identifiedUserId, origin: "consumption", venueId: input.venueId, amountSpent: input.amountSpent });
     }),
 
   /**
@@ -255,6 +317,8 @@ export const commerceRouter = router({
        * Student ya identificado para el resto de la venta.
        */
       identityToken: z.string().min(16).max(256).optional(),
+      /** Fase 10.7 (spec §10) — cómo se cobró la porción en DINERO. Por defecto "cash" (compatibilidad). */
+      moneyPaymentMethod: z.enum(["cash", "card"]).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, input.venueId);
@@ -271,14 +335,25 @@ export const commerceRouter = router({
       }
 
       try {
-        return await recordNativeSale({
+        const result = await recordNativeSale({
           venueId: input.venueId,
           items: input.items,
           identifiedUserId: spendAuthorizedUserId ?? input.identifiedUserId ?? null,
           staffUserId: ctx.user.id,
           idempotencyKey: input.idempotencyKey,
           tokensToApply: input.tokensToApply ?? null,
+          moneyPaymentMethod: input.moneyPaymentMethod ?? null,
         });
+        // Fase 10.7 (spec §20 "receipt / sale result"): la confirmación debe
+        // mostrar el resultado REAL, nunca repetir el preview — se lee el
+        // ledger real ya escrito por processCommerceLoyalty() dentro de
+        // ingestCommerceTransaction(), nunca se recalcula.
+        let tokensEarned: number | null = null;
+        if ("transaction" in result && result.transaction.loyaltyLedgerId != null) {
+          const ledger = await getLedgerById(result.transaction.loyaltyLedgerId);
+          tokensEarned = ledger?.amount ?? null;
+        }
+        return { ...result, tokensEarned };
       } catch (err) {
         mapPosError(err);
       }

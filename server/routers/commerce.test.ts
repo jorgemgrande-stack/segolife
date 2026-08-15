@@ -16,10 +16,11 @@ vi.mock("../segolife/benefits/venueStaffAccess", async (importOriginal) => {
   return { ...actual, getVenueStaffAccess: mockGetVenueStaffAccess };
 });
 
-const { mockListByVenue, mockListItems, mockGetTxVenueId } = vi.hoisted(() => ({
+const { mockListByVenue, mockListItems, mockGetTxVenueId, mockListByVenueWithNames } = vi.hoisted(() => ({
   mockListByVenue: vi.fn(),
   mockListItems: vi.fn(),
   mockGetTxVenueId: vi.fn(),
+  mockListByVenueWithNames: vi.fn(),
 }));
 vi.mock("../segolife/commerce/commerceDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/commerce/commerceDb")>();
@@ -28,6 +29,7 @@ vi.mock("../segolife/commerce/commerceDb", async (importOriginal) => {
     listCommerceTransactionsByVenue: mockListByVenue,
     listCommerceTransactionItems: mockListItems,
     getCommerceTransactionVenueId: mockGetTxVenueId,
+    listCommerceTransactionsByVenueWithNames: mockListByVenueWithNames,
   };
 });
 
@@ -75,6 +77,28 @@ const { mockRefundPosSale } = vi.hoisted(() => ({ mockRefundPosSale: vi.fn() }))
 vi.mock("../segolife/commerce/refundOrchestrator", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/commerce/refundOrchestrator")>();
   return { ...actual, refundPosSale: mockRefundPosSale };
+});
+
+// SEGOLIFE — VENUE BAR POS & LIVE COMMERCE TERMINAL (Fase 10.7).
+const { mockGetLedgerById } = vi.hoisted(() => ({ mockGetLedgerById: vi.fn() }));
+vi.mock("../segolife/tokens/tokenLedgerService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/tokens/tokenLedgerService")>();
+  return { ...actual, getLedgerById: mockGetLedgerById };
+});
+
+const { mockPreviewMyReward, mockPreviewMyWalletValue } = vi.hoisted(() => ({
+  mockPreviewMyReward: vi.fn(),
+  mockPreviewMyWalletValue: vi.fn(),
+}));
+vi.mock("../segolife/tokens/studentRewardPreviewService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/tokens/studentRewardPreviewService")>();
+  return { ...actual, previewMyReward: mockPreviewMyReward, previewMyWalletValue: mockPreviewMyWalletValue };
+});
+
+const { mockListUserBenefits } = vi.hoisted(() => ({ mockListUserBenefits: vi.fn() }));
+vi.mock("../db/benefitsDb", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../db/benefitsDb")>();
+  return { ...actual, listUserBenefits: mockListUserBenefits };
 });
 
 import { commerceRouter } from "./commerce";
@@ -280,5 +304,112 @@ describe("commerce router — refundTransactionLines (reembolso parcial POS, Fas
 
   it("rechaza sin sesión", async () => {
     await expect(callerWithoutSession().refundTransactionLines({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "x" })).rejects.toThrow(/please login/i);
+  });
+});
+
+// SEGOLIFE — VENUE BAR POS & LIVE COMMERCE TERMINAL (Fase 10.7).
+describe("commerce.listByVenueWithNames — historial de ventas del TPV (spec §23)", () => {
+  beforeEach(() => {
+    mockGetVenueStaffAccess.mockReset();
+    mockListByVenueWithNames.mockReset();
+    mockGetVenueStaffAccess.mockResolvedValue([CASANOVA]);
+  });
+
+  it("de SU propio venue: permitido, delega en listCommerceTransactionsByVenueWithNames", async () => {
+    mockListByVenueWithNames.mockResolvedValue([{ transaction: { id: 1 }, studentName: "Ana", operatorName: "Staff" }]);
+    const result = await callerAs(10).listByVenueWithNames({ venueId: CASANOVA });
+    expect(result).toEqual([{ transaction: { id: 1 }, studentName: "Ana", operatorName: "Staff" }]);
+  });
+
+  it("IDOR: de OTRO venue denegado, nunca llega a leer la BD", async () => {
+    await expect(callerAs(10).listByVenueWithNames({ venueId: TIA_FELISA })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockListByVenueWithNames).not.toHaveBeenCalled();
+  });
+
+  it("rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().listByVenueWithNames({ venueId: CASANOVA })).rejects.toThrow(/please login/i);
+  });
+});
+
+describe("commerce.posPreviewReward — preview de recompensa para el Student ya identificado (spec §11)", () => {
+  beforeEach(() => {
+    mockGetVenueStaffAccess.mockReset();
+    mockPreviewMyReward.mockReset();
+    mockGetVenueStaffAccess.mockResolvedValue([CASANOVA]);
+  });
+
+  it("delega en previewMyReward con origin='consumption' fijo y el userId aportado por el STAFF (no ctx.user.id)", async () => {
+    mockPreviewMyReward.mockResolvedValue({ eligible: true, totalGuaranteedTokens: 60 });
+    const result = await callerAs(10).posPreviewReward({ venueId: CASANOVA, identifiedUserId: 42, amountSpent: 20 });
+    expect(result).toEqual({ eligible: true, totalGuaranteedTokens: 60 });
+    expect(mockPreviewMyReward).toHaveBeenCalledWith({ userId: 42, origin: "consumption", venueId: CASANOVA, amountSpent: 20 });
+  });
+
+  it("IDOR: Venue Admin de Casanova no puede previsualizar recompensas en Tía Felisa", async () => {
+    await expect(callerAs(10).posPreviewReward({ venueId: TIA_FELISA, identifiedUserId: 42 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockPreviewMyReward).not.toHaveBeenCalled();
+  });
+
+  it("rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().posPreviewReward({ venueId: CASANOVA, identifiedUserId: 42 })).rejects.toThrow(/please login/i);
+  });
+});
+
+describe("commerce.posIdentifyStudent — enriquecido con saldo/valor promocional/beneficios (Fase 10.7 spec §7)", () => {
+  beforeEach(() => {
+    mockLookupStudentByIdentityToken.mockReset();
+    mockPreviewMyWalletValue.mockReset();
+    mockListUserBenefits.mockReset();
+  });
+
+  it("devuelve el estudiante + balance real + valor promocional + conteo de Benefits activos, todo de servicios ya existentes", async () => {
+    mockLookupStudentByIdentityToken.mockResolvedValue({ userId: 42, name: "Ana" });
+    mockPreviewMyWalletValue.mockResolvedValue({ balance: 600, promotionalValue: { cents: 600, formatted: "6.00€" } });
+    mockListUserBenefits.mockResolvedValue([{ status: "active" }, { status: "active" }, { status: "used" }]);
+    const result = await callerAs(10).posIdentifyStudent({ token: "a".repeat(20) });
+    expect(result).toEqual({
+      userId: 42, name: "Ana",
+      walletBalance: 600, promotionalValue: { cents: 600, formatted: "6.00€" },
+      activeBenefitsCount: 2,
+    });
+    expect(mockPreviewMyWalletValue).toHaveBeenCalledWith(42);
+  });
+
+  it("código no reconocido: NOT_FOUND, nunca llega a consultar wallet/beneficios", async () => {
+    mockLookupStudentByIdentityToken.mockResolvedValue(null);
+    await expect(callerAs(10).posIdentifyStudent({ token: "a".repeat(20) })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mockPreviewMyWalletValue).not.toHaveBeenCalled();
+  });
+});
+
+describe("commerce.posRecordSale — tokensEarned en el resultado (Fase 10.7 spec §20, resultado REAL, nunca repetir el preview)", () => {
+  beforeEach(() => {
+    mockGetVenueStaffAccess.mockReset();
+    mockRecordNativeSale.mockReset();
+    mockGetLedgerById.mockReset();
+    mockGetVenueStaffAccess.mockResolvedValue([CASANOVA]);
+  });
+
+  const BASE_SALE = { venueId: CASANOVA, items: [{ venueProductId: 1, quantity: 1 }], idempotencyKey: "sale-idempotency-earn-1" };
+
+  it("con loyaltyLedgerId presente: lee el ledger REAL y devuelve tokensEarned = ledger.amount", async () => {
+    mockRecordNativeSale.mockResolvedValue({ status: "processed_with_loyalty", transaction: { id: 1, loyaltyLedgerId: 501 } });
+    mockGetLedgerById.mockResolvedValue({ id: 501, amount: 60 });
+    const result = await callerAs(10).posRecordSale(BASE_SALE);
+    expect(result.tokensEarned).toBe(60);
+    expect(mockGetLedgerById).toHaveBeenCalledWith(501);
+  });
+
+  it("sin loyaltyLedgerId (venta anónima o sin recompensa): tokensEarned es null, nunca llama al ledger", async () => {
+    mockRecordNativeSale.mockResolvedValue({ status: "processed_with_loyalty", transaction: { id: 1, loyaltyLedgerId: null } });
+    const result = await callerAs(10).posRecordSale(BASE_SALE);
+    expect(result.tokensEarned).toBeNull();
+    expect(mockGetLedgerById).not.toHaveBeenCalled();
+  });
+
+  it("moneyPaymentMethod se propaga tal cual a recordNativeSale", async () => {
+    mockRecordNativeSale.mockResolvedValue({ status: "processed_with_loyalty", transaction: { id: 1, loyaltyLedgerId: null } });
+    await callerAs(10).posRecordSale({ ...BASE_SALE, moneyPaymentMethod: "card" });
+    expect(mockRecordNativeSale.mock.calls[0][0]).toMatchObject({ moneyPaymentMethod: "card" });
   });
 });

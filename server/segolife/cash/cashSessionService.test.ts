@@ -1,7 +1,11 @@
 /**
- * cashSessionService.test.ts — SEGOLIFE FASE 10 (spec §44-53/§110). Cash vs
+ * cashSessionService.test.ts — SEGOLIFE FASE 10 (spec §44-53/§110) +
+ * FASE 10.7 "Venue Bar POS & Live Commerce Terminal" (spec §16). Cash vs
  * card vs SegoTokens (§O respuesta): SegoTokens NUNCA aportan al efectivo
  * esperado — propiedad de seguridad económica central de este módulo.
+ * Fase 10.7 añade la distinción "card"/"mixed_card" (POS nativo ahora
+ * registra honestamente cómo se cobró el dinero, ver nativeCommerceService.ts)
+ * — tarjeta TAMPOCO cuenta como efectivo, se reporta aparte (salesCardCents).
  */
 import { describe, it, expect, vi } from "vitest";
 import { drizzleConditionMockFactory, MockTable, createMockDb } from "../_testHelpers/drizzleTableMock";
@@ -15,7 +19,7 @@ import {
   venues, commerceTransactions, ticketOrders, events, commerceRefunds, tokenSpendReservations,
   venueCashSessions, venueCashMovements,
 } from "../../../drizzle/schema";
-import { openCashSession, closeCashSession, recordCashMovement, computeSessionSummary, getOpenSession } from "./cashSessionService";
+import { openCashSession, closeCashSession, recordCashMovement, computeSessionSummary, getOpenSession, resolvePaymentBreakdown } from "./cashSessionService";
 
 function makeDb(config: {
   venuesRows?: Array<Record<string, unknown>>;
@@ -117,6 +121,67 @@ describe("computeSessionSummary — separación CASH/SEGOTOKENS (spec §47/§O C
   });
 });
 
+// SEGOLIFE — VENUE BAR POS & LIVE COMMERCE TERMINAL (Fase 10.7, spec §16):
+// el POS nativo ahora persiste honestamente "card"/"mixed_card" — el arqueo
+// debe seguir excluyéndolos del efectivo esperado, igual que ya hacía con
+// SegoTokens, y reportarlos aparte (salesCardCents).
+describe("computeSessionSummary — separación CASH/CARD (Fase 10.7 spec §16)", () => {
+  it("#15 una venta pagada 100% con TARJETA no aporta nada al efectivo, se reporta en salesCardCents", async () => {
+    const session = { id: 1, venueId: 10, openedAt: new Date("2026-08-01T20:00:00Z"), closedAt: null, openingCashCents: 0 };
+    const { db } = makeDb({
+      commerceTx: [{ id: 1, venueId: 10, status: "confirmed", totalCents: 1800, paymentMethod: "card", tokenReservationId: null, occurredAt: new Date("2026-08-01T21:00:00Z") }],
+    });
+    const summary = await computeSessionSummary(session as never, db);
+    expect(summary.salesCashCents).toBe(0);
+    expect(summary.salesCardCents).toBe(1800);
+    expect(summary.expectedCashCents).toBe(0);
+  });
+
+  it("#16 venta mixed_card (ST + tarjeta): la porción de dinero va a salesCardCents, nunca a salesCashCents", async () => {
+    const session = { id: 1, venueId: 10, openedAt: new Date("2026-08-01T20:00:00Z"), closedAt: null, openingCashCents: 0 };
+    const { db } = makeDb({
+      commerceTx: [{ id: 1, venueId: 10, status: "confirmed", totalCents: 2000, paymentMethod: "mixed_card", tokenReservationId: 501, occurredAt: new Date("2026-08-01T21:00:00Z") }],
+      reservations: [{ id: 501, promotionalValueCents: 600, moneyDueCents: 1400 }],
+    });
+    const summary = await computeSessionSummary(session as never, db);
+    expect(summary.salesCashCents).toBe(0);
+    expect(summary.salesCardCents).toBe(1400);
+    expect(summary.salesTokensValueCents).toBe(600);
+  });
+
+  it("#17 venta mixed_cash (ST + efectivo): la porción de dinero va a salesCashCents, nunca a salesCardCents", async () => {
+    const session = { id: 1, venueId: 10, openedAt: new Date("2026-08-01T20:00:00Z"), closedAt: null, openingCashCents: 0 };
+    const { db } = makeDb({
+      commerceTx: [{ id: 1, venueId: 10, status: "confirmed", totalCents: 2000, paymentMethod: "mixed_cash", tokenReservationId: 502, occurredAt: new Date("2026-08-01T21:00:00Z") }],
+      reservations: [{ id: 502, promotionalValueCents: 600, moneyDueCents: 1400 }],
+    });
+    const summary = await computeSessionSummary(session as never, db);
+    expect(summary.salesCashCents).toBe(1400);
+    expect(summary.salesCardCents).toBe(0);
+  });
+
+  it("#18 salesTokensValueCents acumula el valor promocional de SegoTokens aplicado en la sesión (spec §16, informativo)", async () => {
+    const session = { id: 1, venueId: 10, openedAt: new Date("2026-08-01T20:00:00Z"), closedAt: null, openingCashCents: 0 };
+    const { db } = makeDb({
+      commerceTx: [{ id: 1, venueId: 10, status: "confirmed", totalCents: 1000, paymentMethod: "segotokens", tokenReservationId: 503, occurredAt: new Date("2026-08-01T21:00:00Z") }],
+      reservations: [{ id: 503, promotionalValueCents: 1000, moneyDueCents: 0 }],
+    });
+    const summary = await computeSessionSummary(session as never, db);
+    expect(summary.salesTokensValueCents).toBe(1000);
+  });
+
+  it("#19 una venta de puerta legacy 'mixed' (sin distinción de tarjeta) sigue contando como efectivo — retrocompatibilidad", async () => {
+    const session = { id: 1, venueId: 10, openedAt: new Date("2026-08-01T20:00:00Z"), closedAt: null, openingCashCents: 0 };
+    const { db } = makeDb({
+      commerceTx: [{ id: 1, venueId: 10, status: "confirmed", totalCents: 1000, paymentMethod: "mixed", tokenReservationId: 504, occurredAt: new Date("2026-08-01T21:00:00Z") }],
+      reservations: [{ id: 504, promotionalValueCents: 400, moneyDueCents: 600 }],
+    });
+    const summary = await computeSessionSummary(session as never, db);
+    expect(summary.salesCashCents).toBe(600);
+    expect(summary.salesCardCents).toBe(0);
+  });
+});
+
 describe("closeCashSession — spec §50", () => {
   it("#9 calcula la diferencia = contado − esperado", async () => {
     const { db, sessionsTable } = makeDb({ sessions: [{ id: 1, venueId: 10, status: "open", openedAt: new Date("2026-08-01T20:00:00Z"), openingCashCents: 5000 }] });
@@ -155,5 +220,32 @@ describe("recordCashMovement — spec §49", () => {
     const { db, movementsTable } = makeDb({ sessions: [{ id: 1, venueId: 10, status: "open", openedAt: new Date(), openingCashCents: 0 }] });
     await recordCashMovement({ cashSessionId: 1, type: "cash_out", amountCents: 250, reason: "compra hielo", actorUserId: 9 }, db);
     expect(movementsTable.rows[0]).toMatchObject({ type: "cash_out", amountCents: 250, reason: "compra hielo" });
+  });
+});
+
+// Unidad aislada de la función pura extraída (Fase 10.7) — complementa las
+// pruebas de integración de arriba con casos borde exactos de clasificación.
+describe("resolvePaymentBreakdown — unidad aislada (Fase 10.7)", () => {
+  function mockConn(reservationRow: { moneyDueCents: number; promotionalValueCents: number } | null) {
+    return {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue(reservationRow ? [reservationRow] : []),
+          }),
+        }),
+      }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+  }
+
+  it("paymentMethod=null (fila histórica) cuenta como efectivo, mismo criterio que 'cash'", async () => {
+    const result = await resolvePaymentBreakdown(1000, null, null, mockConn(null));
+    expect(result).toEqual({ cashCents: 1000, cardCents: 0, tokensValueCents: 0 });
+  });
+
+  it("paymentMethod='segotokens' sin reserva resoluble (defensivo): usa totalCents como valor de tokens, nunca lo cuenta como efectivo", async () => {
+    const result = await resolvePaymentBreakdown(2000, "segotokens", null, mockConn(null));
+    expect(result).toEqual({ cashCents: 0, cardCents: 0, tokensValueCents: 2000 });
   });
 });

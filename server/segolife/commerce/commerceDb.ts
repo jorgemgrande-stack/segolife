@@ -3,10 +3,10 @@
  * (tab Commerce/Integrations, spec punto 58). Escrituras viven en
  * commercePipeline.ts — este archivo es solo listados para el panel admin.
  */
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { commerceTransactions, commerceTransactionItems, venues, type CommerceTransaction, type CommerceTransactionItem } from "../../../drizzle/schema";
+import { commerceTransactions, commerceTransactionItems, venues, users, type CommerceTransaction, type CommerceTransactionItem } from "../../../drizzle/schema";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -20,6 +20,33 @@ async function getDb(): Promise<DbHandle> {
 export async function listCommerceTransactionsByVenue(venueId: number, db?: DbHandle): Promise<CommerceTransaction[]> {
   const conn = db ?? (await getDb());
   return conn.select().from(commerceTransactions).where(eq(commerceTransactions.venueId, venueId)).orderBy(desc(commerceTransactions.occurredAt)).limit(200);
+}
+
+export interface CommerceTransactionWithNames {
+  transaction: CommerceTransaction;
+  studentName: string | null;
+  operatorName: string | null;
+}
+
+/**
+ * Fase 10.7 (Venue Bar POS, spec §23 "historial de ventas") — mismo patrón
+ * que getWalletBalancesByUserId/getPrimarySalesChannelByEventId (Fase 10.6):
+ * UN único inArray() para toda la página en vez de N queries por fila.
+ */
+export async function listCommerceTransactionsByVenueWithNames(venueId: number, db?: DbHandle): Promise<CommerceTransactionWithNames[]> {
+  const conn = db ?? (await getDb());
+  const rows = await listCommerceTransactionsByVenue(venueId, conn);
+  const userIds = Array.from(new Set(rows.flatMap(r => [r.userId, r.operatorUserId]).filter((id): id is number => id != null)));
+  const nameById = new Map<number, string>();
+  if (userIds.length) {
+    const nameRows = await conn.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, userIds));
+    for (const r of nameRows) if (r.name) nameById.set(r.id, r.name);
+  }
+  return rows.map(transaction => ({
+    transaction,
+    studentName: transaction.userId != null ? (nameById.get(transaction.userId) ?? null) : null,
+    operatorName: transaction.operatorUserId != null ? (nameById.get(transaction.operatorUserId) ?? null) : null,
+  }));
 }
 
 export async function listCommerceTransactionItems(transactionId: number, db?: DbHandle): Promise<CommerceTransactionItem[]> {

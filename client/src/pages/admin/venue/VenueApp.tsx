@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
-import { Loader2, AlertCircle, Home, QrCode, CalendarDays, Activity, Store, LogOut, DoorOpen, Wallet } from "lucide-react";
+import { Loader2, AlertCircle, Home, QrCode, CalendarDays, Activity, Store, LogOut, DoorOpen, Wallet, ShoppingCart } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import VenueAppToday from "./VenueAppToday";
@@ -9,6 +9,7 @@ import VenueAppEvents from "./VenueAppEvents";
 import VenueAppActivity from "./VenueAppActivity";
 import VenueAppVenue from "./VenueAppVenue";
 import VenueAppSales from "./VenueAppSales";
+import VenueAppPos from "./VenueAppPos";
 import VenueAppFinance from "./VenueAppFinance";
 
 /**
@@ -30,12 +31,17 @@ import VenueAppFinance from "./VenueAppFinance";
 
 const LAST_VENUE_KEY = "segolife.venueApp.lastVenueId";
 
-type Tab = "today" | "scan" | "sales" | "finance" | "events" | "activity" | "venue";
+type Tab = "today" | "scan" | "pos" | "sales" | "finance" | "events" | "activity" | "venue";
 
+// SEGOLIFE — VENUE BAR POS & LIVE COMMERCE TERMINAL (Fase 10.7, spec §2):
+// TPV (barra/consumiciones, VenueAppPos) y ENTRADAS (venta de puerta,
+// VenueAppSales — mismo componente de siempre, solo relabeled) son
+// conceptos DELIBERADAMENTE distintos, nunca la misma pestaña.
 const TABS: Array<{ key: Tab; label: string; icon: typeof Home }> = [
   { key: "today", label: "Hoy", icon: Home },
   { key: "scan", label: "Escanear", icon: QrCode },
-  { key: "sales", label: "Ventas", icon: DoorOpen },
+  { key: "pos", label: "TPV", icon: ShoppingCart },
+  { key: "sales", label: "Entradas", icon: DoorOpen },
   { key: "finance", label: "Caja", icon: Wallet },
   { key: "events", label: "Eventos", icon: CalendarDays },
   { key: "activity", label: "Actividad", icon: Activity },
@@ -175,6 +181,7 @@ export default function VenueApp() {
       <main className="flex-1 overflow-y-auto pb-20 md:pb-6">
         {tab === "today" && <VenueAppToday venueId={selectedVenueId} onScan={() => setTab("scan")} onSeeAllActivity={() => setTab("activity")} />}
         {tab === "scan" && <VenueAppScan venueId={selectedVenueId} />}
+        {tab === "pos" && <VenueAppPos venueId={selectedVenueId} />}
         {tab === "sales" && <VenueAppSales venueId={selectedVenueId} />}
         {tab === "finance" && <VenueAppFinance venueId={selectedVenueId} />}
         {tab === "events" && <VenueAppEvents venueId={selectedVenueId} />}
@@ -182,7 +189,7 @@ export default function VenueApp() {
         {tab === "venue" && <VenueAppVenue venueId={selectedVenueId} venueName={venueName} />}
       </main>
 
-      <nav className="md:hidden fixed bottom-0 inset-x-0 border-t border-border bg-card grid grid-cols-7 pb-[env(safe-area-inset-bottom)]">
+      <nav className="md:hidden fixed bottom-0 inset-x-0 border-t border-border bg-card grid grid-cols-8 pb-[env(safe-area-inset-bottom)]">
         {TABS.map(({ key, label, icon: Icon }) => (
           <button
             key={key}
