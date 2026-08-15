@@ -165,6 +165,10 @@ const PUBLIC_TRPC_ROUTES = new Set([
   "events.publicFeatured",
   "events.publicByVenue",
   "events.publicGetBySlug",
+
+  // ── Segolife: Referral & Invite Rewards Engine (Fase 8) — landing pública
+  //    de invitación /invite/:code, el visitante todavía no tiene sesión ──
+  "referrals.publicLanding",
 ]);
 
 // ─── Parsear el nombre del procedimiento desde la URL de tRPC ─────────────────
