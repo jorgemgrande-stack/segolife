@@ -70,6 +70,9 @@ function makeMockDb(config: { order: Record<string, unknown>; existingPayment?: 
   b.where = () => {
     if (mode === "update") {
       if (currentTable === "orders") order = { ...order, ...pendingSet };
+      // Un único payment por order en estos fixtures (igual que `.limit()`
+      // ya asume abajo) — aplicar el update al primero basta.
+      if (currentTable === "payments" && payments[0]) payments[0] = { ...payments[0], ...pendingSet };
       return Promise.resolve([{}]);
     }
     return b;
@@ -265,20 +268,91 @@ describe("checkoutService — initiatePayment con SegoTokens parciales/totales (
     expect(mockGetPaymentProvider().createPayment).not.toHaveBeenCalled();
   });
 
-  it("el dinero se confirma pero la captura de SegoTokens falla (p.ej. reserva expirada en el tramo hospedado): el pedido completa igual — el dinero ya es real, nunca se le niega el ticket al Student", async () => {
+  // ─── Gate de seguridad económica Pre-16.2 (riesgo "dinero confirmado +
+  // reserva ST expirada"): reemplaza el comportamiento antiguo
+  // ("completa igual, best-effort") por la liquidación segura vía
+  // settleAfterMoneyConfirmed() — NUNCA se emite ticket/recompensa si el
+  // tramo de SegoTokens no se pudo capturar de verdad, aunque el dinero ya
+  // sea real. El desenlace depende de si el provider soporta compensación
+  // automática (refund) o no.
+
+  it("el dinero se confirma pero la captura de SegoTokens falla y el provider SÍ soporta reembolso automático: el pedido se compensa solo — termina en refunded, nunca se emite ticket ni recompensa", async () => {
     const reservation = reservationFixture({ moneyDueCents: 500 });
     mockReserveTokenSpend.mockResolvedValue({ status: "reserved", reservation });
     mockCaptureTokenSpend.mockRejectedValue(new Error("RESERVATION_EXPIRED"));
-    mockGetPaymentProvider.mockReturnValue({ providerKey: "mock", createPayment: vi.fn().mockResolvedValue({ status: "succeeded", externalPaymentId: "mock_789" }) });
+    const refundPayment = vi.fn().mockResolvedValue({ status: "refunded" });
+    mockGetPaymentProvider.mockReturnValue({
+      providerKey: "mock",
+      capabilities: { configured: true, supportsRefunds: true, supportsPartialRefunds: true, supportsWebhooks: true },
+      createPayment: vi.fn().mockResolvedValue({ status: "succeeded", externalPaymentId: "mock_789" }),
+      refundPayment,
+    });
     mockTransitionOrderStatus
-      .mockResolvedValueOnce(orderFixture({ status: "awaiting_payment" }))
-      .mockResolvedValueOnce(orderFixture({ status: "paid" }));
+      .mockResolvedValueOnce(orderFixture({ status: "awaiting_payment" })) // pending -> awaiting_payment
+      .mockResolvedValueOnce(orderFixture({ status: "paid" }))             // awaiting_payment -> paid (se reconoce el dinero)
+      .mockResolvedValueOnce(orderFixture({ status: "refunded" }));        // paid -> refunded (compensación automática)
 
-    const { db } = makeMockDb({ order: orderFixture({ totalCents: 2000 }) });
+    const { db, getPayments } = makeMockDb({ order: orderFixture({ totalCents: 2000 }) });
     const result = await initiatePayment(1, 150, db);
 
-    expect(result.paymentStatus).toBe("succeeded");
-    expect(result.tickets).toHaveLength(1);
+    expect(mockCaptureTokenSpend).toHaveBeenCalledWith(reservation.id, expect.anything());
+    expect(mockReleaseTokenSpend).toHaveBeenCalledWith(reservation.id, expect.any(String), expect.anything());
+    expect(refundPayment).toHaveBeenCalledWith(expect.objectContaining({ externalPaymentId: "mock_789", amountCents: 500 }));
+    expect(result.paymentStatus).toBe("failed");
+    expect(result.order.status).toBe("refunded");
+    expect(result.tickets).toBeUndefined();
+    expect(mockIssueTicketsForOrder).not.toHaveBeenCalled();
+    expect(mockEarnTokens).not.toHaveBeenCalled();
+    expect(getPayments()[0]).toMatchObject({ status: "refunded" });
+  });
+
+  it("el dinero se confirma pero la captura de SegoTokens falla y el provider NO soporta reembolso automático: el pedido queda en reconciliation_required (dinero cobrado visible para revisión manual), nunca en paid silencioso", async () => {
+    const reservation = reservationFixture({ moneyDueCents: 500 });
+    mockReserveTokenSpend.mockResolvedValue({ status: "reserved", reservation });
+    mockCaptureTokenSpend.mockRejectedValue(new Error("RESERVATION_EXPIRED"));
+    mockGetPaymentProvider.mockReturnValue({
+      providerKey: "unconfigured",
+      capabilities: { configured: false, supportsRefunds: false, supportsPartialRefunds: false, supportsWebhooks: false },
+      createPayment: vi.fn().mockResolvedValue({ status: "succeeded", externalPaymentId: "mock_789" }),
+      refundPayment: vi.fn(),
+    });
+    mockTransitionOrderStatus
+      .mockResolvedValueOnce(orderFixture({ status: "awaiting_payment" }))
+      .mockResolvedValueOnce(orderFixture({ status: "paid" }))
+      .mockResolvedValueOnce(orderFixture({ status: "reconciliation_required" }));
+
+    const { db, getPayments } = makeMockDb({ order: orderFixture({ totalCents: 2000 }) });
+    const result = await initiatePayment(1, 150, db);
+
+    expect(result.paymentStatus).toBe("failed");
+    expect(result.order.status).toBe("reconciliation_required");
+    expect(result.tickets).toBeUndefined();
+    expect(mockIssueTicketsForOrder).not.toHaveBeenCalled();
+    expect(mockEarnTokens).not.toHaveBeenCalled();
+    expect(getPayments()[0]).toMatchObject({ status: "succeeded" }); // el dinero sigue registrado como cobrado, nunca se esconde
+  });
+
+  it("prueba de sobreventa: la reserva de aforo (order.expiresAt) ya caducó cuando el dinero se confirma — NUNCA se intenta capturar SegoTokens para un aforo que ya pudo venderse a otra persona", async () => {
+    const reservation = reservationFixture({ moneyDueCents: 500 });
+    mockReserveTokenSpend.mockResolvedValue({ status: "reserved", reservation });
+    mockGetPaymentProvider.mockReturnValue({
+      providerKey: "mock",
+      capabilities: { configured: true, supportsRefunds: true, supportsPartialRefunds: true, supportsWebhooks: true },
+      createPayment: vi.fn().mockResolvedValue({ status: "succeeded", externalPaymentId: "mock_789" }),
+      refundPayment: vi.fn().mockResolvedValue({ status: "refunded" }),
+    });
+    mockTransitionOrderStatus
+      .mockResolvedValueOnce(orderFixture({ status: "awaiting_payment", expiresAt: new Date(Date.now() - 60_000) }))
+      .mockResolvedValueOnce(orderFixture({ status: "paid" }))
+      .mockResolvedValueOnce(orderFixture({ status: "refunded" }));
+
+    const { db } = makeMockDb({ order: orderFixture({ totalCents: 2000, expiresAt: new Date(Date.now() - 60_000) }) });
+    const result = await initiatePayment(1, 150, db);
+
+    expect(mockCaptureTokenSpend).not.toHaveBeenCalled(); // el hold ya expiró — nunca se gasta ST por un aforo que pudo ser de otro comprador
+    expect(mockReleaseTokenSpend).toHaveBeenCalledWith(reservation.id, "inventory_hold_expired_before_settlement", expect.anything());
+    expect(result.paymentStatus).toBe("failed");
+    expect(result.tickets).toBeUndefined();
   });
 
   it("proveedor con checkout hospedado (pending+redirectUrl): enlaza tokenReservationId al pedido YA, sin esperar al webhook, y NUNCA captura todavía", async () => {
@@ -331,11 +405,70 @@ describe("checkoutService — confirmPaymentByWebhook con SegoTokens diferidos (
     expect(mockCaptureTokenSpend).not.toHaveBeenCalled();
   });
 
-  it("la captura vía webhook falla: el pedido completa igual (dinero ya confirmado por el provider real)", async () => {
+  // ─── Matriz de tardanza/idempotencia de webhook (Pre-16.2 gate §4/§7,
+  // tests A-F) ─────────────────────────────────────────────────────────────
+
+  it("(B) webhook tardío — la reserva de SegoTokens ya expiró cuando el webhook confirma el dinero: NUNCA completa silenciosamente; sin reembolso automático disponible, termina en reconciliation_required (dinero ya cobrado, visible para revisión manual)", async () => {
     mockCaptureTokenSpend.mockRejectedValue(new Error("RESERVATION_EXPIRED"));
-    mockTransitionOrderStatus.mockResolvedValueOnce(orderFixture({ status: "paid" }));
-    const { db } = makeMockDb({ order: orderFixture({ status: "awaiting_payment", tokenReservationId: 900 }) });
+    mockGetPaymentProvider.mockReturnValue({
+      providerKey: "unconfigured",
+      capabilities: { configured: false, supportsRefunds: false, supportsPartialRefunds: false, supportsWebhooks: false },
+      refundPayment: vi.fn(),
+    });
+    mockTransitionOrderStatus
+      .mockResolvedValueOnce(orderFixture({ status: "paid" }))
+      .mockResolvedValueOnce(orderFixture({ status: "reconciliation_required" }));
+
+    const { db, getPayments } = makeMockDb({
+      order: orderFixture({ status: "awaiting_payment", tokenReservationId: 900 }),
+      existingPayment: { orderId: 1, status: "pending", externalPaymentId: "ext_123", amountCents: 500 },
+    });
     const result = await confirmPaymentByWebhook(1, "ext_123", db);
+
+    expect(mockReleaseTokenSpend).toHaveBeenCalledWith(900, expect.any(String), expect.anything());
+    expect(result.paymentStatus).toBe("failed");
+    expect(result.order.status).toBe("reconciliation_required");
+    expect(result.tickets).toBeUndefined();
+    expect(mockIssueTicketsForOrder).not.toHaveBeenCalled();
+    expect(getPayments()[0]).toMatchObject({ status: "succeeded" });
+  });
+
+  it("(C) webhook duplicado — el pedido YA está 'paid' cuando el webhook reintenta: no vuelve a capturar SegoTokens ni a conceder recompensa, solo reemite los tickets ya existentes de forma idempotente", async () => {
+    const { db } = makeMockDb({ order: orderFixture({ status: "paid", tokenReservationId: 900 }) });
+    const result = await confirmPaymentByWebhook(1, "ext_123", db);
+
+    expect(mockCaptureTokenSpend).not.toHaveBeenCalled();
+    expect(mockTransitionOrderStatus).not.toHaveBeenCalled();
+    expect(mockEarnTokens).not.toHaveBeenCalled();
+    expect(mockIssueTicketsForOrder).toHaveBeenCalledOnce();
     expect(result.paymentStatus).toBe("succeeded");
   });
+
+  it("(F) webhook llega con el pedido en un estado ya incompatible (p.ej. refunded/cancelled tras la compensación automática): no-op seguro, nunca reprocesa ni vuelve a tocar tokens/pagos", async () => {
+    const { db } = makeMockDb({ order: orderFixture({ status: "refunded", tokenReservationId: 900 }) });
+    const result = await confirmPaymentByWebhook(1, "ext_123", db);
+
+    expect(mockCaptureTokenSpend).not.toHaveBeenCalled();
+    expect(mockTransitionOrderStatus).not.toHaveBeenCalled();
+    expect(mockIssueTicketsForOrder).not.toHaveBeenCalled();
+    expect(result.paymentStatus).toBe("failed");
+    expect(result.order.status).toBe("refunded");
+  });
+
+  // (D) "webhook concurrente/repetido en paralelo real" — NO se re-prueba
+  // aquí como un test aislado: la exclusión mutua real ante dos entregas de
+  // webhook genuinamente simultáneas la dan dos primitivas YA existentes y
+  // ya probadas por separado, no algo que este archivo deba reconstruir —
+  // (1) transitionOrderStatus() (orderStateMachine.ts) usa un
+  // `UPDATE...WHERE status IN (from)` condicional — de dos transiciones
+  // `awaiting_payment→paid` simultáneas, la perdedora actualiza 0 filas y
+  // la implementación real lo trata como fallo, nunca como éxito silencioso
+  // (cubierto en orderStateMachine.test.ts); (2) captureTokenSpend() serializa
+  // por SELECT...FOR UPDATE real sobre la reserva/wallet, cuya garantía de
+  // exclusión mutua se prueba de extremo a extremo (sin mocks del motor de
+  // ledger) en crossModuleSpendConcurrency.test.ts. Los tests (B)/(C)/(F) de
+  // arriba prueban la lógica de ramificación idempotente de
+  // confirmPaymentByWebhook/settleAfterMoneyConfirmed en sí — que,
+  // gane quien gane esa carrera real, nunca se reprocesa ni se duplica el
+  // efecto económico.
 });

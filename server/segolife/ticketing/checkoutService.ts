@@ -115,6 +115,127 @@ export interface InitiatePaymentResult {
 }
 
 /**
+ * LIQUIDACIÓN TRAS DINERO CONFIRMADO (Pre-16.2, gate de seguridad
+ * económica §1/§2) — punto ÚNICO donde un order pasa a `paid`, compartido
+ * entre initiatePayment() (éxito síncrono) y confirmPaymentByWebhook()
+ * (éxito asíncrono). Sustituye el "best-effort, nunca bloquea" original:
+ * un dinero real confirmado por el provider NUNCA puede terminar en un
+ * ticket emitido si el tramo de SegoTokens no se pudo capturar de verdad.
+ *
+ * FUENTE DE VERDAD PARA "¿sigue siendo válido honrar este pedido?": el
+ * propio `order.expiresAt` — el MISMO campo que
+ * inventoryHoldService.ts::committedQuantity ya usa para decidir si este
+ * hold sigue contando como aforo comprometido de cara a OTROS compradores.
+ * Si ya pasó, el aforo pudo haberse vendido a otra persona mientras este
+ * pago hospedado seguía en curso — por eso se comprueba ANTES de intentar
+ * capturar cualquier SegoToken, nunca después: capturar tokens para un
+ * pedido cuyo aforo ya no es seguro sería gastar el saldo del Student sin
+ * ninguna garantía de que el ticket pueda emitirse.
+ *
+ * DOS DESENLACES si no se puede honrar (hold caducado y/o captura de
+ * SegoTokens fallida):
+ *  - Si NUNCA hubo dinero real de por medio (compra 100% SegoTokens): no
+ *    hay nada que compensar — se libera la reserva (si sigue "reserved") y
+ *    el pedido simplemente no se completa (vuelve a `pending`), igual que
+ *    cualquier otro intento de pago fallido — el Student puede reintentar.
+ *  - Si SÍ hubo dinero real confirmado por el provider: ese cobro es un
+ *    hecho externo que NUNCA se ignora. Se reconoce (`paid`) y de
+ *    inmediato: (a) si el provider soporta reembolsos
+ *    (`capabilities.supportsRefunds`) y hay una referencia real, se
+ *    compensa automáticamente — el order termina en `refunded`, mismo
+ *    estado que un reembolso normal; (b) si no hay compensación automática
+ *    segura disponible, el order termina en `reconciliation_required` —
+ *    estado YA EXISTENTE en la máquina de estados (mismo que usa
+ *    ticketCancellationService.ts para casos que no puede resolver solo),
+ *    nunca una máquina de estados nueva. En ningún caso de estos dos se
+ *    emite ticket, se concede recompensa ni se notifica compra lista.
+ */
+async function settleAfterMoneyConfirmed(
+  order: TicketOrder,
+  conn: DbHandle,
+  opts: { externalPaymentId: string | null; realMoneyCollectedCents: number; tokenReservationId: number | null; paymentMethod: string | null },
+): Promise<InitiatePaymentResult> {
+  const holdStillValid = order.expiresAt == null || order.expiresAt.getTime() >= Date.now();
+
+  let tokenCaptured = false;
+  if (holdStillValid && opts.tokenReservationId != null) {
+    try {
+      await captureTokenSpend(opts.tokenReservationId, conn);
+      tokenCaptured = true;
+    } catch (err) {
+      console.error(`[checkoutService] No se pudo capturar la reserva de SegoTokens al liquidar (orderId=${order.id}, reservationId=${opts.tokenReservationId}):`, err);
+    }
+  }
+  const tokenLegOk = opts.tokenReservationId == null || tokenCaptured;
+
+  if (holdStillValid && tokenLegOk) {
+    const paidOrder = await transitionOrderStatus(order.id, ["awaiting_payment"], "paid", {
+      purchasedAt: new Date(),
+      externalPaymentId: opts.externalPaymentId,
+      paymentMethod: opts.paymentMethod,
+      tokenReservationId: opts.tokenReservationId,
+    }, conn);
+    const tickets = await finalizePaidOrder(paidOrder, conn);
+    return { order: paidOrder, paymentStatus: "succeeded", tickets };
+  }
+
+  // No se puede honrar — nunca se captura un SegoToken para un pedido que
+  // no va a completarse. Si por algún motivo ya se había capturado justo
+  // antes de comprobar `holdStillValid` (no debería, el orden de arriba lo
+  // impide, pero se cubre igual por defensa en profundidad),
+  // releaseTokenSpend lanzaría INVALID_STATE sobre una reserva ya
+  // "captured" — capturado por el catch, nunca deja el sistema peor.
+  const reason = !holdStillValid ? "inventory_hold_expired_before_settlement" : "token_reservation_capture_failed";
+  if (opts.tokenReservationId != null && !tokenCaptured) {
+    await releaseTokenSpend(opts.tokenReservationId, reason, conn).catch(() => {});
+  }
+
+  if (opts.realMoneyCollectedCents === 0) {
+    // Nunca hubo dinero real de por medio (compra 100% SegoTokens) — nada
+    // que compensar, el pedido simplemente no se completa.
+    await transitionOrderStatus(order.id, ["awaiting_payment"], "pending", {}, conn).catch(() => null);
+    return { order, paymentStatus: "failed", error: `No se pudo completar la compra (${reason})` };
+  }
+
+  // Dinero real confirmado por el provider — hecho externo que no se
+  // ignora: se reconoce primero (paid) y de inmediato se intenta la
+  // compensación segura disponible. paymentMethod/tokenReservationId se
+  // dejan igualmente registrados aunque el pedido no vaya a quedarse en
+  // "paid" — auditoría (spec Pre-16.2 gate §7): administración debe poder
+  // ver que este era un pedido mixto/con SegoTokens al revisar el caso.
+  const paidOrder = await transitionOrderStatus(order.id, ["awaiting_payment"], "paid", {
+    purchasedAt: new Date(),
+    externalPaymentId: opts.externalPaymentId,
+    paymentMethod: opts.paymentMethod,
+    tokenReservationId: opts.tokenReservationId,
+  }, conn);
+
+  const provider = getPaymentProvider();
+  const [payment] = await conn.select().from(ticketPayments).where(eq(ticketPayments.orderId, order.id)).limit(1);
+  const canAutoRefund = provider.capabilities.supportsRefunds && !!payment?.externalPaymentId && (payment?.amountCents ?? 0) > 0;
+
+  if (canAutoRefund) {
+    const refundResult = await provider
+      .refundPayment({ externalPaymentId: payment!.externalPaymentId!, amountCents: payment!.amountCents, reason: `Compensación automática — ${reason}` })
+      .catch((err): { status: "failed"; error: string } => { console.error(`[checkoutService] refundPayment lanzó durante la compensación automática (orderId=${order.id}):`, err); return { status: "failed", error: "refund_threw" }; });
+    if (refundResult.status === "refunded") {
+      const refunded = await transitionOrderStatus(order.id, ["paid"], "refunded", { refundedAt: new Date() }, conn);
+      await conn.update(ticketPayments).set({ status: "refunded" }).where(eq(ticketPayments.orderId, order.id));
+      return { order: refunded, paymentStatus: "failed", error: `La compra no se pudo completar (${reason}) — el dinero se ha reembolsado automáticamente.` };
+    }
+  }
+
+  // Sin compensación automática segura disponible — nunca "paid" silencioso
+  // ni "failed" que esconda que ya se cobró: reconciliation_required deja
+  // el dinero cobrado visible y accionable para administración.
+  await conn.update(ticketPayments).set({ status: "succeeded", externalPaymentId: opts.externalPaymentId }).where(eq(ticketPayments.orderId, order.id));
+  const reconciled = await transitionOrderStatus(order.id, ["paid"], "reconciliation_required", {
+    metadata: { ...(order.metadata ?? {}), reconciliationReason: reason },
+  }, conn);
+  return { order: reconciled, paymentStatus: "failed", error: `La compra no se pudo completar (${reason}) — el dinero ya cobrado requiere revisión manual.` };
+}
+
+/**
  * Inicia el pago de un hold `pending`. Si el provider confirma
  * inmediatamente (p.ej. MockPaymentProvider en dev/test), completa todo el
  * flujo hasta emitir tickets en la misma llamada. Con
@@ -232,25 +353,19 @@ export async function initiatePayment(orderId: number, tokensToApply?: number, d
     // expiró en el tramo hospedado del provider, ventana de 15 min — spec
     // §12 "TTL alignment", igual que HOLD_DURATION_MINUTES), el pedido
     // completa igual: el dinero ya es real, no se le puede negar el ticket
-    // al Student por un detalle interno del ledger — se registra el fallo
-    // en vez de perder el pedido, mismo criterio best-effort que
-    // earnTokens()/evaluateBenefitsForOrigin() más abajo en este archivo.
-    if (tokenReservation) {
-      try {
-        const captured = await captureTokenSpend(tokenReservation.id, conn);
-        tokenReservation = captured.reservation;
-      } catch (err) {
-        console.error(`[checkoutService] Dinero confirmado pero no se pudo capturar la reserva de SegoTokens (orderId=${orderId}, reservationId=${tokenReservation.id}):`, err);
-      }
-    }
-    const paidOrder = await transitionOrderStatus(orderId, ["awaiting_payment"], "paid", {
-      purchasedAt: new Date(),
+    // al Student por un detalle interno del ledger sin más comprobación — se
+    // delega en settleAfterMoneyConfirmed(), que ANTES de capturar nada
+    // verifica que el hold siga siendo válido (gate de seguridad económica
+    // Pre-16.2 §1/§2: nunca aforo vendido dos veces, nunca ticket emitido
+    // sin que el tramo de SegoTokens se haya capturado de verdad — si algo
+    // de esto falla con dinero real ya cobrado, se compensa o se deja en
+    // reconciliation_required, nunca "paid" silencioso).
+    return settleAfterMoneyConfirmed(order, conn, {
       externalPaymentId: result.externalPaymentId ?? null,
-      paymentMethod: tokenReservation ? (moneyDueCents === 0 ? "segotokens" : "mixed") : null,
+      realMoneyCollectedCents: isFree ? 0 : moneyDueCents,
       tokenReservationId: tokenReservation?.id ?? null,
-    }, conn);
-    const tickets = await finalizePaidOrder(paidOrder, conn);
-    return { order: paidOrder, paymentStatus: "succeeded", tickets };
+      paymentMethod: tokenReservation ? (moneyDueCents === 0 ? "segotokens" : "mixed") : null,
+    });
   }
 
   if (result.status === "pending" && result.redirectUrl) {
@@ -281,7 +396,18 @@ export async function initiatePayment(orderId: number, tokensToApply?: number, d
   return { order, paymentStatus: "failed", error: result.error ?? "No se pudo iniciar el pago" };
 }
 
-/** Punto de entrada para un futuro webhook de un proveedor real — nunca se llama sin `provider.verifyWebhook()` haber validado la firma primero. */
+/**
+ * Punto de entrada para un futuro webhook de un proveedor real — nunca se
+ * llama sin `provider.verifyWebhook()` haber validado la firma primero.
+ *
+ * IDEMPOTENCIA (Pre-16.2 gate §4/§7 "webhook duplicado/tardío"): un
+ * reintento del provider (o una redundancia real del propio webhook)
+ * después de que una llamada anterior ya resolvió este order — a `paid`,
+ * `refunded` o `reconciliation_required` — nunca se reprocesa. Solo
+ * `awaiting_payment` es un estado accionable aquí; cualquier otro implica
+ * que ya se resolvió (con éxito o mediante la compensación/reconciliación
+ * de settleAfterMoneyConfirmed) y esta llamada es un no-op seguro.
+ */
 export async function confirmPaymentByWebhook(orderId: number, externalPaymentId: string, db?: DbHandle): Promise<InitiatePaymentResult> {
   const conn = db ?? (await getDb());
   const [order] = await conn.select().from(ticketOrders).where(eq(ticketOrders.id, orderId)).limit(1);
@@ -291,23 +417,21 @@ export async function confirmPaymentByWebhook(orderId: number, externalPaymentId
     const tickets = await issueTicketsForOrder(order, conn);
     return { order, paymentStatus: "succeeded", tickets };
   }
-
-  // Captura diferida (Pre-16.2): si initiatePayment() dejó una reserva de
-  // SegoTokens enlazada (camino hospedado/pending), esta es la ÚNICA otra
-  // vía de la app por la que un order llega a "paid" — captura aquí, ahora
-  // que el dinero restante ya está confirmado por el provider real.
-  // Best-effort por el mismo motivo que en initiatePayment(): el dinero ya
-  // es real, nunca se le niega el ticket al Student por esto.
-  if (order.tokenReservationId != null) {
-    try {
-      await captureTokenSpend(order.tokenReservationId, conn);
-    } catch (err) {
-      console.error(`[checkoutService] Dinero confirmado por webhook pero no se pudo capturar la reserva de SegoTokens (orderId=${orderId}, reservationId=${order.tokenReservationId}):`, err);
-    }
+  if (order.status !== "awaiting_payment") {
+    return { order, paymentStatus: "failed", error: `El pedido ya está en estado '${order.status}' — no admite una nueva confirmación de pago` };
   }
 
-  const paidOrder = await transitionOrderStatus(orderId, ["awaiting_payment"], "paid", { purchasedAt: new Date(), externalPaymentId }, conn);
-  await conn.update(ticketPayments).set({ status: "succeeded", externalPaymentId }).where(eq(ticketPayments.orderId, orderId));
-  const tickets = await finalizePaidOrder(paidOrder, conn);
-  return { order: paidOrder, paymentStatus: "succeeded", tickets };
+  // El webhook solo confirma orderId+externalPaymentId (payload verificado,
+  // ver ticketPaymentWebhookRoutes.ts) — el importe real cobrado se lee del
+  // registro propio ya creado por initiatePayment() al pasar a
+  // awaiting_payment (siempre > 0 aquí: el camino 100% SegoTokens/gratuito
+  // nunca llega a awaiting_payment con un provider real de por medio, ver
+  // cabecera de initiatePayment).
+  const [payment] = await conn.select().from(ticketPayments).where(eq(ticketPayments.orderId, orderId)).limit(1);
+  return settleAfterMoneyConfirmed(order, conn, {
+    externalPaymentId,
+    realMoneyCollectedCents: payment?.amountCents ?? 0,
+    tokenReservationId: order.tokenReservationId,
+    paymentMethod: order.tokenReservationId != null ? "mixed" : null,
+  });
 }
