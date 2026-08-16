@@ -288,24 +288,26 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
                   key={p.id}
                   disabled={outOfStock}
                   onClick={() => addToCart(p.id)}
-                  className="segolife-card-shadow relative flex min-h-[92px] flex-col justify-between rounded-2xl border border-border bg-card p-3.5 text-left transition-transform active:scale-[0.97] disabled:opacity-50"
+                  className="segolife-card-shadow relative flex flex-col overflow-hidden rounded-2xl border border-border bg-card text-left transition-transform active:scale-[0.97] disabled:opacity-50"
                 >
                   {qty > 0 && (
-                    <span className="absolute -right-2 -top-2 flex size-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">{qty}</span>
+                    <span className="absolute right-2 top-2 z-10 flex size-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground shadow">{qty}</span>
                   )}
-                  <div className="flex items-start gap-2">
-                    {p.imageUrl && (
-                      <img src={p.imageUrl} alt="" loading="lazy" className="size-10 shrink-0 rounded-lg object-cover" />
-                    )}
+                  {p.imageUrl ? (
+                    <img src={p.imageUrl} alt={p.name} loading="lazy" className="h-32 w-full object-cover sm:h-36" />
+                  ) : (
+                    <div className="h-32 w-full bg-muted sm:h-36" />
+                  )}
+                  <div className="flex flex-1 flex-col justify-between gap-2 p-3">
                     <p className="line-clamp-2 text-sm font-semibold text-foreground">{p.name}</p>
-                  </div>
-                  <div className="flex items-end justify-between gap-1">
-                    <span className="text-sm font-bold tabular-nums text-foreground">{p.price ? euro(Math.round(Number(p.price) * 100)) : "—"}</span>
-                    {outOfStock ? (
-                      <Badge variant="secondary" className="text-[10px]">AGOTADO</Badge>
-                    ) : p.stockTracked ? (
-                      <span className="text-[10px] text-muted-foreground">{p.currentStockCached ?? 0} ud.</span>
-                    ) : null}
+                    <div className="flex items-end justify-between gap-1">
+                      <span className="text-sm font-bold tabular-nums text-foreground">{p.price ? euro(Math.round(Number(p.price) * 100)) : "—"}</span>
+                      {outOfStock ? (
+                        <Badge variant="secondary" className="text-[10px]">AGOTADO</Badge>
+                      ) : p.stockTracked ? (
+                        <span className="text-[10px] text-muted-foreground">{p.currentStockCached ?? 0} ud.</span>
+                      ) : null}
+                    </div>
                   </div>
                 </button>
               );
