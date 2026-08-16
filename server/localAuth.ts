@@ -44,8 +44,25 @@ function getSecret(): Uint8Array {
   return new TextEncoder().encode(JWT_SECRET_RAW);
 }
 
+// Incidente real (post-Fase 16): el admin real y una Student no podían
+// iniciar sesión desde https://segolife-production.up.railway.app (el
+// dominio público de Railway, sin pasar por www.segolife.es) — la fila
+// canonicalRedirectTarget lo deja pasar a propósito (no rompe el propio
+// healthcheck), pero sessionCookieOptions ponía domain=".segolife.es"
+// SIEMPRE en producción, sin mirar el host real de la petición. Un
+// navegador rechaza en silencio un Set-Cookie cuyo Domain no es el host
+// actual ni un sufijo del mismo — segolife-production.up.railway.app no
+// tiene ninguna relación con segolife.es, así que el login "funcionaba"
+// en el servidor (JWT válido, 200 OK) pero la cookie nunca se guardaba en
+// el navegador, y el usuario volvía a ver el login inmediatamente.
+/** true si `hostname` es segolife.es o cualquier subdominio suyo (www., ie., etc.) — nunca coincide con Railway/localhost/preview. */
+function isSegolifeHost(hostname: string | undefined): boolean {
+  if (!hostname) return false;
+  return hostname === "segolife.es" || hostname.endsWith(".segolife.es");
+}
+
 /** Extraído para poder testear la lógica de domain/secure sin levantar el router completo. */
-export function sessionCookieOptions(nodeEnv: string | undefined = process.env.NODE_ENV): {
+export function sessionCookieOptions(nodeEnv: string | undefined = process.env.NODE_ENV, hostname?: string): {
   httpOnly: true; secure: boolean; sameSite: "lax"; maxAge: number; path: "/"; domain?: string;
 } {
   const isProd = nodeEnv === "production";
@@ -55,13 +72,13 @@ export function sessionCookieOptions(nodeEnv: string | undefined = process.env.N
     sameSite: "lax",
     maxAge: COOKIE_MAX_AGE * 1000,
     path: "/",
-    ...(isProd ? { domain: ".segolife.es" } : {}),
+    ...(isProd && isSegolifeHost(hostname) ? { domain: ".segolife.es" } : {}),
   };
 }
 
 /** Mismas domain/path que sessionCookieOptions — clearCookie exige coincidencia exacta para borrar de verdad. */
-export function clearSessionCookieOptions(nodeEnv: string | undefined = process.env.NODE_ENV): { path: "/"; domain?: string } {
-  return { path: "/", ...(nodeEnv === "production" ? { domain: ".segolife.es" } : {}) };
+export function clearSessionCookieOptions(nodeEnv: string | undefined = process.env.NODE_ENV, hostname?: string): { path: "/"; domain?: string } {
+  return { path: "/", ...(nodeEnv === "production" && isSegolifeHost(hostname) ? { domain: ".segolife.es" } : {}) };
 }
 
 // ─── Helpers JWT ──────────────────────────────────────────────────────────────
@@ -159,7 +176,7 @@ export function createLocalAuthRouter(): Router {
 
     const token = await signSessionToken(user.id);
 
-    res.cookie(COOKIE_NAME, token, sessionCookieOptions());
+    res.cookie(COOKIE_NAME, token, sessionCookieOptions(undefined, req.hostname));
 
     res.json({
       id: user.id,
@@ -226,7 +243,7 @@ export function createLocalAuthRouter(): Router {
       });
 
       const token = await signSessionToken(result.userId);
-      res.cookie(COOKIE_NAME, token, sessionCookieOptions());
+      res.cookie(COOKIE_NAME, token, sessionCookieOptions(undefined, req.hostname));
 
       res.status(201).json({
         id: result.userId,
@@ -254,11 +271,11 @@ export function createLocalAuthRouter(): Router {
   });
 
   /** POST /api/auth/logout */
-  router.post("/api/auth/logout", (_req: Request, res: Response) => {
+  router.post("/api/auth/logout", (req: Request, res: Response) => {
     // El navegador solo borra una cookie si domain/path coinciden EXACTAMENTE
     // con los que se usaron al fijarla — mismas opciones que sessionCookieOptions(),
     // si no el logout dejaría la cookie con domain=".segolife.es" viva.
-    res.clearCookie(COOKIE_NAME, clearSessionCookieOptions());
+    res.clearCookie(COOKIE_NAME, clearSessionCookieOptions(undefined, req.hostname));
     res.json({ ok: true });
   });
 
