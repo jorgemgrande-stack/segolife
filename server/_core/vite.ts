@@ -6,6 +6,8 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import viteConfig from "../../vite.config";
 import { canonicalBaseUrl } from "./canonicalHost";
+import { getCommunityBySlug } from "../db/communitiesDb";
+import type { Community } from "../../drizzle/schema";
 
 export async function setupVite(app: Express, server: Server) {
   const serverOptions = {
@@ -88,11 +90,42 @@ const SEO_ROUTES: Record<string, RouteMeta> = {
   "/": SEGOLIFE_DEFAULT_META,
 };
 
-function resolveRouteMeta(pathname: string): { meta: RouteMeta; canonical: string } {
+/**
+ * Meta diferenciada para la landing pública de una comunidad (Fase 15,
+ * remate) — construida SIEMPRE desde la fila real de `communities` (nombre,
+ * idioma por defecto), nunca desde un `if (slug === "ie")` o equivalente
+ * (regla arquitectónica fundamental, ver CLAUDE.md). Una tercera comunidad
+ * futura queda diferenciada en SEO en cuanto exista en la tabla, sin tocar
+ * este archivo.
+ */
+export function communityRouteMeta(community: Community): RouteMeta {
+  const es = community.defaultLocale === "es";
+  return {
+    title: `${community.name} — SEGOLIFE`,
+    description: es
+      ? `Eventos, locales, SegoTokens y vida universitaria para ${community.name} en Segovia.`
+      : `Events, venues, SegoTokens and student life for ${community.name} in Segovia.`,
+    h1: community.name,
+    body: es
+      ? `Eventos, locales y recompensas para estudiantes en Segovia.`
+      : `Events, venues and rewards for students in Segovia.`,
+  };
+}
+
+export async function resolveRouteMeta(pathname: string): Promise<{ meta: RouteMeta; canonical: string }> {
   // Exact match
   if (SEO_ROUTES[pathname]) {
     const canonical = pathname === "/" ? BASE_URL : `${BASE_URL}${pathname}`;
     return { meta: SEO_ROUTES[pathname], canonical };
+  }
+  // Comunidad real por el primer segmento de la ruta (/ie, /uva, /ie/events/x...)
+  // — cubre exactamente las landings públicas de comunidad de App.tsx (/:community/*).
+  const firstSegment = pathname.split("/")[1];
+  if (firstSegment) {
+    const community = await getCommunityBySlug(firstSegment).catch(() => null);
+    if (community && community.status === "active") {
+      return { meta: communityRouteMeta(community), canonical: `${BASE_URL}/${community.slug}` };
+    }
   }
   // Parent-path match — e.g. /experiencias/slug → /experiencias
   const parent = "/" + (pathname.split("/")[1] ?? "");
@@ -106,8 +139,8 @@ function resolveRouteMeta(pathname: string): { meta: RouteMeta; canonical: strin
 // Cache the built index.html so we only read it from disk once per process.
 let _htmlCache: string | null = null;
 
-function injectSeoMeta(html: string, pathname: string): string {
-  const { meta, canonical } = resolveRouteMeta(pathname);
+async function injectSeoMeta(html: string, pathname: string): Promise<string> {
+  const { meta, canonical } = await resolveRouteMeta(pathname);
   const imageUrl = meta.image ?? DEFAULT_OG_IMAGE;
 
   return html
@@ -169,7 +202,7 @@ export function serveStatic(app: Express) {
   app.use(express.static(distPath));
 
   // SPA fallback: inject route-specific SEO meta before sending index.html
-  app.use("*", (req, res) => {
+  app.use("*", async (req, res) => {
     const indexPath = path.resolve(distPath, "index.html");
     if (!_htmlCache) {
       try {
@@ -180,7 +213,7 @@ export function serveStatic(app: Express) {
     }
     // req.path is "/" for all routes under app.use("*") — use originalUrl instead
     const pathname = req.originalUrl.split("?")[0] || "/";
-    const html = injectSeoMeta(_htmlCache, pathname);
+    const html = await injectSeoMeta(_htmlCache, pathname);
     res.set("Content-Type", "text/html").send(html);
   });
 }

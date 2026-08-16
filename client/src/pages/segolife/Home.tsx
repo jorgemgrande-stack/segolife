@@ -1,10 +1,12 @@
 import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
-import { Coins, Gift, ChevronRight, Flame, Sparkles, PartyPopper, Vote, Ticket, Compass, UserRound, Clock3, CheckCircle2 } from "lucide-react";
+import { Coins, Gift, ChevronRight, Flame, Sparkles, PartyPopper, Vote, Ticket, Compass, UserRound, Clock3, CheckCircle2, Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { formatCardRewardBadge } from "@/lib/rewardPreview";
 import { useCommunity } from "@/contexts/CommunityContext";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { getLoginUrl, getRegisterUrl } from "@/const";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
 import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { SegolifeEventCard } from "@/components/segolife/SegolifeEventCard";
@@ -14,17 +16,36 @@ import { SegolifeWalletSkeleton, SegolifeCardRowSkeleton, SegolifeRowSkeleton } 
 import { Progress } from "@/components/ui/progress";
 
 /**
- * Home definitiva de Segolife (STUDENT APP, PERSONALIZED HOME) — responde
- * "¿qué pasa para mí?" en vez de listar módulos. Orden: saludo → wallet →
- * HERO (Next Best Action, spec §8) → For You (resto de candidatos
- * priorizados, spec §9/§23, deduplicados por construcción — spec §24) →
- * Tonight → Featured → campaña → recurrencia → Actividad reciente → venues
- * → scan. Todo el ranking (`summary.ranking`) ya viene decidido por el
- * servidor (homeFeedRanking.ts, reglas deterministas, spec §22: sin IA/ML) —
- * esta página solo pinta el resultado. REAL DATA ONLY (spec §48): cada
- * sección desaparece si no hay dato real que mostrar, nunca se rellena con
- * un placeholder.
+ * Home de Segolife en /:community — Fase 15 (remate): esta ruta antes exigía
+ * sesión siempre (`requireAuth`), así que un visitante anónimo que llegaba a
+ * /ie o /uva (QR de un venue, enlace compartido, buscador) rebotaba
+ * directamente a /login sin ver nada de esa comunidad — el problema central
+ * que este remate corrige. Ahora Home() es un simple despachador: con sesión
+ * pinta el dashboard personalizado de siempre (AuthenticatedHome, sin
+ * cambios de comportamiento); sin sesión pinta una landing pública real de
+ * la comunidad (CommunityLanding, spec "remate Fase 15" — reutiliza el mismo
+ * shell/routing/contexto, nunca una segunda aplicación).
  */
+export default function Home() {
+  const { t } = useTranslation();
+  const { community, slug } = useCommunity();
+  const { isAuthenticated, loading: authLoading } = useAuth();
+
+  return (
+    <SegolifeAppShell title={t("home.tonightTitle")}>
+      {authLoading ? (
+        <div className="flex min-h-[50dvh] items-center justify-center">
+          <Loader2 className="size-6 animate-spin text-primary" aria-hidden="true" />
+        </div>
+      ) : isAuthenticated ? (
+        <AuthenticatedHome />
+      ) : (
+        <CommunityLanding community={community} slug={slug} />
+      )}
+    </SegolifeAppShell>
+  );
+}
+
 function greetingKey(hour: number): "greetingMorning" | "greetingAfternoon" | "greetingEvening" {
   if (hour < 12) return "greetingMorning";
   if (hour < 19) return "greetingAfternoon";
@@ -45,12 +66,22 @@ const ACTIVITY_KICKER_KEY: Record<string, string> = {
   benefitUsed: "activity.typeBenefitUsed",
 };
 
-export default function Home() {
+/**
+ * Home definitiva de Segolife (STUDENT APP, PERSONALIZED HOME) — responde
+ * "¿qué pasa para mí?" en vez de listar módulos. Orden: saludo → wallet →
+ * HERO (Next Best Action, spec §8) → For You (resto de candidatos
+ * priorizados, spec §9/§23, deduplicados por construcción — spec §24) →
+ * Tonight → Featured → campaña → recurrencia → Actividad reciente → venues
+ * → scan. Todo el ranking (`summary.ranking`) ya viene decidido por el
+ * servidor (homeFeedRanking.ts, reglas deterministas, spec §22: sin IA/ML) —
+ * esta página solo pinta el resultado. REAL DATA ONLY (spec §48): cada
+ * sección desaparece si no hay dato real que mostrar, nunca se rellena con
+ * un placeholder.
+ */
+function AuthenticatedHome() {
   const { t, i18n } = useTranslation();
   const { community, slug } = useCommunity();
 
-  // Fase 15 — misma comunidad que ya usa el resto de esta página (venues,
-  // abajo) en vez de dejar que el backend adivine la primera membresía.
   const { data: summary, isLoading } = trpc.home.getSummary.useQuery({ communityId: community?.id });
   const { data: walletValue } = trpc.tokens.myWalletPromotionalValue.useQuery();
   type HomeCardKind = NonNullable<typeof summary>["ranking"]["forYou"][number];
@@ -224,169 +255,251 @@ export default function Home() {
   }
 
   return (
-    <SegolifeAppShell requireAuth title={t("home.tonightTitle")}>
-      <SegolifePageContainer className="space-y-7">
-        <div>
-          <p className="text-xl font-semibold text-foreground">{greeting}{firstName ? `, ${firstName}` : ""}</p>
-          {community?.name && <p className="text-sm text-muted-foreground">{community.name}</p>}
+    <SegolifePageContainer className="space-y-7">
+      <div>
+        <p className="text-xl font-semibold text-foreground">{greeting}{firstName ? `, ${firstName}` : ""}</p>
+        {community?.name && <p className="text-sm text-muted-foreground">{community.name}</p>}
+      </div>
+
+      {isLoading ? (
+        <SegolifeWalletSkeleton />
+      ) : (
+        <Link href={`/${slug}/rewards`} onClick={() => trackCard("wallet")} className="block segolife-elevated-shadow rounded-3xl bg-primary p-5 text-primary-foreground">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-primary-foreground/80">
+                <Coins className="size-3.5" aria-hidden="true" /> {t("home.walletBalance")}
+              </p>
+              <p className="mt-1 text-4xl font-bold tabular-nums">{(summary?.walletBalance ?? 0).toLocaleString(i18n.language)}</p>
+              {walletValue?.promotionalValue && (
+                <p className="mt-1 text-xs text-primary-foreground/80">{t("rewardPreview.approxValue", { value: walletValue.promotionalValue.formatted })}</p>
+              )}
+              {!!summary?.earnedThisWeek && (
+                <p className="mt-1.5 text-xs text-primary-foreground/80">{t("home.earnedThisWeek", { count: summary.earnedThisWeek })}</p>
+              )}
+            </div>
+            <ChevronRight className="size-5 text-primary-foreground/70" aria-hidden="true" />
+          </div>
+        </Link>
+      )}
+
+      {!isLoading && hero && renderCard(hero, true)}
+
+      {!!forYou.length && (
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold text-foreground">{t("home.forYouTitle")}</h2>
+          <div className="space-y-2.5">
+            {forYou.map(kind => renderCard(kind, false))}
+          </div>
+        </section>
+      )}
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="flex items-center gap-1.5 text-lg font-semibold text-foreground">
+            <Flame className="size-4 text-accent" aria-hidden="true" /> {t("home.tonightTitle")}
+          </h2>
+          <Link href={`/${slug}/explore`} className="text-xs font-medium text-primary">{t("home.exploreAll")}</Link>
         </div>
-
         {isLoading ? (
-          <SegolifeWalletSkeleton />
+          <SegolifeCardRowSkeleton />
+        ) : !tonightEvents.length ? (
+          <SegolifeEmptyState
+            icon={<Flame className="size-5" aria-hidden="true" />}
+            title={t("home.noEventsTonight")}
+            description={t("home.noEventsTonightDescription")}
+          />
         ) : (
-          <Link href={`/${slug}/rewards`} onClick={() => trackCard("wallet")} className="block segolife-elevated-shadow rounded-3xl bg-primary p-5 text-primary-foreground">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-primary-foreground/80">
-                  <Coins className="size-3.5" aria-hidden="true" /> {t("home.walletBalance")}
-                </p>
-                <p className="mt-1 text-4xl font-bold tabular-nums">{(summary?.walletBalance ?? 0).toLocaleString(i18n.language)}</p>
-                {walletValue?.promotionalValue && (
-                  <p className="mt-1 text-xs text-primary-foreground/80">{t("rewardPreview.approxValue", { value: walletValue.promotionalValue.formatted })}</p>
-                )}
-                {!!summary?.earnedThisWeek && (
-                  <p className="mt-1.5 text-xs text-primary-foreground/80">{t("home.earnedThisWeek", { count: summary.earnedThisWeek })}</p>
-                )}
+          <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
+            {tonightEvents.map(e => (
+              <div key={e.id} className="contents" onClick={() => trackCard("event")}>
+                <SegolifeEventCard event={e} slug={slug!} className="w-36 shrink-0" rewardBadge={formatCardRewardBadge(homeRewardBatchQ.data?.[String(e.id)], t)} />
               </div>
-              <ChevronRight className="size-5 text-primary-foreground/70" aria-hidden="true" />
-            </div>
-          </Link>
+            ))}
+          </div>
         )}
+      </section>
 
-        {!isLoading && hero && renderCard(hero, true)}
+      {!!summary?.featuredEvents.length && (
+        <section className="space-y-3">
+          <h2 className="flex items-center gap-1.5 text-lg font-semibold text-foreground">
+            <Sparkles className="size-4 text-primary" aria-hidden="true" /> {t("home.featuredTitle")}
+          </h2>
+          <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
+            {summary.featuredEvents.map(e => (
+              <div key={e.id} className="contents" onClick={() => trackCard("event")}>
+                <SegolifeEventCard event={e} slug={slug!} className="w-36 shrink-0" rewardBadge={formatCardRewardBadge(homeRewardBatchQ.data?.[String(e.id)], t)} />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
-        {!!forYou.length && (
-          <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">{t("home.forYouTitle")}</h2>
-            <div className="space-y-2.5">
-              {forYou.map(kind => renderCard(kind, false))}
-            </div>
-          </section>
-        )}
+      {summary?.activeCampaign && (
+        <div className="segolife-card-shadow flex items-center gap-2 rounded-2xl bg-secondary px-4 py-3 text-secondary-foreground">
+          <Sparkles className="size-4 shrink-0" aria-hidden="true" />
+          <p className="text-sm font-medium">
+            {summary.activeCampaign.name}
+            {summary.activeCampaign.multiplier ? ` ×${summary.activeCampaign.multiplier}` : ""}
+          </p>
+        </div>
+      )}
 
+      {summary?.recurrenceProgress && summary.recurrenceProgress.remaining > 0 && (
+        <div className="segolife-card-shadow rounded-2xl bg-card p-4">
+          <p className="text-sm font-semibold text-foreground">
+            {t("home.recurrenceTitle", { count: summary.recurrenceProgress.count })}
+          </p>
+          <Progress
+            value={(summary.recurrenceProgress.count / summary.recurrenceProgress.threshold) * 100}
+            className="mt-2.5 h-2"
+          />
+          <p className="mt-2 text-xs text-muted-foreground">
+            {t("home.recurrenceNextReward", { remaining: summary.recurrenceProgress.remaining, bonus: summary.recurrenceProgress.bonus })}
+          </p>
+        </div>
+      )}
+
+      {!isLoading && !!summary?.recentActivity.length && (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="flex items-center gap-1.5 text-lg font-semibold text-foreground">
-              <Flame className="size-4 text-accent" aria-hidden="true" /> {t("home.tonightTitle")}
+              <Clock3 className="size-4 text-muted-foreground" aria-hidden="true" /> {t("home.activityTitle")}
             </h2>
+            <Link href={`/${slug}/activity`} className="text-xs font-medium text-primary">{t("home.activityViewAll")}</Link>
+          </div>
+          <div className="space-y-2">
+            {summary.recentActivity.map(entry => {
+              const Icon = ACTIVITY_ICON[entry.type] ?? Coins;
+              return (
+                <div key={entry.id} className="segolife-card-shadow flex items-center gap-3 rounded-2xl bg-card p-3">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground">
+                    <Icon className="size-4.5" aria-hidden="true" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{t(ACTIVITY_KICKER_KEY[entry.type])}</p>
+                    <p className="truncate text-sm font-semibold text-foreground">{entry.label}</p>
+                  </div>
+                  {entry.amount != null && (entry.type === "earned" || entry.type === "spent") && (
+                    <span className={`shrink-0 text-sm font-semibold tabular-nums ${entry.type === "earned" ? "text-primary" : "text-muted-foreground"}`}>
+                      {entry.type === "earned" ? "+" : "-"}{entry.amount}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {isLoading && <SegolifeRowSkeleton count={2} />}
+
+      {!!venues?.length && (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-foreground">{t("home.venuesTitle")}</h2>
             <Link href={`/${slug}/explore`} className="text-xs font-medium text-primary">{t("home.exploreAll")}</Link>
           </div>
-          {isLoading ? (
-            <SegolifeCardRowSkeleton />
-          ) : !tonightEvents.length ? (
-            <SegolifeEmptyState
-              icon={<Flame className="size-5" aria-hidden="true" />}
-              title={t("home.noEventsTonight")}
-              description={t("home.noEventsTonightDescription")}
-            />
-          ) : (
-            <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
-              {tonightEvents.map(e => (
-                <div key={e.id} className="contents" onClick={() => trackCard("event")}>
-                  <SegolifeEventCard event={e} slug={slug!} className="w-36 shrink-0" rewardBadge={formatCardRewardBadge(homeRewardBatchQ.data?.[String(e.id)], t)} />
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
+            {venues.slice(0, 8).map(v => (
+              <div key={v.id} className="contents" onClick={() => trackCard("venue")}>
+                <SegolifeVenueCard venue={{ ...v, categoryName: v.category?.name }} slug={slug!} className="w-28 shrink-0" />
+              </div>
+            ))}
+          </div>
         </section>
+      )}
 
-        {!!summary?.featuredEvents.length && (
-          <section className="space-y-3">
-            <h2 className="flex items-center gap-1.5 text-lg font-semibold text-foreground">
-              <Sparkles className="size-4 text-primary" aria-hidden="true" /> {t("home.featuredTitle")}
-            </h2>
-            <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
-              {summary.featuredEvents.map(e => (
-                <div key={e.id} className="contents" onClick={() => trackCard("event")}>
-                  <SegolifeEventCard event={e} slug={slug!} className="w-36 shrink-0" rewardBadge={formatCardRewardBadge(homeRewardBatchQ.data?.[String(e.id)], t)} />
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+      <Link
+        href={`/${slug}/scan`}
+        className="segolife-elevated-shadow flex items-center justify-center gap-2 rounded-full bg-foreground py-4 text-sm font-semibold text-background"
+      >
+        <Gift className="size-4" aria-hidden="true" /> {t("home.scanCta")}
+      </Link>
+    </SegolifePageContainer>
+  );
+}
 
-        {summary?.activeCampaign && (
-          <div className="segolife-card-shadow flex items-center gap-2 rounded-2xl bg-secondary px-4 py-3 text-secondary-foreground">
-            <Sparkles className="size-4 shrink-0" aria-hidden="true" />
-            <p className="text-sm font-medium">
-              {summary.activeCampaign.name}
-              {summary.activeCampaign.multiplier ? ` ×${summary.activeCampaign.multiplier}` : ""}
-            </p>
+/**
+ * Landing pública de una comunidad (Fase 15, remate) — lo que ve un
+ * visitante SIN sesión en /ie o /uva. Mismos endpoints públicos que ya usa
+ * Explore.tsx (events.publicActive/venues.publicActive filtrados por
+ * communityId, sin exigir sesión), mismas cards (SegolifeEventCard/
+ * SegolifeVenueCard) y mismo shell — nunca una segunda aplicación. Copy
+ * reutilizado de los namespaces publicHome y communityHome (este último ya
+ * existente, heredado de la antigua CommunityHome de Fase 1B) en vez de
+ * inventar textos nuevos por duplicado.
+ */
+function CommunityLanding({ community, slug }: { community: { id: number; name: string } | null; slug: string | null }) {
+  const { t } = useTranslation();
+  const { data: events, isLoading: eventsLoading } = trpc.events.publicActive.useQuery({ communityId: community?.id });
+  const { data: venues, isLoading: venuesLoading } = trpc.venues.publicActive.useQuery({ communityId: community?.id });
+
+  const registerUrl = getRegisterUrl("/", slug ?? undefined);
+  const loginUrl = getLoginUrl(slug ? `/${slug}` : "/");
+  const upcomingEvents = (events ?? []).slice(0, 8);
+  const activeVenues = (venues ?? []).slice(0, 8);
+
+  return (
+    <SegolifePageContainer className="space-y-7">
+      <section className="segolife-elevated-shadow rounded-3xl bg-primary p-6 text-primary-foreground sm:p-8">
+        <p className="text-xs font-semibold uppercase tracking-widest text-primary-foreground/70">{t("publicHome.hero.eyebrow")}</p>
+        <h1 className="mt-2 text-3xl font-bold leading-tight sm:text-4xl">{community?.name}</h1>
+        <p className="mt-2 max-w-md text-sm text-primary-foreground/85">{t("communityHome.tagline")}</p>
+        <div className="mt-5 flex flex-col gap-2.5 sm:flex-row">
+          <a
+            href={registerUrl}
+            className="inline-flex items-center justify-center rounded-full bg-white px-6 py-3 text-sm font-semibold text-primary shadow-lg transition-transform active:scale-95"
+          >
+            {t("publicHome.hero.ctaPrimary")}
+          </a>
+          <a
+            href={loginUrl}
+            className="inline-flex items-center justify-center rounded-full border border-primary-foreground/30 px-6 py-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-white/10"
+          >
+            {t("publicHome.hero.ctaSecondary")}
+          </a>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="flex items-center gap-1.5 text-lg font-semibold text-foreground">
+          <Flame className="size-4 text-accent" aria-hidden="true" /> {t("communityHome.eventsTitle")}
+        </h2>
+        {eventsLoading ? (
+          <SegolifeCardRowSkeleton />
+        ) : !upcomingEvents.length ? (
+          <SegolifeEmptyState icon={<Flame className="size-5" aria-hidden="true" />} title={t("communityHome.noEvents")} />
+        ) : (
+          <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
+            {upcomingEvents.map(e => (
+              <SegolifeEventCard key={e.id} event={e} slug={slug!} className="w-36 shrink-0" />
+            ))}
           </div>
         )}
+      </section>
 
-        {summary?.recurrenceProgress && summary.recurrenceProgress.remaining > 0 && (
-          <div className="segolife-card-shadow rounded-2xl bg-card p-4">
-            <p className="text-sm font-semibold text-foreground">
-              {t("home.recurrenceTitle", { count: summary.recurrenceProgress.count })}
-            </p>
-            <Progress
-              value={(summary.recurrenceProgress.count / summary.recurrenceProgress.threshold) * 100}
-              className="mt-2.5 h-2"
-            />
-            <p className="mt-2 text-xs text-muted-foreground">
-              {t("home.recurrenceNextReward", { remaining: summary.recurrenceProgress.remaining, bonus: summary.recurrenceProgress.bonus })}
-            </p>
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-foreground">{t("communityHome.venuesTitle")}</h2>
+        {venuesLoading ? (
+          <SegolifeRowSkeleton count={2} />
+        ) : !activeVenues.length ? (
+          <SegolifeEmptyState icon={<Compass className="size-5" aria-hidden="true" />} title={t("communityHome.noVenues")} />
+        ) : (
+          <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
+            {activeVenues.map(v => (
+              <SegolifeVenueCard key={v.id} venue={{ ...v, categoryName: v.category?.name }} slug={slug!} className="w-28 shrink-0" />
+            ))}
           </div>
         )}
+      </section>
 
-        {!isLoading && !!summary?.recentActivity.length && (
-          <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="flex items-center gap-1.5 text-lg font-semibold text-foreground">
-                <Clock3 className="size-4 text-muted-foreground" aria-hidden="true" /> {t("home.activityTitle")}
-              </h2>
-              <Link href={`/${slug}/activity`} className="text-xs font-medium text-primary">{t("home.activityViewAll")}</Link>
-            </div>
-            <div className="space-y-2">
-              {summary.recentActivity.map(entry => {
-                const Icon = ACTIVITY_ICON[entry.type] ?? Coins;
-                return (
-                  <div key={entry.id} className="segolife-card-shadow flex items-center gap-3 rounded-2xl bg-card p-3">
-                    <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground">
-                      <Icon className="size-4.5" aria-hidden="true" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{t(ACTIVITY_KICKER_KEY[entry.type])}</p>
-                      <p className="truncate text-sm font-semibold text-foreground">{entry.label}</p>
-                    </div>
-                    {entry.amount != null && (entry.type === "earned" || entry.type === "spent") && (
-                      <span className={`shrink-0 text-sm font-semibold tabular-nums ${entry.type === "earned" ? "text-primary" : "text-muted-foreground"}`}>
-                        {entry.type === "earned" ? "+" : "-"}{entry.amount}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {isLoading && <SegolifeRowSkeleton count={2} />}
-
-        {!!venues?.length && (
-          <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-foreground">{t("home.venuesTitle")}</h2>
-              <Link href={`/${slug}/explore`} className="text-xs font-medium text-primary">{t("home.exploreAll")}</Link>
-            </div>
-            <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
-              {venues.slice(0, 8).map(v => (
-                <div key={v.id} className="contents" onClick={() => trackCard("venue")}>
-                  <SegolifeVenueCard venue={{ ...v, categoryName: v.category?.name }} slug={slug!} className="w-28 shrink-0" />
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        <Link
-          href={`/${slug}/scan`}
-          className="segolife-elevated-shadow flex items-center justify-center gap-2 rounded-full bg-foreground py-4 text-sm font-semibold text-background"
-        >
-          <Gift className="size-4" aria-hidden="true" /> {t("home.scanCta")}
-        </Link>
-      </SegolifePageContainer>
-    </SegolifeAppShell>
+      <Link
+        href={`/${slug}/explore`}
+        className="segolife-elevated-shadow flex items-center justify-center gap-2 rounded-full bg-foreground py-4 text-sm font-semibold text-background"
+      >
+        <Compass className="size-4" aria-hidden="true" /> {t("home.exploreAll")}
+      </Link>
+    </SegolifePageContainer>
   );
 }

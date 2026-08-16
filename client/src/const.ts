@@ -39,8 +39,18 @@ export const getLoginUrl = (returnPath = "/") => {
  * en modo LOCAL_AUTH (el registro propio de SEGOLIFE es REST local — ver
  * server/localAuth.ts); en modo Manus OAuth no existe un flujo de registro
  * propio, así que cae a getLoginUrl (el portal OAuth gestiona alta de cuenta).
+ *
+ * `communitySlug` (Fase 15, remate) — preselecciona la comunidad en el paso 2
+ * del formulario vía `?community=<slug>` (mecanismo que Register.tsx ya leía
+ * pero que hasta ahora ningún sitio del código construía). La selección
+ * sigue validándose siempre server-side en registerStudent(): esto es solo
+ * una comodidad de UX, nunca una fuente de verdad.
  */
-export const getRegisterUrl = (returnPath = "/") => {
+export const getRegisterUrl = (returnPath = "/", communitySlug?: string) => {
   if (!isLocalAuth()) return getLoginUrl(returnPath);
-  return `/register${returnPath !== "/" ? `?returnTo=${encodeURIComponent(returnPath)}` : ""}`;
+  const params = new URLSearchParams();
+  if (returnPath !== "/") params.set("returnTo", returnPath);
+  if (communitySlug) params.set("community", communitySlug);
+  const qs = params.toString();
+  return `/register${qs ? `?${qs}` : ""}`;
 };

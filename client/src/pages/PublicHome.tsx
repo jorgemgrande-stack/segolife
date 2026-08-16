@@ -1,11 +1,10 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect } from "react";
 import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
-import { MapPin, Compass, Ticket, Gift, Building2, Percent, Users, Sparkles, ArrowRight } from "lucide-react";
+import { Compass, Ticket, Gift, Building2, Percent, Users, ArrowRight } from "lucide-react";
 import "@/lib/i18n";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl, getRegisterUrl } from "@/const";
-import { SegolifeImage } from "@/components/segolife/SegolifeImage";
 import { PublicHomeNav } from "@/components/publicHome/PublicHomeNav";
 import { PublicHomeFooter } from "@/components/publicHome/PublicHomeFooter";
 
@@ -17,11 +16,14 @@ import { PublicHomeFooter } from "@/components/publicHome/PublicHomeFooter";
  * registrado — nunca una landing SaaS genérica (spec: "no hero blanco, no
  * pricing cards, no footer corporativo").
  *
- * Contenido real, nunca inventado: "Lo que se cuece"/"Esta noche en Segovia"
- * consumen events.publicActive/venues.publicActive (endpoints públicos ya
- * existentes) SIN filtro de comunidad — ambas comunidades a la vez. Si la
- * BD está vacía (como hoy), cada sección esconde su grid y muestra un empty
- * state editorial, nunca un grid vacío ni datos ficticios.
+ * Fase 15 (remate) — esta Home dejó de mostrar "Lo que se cuece"/"Esta noche
+ * en Segovia" (eventos/locales de IE+UVA mezclados sin filtro de comunidad):
+ * el propio spec de este remate exige que la master home NUNCA se lea como
+ * un feed indiferenciado, sino como marca neutra + explicación breve +
+ * selector hacia las comunidades reales — el contenido real (eventos,
+ * locales) vive en la landing pública de cada comunidad (/ie, /uva — ver
+ * CommunityLanding en pages/segolife/Home.tsx), que sí lo filtra por
+ * comunidad real.
  *
  * Fotografía del hero: gallery.getItems({category:"home_hero"}) — reutiliza
  * la Biblioteca Multimedia ya existente (gallery_items, administrable desde
@@ -38,37 +40,11 @@ export default function PublicHome() {
   }, []);
 
   const { data: heroPhotos } = trpc.gallery.getItems.useQuery({ category: "home_hero" });
-  const { data: featuredEvents } = trpc.events.publicFeatured.useQuery({});
-  const { data: events } = trpc.events.publicActive.useQuery({});
-  const { data: featuredVenues } = trpc.venues.publicFeatured.useQuery({});
-  const { data: venues } = trpc.venues.publicActive.useQuery({});
   const { data: communities } = trpc.communities.list.useQuery();
-
-  // "Lo que se cuece" prioriza los eventos que el admin marcó como
-  // destacados (control ya existente en EventsManager, `isFeatured` /
-  // events.publicFeatured) y solo completa con el resto de activos si aún
-  // no hay 6 destacados — nunca al revés, para que marcar un evento como
-  // destacado tenga un efecto real y visible en la Home.
-  const featuredIds = new Set((featuredEvents ?? []).map(e => e.id));
-  const upcomingEvents = [
-    ...(featuredEvents ?? []),
-    ...(events ?? []).filter(e => !featuredIds.has(e.id)),
-  ].slice(0, 6);
-  // A diferencia de "Lo que se cuece": aquí se listan TODOS los locales
-  // activos (sin slice), destacados primero en el orden curado desde
-  // /admin/cms/inicio (homeSortOrder) — los venues son un catálogo estable,
-  // no un flujo de eventos que necesite recortarse.
-  const featuredVenueIds = new Set((featuredVenues ?? []).map(v => v.id));
-  const tonightVenues = [
-    ...(featuredVenues ?? []),
-    ...(venues ?? []).filter(v => !featuredVenueIds.has(v.id)),
-  ];
 
   return (
     <div className="segolife-theme min-h-dvh bg-background">
       <Hero heroPhotos={heroPhotos} />
-      <WhatsHappening events={upcomingEvents} />
-      <TonightInSegovia venues={tonightVenues} />
       <Explainer />
       <Communities communities={communities ?? []} />
       <RewardsSection />
@@ -141,114 +117,7 @@ function Hero({ heroPhotos }: { heroPhotos?: Array<{ id: number; imageUrl: strin
   );
 }
 
-// ─── 02 — WHAT'S HAPPENING ─────────────────────────────────────────────────────
-
-interface PublicEvent {
-  slug: string;
-  name: string;
-  imageUrl: string | null;
-  startsAt: string | Date;
-  isFeatured: boolean;
-  venue: { name: string } | null;
-  communities: Array<{ slug: string }>;
-}
-
-/** Elige de forma determinista con qué comunidad enlazar desde la Home
- * pública (sin comunidad elegida todavía) — antes usaba communities[0]
- * directamente, dependiente del orden de fila que devuelve la consulta
- * (no garantizado sin ORDER BY); ordenar por slug lo vuelve estable. */
-function primaryCommunitySlug(communities: Array<{ slug: string }>): string | undefined {
-  return [...communities].sort((a, b) => a.slug.localeCompare(b.slug))[0]?.slug;
-}
-
-function WhatsHappening({ events }: { events: PublicEvent[] }) {
-  const { t, i18n } = useTranslation();
-
-  return (
-    <section className="bg-background py-16 sm:py-24">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <SectionHeader title={t("publicHome.events.title")} subtitle={t("publicHome.events.subtitle")} />
-        {events.length === 0 ? (
-          <EmptyEditorial icon={<Ticket className="size-6" aria-hidden="true" />} text={t("publicHome.events.empty")} />
-        ) : (
-          <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 sm:gap-6 lg:grid-cols-4">
-            {events.map((event) => {
-              const slug = primaryCommunitySlug(event.communities);
-              const starts = new Date(event.startsAt);
-              const day = starts.toLocaleDateString(i18n.language, { weekday: "short", day: "numeric", month: "short" });
-              return (
-                <Link key={event.slug} href={slug ? `/${slug}/events/${event.slug}` : "#"} className="group">
-                  <div className="relative">
-                    <SegolifeImage src={event.imageUrl} alt={event.name} ratio={4 / 5} className="transition-transform duration-300 group-hover:scale-[1.03]" />
-                    {event.isFeatured && (
-                      <span className="absolute left-2 top-2 rounded-full bg-accent px-2 py-0.5 text-[10px] font-bold text-accent-foreground">★</span>
-                    )}
-                    <div className="absolute inset-x-0 bottom-0 rounded-b-2xl bg-gradient-to-t from-black/75 to-transparent p-3 pt-8">
-                      <p className="text-[11px] font-semibold text-white/85">{day}</p>
-                    </div>
-                  </div>
-                  <p className="mt-2 line-clamp-1 text-sm font-semibold text-foreground">{event.name}</p>
-                  {event.venue && (
-                    <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <MapPin className="size-3" aria-hidden="true" /> {event.venue.name}
-                    </p>
-                  )}
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
-
-// ─── 03 — TONIGHT IN SEGOVIA ────────────────────────────────────────────────────
-
-interface PublicVenue {
-  slug: string;
-  name: string;
-  imageUrl: string | null;
-  /** Fase 8.6: foto grande real del venue — `imageUrl` pasó a ser el LOGO. */
-  coverImageUrl?: string | null;
-  category: { name: string } | null;
-  communities: Array<{ slug: string }>;
-}
-
-function TonightInSegovia({ venues }: { venues: PublicVenue[] }) {
-  const { t } = useTranslation();
-
-  return (
-    <section className="bg-[#150a28] py-16 text-white sm:py-24">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <SectionHeader title={t("publicHome.tonight.title")} subtitle={t("publicHome.tonight.subtitle")} dark />
-        {venues.length === 0 ? (
-          <EmptyEditorial icon={<Sparkles className="size-6" aria-hidden="true" />} text={t("publicHome.tonight.empty")} dark />
-        ) : (
-          <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {venues.map((venue) => {
-              const slug = primaryCommunitySlug(venue.communities);
-              return (
-                <Link key={venue.slug} href={slug ? `/${slug}/venues/${venue.slug}` : "#"} className="group relative block overflow-hidden rounded-3xl">
-                  <SegolifeImage src={venue.coverImageUrl ?? venue.imageUrl} alt={venue.name} ratio={16 / 11} rounded="rounded-3xl" className="transition-transform duration-300 group-hover:scale-[1.04]" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
-                  <div className="absolute inset-x-0 bottom-0 p-5">
-                    {venue.category && (
-                      <p className="text-xs font-semibold uppercase tracking-wide text-white/60">{venue.category.name}</p>
-                    )}
-                    <p className="mt-1 text-xl font-bold">{venue.name}</p>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
-
-// ─── 04 — YOUR STUDENT LIFE, IN ONE PLACE ──────────────────────────────────────
+// ─── 02 — YOUR STUDENT LIFE, IN ONE PLACE ──────────────────────────────────────
 
 function Explainer() {
   const { t } = useTranslation();
@@ -281,7 +150,7 @@ function Explainer() {
   );
 }
 
-// ─── 05 — COMMUNITIES ───────────────────────────────────────────────────────────
+// ─── 03 — COMMUNITIES ───────────────────────────────────────────────────────────
 
 function Communities({ communities }: { communities: Array<{ slug: string; name: string }> }) {
   const { t } = useTranslation();
@@ -314,7 +183,7 @@ function Communities({ communities }: { communities: Array<{ slug: string; name:
   );
 }
 
-// ─── 06 — SEGOTOKENS / REWARDS ──────────────────────────────────────────────────
+// ─── 04 — SEGOTOKENS / REWARDS ──────────────────────────────────────────────────
 
 function RewardsSection() {
   const { t } = useTranslation();
@@ -338,7 +207,7 @@ function RewardsSection() {
   );
 }
 
-// ─── 07 — FINAL CTA ──────────────────────────────────────────────────────────────
+// ─── 05 — FINAL CTA ──────────────────────────────────────────────────────────────
 
 function FinalCta() {
   const { t } = useTranslation();
@@ -366,15 +235,6 @@ function SectionHeader({ title, subtitle, dark }: { title: string; subtitle: str
         <h2 className={`text-3xl font-bold tracking-tight sm:text-4xl ${dark ? "text-white" : "text-foreground"}`}>{title}</h2>
         <p className={`mt-1 text-base ${dark ? "text-white/60" : "text-muted-foreground"}`}>{subtitle}</p>
       </div>
-    </div>
-  );
-}
-
-function EmptyEditorial({ icon, text, dark }: { icon: ReactNode; text: string; dark?: boolean }) {
-  return (
-    <div className={`mt-8 flex flex-col items-center gap-3 rounded-3xl border border-dashed px-6 py-16 text-center ${dark ? "border-white/15 text-white/50" : "border-border text-muted-foreground"}`}>
-      <div className={`flex size-12 items-center justify-center rounded-full ${dark ? "bg-white/10" : "bg-secondary"}`}>{icon}</div>
-      <p className="max-w-sm text-sm">{text}</p>
     </div>
   );
 }
