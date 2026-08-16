@@ -5,7 +5,7 @@ import {
   Settings, Menu, X, LogOut, Users, Image, ChevronDown,
   Bell, Search, User, BedDouble, Sparkles, UtensilsCrossed, AlertCircle,
   UserPlus, FileCheck, ChevronRight, Receipt, Truck, Monitor, Tag, Ticket,
-  Sun, Moon, ExternalLink, Target, MessageCircle, Bot, Mail, Building2,
+  Sun, Moon, ExternalLink, Building2,
   Briefcase, GraduationCap, Store, CalendarDays, Coins, QrCode, Gift, Vote, Plug, ShoppingBag, Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -202,22 +202,19 @@ const navItems = [
       { label: "Facturación", href: "/admin/partners/facturacion", key: "partners-billing" },
     ],
   },
-  {
-    label: "Atención Comercial",
-    href: "/admin/atencion-comercial",
-    icon: Target,
-    roles: ["admin", "agente"],
-    children: [
-      { label: "Panel de seguimiento", href: "/admin/atencion-comercial?tab=dashboard", key: "ac-dashboard" },
-      { label: "Presupuestos abiertos", href: "/admin/atencion-comercial?tab=open", key: "ac-open" },
-      { label: "Reglas de recordatorio", href: "/admin/atencion-comercial?tab=rules", key: "ac-rules" },
-      { label: "Historial", href: "/admin/atencion-comercial?tab=history", key: "ac-history" },
-      { label: "Configuración", href: "/admin/atencion-comercial?tab=settings", key: "ac-settings" },
-      { label: "WhatsApp GHL", href: "/admin/atencion-comercial/whatsapp", key: "ac-whatsapp", icon: MessageCircle },
-      { label: "Agente IA Vapi", href: "/admin/atencion-comercial/agente-ia", key: "ac-vapi", icon: Bot },
-      { label: "Email Comercial", href: "/admin/atencion-comercial/email", key: "ac-email", icon: Mail, flagKey: "commercial_email_enabled" },
-    ],
-  },
+  // SEGOLIFE — COMMUNICATION CENTER CONSOLIDATION (Fase 11, spec §3/§4/§69/
+  // §70): "Atención Comercial" (panel de seguimiento de presupuestos,
+  // WhatsApp GHL, Agente IA Vapi, Email Comercial) era el embudo de
+  // comunicación de turismo heredado de Náyade — auditado en esta fase:
+  // GHL no tiene credenciales configuradas en producción (system_settings
+  // vacío), 0 conversaciones reales en ghl_conversations, Vapi no tiene
+  // ninguna API key configurada (env ni BD), 0 llamadas reales en
+  // vapi_calls. Ninguna capacidad operativa real que extraer/consolidar en
+  // Communication Center hoy — se OCULTA del nav (nunca se borran rutas/
+  // código/tablas, mismo criterio que "Operaciones"/CRM abajo). Si GHL o
+  // Vapi se configuran de verdad en el futuro, la decisión de si encajan
+  // dentro de Communication Center → Integraciones se retoma entonces con
+  // datos reales, no aquí.
   // "Operaciones" (Calendario/Actividades del Día, spec Fase 9 §30/§76)
   // oculto del nav: su modelo de datos es 100% turismo heredado
   // (reservations/reservationOperational, Monitor/Pax/Hora de llegada) sin

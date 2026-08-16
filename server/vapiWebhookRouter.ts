@@ -137,20 +137,30 @@ if (process.env.VAPI_INTEGRATION_ENABLED === "true") {
 const vapiWebhookRouter = express.Router();
 
 vapiWebhookRouter.post("/api/vapi/webhook", express.json({ limit: "1mb" }), async (req, res) => {
-  // 1. Secreto opcional — env var con fallback a BD
+  // SEGOLIFE — COMMUNICATION CENTER CONSOLIDATION (Fase 11, spec §33/§57):
+  // este endpoint escribe leads/clients/quotes reales ante CUALQUIER POST —
+  // antes, sin secreto configurado, aceptaba la petición sin más (fallback
+  // "si no hay secreto, no se verifica nada"). Auditoría de esta fase
+  // confirmó que NINGÚN secreto está configurado hoy (ni env ni BD) y que
+  // vapi_calls tiene 0 filas en producción — ningún llamador legítimo
+  // depende del comportamiento anterior. Ahora exige secreto SIEMPRE, mismo
+  // criterio que brevoWebhookRoutes.ts (503 si no está configurado, 401 si
+  // no coincide) — nunca acepta una petición sin verificar.
   const [secretRows]: any = await _pool.execute(
     "SELECT `value` FROM site_settings WHERE `key` = 'vapiWebhookSecret' LIMIT 1"
   ).catch(() => [[]]);
   const dbSecret = (secretRows as any[])[0]?.value ?? "";
   const secret = process.env.VAPI_WEBHOOK_SECRET || dbSecret || process.env.GHL_WEBHOOK_SECRET || "";
-  if (secret) {
-    const provided =
-      (req.headers["x-vapi-secret"] as string | undefined) ??
-      (req.query.secret as string | undefined);
-    if (provided !== secret) {
-      console.warn("[VAPI Webhook] Petición rechazada — secreto inválido");
-      return res.status(401).json({ ok: false, error: "Unauthorized" });
-    }
+  if (!secret) {
+    console.warn("[VAPI Webhook] Petición rechazada — ningún secreto configurado (VAPI_WEBHOOK_SECRET/BD/GHL_WEBHOOK_SECRET)");
+    return res.status(503).json({ ok: false, error: "Vapi webhook not configured" });
+  }
+  const provided =
+    (req.headers["x-vapi-secret"] as string | undefined) ??
+    (req.query.secret as string | undefined);
+  if (provided !== secret) {
+    console.warn("[VAPI Webhook] Petición rechazada — secreto inválido");
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
   }
 
   const payload = req.body ?? {};
