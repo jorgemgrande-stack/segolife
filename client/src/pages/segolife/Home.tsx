@@ -6,7 +6,6 @@ import { trpc } from "@/lib/trpc";
 import { formatCardRewardBadge } from "@/lib/rewardPreview";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl, getRegisterUrl } from "@/const";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
 import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { SegolifeEventCard } from "@/components/segolife/SegolifeEventCard";
@@ -14,34 +13,41 @@ import { SegolifeVenueCard } from "@/components/segolife/SegolifeVenueCard";
 import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
 import { SegolifeWalletSkeleton, SegolifeCardRowSkeleton, SegolifeRowSkeleton } from "@/components/segolife/SegolifeSkeletons";
 import { Progress } from "@/components/ui/progress";
+import CommunityPublicLanding from "./CommunityPublicLanding";
 
 /**
- * Home de Segolife en /:community — Fase 15 (remate): esta ruta antes exigía
- * sesión siempre (`requireAuth`), así que un visitante anónimo que llegaba a
- * /ie o /uva (QR de un venue, enlace compartido, buscador) rebotaba
- * directamente a /login sin ver nada de esa comunidad — el problema central
- * que este remate corrige. Ahora Home() es un simple despachador: con sesión
- * pinta el dashboard personalizado de siempre (AuthenticatedHome, sin
- * cambios de comportamiento); sin sesión pinta una landing pública real de
- * la comunidad (CommunityLanding, spec "remate Fase 15" — reutiliza el mismo
- * shell/routing/contexto, nunca una segunda aplicación).
+ * Home de Segolife en /:community — Fase 15.1 (corrección tras un bug real
+ * reportado con capturas): la versión anterior (Fase 15 "remate") pintaba la
+ * landing pública anónima DENTRO de SegolifeAppShell — el mismo shell de la
+ * Student App autenticada — así que un visitante sin sesión veía el sidebar
+ * de Home/Explore/Comunity/Tickets/Scan/Rewards/Perfil y los iconos de
+ * campana/perfil, como si ya hubiera iniciado sesión. Home() ahora decide
+ * ANTES de montar ningún shell: con sesión, envuelve el dashboard
+ * personalizado de siempre (AuthenticatedHome) en SegolifeAppShell, sin
+ * cambios; sin sesión, monta CommunityPublicLanding — que NUNCA importa
+ * SegolifeAppShell, usa el mismo sistema visual público que la Home master
+ * (PublicHomeNav/Footer + secciones reexportadas de PublicHome.tsx).
  */
 export default function Home() {
   const { t } = useTranslation();
-  const { community, slug } = useCommunity();
+  const { community, slug, loading: communityLoading } = useCommunity();
   const { isAuthenticated, loading: authLoading } = useAuth();
+
+  if (communityLoading || authLoading) {
+    return (
+      <div className="segolife-theme flex min-h-dvh items-center justify-center bg-background">
+        <Loader2 className="size-6 animate-spin text-primary" aria-hidden="true" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <CommunityPublicLanding community={community} slug={slug} />;
+  }
 
   return (
     <SegolifeAppShell title={t("home.tonightTitle")}>
-      {authLoading ? (
-        <div className="flex min-h-[50dvh] items-center justify-center">
-          <Loader2 className="size-6 animate-spin text-primary" aria-hidden="true" />
-        </div>
-      ) : isAuthenticated ? (
-        <AuthenticatedHome />
-      ) : (
-        <CommunityLanding community={community} slug={slug} />
-      )}
+      <AuthenticatedHome />
     </SegolifeAppShell>
   );
 }
@@ -415,90 +421,6 @@ function AuthenticatedHome() {
         className="segolife-elevated-shadow flex items-center justify-center gap-2 rounded-full bg-foreground py-4 text-sm font-semibold text-background"
       >
         <Gift className="size-4" aria-hidden="true" /> {t("home.scanCta")}
-      </Link>
-    </SegolifePageContainer>
-  );
-}
-
-/**
- * Landing pública de una comunidad (Fase 15, remate) — lo que ve un
- * visitante SIN sesión en /ie o /uva. Mismos endpoints públicos que ya usa
- * Explore.tsx (events.publicActive/venues.publicActive filtrados por
- * communityId, sin exigir sesión), mismas cards (SegolifeEventCard/
- * SegolifeVenueCard) y mismo shell — nunca una segunda aplicación. Copy
- * reutilizado de los namespaces publicHome y communityHome (este último ya
- * existente, heredado de la antigua CommunityHome de Fase 1B) en vez de
- * inventar textos nuevos por duplicado.
- */
-function CommunityLanding({ community, slug }: { community: { id: number; name: string } | null; slug: string | null }) {
-  const { t } = useTranslation();
-  const { data: events, isLoading: eventsLoading } = trpc.events.publicActive.useQuery({ communityId: community?.id });
-  const { data: venues, isLoading: venuesLoading } = trpc.venues.publicActive.useQuery({ communityId: community?.id });
-
-  const registerUrl = getRegisterUrl("/", slug ?? undefined);
-  const loginUrl = getLoginUrl(slug ? `/${slug}` : "/");
-  const upcomingEvents = (events ?? []).slice(0, 8);
-  const activeVenues = (venues ?? []).slice(0, 8);
-
-  return (
-    <SegolifePageContainer className="space-y-7">
-      <section className="segolife-elevated-shadow rounded-3xl bg-primary p-6 text-primary-foreground sm:p-8">
-        <p className="text-xs font-semibold uppercase tracking-widest text-primary-foreground/70">{t("publicHome.hero.eyebrow")}</p>
-        <h1 className="mt-2 text-3xl font-bold leading-tight sm:text-4xl">{community?.name}</h1>
-        <p className="mt-2 max-w-md text-sm text-primary-foreground/85">{t("communityHome.tagline")}</p>
-        <div className="mt-5 flex flex-col gap-2.5 sm:flex-row">
-          <a
-            href={registerUrl}
-            className="inline-flex items-center justify-center rounded-full bg-white px-6 py-3 text-sm font-semibold text-primary shadow-lg transition-transform active:scale-95"
-          >
-            {t("publicHome.hero.ctaPrimary")}
-          </a>
-          <a
-            href={loginUrl}
-            className="inline-flex items-center justify-center rounded-full border border-primary-foreground/30 px-6 py-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-white/10"
-          >
-            {t("publicHome.hero.ctaSecondary")}
-          </a>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="flex items-center gap-1.5 text-lg font-semibold text-foreground">
-          <Flame className="size-4 text-accent" aria-hidden="true" /> {t("communityHome.eventsTitle")}
-        </h2>
-        {eventsLoading ? (
-          <SegolifeCardRowSkeleton />
-        ) : !upcomingEvents.length ? (
-          <SegolifeEmptyState icon={<Flame className="size-5" aria-hidden="true" />} title={t("communityHome.noEvents")} />
-        ) : (
-          <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
-            {upcomingEvents.map(e => (
-              <SegolifeEventCard key={e.id} event={e} slug={slug!} className="w-36 shrink-0" />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-foreground">{t("communityHome.venuesTitle")}</h2>
-        {venuesLoading ? (
-          <SegolifeRowSkeleton count={2} />
-        ) : !activeVenues.length ? (
-          <SegolifeEmptyState icon={<Compass className="size-5" aria-hidden="true" />} title={t("communityHome.noVenues")} />
-        ) : (
-          <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
-            {activeVenues.map(v => (
-              <SegolifeVenueCard key={v.id} venue={{ ...v, categoryName: v.category?.name }} slug={slug!} className="w-28 shrink-0" />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <Link
-        href={`/${slug}/explore`}
-        className="segolife-elevated-shadow flex items-center justify-center gap-2 rounded-full bg-foreground py-4 text-sm font-semibold text-background"
-      >
-        <Compass className="size-4" aria-hidden="true" /> {t("home.exploreAll")}
       </Link>
     </SegolifePageContainer>
   );

@@ -118,8 +118,11 @@ function Hero({ heroPhotos }: { heroPhotos?: Array<{ id: number; imageUrl: strin
 }
 
 // ─── 02 — YOUR STUDENT LIFE, IN ONE PLACE ──────────────────────────────────────
+// Exportado (Fase 15.1) — reutilizado tal cual por CommunityPublicLanding
+// (/ie, /uva anónimo): contenido 100% genérico del ecosistema SEGOLIFE, sin
+// nada específico de comunidad que duplicar.
 
-function Explainer() {
+export function Explainer() {
   const { t } = useTranslation();
   const items = [
     { key: "events", icon: Compass },
@@ -184,8 +187,10 @@ function Communities({ communities }: { communities: Array<{ slug: string; name:
 }
 
 // ─── 04 — SEGOTOKENS / REWARDS ──────────────────────────────────────────────────
+// Exportado (Fase 15.1) — reutilizado tal cual por CommunityPublicLanding,
+// mismo criterio que Explainer.
 
-function RewardsSection() {
+export function RewardsSection() {
   const { t } = useTranslation();
   const steps = ["discover", "go", "earn", "unlock"] as const;
 
@@ -208,15 +213,19 @@ function RewardsSection() {
 }
 
 // ─── 05 — FINAL CTA ──────────────────────────────────────────────────────────────
+// Exportado (Fase 15.1) — `registerUrl` es opcional para que
+// CommunityPublicLanding pueda pasar la URL con la comunidad preseleccionada
+// (getRegisterUrl("/", slug)); esta Home master sigue usando el default
+// (getRegisterUrl() sin comunidad) exactamente como antes.
 
-function FinalCta() {
+export function FinalCta({ registerUrl }: { registerUrl?: string } = {}) {
   const { t } = useTranslation();
   return (
     <section className="bg-[#150a28] py-20 text-center text-white sm:py-28">
       <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
         <h2 className="text-3xl font-bold tracking-tight sm:text-5xl">{t("publicHome.finalCta.title")}</h2>
         <a
-          href={getRegisterUrl()}
+          href={registerUrl ?? getRegisterUrl()}
           className="mt-8 inline-flex items-center justify-center rounded-full bg-white px-8 py-4 text-base font-semibold text-[#150a28] shadow-xl transition-transform active:scale-95"
         >
           {t("publicHome.finalCta.cta")}
@@ -227,8 +236,9 @@ function FinalCta() {
 }
 
 // ─── Primitivas compartidas de sección ──────────────────────────────────────────
+// Exportado (Fase 15.1) — reutilizado por CommunityPublicLanding.
 
-function SectionHeader({ title, subtitle, dark }: { title: string; subtitle: string; dark?: boolean }) {
+export function SectionHeader({ title, subtitle, dark }: { title: string; subtitle: string; dark?: boolean }) {
   return (
     <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
       <div>
