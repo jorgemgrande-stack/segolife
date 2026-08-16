@@ -251,13 +251,13 @@ describe("doorSaleService — refundDoorSale (spec §20/§56)", () => {
     await expect(refundDoorSale({ orderId: 100, refundedByUserId: 9, reason: "" }, db)).rejects.toMatchObject({ code: "REASON_REQUIRED" });
   });
 
-  it("#14 registra el reembolso en el feed unificado (commerce_refunds) vía recordCommerceRefund", async () => {
+  it("#14 registra el reembolso en el feed unificado (commerce_refunds) vía recordCommerceRefund, con el venueId REAL resuelto del evento — nunca null (si no, desaparece del arqueo de caja del venue, spec §41/§53)", async () => {
     const paidOrder = orderRow({ status: "paid", channel: "door" });
     const { db } = makeMockDb({ order: paidOrder, tickets: [ticketRow({ status: "used" })] });
     mockTransitionOrderStatus.mockResolvedValueOnce({ ...paidOrder, status: "refunded" });
     await refundDoorSale({ orderId: 100, refundedByUserId: 9, reason: "motivo real" }, db);
     expect(mockRecordCommerceRefund).toHaveBeenCalledOnce();
-    expect(mockRecordCommerceRefund.mock.calls[0][0]).toMatchObject({ sourceType: "ticket_order", moneyRefundStatus: "completed" });
+    expect(mockRecordCommerceRefund.mock.calls[0][0]).toMatchObject({ sourceType: "ticket_order", moneyRefundStatus: "completed", venueId: 20 });
   });
 
   it("#15 reembolso de venta con SegoTokens aplicados los restaura vía reverseTokenSpend", async () => {

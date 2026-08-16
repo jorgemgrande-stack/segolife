@@ -313,6 +313,16 @@ export async function refundDoorSale(input: RefundDoorSaleInput, db?: DbHandle):
 
   const refunded = await transitionOrderStatus(input.orderId, ["paid"], "refunded", { refundedAt: new Date() }, conn);
 
+  // PRE-16 overnight hardening (bug real encontrado en auditoría): antes se
+  // registraba con venueId=null — cashSessionService.ts filtra sus
+  // refunds por `eq(commerceRefunds.venueId, session.venueId)`, y SQL `=`
+  // nunca hace match contra NULL, así que un reembolso real de puerta
+  // desaparecía silenciosamente del arqueo de caja (expectedCashCents
+  // quedaba de más, la caja cerraba con un "descuadre" fantasma exacto al
+  // importe de cada reembolso de puerta). Mismo patrón de resolución que
+  // recordDoorSale más arriba en este archivo.
+  const [event] = await conn.select({ venueId: events.venueId }).from(events).where(eq(events.id, order.eventId)).limit(1);
+
   const tickets = await conn.select().from(eventTickets).where(eq(eventTickets.orderId, input.orderId));
   const admittedIds = tickets.filter(t => t.status === "used").map(t => t.id);
   if (admittedIds.length) {
@@ -330,7 +340,7 @@ export async function refundDoorSale(input: RefundDoorSaleInput, db?: DbHandle):
   await recordCommerceRefund({
     sourceType: "ticket_order",
     sourceId: order.id,
-    venueId: null,
+    venueId: event?.venueId ?? null,
     eventId: order.eventId,
     userId: order.userId,
     amountCents: order.totalCents,
