@@ -294,7 +294,7 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
                     <span className="absolute right-2 top-2 z-10 flex size-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground shadow">{qty}</span>
                   )}
                   {p.imageUrl ? (
-                    <img src={p.imageUrl} alt={p.name} loading="lazy" className="h-32 w-full object-cover sm:h-36" />
+                    <img src={p.imageUrl} alt={p.name} loading="lazy" className="h-32 w-full bg-secondary object-contain sm:h-36" />
                   ) : (
                     <div className="h-32 w-full bg-muted sm:h-36" />
                   )}
