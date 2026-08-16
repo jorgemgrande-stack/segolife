@@ -58,10 +58,10 @@ export default function VenueApp() {
 
   const venueOptions = useMemo(() => {
     if (!authQ.data) return [];
-    if (authQ.data.all) return (allVenuesQ.data ?? []).map(v => ({ id: v.id, name: v.name }));
+    if (authQ.data.all) return (allVenuesQ.data ?? []).map(v => ({ id: v.id, name: v.name, imageUrl: v.imageUrl }));
     return (allVenuesQ.data ?? [])
       .filter(v => authQ.data!.venueIds.includes(v.id))
-      .map(v => ({ id: v.id, name: v.name }));
+      .map(v => ({ id: v.id, name: v.name, imageUrl: v.imageUrl }));
   }, [authQ.data, allVenuesQ.data]);
 
   // Auto-selección: un único venue autorizado (no-admin) entra directo sin
@@ -144,15 +144,21 @@ export default function VenueApp() {
     );
   }
 
-  const venueName = venueOptions.find(v => v.id === selectedVenueId)?.name ?? "Venue";
+  const selectedVenue = venueOptions.find(v => v.id === selectedVenueId);
+  const venueName = selectedVenue?.name ?? "Venue";
   const canChangeVenue = authQ.data?.all || (authQ.data && authQ.data.venueIds.length > 1);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="shrink-0 border-b border-border bg-card px-4 py-3 flex items-center justify-between">
-        <div className="min-w-0">
-          <p className="font-semibold text-foreground truncate">{venueName}</p>
-          <p className="text-xs text-muted-foreground truncate">{user?.name ?? user?.email}</p>
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="min-w-0">
+            <p className="font-semibold text-foreground truncate">{venueName}</p>
+            <p className="text-xs text-muted-foreground truncate">{user?.name ?? user?.email}</p>
+          </div>
+          {selectedVenue?.imageUrl && (
+            <img src={selectedVenue.imageUrl} alt={venueName} className="size-9 shrink-0 rounded-full border border-border bg-secondary object-cover" />
+          )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {canChangeVenue && (
