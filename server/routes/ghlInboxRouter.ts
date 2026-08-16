@@ -20,7 +20,38 @@ import mysql from "mysql2/promise";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { ghlConversations, ghlMessages, ghlWebhookEvents, siteSettings } from "../../drizzle/schema";
 import { ghlInboxEmitter } from "../ghlInboxEvents";
-import type { Response } from "express";
+import { getUserFromRequest } from "../localAuth";
+import { sdk } from "../_core/sdk";
+import type { Request, Response, NextFunction } from "express";
+
+const USE_LOCAL_AUTH = process.env.LOCAL_AUTH === "true";
+
+/**
+ * PRE-16 overnight hardening (bug real de seguridad encontrado en
+ * auditoría, clase CRÍTICA): las acciones disparadas por un humano desde el
+ * panel de WhatsApp GHL Inbox (leer el stream en vivo, responder, iniciar
+ * conversación, sincronizar) no comprobaban NINGUNA sesión — solo la
+ * presencia de credenciales GHL configuradas. Cualquier POST/GET sin
+ * autenticar podía leer conversaciones en vivo (con un token de fallback
+ * HARDCODEADO en el propio código fuente, "nayade-ghl-stream") o, si
+ * alguna vez se configuran credenciales GHL reales, enviar mensajes reales
+ * de WhatsApp a un número arbitrario a través de la cuenta real del
+ * negocio. Mismo patrón dual LOCAL_AUTH/sdk ya establecido en
+ * `uploadRoutes.ts::requireAdmin` para proteger rutas Express (no-tRPC) con
+ * la sesión de administrador real — nunca un secreto embebible en el cliente.
+ */
+async function requireAdminSession(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = USE_LOCAL_AUTH ? await getUserFromRequest(req) : await sdk.authenticateRequest(req);
+    if (!user || user.role !== "admin") {
+      res.status(403).json({ ok: false, error: "Acceso denegado. Se requiere rol admin." });
+      return;
+    }
+    next();
+  } catch {
+    res.status(401).json({ ok: false, error: "No autenticado." });
+  }
+}
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
 const db = drizzle(_pool);
@@ -484,20 +515,29 @@ ghlInboxRouter.post(
   "/api/ghl/inbox/webhook",
   express.json({ limit: "2mb" }),
   async (req, res) => {
-    // 1. Validar secreto (env var con fallback a BD)
+    // 1. Validar secreto — SIEMPRE obligatorio (PRE-16 overnight hardening,
+    // auditoría de seguridad: mismo bug ya encontrado y corregido en
+    // ghlWebhookRouter.ts/vapiWebhookRouter.ts — "si no hay secreto,
+    // aceptar todo" dejaba procesar como evento real de GHL cualquier POST
+    // sin autenticar, escribiendo conversaciones/mensajes fabricados en la
+    // bandeja de WhatsApp visible para el staff. Ningún llamador legítimo
+    // depende del comportamiento anterior: sin secreto configurado no hay
+    // integración GHL real activa en este entorno.
     const [secretRows]: any = await _pool.execute(
       "SELECT `value` FROM site_settings WHERE `key` = 'ghlInboxWebhookSecret' LIMIT 1"
     ).catch(() => [[]]);
     const dbSecret = (secretRows as any[])[0]?.value ?? "";
     const secret = process.env.GHL_WEBHOOK_SECRET || dbSecret;
-    if (secret) {
-      const provided =
-        (req.headers["x-ghl-secret"] as string | undefined) ??
-        (req.query.secret as string | undefined);
-      if (provided !== secret) {
-        log("warn", "Webhook con secreto inválido — ignorado silenciosamente");
-        return res.status(200).json({ ok: true }); // Siempre 200 para evitar reintentos de GHL
-      }
+    if (!secret) {
+      log("warn", "Webhook rechazado — GHL_WEBHOOK_SECRET no configurado");
+      return res.status(503).json({ ok: false, error: "GHL inbox webhook not configured" });
+    }
+    const provided =
+      (req.headers["x-ghl-secret"] as string | undefined) ??
+      (req.query.secret as string | undefined);
+    if (provided !== secret) {
+      log("warn", "Webhook con secreto inválido — ignorado silenciosamente");
+      return res.status(200).json({ ok: true }); // Siempre 200 para evitar reintentos de GHL
     }
 
     const payload = req.body ?? {};
@@ -549,21 +589,7 @@ ghlInboxRouter.post(
 );
 
 // ── GET /api/ghl/inbox/stream — SSE para actualizaciones en tiempo real ────────
-ghlInboxRouter.get("/api/ghl/inbox/stream", (req, res: Response) => {
-  // Autenticación básica: el frontend debe enviar el cookie/header de sesión.
-  // En producción el authGuard middleware ya protege /api/trpc; el SSE es un
-  // endpoint Express independiente — verificamos la presencia de la sesión.
-  // Si no hay sesión, devolvemos 401.
-  const sessionCookie = req.cookies?.["nayade_session"] ?? req.headers["x-session-token"];
-  // En Railway con LOCAL_AUTH el cookie puede tener otro nombre — permitimos
-  // la conexión si está en el mismo dominio (SameSite cookie). En desarrollo
-  // permitimos siempre para no bloquear el desarrollo local.
-  // Para no complicar la autenticación SSE, usamos un token de query param.
-  const streamToken = req.query.token as string | undefined;
-  const expectedStreamToken = process.env.GHL_STREAM_TOKEN ?? "nayade-ghl-stream";
-  if (streamToken !== expectedStreamToken && process.env.NODE_ENV === "production") {
-    return res.status(401).send("Unauthorized");
-  }
+ghlInboxRouter.get("/api/ghl/inbox/stream", requireAdminSession, (req, res: Response) => {
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -595,6 +621,7 @@ ghlInboxRouter.get("/api/ghl/inbox/stream", (req, res: Response) => {
 ghlInboxRouter.post(
   "/api/ghl/conversations/:ghlConvId/reply",
   express.json({ limit: "512kb" }),
+  requireAdminSession,
   async (req, res) => {
     const { ghlConvId } = req.params;
     const { message } = req.body ?? {};
@@ -698,7 +725,7 @@ ghlInboxRouter.post(
 );
 
 // ── GET /api/ghl/templates — listar plantillas WhatsApp aprobadas ─────────────
-ghlInboxRouter.get("/api/ghl/templates", async (req, res) => {
+ghlInboxRouter.get("/api/ghl/templates", requireAdminSession, async (req, res) => {
   const creds = await getInboxCredentials();
   if (!creds) return res.status(200).json({ ok: false, templates: [], message: "Sin credenciales" });
   const { token, locationId } = creds;
@@ -716,7 +743,7 @@ ghlInboxRouter.get("/api/ghl/templates", async (req, res) => {
 });
 
 // ── POST /api/ghl/conversations/new — iniciar nueva conversación ──────────────
-ghlInboxRouter.post("/api/ghl/conversations/new", express.json({ limit: "512kb" }), async (req, res) => {
+ghlInboxRouter.post("/api/ghl/conversations/new", express.json({ limit: "512kb" }), requireAdminSession, async (req, res) => {
   const { phone, contactName, message, templateId } = req.body ?? {};
 
   if (!phone?.trim()) return res.status(400).json({ ok: false, message: "Teléfono requerido" });
@@ -846,7 +873,7 @@ ghlInboxRouter.post("/api/ghl/conversations/new", express.json({ limit: "512kb" 
 });
 
 // ── POST /api/ghl/inbox/sync — sincronización manual ─────────────────────────
-ghlInboxRouter.post("/api/ghl/inbox/sync", express.json({ limit: "128kb" }), async (req, res) => {
+ghlInboxRouter.post("/api/ghl/inbox/sync", express.json({ limit: "128kb" }), requireAdminSession, async (req, res) => {
   const syncCreds = await getInboxCredentials();
   if (!syncCreds) {
     return res.status(200).json({

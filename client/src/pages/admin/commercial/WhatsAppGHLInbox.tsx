@@ -55,8 +55,7 @@ function useGhlSSE(onUpdate: () => void) {
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    const streamToken = "nayade-ghl-stream";
-    const url = `/api/ghl/inbox/stream?token=${encodeURIComponent(streamToken)}`;
+    const url = "/api/ghl/inbox/stream";
 
     const connect = () => {
       const es = new EventSource(url);
