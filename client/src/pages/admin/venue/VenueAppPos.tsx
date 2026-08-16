@@ -293,7 +293,12 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
                   {qty > 0 && (
                     <span className="absolute -right-2 -top-2 flex size-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">{qty}</span>
                   )}
-                  <p className="line-clamp-2 text-sm font-semibold text-foreground">{p.name}</p>
+                  <div className="flex items-start gap-2">
+                    {p.imageUrl && (
+                      <img src={p.imageUrl} alt="" loading="lazy" className="size-10 shrink-0 rounded-lg object-cover" />
+                    )}
+                    <p className="line-clamp-2 text-sm font-semibold text-foreground">{p.name}</p>
+                  </div>
                   <div className="flex items-end justify-between gap-1">
                     <span className="text-sm font-bold tabular-nums text-foreground">{p.price ? euro(Math.round(Number(p.price) * 100)) : "—"}</span>
                     {outOfStock ? (

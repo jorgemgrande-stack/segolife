@@ -4112,6 +4112,10 @@ export const venueProducts = mysqlTable("venue_products", {
   category:     varchar("category", { length: 64 }),
   price:        decimal("price", { precision: 10, scale: 2 }),
   isActive:     boolean("is_active").notNull().default(true),
+  // Fase 12.5 (spec §15 del prompt original de catálogo, "images optional"):
+  // mismo patrón que venues.imageUrl — URL plana, nunca un FK a media_files.
+  // Nullable: sin imagen, la UI cae a un placeholder por categoría (nunca rompe).
+  imageUrl:     varchar("image_url", { length: 512 }),
   metadata:     json("metadata").$type<Record<string, unknown>>(),
   // SEGOLIFE — FASE 10 (spec §7/§28/§39): tipo de IVA configurado (NULL =
   // sin configurar todavía, nunca se adivina). stockTracked=false por

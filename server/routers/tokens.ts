@@ -154,6 +154,7 @@ const productInputSchema = z.object({
   slug: z.string().min(1).max(128).regex(/^[a-z0-9-]+$/),
   category: z.string().max(64).nullish(),
   price: z.string().nullish(),
+  imageUrl: z.string().max(512).nullish(),
 });
 
 const scheduleInputSchema = z.object({

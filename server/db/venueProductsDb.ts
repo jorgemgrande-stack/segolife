@@ -29,6 +29,7 @@ export interface CreateVenueProductInput {
   slug: string;
   category?: string | null;
   price?: string | null;
+  imageUrl?: string | null;
   metadata?: Record<string, unknown> | null;
 }
 
@@ -45,6 +46,7 @@ export interface UpdateVenueProductFields {
   slug?: string;
   category?: string | null;
   price?: string | null;
+  imageUrl?: string | null;
   metadata?: Record<string, unknown> | null;
 }
 
