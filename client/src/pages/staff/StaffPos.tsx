@@ -29,6 +29,15 @@ export default function StaffPos() {
   const [lastSaleAt, setLastSaleAt] = useState<number | null>(null);
   const [tokensToApply, setTokensToApply] = useState("");
   const [tokenRequestId, setTokenRequestId] = useState<number | null>(null);
+  // PRE-16 overnight hardening (bug real encontrado en auditoría, mismo que
+  // VenueAppPos.tsx): antes se generaba un `crypto.randomUUID()` nuevo en
+  // cada llamada a handleRecordSale — un reintento tras timeout/red perdida
+  // (la respuesta del primer intento se pierde) generaba una clave
+  // DISTINTA, y el servidor no podía reconocer que era la misma venta —
+  // riesgo real de venta duplicada. Ahora la clave vive una sola vez por
+  // intento de venta, y solo se regenera cuando el carrito se resetea de
+  // verdad (venta ya confirmada con éxito).
+  const [saleIdempotencyKey, setSaleIdempotencyKey] = useState(() => crypto.randomUUID());
   const scannerRef = useRef<{ stop: () => Promise<void>; clear: () => void } | null>(null);
 
   const { data: authorized } = trpc.commerce.myAuthorizedVenuesForPos.useQuery();
@@ -55,6 +64,7 @@ export default function StaffPos() {
       setTokensToApply("");
       setTokenRequestId(null);
       setLastSaleAt(Date.now());
+      setSaleIdempotencyKey(crypto.randomUUID());
     },
     onError: e => toast.error(e.message),
   });
@@ -162,7 +172,7 @@ export default function StaffPos() {
       venueId: Number(venueId),
       items: cartItems,
       identifiedUserId: identifiedStudent?.userId ?? null,
-      idempotencyKey: `pos:${venueId}:${crypto.randomUUID()}`,
+      idempotencyKey: `pos:${venueId}:${saleIdempotencyKey}`,
       confirmedTokenRequestId: tokenRequestId && tokenRequestStatus === "confirmed" ? tokenRequestId : undefined,
     });
   };

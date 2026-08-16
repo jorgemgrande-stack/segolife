@@ -75,6 +75,18 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
   const [tokensToApply, setTokensToApply] = useState("");
   const [tokenRequestId, setTokenRequestId] = useState<number | null>(null);
   const [moneyMethod, setMoneyMethod] = useState<"cash" | "card">("cash");
+  // PRE-16 overnight hardening (bug real encontrado en auditoría): antes se
+  // generaba un `crypto.randomUUID()` NUEVO dentro de handleConfirmSale() en
+  // cada llamada — protegía el doble-tap (mismo evento, submittingRef ya lo
+  // cubría) pero NO un reintento real tras un timeout/red perdida: la
+  // respuesta del primer intento se pierde, el operador reintenta, y el
+  // reintento generaba una clave distinta — el servidor no tenía forma de
+  // reconocer que era la MISMA venta, así que la venta (y su decremento de
+  // stock/captura de SegoTokens) podía duplicarse de verdad. Ahora la clave
+  // vive una sola vez por intento de venta — se genera de nuevo SOLO cuando
+  // el carrito se resetea de verdad (venta ya confirmada con éxito), nunca
+  // en cada click.
+  const [saleIdempotencyKey, setSaleIdempotencyKey] = useState(() => crypto.randomUUID());
   const [lastSale, setLastSale] = useState<{ totalCents: number; tokensSpent: number; promotionalValueCents: number; moneyDueCents: number; moneyMethod: "cash" | "card"; studentName: string | null; tokensEarned: number | null; transactionId: number | null } | null>(null);
   const [benefitManualToken, setBenefitManualToken] = useState("");
 
@@ -173,6 +185,7 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
       setIdentifiedToken(null);
       setTokensToApply("");
       setTokenRequestId(null);
+      setSaleIdempotencyKey(crypto.randomUUID());
     },
     onError: e => toast.error(e.message),
   });
@@ -226,7 +239,7 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
       venueId,
       items: cartItems,
       identifiedUserId: identifiedStudent?.userId ?? null,
-      idempotencyKey: `tpv:${venueId}:${crypto.randomUUID()}`,
+      idempotencyKey: `tpv:${venueId}:${saleIdempotencyKey}`,
       confirmedTokenRequestId: tokenRequestId && tokenRequestStatus === "confirmed" ? tokenRequestId : undefined,
       moneyPaymentMethod: moneyMethod,
     }, {
