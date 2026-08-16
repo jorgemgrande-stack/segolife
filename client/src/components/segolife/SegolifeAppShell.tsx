@@ -38,7 +38,7 @@ export function SegolifeAppShell({
 }) {
   const { t } = useTranslation();
   const { community, slug, loading, availableLocales } = useCommunity();
-  const [currentPath] = useLocation();
+  const [currentPath, navigate] = useLocation();
   // El redirect-a-login de useAuth es un efecto independiente del render (navega
   // con window.location.href), así que si se habilitara siempre que requireAuth
   // es true, puede dispararse ANTES de saber si `community` es válida — mandando
@@ -75,7 +75,35 @@ export function SegolifeAppShell({
     refetchIntervalInBackground: false,
   });
 
-  if (loading || (requireAuth && authLoading)) {
+  // Bug real reportado con capturas: un Student autenticado que navegaba a la
+  // URL de OTRA comunidad de la que no es miembro (p.ej. Cristina, solo IE,
+  // visitando /uva) "se convertía" en esa comunidad — el saludo decía
+  // "Segolife UVA" y las queries de esta página (venues, etc.) pedían datos
+  // de esa comunidad ajena, aunque home.getSummary ya se defendía server-side
+  // cayendo a la membresía real. Un usuario logueado debe acceder SIEMPRE a
+  // su propia comunidad real, nunca a la que diga la URL sin comprobarla —
+  // igual que ya hacía el selector de SegolifeSidebar (myMemberships, nunca
+  // communities.list). Si no es miembro real de la comunidad de la URL, se
+  // redirige a su comunidad real (la primera membresía, mismo criterio de
+  // "primaria" que ya usa home.ts en el servidor) en vez de mostrarle
+  // contenido de una comunidad ajena disfrazado de "su" Home.
+  const { data: myMemberships, isLoading: membershipsLoading } = trpc.communities.myMemberships.useQuery(undefined, {
+    enabled: !!user && !!community,
+    staleTime: 60_000,
+  });
+  const isRealMember = !myMemberships || myMemberships.length === 0 || myMemberships.some(m => m.id === community?.id);
+
+  useEffect(() => {
+    if (!user || !community || !myMemberships || myMemberships.length === 0) return;
+    if (isRealMember) return;
+    const primarySlug = myMemberships[0].slug;
+    if (primarySlug && primarySlug !== slug) {
+      navigate(`/${primarySlug}`, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, community?.id, myMemberships, slug]);
+
+  if (loading || (requireAuth && authLoading) || (!!user && !!community && membershipsLoading) || (!!user && !isRealMember)) {
     return (
       <div className="segolife-theme flex min-h-dvh items-center justify-center bg-background">
         <Loader2 className="size-6 animate-spin text-primary" aria-hidden="true" />
