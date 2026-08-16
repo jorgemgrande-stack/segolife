@@ -157,7 +157,7 @@ export default function VenueApp() {
             <p className="text-xs text-muted-foreground truncate">{user?.name ?? user?.email}</p>
           </div>
           {selectedVenue?.imageUrl && (
-            <img src={selectedVenue.imageUrl} alt={venueName} className="size-9 shrink-0 rounded-full border border-border bg-secondary object-cover" />
+            <img src={selectedVenue.imageUrl} alt={venueName} className="size-9 shrink-0 rounded-lg border border-border bg-secondary object-contain" />
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">

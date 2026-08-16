@@ -177,8 +177,9 @@ export default function VenuesManager() {
                         src={v.imageUrl}
                         alt={v.name}
                         ratio={1}
-                        rounded="rounded-full"
-                        className="size-10"
+                        rounded="rounded-lg"
+                        fit="contain"
+                        className="size-10 bg-secondary"
                       />
                     </TableCell>
                     <TableCell>

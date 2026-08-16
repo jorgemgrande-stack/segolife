@@ -14,12 +14,17 @@ export function SegolifeImage({
   ratio = 4 / 3,
   className,
   rounded = "rounded-2xl",
+  fit = "cover",
 }: {
   src?: string | null;
   alt: string;
   ratio?: number;
   className?: string;
   rounded?: string;
+  /** "cover" (por defecto, fotografía a sangre) o "contain" — logos/wordmarks
+   * que deben verse completos sin recortar, nunca a costa de perder parte
+   * del diseño real de marca. */
+  fit?: "cover" | "contain";
 }) {
   const [failed, setFailed] = useState(false);
   const showFallback = !src || failed;
@@ -36,7 +41,7 @@ export function SegolifeImage({
           alt={alt}
           loading="lazy"
           decoding="async"
-          className="h-full w-full object-cover"
+          className={cn("h-full w-full", fit === "contain" ? "object-contain" : "object-cover")}
           onError={() => setFailed(true)}
         />
       )}
