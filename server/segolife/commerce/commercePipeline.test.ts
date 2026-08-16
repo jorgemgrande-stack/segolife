@@ -69,7 +69,7 @@ function transactionFixture(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function fakeDb({ existingTransaction = null as unknown, insertId = 701 } = {}) {
+function fakeDb({ existingTransaction = null as unknown, insertId = 701, duplicateKeyOnInsert = false } = {}) {
   let selectCallCount = 0;
   const row = { id: insertId, idempotencyKey: "fourvenues:native:0:fv_pay_001", venueId: 10, eventId: null, userId: 42, totalCents: 1500, occurredAt: new Date("2026-09-05T10:00:00.000Z"), status: "confirmed", loyaltyProcessedAt: null };
   const db = {
@@ -78,7 +78,13 @@ function fakeDb({ existingTransaction = null as unknown, insertId = 701 } = {}) 
         where: () => ({
           limit: async () => {
             selectCallCount++;
+            // 1ª select: precheck por idempotencyKey (vacío salvo existingTransaction).
+            // Con duplicateKeyOnInsert=true, la ÚNICA select adicional es la
+            // reconsulta tras el ER_DUP_ENTRY (spec: nunca por insertId, que
+            // en la perdedora de la carrera nunca fue real) — devuelve la
+            // fila GANADORA ya confirmada por la otra llamada concurrente.
             if (selectCallCount === 1) return existingTransaction ? [existingTransaction] : [];
+            if (duplicateKeyOnInsert) return [row];
             return [row];
           },
         }),
@@ -86,7 +92,14 @@ function fakeDb({ existingTransaction = null as unknown, insertId = 701 } = {}) 
     }),
     insert: () => ({
       ignore: () => ({ values: async () => [{ insertId }] }),
-      values: async () => [{ insertId }],
+      values: async () => {
+        if (duplicateKeyOnInsert) {
+          const err: any = new Error("Duplicate entry for key 'idempotency_key'");
+          err.code = "ER_DUP_ENTRY";
+          throw err;
+        }
+        return [{ insertId }];
+      },
     }),
     update: () => ({ set: () => ({ where: async () => [{}] }) }),
   };
@@ -118,6 +131,30 @@ describe("ingestCommerceTransaction", () => {
     expect(mockRecordUnresolvedOperation).toHaveBeenCalledOnce();
     expect(mockRecordUnresolvedOperation.mock.calls[0][0]).toMatchObject({ operationType: "commerce", amountCents: 1500 });
     expect(mockEarnTokens).not.toHaveBeenCalled();
+  });
+
+  // PRE-16 overnight hardening (bug real encontrado en auditoría): dos
+  // llamadas con la MISMA idempotencyKey genuinamente en paralelo (retry de
+  // red) antes producían insertId=0 en la perdedora (INSERT IGNORE
+  // silenciado) → SELECT WHERE id=0 → TypeError → el try/catch de
+  // recordNativeSale lo trataba como "venta fallida" y revertía
+  // SegoTokens/stock que en realidad pertenecían a la GANADORA, ya
+  // confirmada de verdad. Ahora se captura el ER_DUP_ENTRY real y se
+  // reconsulta por idempotencyKey — nunca por insertId.
+  it("colisión real de idempotencyKey (dos llamadas concurrentes, ER_DUP_ENTRY en el INSERT): devuelve la transacción YA confirmada por la otra, nunca lanza ni reprocesa loyalty", async () => {
+    mockResolveIdentity.mockResolvedValue({ userId: 42, method: "buyer_email" });
+    const db = fakeDb({ duplicateKeyOnInsert: true });
+
+    const result = await ingestCommerceTransaction({
+      provider: "fourvenues",
+      venueId: 10,
+      transaction: transactionFixture(),
+    }, db);
+
+    expect(result.status).toBe("already_exists");
+    expect(result.transaction).toMatchObject({ id: 701, status: "confirmed" });
+    expect(mockEarnTokens).not.toHaveBeenCalled();
+    expect(mockRecordUnresolvedOperation).not.toHaveBeenCalled();
   });
 
   it("identidad resuelta → procesa loyalty con amountSpent en EUROS (totalCents/100), origin='consumption'", async () => {

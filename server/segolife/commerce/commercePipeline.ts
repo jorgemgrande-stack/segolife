@@ -144,26 +144,48 @@ export async function ingestCommerceTransaction(input: IngestCommerceTransaction
         buyer: input.transaction.buyer,
       }, conn);
 
-  const [insertResult] = await conn.insert(commerceTransactions).ignore().values({
-    userId: identity.userId,
-    venueId: input.venueId,
-    eventId: input.eventId ?? null,
-    provider: input.provider,
-    integrationType: input.integrationType ?? null,
-    integrationId: input.integrationId ?? null,
-    salesChannelId: input.salesChannelId ?? null,
-    externalTransactionId: input.transaction.externalTransactionId,
-    status: input.transaction.status,
-    subtotalCents: input.transaction.subtotalCents,
-    feesCents: input.transaction.feesCents,
-    totalCents: input.transaction.totalCents,
-    currency: input.transaction.currency,
-    paymentMethod: input.transaction.paymentMethod ?? null,
-    occurredAt: input.transaction.occurredAt,
-    idempotencyKey,
-    metadata: {},
-  });
-  const insertId = (insertResult as unknown as { insertId: number }).insertId;
+  // PRE-16 overnight hardening (bug real encontrado en auditoría): antes
+  // usaba `.insert(...).ignore()` — si dos llamadas con la MISMA
+  // idempotencyKey corrían genuinamente en paralelo (retransmisión a nivel
+  // de red, proxy con retry), la perdedora recibía `insertId=0` (MySQL
+  // silencia el INSERT IGNORE duplicado), el `SELECT ... WHERE id = 0` no
+  // encontraba nada, y el `TypeError` resultante hacía que el try/catch de
+  // recordNativeSale la tratara como "la venta falló" — disparando una
+  // reversión de SegoTokens/stock que en realidad pertenecían a la
+  // transacción GANADORA, ya confirmada de verdad. Mismo patrón ya usado
+  // correctamente en stockService.ts::applyMovementInTx: sin `.ignore()`,
+  // capturar el error real de clave duplicada y reconsultar por
+  // idempotencyKey (nunca por insertId, que en la perdedora nunca fue real).
+  let insertId: number;
+  try {
+    const [insertResult] = await conn.insert(commerceTransactions).values({
+      userId: identity.userId,
+      venueId: input.venueId,
+      eventId: input.eventId ?? null,
+      provider: input.provider,
+      integrationType: input.integrationType ?? null,
+      integrationId: input.integrationId ?? null,
+      salesChannelId: input.salesChannelId ?? null,
+      externalTransactionId: input.transaction.externalTransactionId,
+      status: input.transaction.status,
+      subtotalCents: input.transaction.subtotalCents,
+      feesCents: input.transaction.feesCents,
+      totalCents: input.transaction.totalCents,
+      currency: input.transaction.currency,
+      paymentMethod: input.transaction.paymentMethod ?? null,
+      occurredAt: input.transaction.occurredAt,
+      idempotencyKey,
+      metadata: {},
+    });
+    insertId = (insertResult as unknown as { insertId: number }).insertId;
+  } catch (err: unknown) {
+    const mysqlErr = err as { code?: string };
+    if (mysqlErr?.code === "ER_DUP_ENTRY") {
+      const [existing] = await conn.select().from(commerceTransactions).where(eq(commerceTransactions.idempotencyKey, idempotencyKey)).limit(1);
+      if (existing) return { status: "already_exists", transaction: existing };
+    }
+    throw err;
+  }
 
   if (input.transaction.items.length) {
     await conn.insert(commerceTransactionItems).values(
