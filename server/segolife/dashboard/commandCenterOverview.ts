@@ -116,10 +116,17 @@ async function getTicketsKpi(ctx: DashboardFilterContext, db: AnyDbHandle): Prom
     if (r.status === "paid") {
       paid += n;
       ticketRevenueCents += revenue;
-      // `provider` distingue "segolife" (nativo, ver inventoryHoldService.ts) de "fourvenues" —
-      // spec §28/§45: cada origen es su propio source of truth, nunca se confunden operacionalmente.
+      // `provider` distingue "segolife" (nativo, ver inventoryHoldService.ts) de
+      // "fourvenues_integrations" (el valor REAL que escribe integrationSyncService.ts/
+      // ticketPurchasePipeline.ts para pedidos importados — "fourvenues" a secas es
+      // un provider key DISTINTO, del Channel Manager legacy, sin credenciales reales
+      // hoy — spec §28/§45: cada origen es su propio source of truth, nunca se
+      // confunden operacionalmente. PRE-16 overnight hardening: antes comparaba contra
+      // "fourvenues", que nunca coincide con datos reales — fourvenuesPaid/
+      // fourvenuesRevenueCents quedaban siempre en 0 en producción (bug de
+      // presentación, el total combinado de abajo seguía siendo correcto).
       if (r.provider === "segolife") { nativePaid += n; nativeRevenueCents += revenue; }
-      else if (r.provider === "fourvenues") { fourvenuesPaid += n; fourvenuesRevenueCents += revenue; }
+      else if (r.provider === "fourvenues_integrations") { fourvenuesPaid += n; fourvenuesRevenueCents += revenue; }
     }
     if (r.status === "cancelled" || r.status === "failed") cancelled += n;
     if (r.status === "refunded" || r.status === "partially_refunded") refunded += n;

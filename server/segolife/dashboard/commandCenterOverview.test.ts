@@ -100,7 +100,7 @@ describe("getOverviewSnapshot", () => {
     const db = fakeDb({
       ticketOrdersRows: [
         { status: "paid", provider: "segolife", n: 4, revenue: 20000 },
-        { status: "paid", provider: "fourvenues", n: 6, revenue: 30000 },
+        { status: "paid", provider: "fourvenues_integrations", n: 6, revenue: 30000 },
         { status: "cancelled", n: 2, revenue: 0 },
         { status: "failed", n: 1, revenue: 0 },
         { status: "refunded", n: 3, revenue: 0 },
