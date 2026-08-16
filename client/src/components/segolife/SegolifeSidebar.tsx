@@ -4,6 +4,7 @@ import { Home as HomeIcon, Compass, Ticket, Gift, QrCode, User, ChevronDown, Che
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 /**
  * Sidebar de escritorio de Segolife (Fase 8.5, >=1200px vía el breakpoint
@@ -35,7 +36,19 @@ const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
 export function SegolifeSidebar({ slug, benefitsBadge }: { slug: string; benefitsBadge?: boolean }) {
   const { t } = useTranslation();
   const [location] = useLocation();
-  const { data: availableCommunities } = trpc.communities.myMemberships.useQuery();
+  // Bug real reportado: un visitante ANÓNIMO en /ie o /uva rebotaba
+  // constantemente a /login sin ningún requireAuth de por medio.
+  // myMemberships es protectedProcedure — llamarla sin `enabled` disparaba
+  // un 401 en CADA visita anónima (el sidebar se monta siempre que
+  // hideNav=false, aunque esté oculto por CSS bajo el breakpoint xl:), y
+  // main.tsx tiene un handler GLOBAL que redirige a /login ante cualquier
+  // error con el mensaje UNAUTHED_ERR_MSG — exactamente lo que
+  // protectedProcedure lanza. Bug preexistente (Fase 8.5), nunca detectado
+  // antes porque solo se manifiesta con un navegador real y una visita sin
+  // sesión — los tests de este componente mockean trpc entero, así que
+  // nunca ejercitan ni el error real ni el handler global de main.tsx.
+  const { isAuthenticated } = useAuth();
+  const { data: availableCommunities } = trpc.communities.myMemberships.useQuery(undefined, { enabled: isAuthenticated });
   const { data: publicSettings } = trpc.config.getPublicSettings.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
