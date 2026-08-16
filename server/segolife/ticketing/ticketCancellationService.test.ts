@@ -22,6 +22,12 @@ vi.mock("./payments/paymentProviderRegistry", () => ({ getPaymentProvider: mockG
 vi.mock("../engagement/engagementEvents", () => ({ emitEngagementEvent: vi.fn() }));
 vi.mock("../tokens/tokenLedgerService", () => ({ reverseTransaction: mockReverseTransaction, isLedgerEntryReversed: mockIsLedgerEntryReversed }));
 
+// Pre-16.2 — "Online Event Checkout — SegoTokens + Money": reembolso de una
+// compra que aplicó SegoTokens debe devolverlos, mismo primitivo/criterio
+// que doorSaleService.refundDoorSale (Pre-16.1).
+const { mockReverseTokenSpend } = vi.hoisted(() => ({ mockReverseTokenSpend: vi.fn() }));
+vi.mock("../tokens/tokenSpendService", () => ({ reverseTokenSpend: mockReverseTokenSpend }));
+
 import { cancelOrder, refundOrder } from "./ticketCancellationService";
 import { eventTickets, ticketPayments, tokenLedger } from "../../../drizzle/schema";
 
@@ -67,7 +73,7 @@ describe("ticketCancellationService — refundOrder", () => {
     const db = makeMockDb({
       order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {} },
       tickets: [{ id: 10, status: "issued" }],
-      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc" },
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc", amountCents: 2000 },
     });
 
     const result = await refundOrder(1, 9, "Cliente lo solicita", db);
@@ -97,7 +103,7 @@ describe("ticketCancellationService — refundOrder", () => {
     const db = makeMockDb({
       order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {} },
       tickets: [{ id: 10, status: "issued" }],
-      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc" },
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc", amountCents: 2000 },
     });
 
     const result = await refundOrder(1, 9, "Cliente lo solicita", db);
@@ -112,7 +118,7 @@ describe("ticketCancellationService — refundOrder", () => {
     const db = makeMockDb({
       order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {} },
       tickets: [{ id: 10, status: "issued" }],
-      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc" },
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc", amountCents: 2000 },
       purchaseLedgerEntry: { id: 555, sourceType: "ticket", sourceId: 1, direction: "credit" },
     });
 
@@ -128,7 +134,7 @@ describe("ticketCancellationService — refundOrder", () => {
     const db = makeMockDb({
       order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 0, metadata: {} },
       tickets: [{ id: 10, status: "issued" }],
-      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: null },
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: null, amountCents: 0 },
       purchaseLedgerEntry: null,
     });
 
@@ -143,7 +149,7 @@ describe("ticketCancellationService — refundOrder", () => {
     const db = makeMockDb({
       order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {} },
       tickets: [{ id: 10, status: "issued" }],
-      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc" },
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc", amountCents: 2000 },
       purchaseLedgerEntry: { id: 555, sourceType: "ticket", sourceId: 1, direction: "credit" },
     });
 
@@ -158,11 +164,76 @@ describe("ticketCancellationService — refundOrder", () => {
     const db = makeMockDb({
       order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {} },
       tickets: [{ id: 10, status: "issued" }],
-      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc" },
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc", amountCents: 2000 },
       purchaseLedgerEntry: { id: 555, sourceType: "ticket", sourceId: 1, direction: "credit" },
     });
 
     const result = await refundOrder(1, 9, "Cliente lo solicita", db);
     expect(result.reconciliationRequired).toBe(false); // el refund real ya ocurrió, no se revierte por un fallo aquí
+  });
+
+  // ─── SegoTokens en el reembolso (Pre-16.2, "Online Event Checkout — SegoTokens + Money") ──
+
+  it("pedido pagado con ST parciales (mixto): el provider solo reembolsa el TRAMO de dinero (amountCents del pago, nunca order.totalCents bruto), y se revierte la reserva de SegoTokens", async () => {
+    const refundPayment = vi.fn().mockResolvedValue({ status: "refunded" });
+    mockGetPaymentProvider.mockReturnValue({ refundPayment });
+    mockReverseTokenSpend.mockResolvedValue({ tokensReserved: 150 });
+    mockTransitionOrderStatus.mockResolvedValue({ id: 1, status: "refunded", userId: 42, eventId: 5, tokenReservationId: 900 });
+    const db = makeMockDb({
+      order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {}, tokenReservationId: 900 },
+      tickets: [{ id: 10, status: "issued" }],
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc", amountCents: 500 }, // 2000 bruto, 1500 ST, 500 dinero
+    });
+
+    await refundOrder(1, 9, "Cliente lo solicita", db);
+
+    expect(refundPayment).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 500 })); // NUNCA 2000
+    expect(mockReverseTokenSpend).toHaveBeenCalledOnce();
+    expect(mockReverseTokenSpend.mock.calls[0][0]).toMatchObject({ reservationId: 900, adminUserId: 9 });
+  });
+
+  it("pedido pagado 100% con SegoTokens (moneyDueCents=0): NUNCA llama al provider (nada que cobrar en dinero), pero SÍ revierte los SegoTokens", async () => {
+    const refundPayment = vi.fn();
+    mockGetPaymentProvider.mockReturnValue({ refundPayment });
+    mockReverseTokenSpend.mockResolvedValue({ tokensReserved: 200 });
+    mockTransitionOrderStatus.mockResolvedValue({ id: 1, status: "refunded", userId: 42, eventId: 5, tokenReservationId: 900 });
+    const db = makeMockDb({
+      order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {}, tokenReservationId: 900 },
+      tickets: [{ id: 10, status: "issued" }],
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: null, amountCents: 0 },
+    });
+
+    const result = await refundOrder(1, 9, "Cliente lo solicita", db);
+
+    expect(refundPayment).not.toHaveBeenCalled();
+    expect(result.reconciliationRequired).toBe(false);
+    expect(mockReverseTokenSpend).toHaveBeenCalledOnce();
+  });
+
+  it("pedido pagado solo en dinero (sin SegoTokens): NUNCA llama a reverseTokenSpend", async () => {
+    mockGetPaymentProvider.mockReturnValue({ refundPayment: vi.fn().mockResolvedValue({ status: "refunded" }) });
+    mockTransitionOrderStatus.mockResolvedValue({ id: 1, status: "refunded", userId: 42, eventId: 5, tokenReservationId: null });
+    const db = makeMockDb({
+      order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {}, tokenReservationId: null },
+      tickets: [{ id: 10, status: "issued" }],
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc", amountCents: 2000 },
+    });
+
+    await refundOrder(1, 9, "Cliente lo solicita", db);
+    expect(mockReverseTokenSpend).not.toHaveBeenCalled();
+  });
+
+  it("reverseTokenSpend falla → el reembolso de dinero ya confirmado NUNCA se deshace (best-effort, mismo criterio que la reversión de recompensa)", async () => {
+    mockGetPaymentProvider.mockReturnValue({ refundPayment: vi.fn().mockResolvedValue({ status: "refunded" }) });
+    mockReverseTokenSpend.mockRejectedValue(new Error("boom"));
+    mockTransitionOrderStatus.mockResolvedValue({ id: 1, status: "refunded", userId: 42, eventId: 5, tokenReservationId: 900 });
+    const db = makeMockDb({
+      order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {}, tokenReservationId: 900 },
+      tickets: [{ id: 10, status: "issued" }],
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc", amountCents: 500 },
+    });
+
+    const result = await refundOrder(1, 9, "Cliente lo solicita", db);
+    expect(result.reconciliationRequired).toBe(false);
   });
 });

@@ -79,9 +79,10 @@ export const ticketPurchaseRouter = router({
   initiatePayment: protectedProcedure
     .input(z.object({
       orderId: z.number().int().positive(),
-      // SEGOLIFE — COMMERCE CORE (Fase 9, spec §65): compra 100% con
-      // SegoTokens — el servidor recalcula/rechaza si no cubre el precio
-      // entero, nunca confía en que el cliente ya "sabe" que cubre.
+      // Pre-16.2 ("Online Event Checkout — SegoTokens + Money"): parcial o
+      // total — el servidor siempre recalcula desde la política de canje
+      // vigente y clama al máximo elegible, nunca confía en que el cliente
+      // "sabe" cuánto cubre (ver checkoutService.ts::initiatePayment).
       tokensToApply: z.number().int().positive().optional(),
     }))
     .mutation(async ({ ctx, input }) => {

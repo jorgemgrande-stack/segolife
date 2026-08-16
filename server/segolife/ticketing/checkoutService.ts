@@ -33,7 +33,7 @@ import { issueTicketsForOrder } from "./ticketIssuanceService";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
 import { earnTokens } from "../tokens/tokenEngine";
 import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
-import { reserveAndCaptureTokenSpend, reverseTokenSpend, type TokenSpendReservation } from "../tokens/tokenSpendService";
+import { reserveTokenSpend, captureTokenSpend, releaseTokenSpend, type TokenSpendReservation } from "../tokens/tokenSpendService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 3 });
 const _db = drizzle(_pool);
@@ -119,8 +119,8 @@ export interface InitiatePaymentResult {
  * inmediatamente (p.ej. MockPaymentProvider en dev/test), completa todo el
  * flujo hasta emitir tickets en la misma llamada. Con
  * UnconfiguredPaymentProvider (producción sin proveedor real) SIEMPRE
- * devuelve `paymentStatus: "failed"` — nunca hay tickets, nunca se finge
- * un pago (spec punto 45.5).
+ * devuelve `paymentStatus: "failed"` para cualquier importe en dinero
+ * pendiente — nunca hay tickets, nunca se finge un pago (spec punto 45.5).
  *
  * TICKET GRATUITO (spec §33): si `totalCents === 0`, NUNCA se llama al
  * PaymentProvider (ni siquiera al mock/unconfigured) — se confirma mediante
@@ -131,13 +131,25 @@ export interface InitiatePaymentResult {
  * funcione exactamente igual que para un pago real.
  */
 /**
- * `tokensToApply` (Fase 9, Commerce Core, spec §65): oportunidad controlada
- * de compra 100% con SegoTokens — SOLO se acepta si cubre el precio ENTERO
- * (moneyDueCents=0 tras aplicar la política de canje). Nunca una
- * combinación ST+dinero online: no existe pasarela de pago real (spec §13/
- * §48), así que un pedido con dinero pendiente NUNCA puede completarse
- * igual que uno gratuito. Reutiliza el MISMO primitivo que POS/puerta
- * (`reserveAndCaptureTokenSpend`), nunca una segunda vía de gasto.
+ * `tokensToApply` (Pre-16.2, "Online Event Checkout — SegoTokens + Money"):
+ * PARCIAL o TOTAL — el servidor recalcula/clama según la política de canje
+ * vigente, nunca confía en que el cliente ya "sabe" cuánto cubre. Reutiliza
+ * el motor de dos pasos ya construido para el pago presencial (Pre-16.1,
+ * `reserveTokenSpend()`/`captureTokenSpend()`/`releaseTokenSpend()`) —
+ * NUNCA `reserveAndCaptureTokenSpend()` (atómico): aquí la captura debe
+ * diferirse hasta que el dinero restante también esté confirmado (patrón A,
+ * spec §16/§13 de Pre-16.1, "reserve → capture after remaining payment
+ * succeeds"). A diferencia del pago presencial, aquí NO hace falta un paso
+ * de confirmación separado del Student — el propio Student, ya autenticado,
+ * es quien inicia y ejecuta este checkout; su clic en "Pagar" ES la
+ * autorización, no hace falta pedírsela dos veces.
+ *
+ * Solo se llama al PaymentProvider por `moneyDueCents` (el resto tras
+ * aplicar SegoTokens), NUNCA por `order.totalCents` bruto — así, sin
+ * pasarela real conectada (hoy: UnconfiguredPaymentProvider, siempre
+ * "failed"), un pedido 100% cubierto por SegoTokens sigue completándose sin
+ * tocar el provider (moneyDueCents=0), y uno con dinero pendiente falla
+ * honestamente por el importe REAL que faltaría cobrar, nunca por el bruto.
  */
 export async function initiatePayment(orderId: number, tokensToApply?: number, db?: DbHandle): Promise<InitiatePaymentResult> {
   const conn = db ?? (await getDb());
@@ -148,7 +160,7 @@ export async function initiatePayment(orderId: number, tokensToApply?: number, d
   if (tokensToApply != null && tokensToApply > 0 && order.totalCents > 0) {
     if (!order.userId) throw new CheckoutError("STUDENT_REQUIRED", "Se necesita un Student identificado para aplicar SegoTokens");
     const [event] = await conn.select({ venueId: events.venueId }).from(events).where(eq(events.id, order.eventId)).limit(1);
-    const spendResult = await reserveAndCaptureTokenSpend({
+    const reserveResult = await reserveTokenSpend({
       userId: order.userId,
       venueId: event?.venueId ?? null,
       eventId: order.eventId,
@@ -159,21 +171,14 @@ export async function initiatePayment(orderId: number, tokensToApply?: number, d
       idempotencyKey: `ticket_order_tokens:${orderId}`,
       createdByUserId: order.userId,
     }, conn);
-    if (!("reservation" in spendResult)) {
+    if (reserveResult.status !== "reserved") {
       throw new CheckoutError("TOKEN_SPEND_FAILED", "No se pudo aplicar SegoTokens a esta compra");
     }
-    if (spendResult.reservation.moneyDueCents > 0) {
-      // No cubre el 100% — liberar inmediatamente, nunca dejar SegoTokens
-      // capturados para una compra online que no puede completarse sin
-      // pasarela de pago (spec §13, "no ST permanently captured unless
-      // architecture can safely reserve and later capture").
-      await reverseTokenSpend({ reservationId: spendResult.reservation.id, reason: "SegoTokens insuficientes para cubrir el 100% online — no hay pasarela de pago para el resto", adminUserId: order.userId }, conn).catch(() => {});
-      throw new CheckoutError("INSUFFICIENT_TOKENS_FOR_FULL_COVERAGE", "Los SegoTokens aplicados no cubren el precio completo — sin pasarela de pago no es posible completar esta compra con un pago mixto");
-    }
-    tokenReservation = spendResult.reservation;
+    tokenReservation = reserveResult.reservation;
   }
 
-  const isFree = order.totalCents === 0 || tokenReservation != null;
+  const moneyDueCents = tokenReservation ? tokenReservation.moneyDueCents : order.totalCents;
+  const isFree = moneyDueCents === 0;
   const provider = getPaymentProvider();
   const paymentIdempotencyKey = `ticket_payment:${orderId}:attempt`;
 
@@ -192,7 +197,7 @@ export async function initiatePayment(orderId: number, tokensToApply?: number, d
   try {
     awaitingOrder = await transitionOrderStatus(orderId, ["pending"], "awaiting_payment", {}, conn);
   } catch (err) {
-    if (tokenReservation) await reverseTokenSpend({ reservationId: tokenReservation.id, reason: "Pedido no pudo transicionar a awaiting_payment", adminUserId: order.userId }, conn).catch(() => {});
+    if (tokenReservation) await releaseTokenSpend(tokenReservation.id, "order_could_not_transition_to_awaiting_payment", conn).catch(() => {});
     if (err instanceof OrderStateError) throw new CheckoutError(err.code, err.message);
     throw err;
   }
@@ -201,7 +206,7 @@ export async function initiatePayment(orderId: number, tokensToApply?: number, d
     ? { status: "succeeded" as const, externalPaymentId: null, redirectUrl: null, error: null }
     : await provider.createPayment({
         orderId,
-        amountCents: order.totalCents,
+        amountCents: moneyDueCents,
         currency: order.currency,
         idempotencyKey: paymentIdempotencyKey,
       });
@@ -209,9 +214,9 @@ export async function initiatePayment(orderId: number, tokensToApply?: number, d
   if (!existingPayment) {
     await conn.insert(ticketPayments).ignore().values({
       orderId,
-      provider: tokenReservation ? "segolife_native_segotokens" : isFree ? "segolife_native_free" : provider.providerKey,
+      provider: isFree && tokenReservation ? "segolife_native_segotokens" : isFree ? "segolife_native_free" : provider.providerKey,
       externalPaymentId: result.externalPaymentId ?? null,
-      amountCents: order.totalCents,
+      amountCents: moneyDueCents,
       currency: order.currency,
       status: result.status === "succeeded" ? "succeeded" : result.status === "failed" ? "failed" : "pending",
       idempotencyKey: paymentIdempotencyKey,
@@ -221,10 +226,27 @@ export async function initiatePayment(orderId: number, tokensToApply?: number, d
   }
 
   if (result.status === "succeeded") {
+    // La captura real del ledger ocurre AQUÍ, una única vez, ahora que el
+    // dinero restante (si lo había) ya está confirmado — nunca antes. Si el
+    // dinero acaba de confirmarse pero la captura falla (p.ej. la reserva
+    // expiró en el tramo hospedado del provider, ventana de 15 min — spec
+    // §12 "TTL alignment", igual que HOLD_DURATION_MINUTES), el pedido
+    // completa igual: el dinero ya es real, no se le puede negar el ticket
+    // al Student por un detalle interno del ledger — se registra el fallo
+    // en vez de perder el pedido, mismo criterio best-effort que
+    // earnTokens()/evaluateBenefitsForOrigin() más abajo en este archivo.
+    if (tokenReservation) {
+      try {
+        const captured = await captureTokenSpend(tokenReservation.id, conn);
+        tokenReservation = captured.reservation;
+      } catch (err) {
+        console.error(`[checkoutService] Dinero confirmado pero no se pudo capturar la reserva de SegoTokens (orderId=${orderId}, reservationId=${tokenReservation.id}):`, err);
+      }
+    }
     const paidOrder = await transitionOrderStatus(orderId, ["awaiting_payment"], "paid", {
       purchasedAt: new Date(),
       externalPaymentId: result.externalPaymentId ?? null,
-      paymentMethod: tokenReservation ? "segotokens" : null,
+      paymentMethod: tokenReservation ? (moneyDueCents === 0 ? "segotokens" : "mixed") : null,
       tokenReservationId: tokenReservation?.id ?? null,
     }, conn);
     const tickets = await finalizePaidOrder(paidOrder, conn);
@@ -234,13 +256,27 @@ export async function initiatePayment(orderId: number, tokensToApply?: number, d
   if (result.status === "pending" && result.redirectUrl) {
     // Proveedor con checkout hospedado (futuro real) — el order queda
     // awaiting_payment hasta que un webhook llame a confirmPaymentByWebhook().
+    // La reserva de SegoTokens sigue "reserved" (nunca capturada todavía) —
+    // se enlaza al order YA, sin esperar al webhook, para que
+    // confirmPaymentByWebhook() pueda encontrarla y capturarla cuando el
+    // dinero se confirme. A diferencia de los enlaces "best-effort" del
+    // resto de este dominio (p.ej. tokenReservationId en el pago
+    // presencial), este SÍ debe propagar el error si falla — sin él, el
+    // webhook no podría capturar nunca y el pedido quedaría pagado sin que
+    // el dinero recibiera su parte en SegoTokens de vuelta al Student ni al
+    // ledger (ni capturado ni liberado).
+    if (tokenReservation) {
+      await conn.update(ticketOrders).set({ tokenReservationId: tokenReservation.id }).where(eq(ticketOrders.id, orderId));
+    }
     return { order: awaitingOrder, paymentStatus: "pending", redirectUrl: result.redirectUrl };
   }
 
   // Sin proveedor real (o rechazo) — vuelve a pending para no dejar el hold
   // atrapado en awaiting_payment sin ninguna vía de completar el pago; el
   // hold sigue vigente hasta expiresAt, el estudiante puede reintentar.
-  if (tokenReservation) await reverseTokenSpend({ reservationId: tokenReservation.id, reason: "Pago no pudo completarse tras aplicar SegoTokens", adminUserId: order.userId }, conn).catch(() => {});
+  // Libera (nunca revierte) — la reserva nunca llegó a capturarse en este
+  // camino.
+  if (tokenReservation) await releaseTokenSpend(tokenReservation.id, "money_leg_failed_or_no_provider", conn).catch(() => {});
   await transitionOrderStatus(orderId, ["awaiting_payment"], "pending", {}, conn).catch(() => null);
   return { order, paymentStatus: "failed", error: result.error ?? "No se pudo iniciar el pago" };
 }
@@ -254,6 +290,20 @@ export async function confirmPaymentByWebhook(orderId: number, externalPaymentId
   if (order.status === "paid") {
     const tickets = await issueTicketsForOrder(order, conn);
     return { order, paymentStatus: "succeeded", tickets };
+  }
+
+  // Captura diferida (Pre-16.2): si initiatePayment() dejó una reserva de
+  // SegoTokens enlazada (camino hospedado/pending), esta es la ÚNICA otra
+  // vía de la app por la que un order llega a "paid" — captura aquí, ahora
+  // que el dinero restante ya está confirmado por el provider real.
+  // Best-effort por el mismo motivo que en initiatePayment(): el dinero ya
+  // es real, nunca se le niega el ticket al Student por esto.
+  if (order.tokenReservationId != null) {
+    try {
+      await captureTokenSpend(order.tokenReservationId, conn);
+    } catch (err) {
+      console.error(`[checkoutService] Dinero confirmado por webhook pero no se pudo capturar la reserva de SegoTokens (orderId=${orderId}, reservationId=${order.tokenReservationId}):`, err);
+    }
   }
 
   const paidOrder = await transitionOrderStatus(orderId, ["awaiting_payment"], "paid", { purchasedAt: new Date(), externalPaymentId }, conn);

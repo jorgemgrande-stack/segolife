@@ -54,7 +54,18 @@ export interface EventPerformanceRow {
   attendanceCount: number;
   eligibleTickets: number;
   attendanceRatePct: number | null;
+  /** Valor comercial BRUTO (spec §21: nunca se muta por SegoTokens aplicados) — suma de ticket_orders.total_cents. */
   ticketRevenueCents: number;
+  /**
+   * Pre-16.2 (spec §22 "SegoTokens are not money revenue"): tramo REAL en
+   * dinero — ticketRevenueCents menos el valor promocional de SegoTokens ya
+   * aplicado (token_spend_reservations.promotional_value_cents, vía
+   * ticket_orders.token_reservation_id). Para un pedido sin SegoTokens,
+   * coincide exactamente con ticketRevenueCents.
+   */
+  ticketMoneyCollectedCents: number;
+  /** Valor promocional de SegoTokens ya aplicado — nunca sumado dentro de ticketRevenueCents/ticketMoneyCollectedCents a la vez, siempre reportado aparte. */
+  ticketTokensPromotionalValueCents: number;
   velocity: EventVelocity;
 }
 
@@ -102,21 +113,35 @@ export async function getEventPerformance(ctx: DashboardFilterContext, db: AnyDb
   // conteo de `total_cents` cuando una orden tiene varias líneas. Los tickets
   // vendidos se agregan aparte (`ticketsResult`, por item) precisamente para
   // no mezclar ambas unidades en la misma suma.
+  //
+  // Pre-16.2 (spec §22/§39): LEFT JOIN a token_spend_reservations vía
+  // ticket_orders.token_reservation_id — el mismo enlace que ya usa
+  // fiscalSnapshotService.ts::buildFromTicketOrder para separar el tramo
+  // promocional del real cobrado en dinero. `promotional_value_cents` de la
+  // reserva SIEMPRE se resta de `ticket_revenue_cents` (bruto) para obtener
+  // `ticket_money_collected_cents` — SegoTokens NUNCA cuenta como ingreso
+  // monetario aquí.
   const rankingResult = await db.execute(sql`
     SELECT o.event_id AS event_id, e.name AS event_name, e.venue_id AS venue_id, v.name AS venue_name, e.starts_at AS starts_at,
       COUNT(DISTINCT o.id) AS orders_count,
-      COALESCE(SUM(o.total_cents), 0) AS ticket_revenue_cents
+      COALESCE(SUM(o.total_cents), 0) AS ticket_revenue_cents,
+      COALESCE(SUM(tsr.promotional_value_cents), 0) AS ticket_tokens_promotional_value_cents
     FROM ticket_orders o
     JOIN events e ON e.id = o.event_id
     LEFT JOIN venues v ON v.id = e.venue_id
+    LEFT JOIN token_spend_reservations tsr ON tsr.id = o.token_reservation_id
     WHERE o.status = 'paid' AND o.purchased_at >= ${ctx.from} AND o.purchased_at < ${ctx.to} ${communityCond}
     GROUP BY o.event_id, e.name, e.venue_id, v.name, e.starts_at
     ORDER BY ticket_revenue_cents DESC
     LIMIT ${RANKING_LIMIT}
   `);
-  const revenueByEvent = new Map<number, { ordersCount: number; ticketRevenueCents: number }>();
-  for (const r of rowsOf<{ event_id: number; orders_count: number | string; ticket_revenue_cents: number | string }>(rankingResult)) {
-    revenueByEvent.set(Number(r.event_id), { ordersCount: Number(r.orders_count), ticketRevenueCents: Number(r.ticket_revenue_cents) });
+  const revenueByEvent = new Map<number, { ordersCount: number; ticketRevenueCents: number; ticketTokensPromotionalValueCents: number }>();
+  for (const r of rowsOf<{ event_id: number; orders_count: number | string; ticket_revenue_cents: number | string; ticket_tokens_promotional_value_cents: number | string }>(rankingResult)) {
+    revenueByEvent.set(Number(r.event_id), {
+      ordersCount: Number(r.orders_count),
+      ticketRevenueCents: Number(r.ticket_revenue_cents),
+      ticketTokensPromotionalValueCents: Number(r.ticket_tokens_promotional_value_cents),
+    });
   }
 
   const ticketsResult = await db.execute(sql`
@@ -175,7 +200,7 @@ export async function getEventPerformance(ctx: DashboardFilterContext, db: AnyDb
     const eventId = Number(r.event_id);
     if (seen.has(eventId)) continue;
     seen.add(eventId);
-    const revenue = revenueByEvent.get(eventId) ?? { ordersCount: 0, ticketRevenueCents: 0 };
+    const revenue = revenueByEvent.get(eventId) ?? { ordersCount: 0, ticketRevenueCents: 0, ticketTokensPromotionalValueCents: 0 };
     const attendanceCount = attendanceByEvent.get(eventId) ?? 0;
     const eligibleTickets = eligibleByEvent.get(eventId) ?? 0;
     rows.push({
@@ -185,6 +210,8 @@ export async function getEventPerformance(ctx: DashboardFilterContext, db: AnyDb
       attendanceCount, eligibleTickets,
       attendanceRatePct: eligibleTickets > 0 ? Math.round((attendanceCount / eligibleTickets) * 1000) / 10 : null,
       ticketRevenueCents: revenue.ticketRevenueCents,
+      ticketTokensPromotionalValueCents: revenue.ticketTokensPromotionalValueCents,
+      ticketMoneyCollectedCents: revenue.ticketRevenueCents - revenue.ticketTokensPromotionalValueCents,
       velocity: velocityByEvent.get(eventId) ?? { last24h: 0, prior24h: 0, trend: "flat" },
     });
   }

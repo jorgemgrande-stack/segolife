@@ -25,9 +25,12 @@ const STATUS_KEY: Record<string, string> = {
 
 /**
  * Resumen de pedido + pago — /:community/checkout/:orderId (Fase 8, spec
- * punto 27). Mientras no exista un PaymentProvider real configurado, "Pay"
- * SIEMPRE devuelve un estado honesto de "no disponible todavía" — nunca se
- * finge un pago exitoso (arquitectura preparada ≠ checkout falso).
+ * punto 27; SegoTokens parciales/totales en Pre-16.2 "Online Event
+ * Checkout — SegoTokens + Money"). Mientras no exista un PaymentProvider
+ * real configurado, cualquier importe de DINERO pendiente SIEMPRE devuelve
+ * un estado honesto de "no disponible todavía" — nunca se finge un pago
+ * exitoso (arquitectura preparada ≠ checkout falso). Una compra 100%
+ * cubierta por SegoTokens sigue completándose sin tocar el provider.
  */
 export default function TicketCheckout() {
   const { t, i18n } = useTranslation();
@@ -41,14 +44,28 @@ export default function TicketCheckout() {
   const { data, isLoading, refetch } = trpc.ticketPurchase.myOrderById.useQuery({ orderId }, { enabled: !!orderId });
   const walletQ = trpc.tokens.getMyWallet.useQuery();
 
+  const requestedTokensNum = Number(tokensInput) || 0;
+  const canPay = data ? data.order.status === "pending" || data.order.status === "awaiting_payment" : false;
+
+  // SEGOTOKENS SPEND — COTIZACIÓN CANÓNICA (Pre-16.2, spec §7): el ST→€ y el
+  // "cuánto queda por pagar" NUNCA se calculan en el cliente — siempre se
+  // pide al mismo motor server-side que initiatePayment() usará de verdad
+  // (tokenSpendService.ts), con el MISMO alcance venueId/eventId. Distinto
+  // del preview de abajo (rewardQ), que es el lado "earn" — este es "spend".
+  const quoteQ = trpc.tokens.myQuoteTokenSpend.useQuery(
+    { venueId: data?.venueId ?? null, eventId: data?.order.eventId, grossAmountCents: data?.order.totalCents ?? 0, requestedTokens: requestedTokensNum },
+    { enabled: !!data && canPay && requestedTokensNum > 0 }
+  );
+  const quote = quoteQ.data?.eligible ? quoteQ.data : null;
+  const exceedsBalance = !!walletQ.data && requestedTokensNum > walletQ.data.balance;
+  const moneyDueCents = quote ? quote.moneyDueCents : (data?.order.totalCents ?? 0);
+
   // SEGOTOKENS REWARD PREVIEW (Fase 10.6, spec §32) — cuánto ST va a ganar
   // ESTA compra (lado "earn", distinto del input de "pagar con ST" de abajo,
-  // que es el lado "spend") — solo mientras el pedido sigue pagable
-  // (canPay se calcula más abajo; aquí se repite la misma condición porque
-  // `data`/`order` todavía no existen en este punto del componente).
+  // que es el lado "spend") — solo mientras el pedido sigue pagable.
   const rewardQ = trpc.tokens.previewMyReward.useQuery(
     { origin: "ticket", eventId: data?.order.eventId, amountSpent: data ? data.order.totalCents / 100 : undefined },
-    { enabled: !!data && (data.order.status === "pending" || data.order.status === "awaiting_payment") }
+    { enabled: !!data && canPay }
   );
 
   const payMut = trpc.ticketPurchase.initiatePayment.useMutation({
@@ -57,6 +74,9 @@ export default function TicketCheckout() {
         toast.success(t("ticketing.orderStatusPaid"));
         navigate(`/${slug}/tickets`);
       } else {
+        // "pending" (checkout hospedado, futuro real) o "failed" — en ambos
+        // casos el order/badge de estado ya refleja la realidad al refetch,
+        // nunca se finge un éxito (spec §14/§45.5).
         refetch();
       }
     },
@@ -84,7 +104,6 @@ export default function TicketCheckout() {
   }
 
   const { order, items } = data;
-  const canPay = order.status === "pending" || order.status === "awaiting_payment";
   const canCancel = order.status === "pending" || order.status === "awaiting_payment";
   const lastFailure = payMut.data && "error" in payMut.data ? payMut.data.error : null;
 
@@ -140,9 +159,11 @@ export default function TicketCheckout() {
               </div>
             )}
 
-            {/* SEGOLIFE — COMMERCE CORE (Fase 9, spec §65): compra 100% con
-                SegoTokens — el servidor rechaza si no cubre el precio
-                entero (nunca un pago mixto online, sin pasarela real). */}
+            {/* Pre-16.2 ("Online Event Checkout — SegoTokens + Money"): el
+                Student elige cuántos ST aplicar — parcial o total, el
+                servidor clama/recalcula según la política de canje vigente
+                (misma cotización canónica que initiatePayment() usará de
+                verdad al confirmar). */}
             {walletQ.data && walletQ.data.balance > 0 && (
               <div className="segolife-card-shadow mt-4 space-y-2 rounded-2xl bg-card p-4 text-sm">
                 <p className="flex items-center gap-1.5 font-medium text-foreground">
@@ -150,17 +171,30 @@ export default function TicketCheckout() {
                 </p>
                 <p className="text-xs text-muted-foreground">{t("ticketing.payWithTokensHint")} ({walletQ.data.balance} ST)</p>
                 <div className="flex gap-2">
-                  <Input type="number" min={0} value={tokensInput} onChange={e => setTokensInput(e.target.value)} placeholder="0" />
-                  <Button variant="secondary" disabled={payMut.isPending || !Number(tokensInput)} onClick={() => payMut.mutate({ orderId, tokensToApply: Number(tokensInput) })}>
-                    {t("ticketing.payWithTokensButton")}
+                  <Input type="number" min={0} max={walletQ.data.balance} value={tokensInput} onChange={e => setTokensInput(e.target.value)} placeholder="0" />
+                  <Button variant="outline" size="sm" onClick={() => setTokensInput(String(walletQ.data!.balance))}>
+                    {t("ticketing.useMaxTokensButton")}
                   </Button>
                 </div>
+                {exceedsBalance && <p className="text-xs text-destructive">{t("ticketing.tokensExceedBalance")}</p>}
+                {quote && (
+                  <div className="space-y-1 border-t border-border pt-2 text-xs">
+                    <div className="flex justify-between"><span className="text-muted-foreground">{t("ticketing.tokensAppliedLabel")}</span><span className="font-medium text-foreground">{quote.tokensToSpend} ST</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">{t("ticketing.promotionalValueLabel")}</span><span className="font-medium text-foreground">−{(quote.promotionalValueCents / 100).toFixed(2)} {order.currency}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">{t("ticketing.remainingToPayLabel")}</span><span className="font-semibold text-foreground">{(quote.moneyDueCents / 100).toFixed(2)} {order.currency}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">{t("ticketing.balanceAfterLabel")}</span><span className="font-medium text-foreground">{walletQ.data.balance - quote.tokensToSpend} ST</span></div>
+                  </div>
+                )}
               </div>
             )}
 
-            <Button className="mt-4 w-full rounded-full py-6 text-sm font-semibold" disabled={payMut.isPending} onClick={() => payMut.mutate({ orderId })}>
+            <Button
+              className="mt-4 w-full rounded-full py-6 text-sm font-semibold"
+              disabled={payMut.isPending || exceedsBalance}
+              onClick={() => payMut.mutate({ orderId, tokensToApply: requestedTokensNum > 0 ? requestedTokensNum : undefined })}
+            >
               {payMut.isPending ? <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" /> : null}
-              {t("ticketing.payButton")} · {(order.totalCents / 100).toFixed(2)} {order.currency}
+              {t("ticketing.payButton")} · {(moneyDueCents / 100).toFixed(2)} {order.currency}
             </Button>
             {canCancel && (
               <Button variant="ghost" className="mt-2 w-full text-destructive" disabled={cancelMut.isPending} onClick={() => cancelMut.mutate({ orderId })}>

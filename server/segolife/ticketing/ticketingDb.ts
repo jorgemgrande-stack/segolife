@@ -220,7 +220,7 @@ export interface MyOrderItemWithTypeName {
   totalPriceCents: number;
 }
 
-export async function getMyOrderById(orderId: number, userId: number, db?: DbHandle): Promise<{ order: TicketOrder; items: MyOrderItemWithTypeName[] } | null> {
+export async function getMyOrderById(orderId: number, userId: number, db?: DbHandle): Promise<{ order: TicketOrder; items: MyOrderItemWithTypeName[]; venueId: number | null } | null> {
   const conn = db ?? (await getDb());
   const [order] = await conn.select().from(ticketOrders).where(and(eq(ticketOrders.id, orderId), eq(ticketOrders.userId, userId))).limit(1);
   if (!order) return null;
@@ -234,7 +234,13 @@ export async function getMyOrderById(orderId: number, userId: number, db?: DbHan
   }).from(ticketOrderItems)
     .leftJoin(eventTicketTypes, eq(ticketOrderItems.ticketTypeId, eventTicketTypes.id))
     .where(eq(ticketOrderItems.orderId, orderId));
-  return { order, items };
+  // Pre-16.2 (spec §7 "canonical quote"): el checkout necesita el venueId
+  // del evento para pedir la cotización de SegoTokens con el mismo alcance
+  // exacto que initiatePayment() ya resuelve internamente
+  // (checkoutService.ts) — nunca un venueId que el propio cliente pudiera
+  // inventar.
+  const [event] = await conn.select({ venueId: events.venueId }).from(events).where(eq(events.id, order.eventId)).limit(1);
+  return { order, items, venueId: event?.venueId ?? null };
 }
 
 export interface MyTicketWithEvent {

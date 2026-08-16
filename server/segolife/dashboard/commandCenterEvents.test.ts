@@ -76,6 +76,36 @@ describe("getEventPerformance — ranking", () => {
     expect(snapshot.topEventId).toBeNull();
     expect(snapshot.trendingEventId).toBeNull();
   });
+
+  // ─── Pre-16.2 ("Online Event Checkout — SegoTokens + Money", spec §22/§39) ──
+
+  it("pedido con SegoTokens aplicados: ticketRevenueCents queda BRUTO, ticketMoneyCollectedCents resta el valor promocional — SegoTokens nunca cuenta como ingreso monetario", async () => {
+    const db = fakeExecuteDb([
+      // ticket 4600 (bruto), 1500 de SegoTokens aplicados -> 3100 reales en dinero
+      [{ event_id: 1, event_name: "Evento mixto", venue_id: 10, venue_name: "Casanova", starts_at: "2026-08-20T22:00:00.000Z", orders_count: 1, ticket_revenue_cents: 4600, ticket_tokens_promotional_value_cents: 1500 }],
+      [{ event_id: 1, tickets_sold: 1 }],
+      [], [],
+      [{ event_id: 1, last24h: 0, prior24h: 0 }],
+      [],
+    ]);
+    const snapshot = await getEventPerformance(CTX, db as never, NOW);
+    expect(snapshot.rows[0].ticketRevenueCents).toBe(4600);
+    expect(snapshot.rows[0].ticketTokensPromotionalValueCents).toBe(1500);
+    expect(snapshot.rows[0].ticketMoneyCollectedCents).toBe(3100);
+  });
+
+  it("pedido sin SegoTokens: ticketMoneyCollectedCents coincide exactamente con ticketRevenueCents", async () => {
+    const db = fakeExecuteDb([
+      [{ event_id: 1, event_name: "Evento solo dinero", venue_id: 10, venue_name: "Casanova", starts_at: "2026-08-20T22:00:00.000Z", orders_count: 1, ticket_revenue_cents: 2000, ticket_tokens_promotional_value_cents: 0 }],
+      [{ event_id: 1, tickets_sold: 1 }],
+      [], [],
+      [{ event_id: 1, last24h: 0, prior24h: 0 }],
+      [],
+    ]);
+    const snapshot = await getEventPerformance(CTX, db as never, NOW);
+    expect(snapshot.rows[0].ticketMoneyCollectedCents).toBe(2000);
+    expect(snapshot.rows[0].ticketTokensPromotionalValueCents).toBe(0);
+  });
 });
 
 describe("getEventPerformance — NEEDS ATTENTION (regla objetiva, nunca capacity)", () => {

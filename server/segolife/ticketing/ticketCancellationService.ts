@@ -25,6 +25,7 @@ import { getPaymentProvider } from "./payments/paymentProviderRegistry";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
 import { CheckoutError } from "./inventoryHoldService";
 import { reverseTransaction, isLedgerEntryReversed } from "../tokens/tokenLedgerService";
+import { reverseTokenSpend } from "../tokens/tokenSpendService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -69,10 +70,18 @@ export async function refundOrder(orderId: number, refundedByUserId: number, rea
   const [payment] = await conn.select().from(ticketPayments)
     .where(and(eq(ticketPayments.orderId, orderId), eq(ticketPayments.status, "succeeded"))).limit(1);
 
+  // Pre-16.2: `payment.amountCents` es el importe REAL cobrado por el
+  // provider (el dinero restante tras aplicar SegoTokens, si los hubo —
+  // nunca el bruto del pedido, ver checkoutService.ts). Si no hubo nada que
+  // cobrar en dinero (100% SegoTokens, o ticket gratuito), no se llama al
+  // provider en absoluto — nada que reembolsar por esa vía.
+  const moneyToRefundCents = payment?.amountCents ?? 0;
   const provider = getPaymentProvider();
-  const refundResult = payment?.externalPaymentId
-    ? await provider.refundPayment({ externalPaymentId: payment.externalPaymentId, amountCents: order.totalCents, reason })
-    : { status: "failed" as const, error: "Sin referencia de pago real que reembolsar (provider no configurado)" };
+  const refundResult = moneyToRefundCents === 0
+    ? { status: "refunded" as const, externalPaymentId: payment?.externalPaymentId ?? null, error: null }
+    : payment?.externalPaymentId
+      ? await provider.refundPayment({ externalPaymentId: payment.externalPaymentId, amountCents: moneyToRefundCents, reason })
+      : { status: "failed" as const, error: "Sin referencia de pago real que reembolsar (provider no configurado)" };
 
   if (refundResult.status !== "refunded") {
     const reconciled = await transitionOrderStatus(orderId, ["paid"], "reconciliation_required", {
@@ -90,6 +99,19 @@ export async function refundOrder(orderId: number, refundedByUserId: number, rea
   }
 
   await reverseNativePurchaseReward(refunded, refundedByUserId, conn);
+
+  // Pre-16.2: si la compra se pagó (total o parcialmente) con SegoTokens,
+  // devolverlos al wallet — mismo primitivo y mismo criterio best-effort
+  // que ya usa doorSaleService.refundDoorSale (Pre-16.1) para el reembolso
+  // presencial; un fallo aquí nunca deshace el reembolso de dinero ya
+  // confirmado con el provider.
+  if (refunded.tokenReservationId != null) {
+    try {
+      await reverseTokenSpend({ reservationId: refunded.tokenReservationId, reason, adminUserId: refundedByUserId }, conn);
+    } catch (err) {
+      console.error(`[ticketCancellationService] No se pudieron revertir los SegoTokens (orderId=${orderId}):`, err);
+    }
+  }
 
   if (refunded.userId) {
     emitEngagementEvent("order_refunded", { userId: refunded.userId, communityId: null, orderId: refunded.id, eventId: refunded.eventId, amountCents: order.totalCents, partial: false });
