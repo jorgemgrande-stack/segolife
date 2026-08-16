@@ -77,8 +77,8 @@ describe("renderEmailShell — compatibilidad y branding", () => {
     expect(html).not.toMatch(/@import|fonts\.googleapis|<link/);
   });
 
-  it("la cabecera incluye el logo real de SEGOLIFE (icono cuadrado, .png — Outlook desktop no renderiza .svg) con URL absoluta y alt de marca — nunca un <img> roto en un cliente de email", () => {
-    expect(html).toContain('src="https://www.segolife.es/icons/segolife-icon.png"');
+  it("la cabecera incluye el logo real de marca subido por el admin (.png — Outlook desktop no renderiza .svg) con URL absoluta y alt de marca — nunca un <img> roto en un cliente de email", () => {
+    expect(html).toContain('src="https://www.segolife.es/local-storage/segolife/uploads/1786874257171-c8vhw5.png"');
     expect(html).toContain('alt="SEGOLIFE"');
   });
 

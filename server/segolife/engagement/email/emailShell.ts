@@ -16,8 +16,6 @@
  * Identidad visual: violeta/lila sobre negro/blanco, estética nightlife/
  * university lifestyle premium — ver docs/engagement/communication-center.md.
  */
-import { canonicalBaseUrl } from "../../../_core/canonicalHost";
-
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 
 export const EMAIL_TOKENS = {
@@ -35,6 +33,16 @@ export const EMAIL_TOKENS = {
 } as const;
 
 const FONT_STACK = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+// Logo real de marca (subido por el admin, mismo asset que sirve
+// `segolife_brand_logo_url` en el resto de la app — client/src/components/
+// segolife/SegolifeHeader.tsx y compañía). Hardcodeado aquí en vez de leído
+// de system_settings porque ese valor solo se lee vía tRPC (cliente) o el
+// helper async `getSystemSetting()`; el shell de email es síncrono y se
+// invoca desde ~12 listeners/servicios sin acceso a la DB en ese punto. Si
+// el admin cambia el logo de marca desde el panel, este archivo necesita
+// actualizarse a mano.
+const SEGOLIFE_LOGO_URL = "https://www.segolife.es/local-storage/segolife/uploads/1786874257171-c8vhw5.png";
 
 // ─── Utilidades ──────────────────────────────────────────────────────────────
 
@@ -171,7 +179,7 @@ export function renderEmailShell(opts: EmailShellOptions): string {
 <tr><td style="background:${EMAIL_TOKENS.ink};padding:18px 32px;">
 <!-- .png, not .svg — Outlook desktop's Word rendering engine drops SVG <img> tags silently -->
 <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-<td style="padding-right:10px;"><img src="${canonicalBaseUrl()}/icons/segolife-icon.png" width="28" height="28" alt="SEGOLIFE" style="display:block;border:0;border-radius:7px;" /></td>
+<td style="padding-right:10px;"><img src="${SEGOLIFE_LOGO_URL}" width="28" height="28" alt="SEGOLIFE" style="display:block;border:0;" /></td>
 <td><span style="font-family:${FONT_STACK};font-size:18px;font-weight:800;letter-spacing:0.04em;color:${EMAIL_TOKENS.white};">SEGO<span style="color:#C4B5FD;">LIFE</span></span></td>
 </tr></table>
 </td></tr>
