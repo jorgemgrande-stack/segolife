@@ -16,16 +16,21 @@ import {
   roomTypes,
   spaTreatments,
   locations,
+  communities,
 } from "../drizzle/schema";
+import { canonicalBaseUrl } from "./_core/canonicalHost";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const db = drizzle(_pool);
 
 // Fase 8.5 — corrección de cierre: apuntaba a "https://skicenter.es" (dominio
-// ajeno). El listado de páginas (hotel/spa/restaurantes) sigue siendo el
-// heredado de Náyade — pendiente de un sitemap propio de SEGOLIFE en una
-// fase futura — pero al menos ya no se publican URLs bajo un dominio ajeno.
-const BASE_URL = "https://segolife-production.up.railway.app";
+// ajeno). Fase 15 (spec §29/§33) — corregido de nuevo: apuntaba al dominio
+// INTERNO de Railway (nunca indexable/compartible de verdad), y no incluía
+// NINGUNA ruta real de SEGOLIFE (/, /ie, /uva) — solo el listado heredado de
+// Náyade (hotel/spa/restaurantes/experiencias), que se deja intacto (fuera
+// de alcance tocar/retirar infraestructura legacy, CLAUDE.md) pero ya no se
+// publica bajo un dominio ajeno.
+const BASE_URL = canonicalBaseUrl();
 
 const STATIC_URLS: Array<{ path: string; changefreq: string; priority: string }> = [
   { path: "/",               changefreq: "weekly",  priority: "1.0" },
@@ -73,6 +78,7 @@ export const sitemapRouter = Router();
 sitemapRouter.get("/sitemap.xml", async (_req, res) => {
   try {
     const [
+      communityRows,
       expRows,
       legoRows,
       legoCategories,
@@ -81,6 +87,10 @@ sitemapRouter.get("/sitemap.xml", async (_req, res) => {
       spaRows,
       locationRows,
     ] = await Promise.all([
+      // Fase 15 (spec §29) — comunidades activas reales, nunca /ie /uva hardcodeados:
+      // una tercera comunidad futura aparece aquí automáticamente sin tocar este archivo.
+      db.select({ slug: communities.slug }).from(communities).where(eq(communities.status, "active")),
+
       db
         .select({ slug: experiences.slug, updatedAt: experiences.updatedAt })
         .from(experiences)
@@ -127,6 +137,12 @@ sitemapRouter.get("/sitemap.xml", async (_req, res) => {
     // Rutas estáticas
     for (const u of STATIC_URLS) {
       entries.push(urlEntry(u.path, undefined, u.changefreq, u.priority));
+    }
+
+    // /:community (spec §29) — explore es la landing pública real de cada comunidad.
+    for (const c of communityRows) {
+      entries.push(urlEntry(`/${c.slug}`, undefined, "daily", "0.9"));
+      entries.push(urlEntry(`/${c.slug}/explore`, undefined, "daily", "0.8"));
     }
 
     // /experiencias/:slug (slugs malformados ya excluidos en la query)

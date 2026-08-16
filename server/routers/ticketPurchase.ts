@@ -16,6 +16,7 @@ import { cancelOrder } from "../segolife/ticketing/ticketCancellationService";
 import { expireStaleHoldsForUser } from "../segolife/ticketing/inventoryHoldService";
 import { listMyOrders, getMyOrderById, listMyTickets, getMyTicketById, type MyTicketWithEvent } from "../segolife/ticketing/ticketingDb";
 import { getOrCreateMyIdentityToken, rotateMyIdentityToken } from "../segolife/commerce/studentIdentityService";
+import { getEventById } from "../db/eventsDb";
 
 function mapCheckoutError(err: unknown): never {
   if (err instanceof CheckoutError) {
@@ -43,8 +44,23 @@ export const ticketPurchaseRouter = router({
       eventId: z.number().int().positive(),
       items: z.array(z.object({ ticketTypeId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1),
       idempotencyKey: z.string().min(8).max(191),
+      // Fase 15 (spec §17, "checkout must preserve the event/community
+      // relationship... server-side truth wins"): auditoría de esta fase
+      // confirmó que checkout no tenía NINGÚN concepto de comunidad — un
+      // Student podía comprar una entrada para un evento restringido a otra
+      // comunidad con solo conocer el eventId. Opcional para no romper
+      // ningún consumidor sin contexto de comunidad; mismo criterio
+      // permisivo que publicGetBySlug — un evento sin comunidades
+      // asignadas nunca se bloquea.
+      communityId: z.number().int().positive().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
+      if (input.communityId != null) {
+        const detail = await getEventById(input.eventId);
+        if (detail && detail.communities.length > 0 && !detail.communities.some(c => c.id === input.communityId)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Este evento no está disponible en esta comunidad." });
+        }
+      }
       try {
         const result = await startCheckout({
           eventId: input.eventId,

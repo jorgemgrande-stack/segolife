@@ -25,14 +25,17 @@ import { isEventPast } from "@shared/segolife/eventTiming";
  */
 export default function EventDetail() {
   const { t, i18n } = useTranslation();
-  const { slug } = useCommunity();
+  const { slug, community } = useCommunity();
   const params = useParams<{ slug: string }>();
   const [, navigate] = useLocation();
   const eventSlug = params.slug;
   const { user } = useAuth();
 
+  // Fase 15 (spec §16/§43) — pasa la comunidad real de la URL para que el
+  // backend pueda ocultar un evento restringido a otra comunidad (nunca
+  // solo un filtro de frontend, ver publicGetBySlug en events.ts).
   const { data, isLoading, error, refetch } = trpc.events.publicGetBySlug.useQuery(
-    { slug: eventSlug },
+    { slug: eventSlug, communityId: community?.id },
     { enabled: !!eventSlug }
   );
 
@@ -61,6 +64,7 @@ export default function EventDetail() {
       eventId: data.purchaseAction.eventId,
       items,
       idempotencyKey: `checkout:${data.purchaseAction.eventId}:${crypto.randomUUID()}`,
+      communityId: community?.id,
     });
   };
 

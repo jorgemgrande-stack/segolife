@@ -51,6 +51,7 @@ import {
 } from "../../../drizzle/schema";
 import { postLedgerMovementInTx } from "../tokens/tokenLedgerService";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
+import { canonicalBaseUrl } from "../../_core/canonicalHost";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 3 });
 const _db = drizzle(_pool);
@@ -466,8 +467,15 @@ export interface StudentReferralSummary {
   };
 }
 
+/**
+ * Fase 15 (spec §33): antes caía a `""` (string vacío) si APP_URL no estaba
+ * definida, produciendo un inviteLink relativo sin host (`/invite/CODE`) —
+ * roto en cualquier contexto fuera de la propia app (email, WhatsApp,
+ * copiar/compartir). canonicalBaseUrl() ya resuelve APP_URL si existe, o el
+ * host canónico real de producción si no.
+ */
 function appBaseUrl(): string {
-  return (process.env.APP_URL ?? "").replace(/\/+$/, "");
+  return canonicalBaseUrl();
 }
 
 export async function getStudentReferralSummary(userId: number, db?: AnyDbHandle): Promise<StudentReferralSummary> {

@@ -195,12 +195,29 @@ export const eventsRouter = router({
    * al frontend público un segundo endpoint o preguntar por proveedor — el
    * frontend solo recibe { type: "external_url" | "native_checkout" |
    * "unavailable" }, nunca conoce Fourvenues/Weezevent.
+   *
+   * Fase 15 (spec §16/§43, "never leak a private/community-restricted event
+   * merely because the user knows its slug"): auditoría de esta fase
+   * confirmó que este endpoint devolvía CUALQUIER evento activo sin mirar
+   * nunca `communities` — un Student en /uva podía ver (y comprar) un
+   * evento marcado IE-only con solo conocer su slug/URL directa. `communityId`
+   * es opcional (mantiene compatible cualquier consumidor sin contexto de
+   * comunidad); cuando se recibe, un evento CON comunidades asignadas que no
+   * incluyan esa comunidad se trata como "no encontrado" — igual que un
+   * slug inexistente, nunca revela que el evento existe en otra comunidad.
+   * Un evento SIN ninguna comunidad asignada (`communities.length === 0`)
+   * se sigue mostrando siempre — es el estado "sin restringir", coherente
+   * con cómo ya se comporta el listado público sin filtro (spec: nunca
+   * romper eventos legacy que nunca se vincularon a una comunidad).
    */
   publicGetBySlug: publicProcedure
-    .input(z.object({ slug: z.string().min(1).max(128) }))
+    .input(z.object({ slug: z.string().min(1).max(128), communityId: z.number().int().positive().optional() }))
     .query(async ({ input }) => {
       const detail = await getEventBySlug(input.slug);
       if (!detail || detail.event.status !== "active") return null;
+      if (input.communityId != null && detail.communities.length > 0 && !detail.communities.some(c => c.id === input.communityId)) {
+        return null;
+      }
       const purchaseAction = await computePurchaseAction(detail.event.id, detail.event);
       return { ...detail, purchaseAction };
     }),

@@ -49,7 +49,9 @@ export default function Home() {
   const { t, i18n } = useTranslation();
   const { community, slug } = useCommunity();
 
-  const { data: summary, isLoading } = trpc.home.getSummary.useQuery();
+  // Fase 15 — misma comunidad que ya usa el resto de esta página (venues,
+  // abajo) en vez de dejar que el backend adivine la primera membresía.
+  const { data: summary, isLoading } = trpc.home.getSummary.useQuery({ communityId: community?.id });
   const { data: walletValue } = trpc.tokens.myWalletPromotionalValue.useQuery();
   type HomeCardKind = NonNullable<typeof summary>["ranking"]["forYou"][number];
   const { data: me } = trpc.students.me.useQuery();

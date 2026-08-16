@@ -4,4 +4,4 @@ Disallow: /admin/
 Disallow: /api/
 Disallow: /registrar-gasto
 
-Sitemap: https://nayadeexperiences.es/sitemap.xml
+Sitemap: https://www.segolife.es/sitemap.xml

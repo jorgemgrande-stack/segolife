@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { Loader2, MapPinOff, Bell, User as UserIcon } from "lucide-react";
 import { useCommunity } from "@/contexts/CommunityContext";
@@ -38,22 +38,32 @@ export function SegolifeAppShell({
 }) {
   const { t } = useTranslation();
   const { community, slug, loading, availableLocales } = useCommunity();
+  const [currentPath] = useLocation();
   // El redirect-a-login de useAuth es un efecto independiente del render (navega
   // con window.location.href), así que si se habilitara siempre que requireAuth
   // es true, puede dispararse ANTES de saber si `community` es válida — mandando
   // a un slug inexistente a /login (con marca heredada) en vez de al 404 "Community
   // not found" de abajo. Solo se habilita una vez community terminó de resolverse
   // y es una comunidad real.
+  //
+  // Fase 15 (spec §11/§32, "community attribution must survive the funnel",
+  // "URL preservation"): auditoría de esta fase confirmó que getLoginUrl()
+  // se llamaba SIN argumentos aquí — cualquier deep link no autenticado a
+  // /ie/... o /uva/... (p.ej. desde un QR en el venue) perdía la ruta Y la
+  // comunidad por completo al mandar a /login, que solo sabe volver a "/".
+  // wouter ya expone la ruta completa (incluida la comunidad) vía useLocation().
   const { user, loading: authLoading } = useAuth({
     redirectOnUnauthenticated: requireAuth && !loading && !!community,
-    redirectPath: getLoginUrl(),
+    redirectPath: getLoginUrl(currentPath),
   });
 
   useEffect(() => {
     document.title = title ? `${title} · Segolife` : "Segolife";
   }, [title]);
 
-  const { data: homeSummary } = trpc.home.getSummary.useQuery(undefined, {
+  // Fase 15 — misma comunidad que ya resuelve la URL (`community?.id`), en
+  // vez de dejar que el backend adivine "la primera membresía" (spec §11/§13).
+  const { data: homeSummary } = trpc.home.getSummary.useQuery({ communityId: community?.id }, {
     enabled: !!user,
     staleTime: 60_000,
   });

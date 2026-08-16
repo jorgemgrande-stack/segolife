@@ -309,7 +309,18 @@ export default function Profile() {
               {availableLocales.filter(isSupportedLocale).map((locale: SupportedLocale) => (
                 <button
                   key={locale}
-                  onClick={() => i18n.changeLanguage(locale)}
+                  onClick={() => {
+                    i18n.changeLanguage(locale);
+                    // Fase 15 (spec §24, "explicit Student language preference
+                    // must override community default"): auditoría de esta
+                    // fase confirmó que este botón SOLO cambiaba el idioma
+                    // visual — nunca llegaba a student_profiles.preferredLocale,
+                    // así que resolveCommunicationLocale() (ya implementado y
+                    // correcto para emails) nunca veía la elección real del
+                    // Student. Envío mínimo (solo este campo) — updateStudentProfile
+                    // hace SET parcial, nunca toca el resto del perfil.
+                    updateProfile.mutate({ preferredLocale: locale });
+                  }}
                   className={`flex-1 rounded-2xl border px-4 py-3 text-sm font-medium transition-colors ${
                     i18n.language === locale
                       ? "border-primary bg-primary text-primary-foreground"

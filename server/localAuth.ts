@@ -25,9 +25,40 @@ const COOKIE_NAME = "nayade_session";
 const JWT_SECRET_RAW = process.env.JWT_SECRET ?? "local-dev-secret-change-me";
 const JWT_ALGO = "HS256" as const;
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 días en segundos
+// Fase 15 (spec §34, "auth/cookie safety"): auditoría confirmó que la cookie
+// nunca declaraba `domain`, así que el navegador la trataba como host-only —
+// una sesión iniciada en www.segolife.es no se enviaba en peticiones a
+// segolife.es (ni al revés), y sin ningún redirect canónico entre ambos
+// (ver server/_core/index.ts), un Student podía parecer desconectado solo
+// por rebotar entre los dos hosts. `.segolife.es` (con el punto inicial)
+// cubre el apex y cualquier subdominio futuro (ie.segolife.es, etc.) sin
+// tener que tocar esta constante otra vez. En desarrollo local (localhost)
+// se deja sin `domain` — Chrome/Firefox rechazan o tratan de forma rara un
+// dominio de cookie que no coincide con un sufijo público real. Ver
+// sessionCookieOptions()/clearSessionCookieOptions() más abajo.
 
 function getSecret(): Uint8Array {
   return new TextEncoder().encode(JWT_SECRET_RAW);
+}
+
+/** Extraído para poder testear la lógica de domain/secure sin levantar el router completo. */
+export function sessionCookieOptions(nodeEnv: string | undefined = process.env.NODE_ENV): {
+  httpOnly: true; secure: boolean; sameSite: "lax"; maxAge: number; path: "/"; domain?: string;
+} {
+  const isProd = nodeEnv === "production";
+  return {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: "lax",
+    maxAge: COOKIE_MAX_AGE * 1000,
+    path: "/",
+    ...(isProd ? { domain: ".segolife.es" } : {}),
+  };
+}
+
+/** Mismas domain/path que sessionCookieOptions — clearCookie exige coincidencia exacta para borrar de verdad. */
+export function clearSessionCookieOptions(nodeEnv: string | undefined = process.env.NODE_ENV): { path: "/"; domain?: string } {
+  return { path: "/", ...(nodeEnv === "production" ? { domain: ".segolife.es" } : {}) };
 }
 
 // ─── Helpers JWT ──────────────────────────────────────────────────────────────
@@ -125,13 +156,7 @@ export function createLocalAuthRouter(): Router {
 
     const token = await signSessionToken(user.id);
 
-    res.cookie(COOKIE_NAME, token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: COOKIE_MAX_AGE * 1000,
-      path: "/",
-    });
+    res.cookie(COOKIE_NAME, token, sessionCookieOptions());
 
     res.json({
       id: user.id,
@@ -198,13 +223,7 @@ export function createLocalAuthRouter(): Router {
       });
 
       const token = await signSessionToken(result.userId);
-      res.cookie(COOKIE_NAME, token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: COOKIE_MAX_AGE * 1000,
-        path: "/",
-      });
+      res.cookie(COOKIE_NAME, token, sessionCookieOptions());
 
       res.status(201).json({
         id: result.userId,
@@ -233,7 +252,10 @@ export function createLocalAuthRouter(): Router {
 
   /** POST /api/auth/logout */
   router.post("/api/auth/logout", (_req: Request, res: Response) => {
-    res.clearCookie(COOKIE_NAME, { path: "/" });
+    // El navegador solo borra una cookie si domain/path coinciden EXACTAMENTE
+    // con los que se usaron al fijarla — mismas opciones que sessionCookieOptions(),
+    // si no el logout dejaría la cookie con domain=".segolife.es" viva.
+    res.clearCookie(COOKIE_NAME, clearSessionCookieOptions());
     res.json({ ok: true });
   });
 

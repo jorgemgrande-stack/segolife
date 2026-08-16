@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import viteConfig from "../../vite.config";
+import { canonicalBaseUrl } from "./canonicalHost";
 
 export async function setupVite(app: Express, server: Server) {
   const serverOptions = {
@@ -63,7 +64,9 @@ export async function setupVite(app: Express, server: Server) {
 // canonical y Open Graph de Náyade. Sin rutas propias de SEGOLIFE todavía
 // definidas aquí, el fallback neutro (mismo texto que client/index.html) es
 // la opción correcta — no se inventan textos/imágenes de marca nuevos.
-const BASE_URL = "https://segolife-production.up.railway.app";
+// Fase 15 (spec §33) — corregido de nuevo: seguía apuntando al dominio
+// interno de Railway, nunca al host público real.
+const BASE_URL = canonicalBaseUrl();
 const DEFAULT_OG_IMAGE = "/icons/segolife-icon.svg";
 
 interface RouteMeta {

@@ -96,6 +96,41 @@ describe("events router — publicGetBySlug (Event→Venue, punto 91)", () => {
     const keys = Object.keys(result!.event);
     expect(keys.some(k => /secret|token|apikey|api_key|credential|password/i.test(k))).toBe(false);
   });
+
+  // Fase 15 (spec §16/§43) — antes se devolvía CUALQUIER evento activo sin
+  // mirar nunca `communities`; un Student en /uva podía ver (y comprar) un
+  // evento IE-only con solo conocer su slug/URL directa.
+  describe("publicGetBySlug — enforcement de comunidad (Fase 15, spec §16/§43)", () => {
+    it("evento restringido a IE, pedido desde UVA (communityId distinto) -> null, igual que un slug inexistente", async () => {
+      mockGetEventBySlug.mockResolvedValue({ event: baseEvent(), venue: VENUE, communities: [{ id: 1, slug: "ie" }] });
+      const result = await publicCaller().publicGetBySlug({ slug: "qa-casanova-upcoming", communityId: 2 });
+      expect(result).toBeNull();
+    });
+
+    it("evento restringido a IE, pedido desde IE (communityId coincide) -> se devuelve normalmente", async () => {
+      mockGetEventBySlug.mockResolvedValue({ event: baseEvent(), venue: VENUE, communities: [{ id: 1, slug: "ie" }] });
+      const result = await publicCaller().publicGetBySlug({ slug: "qa-casanova-upcoming", communityId: 1 });
+      expect(result).not.toBeNull();
+    });
+
+    it("evento compartido IE+UVA -> visible desde CUALQUIERA de las dos comunidades", async () => {
+      mockGetEventBySlug.mockResolvedValue({ event: baseEvent(), venue: VENUE, communities: [{ id: 1, slug: "ie" }, { id: 2, slug: "uva" }] });
+      expect(await publicCaller().publicGetBySlug({ slug: "shared", communityId: 1 })).not.toBeNull();
+      expect(await publicCaller().publicGetBySlug({ slug: "shared", communityId: 2 })).not.toBeNull();
+    });
+
+    it("evento SIN ninguna comunidad asignada (legacy/sin restringir) -> siempre visible, con o sin communityId", async () => {
+      mockGetEventBySlug.mockResolvedValue({ event: baseEvent(), venue: VENUE, communities: [] });
+      expect(await publicCaller().publicGetBySlug({ slug: "qa-casanova-upcoming", communityId: 1 })).not.toBeNull();
+      expect(await publicCaller().publicGetBySlug({ slug: "qa-casanova-upcoming", communityId: 99 })).not.toBeNull();
+    });
+
+    it("sin communityId en absoluto (consumidor sin contexto de comunidad) -> nunca se restringe, compatibilidad hacia atrás", async () => {
+      mockGetEventBySlug.mockResolvedValue({ event: baseEvent(), venue: VENUE, communities: [{ id: 1, slug: "ie" }] });
+      const result = await publicCaller().publicGetBySlug({ slug: "qa-casanova-upcoming" });
+      expect(result).not.toBeNull();
+    });
+  });
 });
 
 describe("events router — publicByVenue (Venue→Event, punto 91)", () => {

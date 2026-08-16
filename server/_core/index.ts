@@ -43,6 +43,7 @@ import { startMatchingJob } from "../services/cardTerminalMatchingService";
 import { startRelinkJob } from "../services/cardTerminalRelinkService";
 import { serveStatic, setupVite } from "./vite";
 import { getFeatureFlag } from "../config";
+import { canonicalRedirectTarget } from "./canonicalHost";
 // seedSegolifeCommunitiesIfEmpty ya NO se importa aquí — se ejecuta solo vía
 // `pnpm db:seed` (scripts/db-seed.ts). STARTUP != SEED, ver CLAUDE.md.
 
@@ -255,6 +256,22 @@ async function startServer() {
   // body parser) para responder lo más rápido posible. Es lo que usa
   // railway.toml como healthcheckPath.
   app.use(healthRouter);
+
+  // Fase 15 (spec §33, "ROOT DOMAIN" — "Choose ONE canonical host"):
+  // auditoría confirmó que segolife.es y www.segolife.es se servían de forma
+  // IDÉNTICA, sin ningún redirect entre ambos — cada uno indexable por
+  // separado (SEO duplicado) y, combinado con el bug de cookie sin `domain`
+  // ya corregido en localAuth.ts, una fuente real de "sesión perdida" al
+  // rebotar entre hosts. Canónico = www.segolife.es (coincide con
+  // RAILWAY_PUBLIC_DOMAIN ya configurado en producción). Solo redirige el
+  // apex EXACTO — nunca el dominio interno de Railway, nunca localhost,
+  // nunca un preview domain — para no arriesgar el propio healthcheck de
+  // Railway (que además ya respondió arriba si la request era /api/health).
+  app.use((req, res, next) => {
+    const target = canonicalRedirectTarget(req.hostname, req.originalUrl);
+    if (target) { res.redirect(301, target); return; }
+    next();
+  });
 
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
