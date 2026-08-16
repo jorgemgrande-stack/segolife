@@ -90,7 +90,7 @@ describe("buildExecutiveBrief — resumen en prosa 100% determinista (Fase 14, s
   });
 
   it("omite por completo una frase cuyo hecho no está disponible (nunca inventa)", () => {
-    const brief = buildExecutiveBrief(briefInputs({ eventsToday: null, topVenueByNativeSales: null, attendanceComparison: null }));
+    const brief = buildExecutiveBrief(briefInputs({ eventsToday: null, topVenueByEcosystemSales: null, attendanceComparison: null }));
     expect(brief.sentences.some(s => s.includes("evento"))).toBe(false);
     expect(brief.sentences.some(s => s.includes("concentra"))).toBe(false);
     expect(brief.sentences.some(s => s.includes("periodo anterior")))
@@ -102,9 +102,9 @@ describe("buildExecutiveBrief — resumen en prosa 100% determinista (Fase 14, s
     expect(brief.sentences).toContain("No hay eventos activos hoy.");
   });
 
-  it("incluye el venue líder solo si sharePct > 0, con el número real (nunca inventado)", () => {
-    const brief = buildExecutiveBrief(briefInputs({ topVenueByNativeSales: { venueName: "La Finca", sharePct: 47 } }));
-    expect(brief.sentences).toContain("La Finca concentra el 47% de las ventas nativas del periodo.");
+  it("incluye el venue líder solo si sharePct > 0, con el número real (nunca inventado) — etiquetado como ecosistema, nunca 'nativas' (Fase 16: el dato incluye Fourvenues)", () => {
+    const brief = buildExecutiveBrief(briefInputs({ topVenueByEcosystemSales: { venueName: "La Finca", sharePct: 47 } }));
+    expect(brief.sentences).toContain("La Finca concentra el 47% de las ventas del ecosistema (nativas + Fourvenues) del periodo.");
   });
 
   it("frase de comparación usa 'por encima'/'por debajo' según la dirección real, nunca texto genérico", () => {

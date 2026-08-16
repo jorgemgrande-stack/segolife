@@ -21,6 +21,10 @@ const ALLOWED_PATTERNS: RegExp[] = [
   // COMUNITY (spec punto 20/45) — hub y detalle de una propuesta.
   /^\/[a-z0-9-]+\/comunity$/,
   /^\/[a-z0-9-]+\/comunity\/\d+$/,
+  // Fase 16 — reset de contraseña (server/passwordReset.ts). Ruta global,
+  // sin prefijo de comunidad. El token va en la query string, preservada
+  // aparte por sanitizeDeepLink (solo el path se compara contra el patrón).
+  /^\/nueva-contrasena$/,
 ];
 
 export function sanitizeDeepLink(raw: string | null | undefined): string | null {

@@ -21,7 +21,10 @@ import { registerStudent, RegistrationError, type RegistrationErrorCode } from "
 import { recordStudentLogin } from "./segolife/students/studentLoginEventsDb";
 
 // ─── Configuración ────────────────────────────────────────────────────────────
-const COOKIE_NAME = "nayade_session";
+// Exportado (Fase 16, auditoría) — authGuard.ts duplicaba este literal de
+// forma independiente; nada garantizaba que se mantuvieran sincronizados si
+// alguno cambiaba. Fuente única de verdad ahora.
+export const COOKIE_NAME = "nayade_session";
 const JWT_SECRET_RAW = process.env.JWT_SECRET ?? "local-dev-secret-change-me";
 const JWT_ALGO = "HS256" as const;
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 días en segundos
@@ -277,5 +280,3 @@ export function createLocalAuthRouter(): Router {
 
   return router;
 }
-
-export { COOKIE_NAME };

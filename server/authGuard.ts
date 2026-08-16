@@ -18,7 +18,7 @@
  */
 
 import type { Request, Response, NextFunction } from "express";
-import { verifySessionToken } from "./localAuth";
+import { verifySessionToken, COOKIE_NAME } from "./localAuth";
 import { sdk } from "./_core/sdk";
 import { UNAUTHED_ERR_MSG } from "@shared/const";
 
@@ -215,8 +215,9 @@ export function createAuthGuardMiddleware(useLocalAuth: boolean) {
     let authenticated = false;
 
     if (useLocalAuth) {
-      // Modo local: verificar JWT en cookie nayade_session
-      const token = getCookie(req, "nayade_session");
+      // Modo local: verificar JWT en la cookie de sesión (nombre importado
+      // de localAuth.ts, fuente única — Fase 16, antes duplicado aquí)
+      const token = getCookie(req, COOKIE_NAME);
       if (token) {
         const userId = await verifySessionToken(token);
         authenticated = userId !== null;

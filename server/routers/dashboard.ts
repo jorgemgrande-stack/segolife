@@ -153,15 +153,15 @@ async function computeExecutiveBriefInputs(ctx: ReturnType<typeof resolveCtx>, d
     ctx.rangeLabel === "today" ? countEventsStartingInRange(ctx, db) : Promise.resolve(null),
   ]);
 
-  const totalNativeRevenue = venuePerf.rows.reduce((sum, r) => sum + r.totalEcosystemRevenueCents, 0);
+  const totalEcosystemRevenue = venuePerf.rows.reduce((sum, r) => sum + r.totalEcosystemRevenueCents, 0);
   const topVenueRow = [...venuePerf.rows].sort((a, b) => b.totalEcosystemRevenueCents - a.totalEcosystemRevenueCents)[0];
-  const topVenueByNativeSales = topVenueRow && totalNativeRevenue > 0
-    ? { venueName: topVenueRow.venueName, sharePct: Math.round((topVenueRow.totalEcosystemRevenueCents / totalNativeRevenue) * 1000) / 10 }
+  const topVenueByEcosystemSales = topVenueRow && totalEcosystemRevenue > 0
+    ? { venueName: topVenueRow.venueName, sharePct: Math.round((topVenueRow.totalEcosystemRevenueCents / totalEcosystemRevenue) * 1000) / 10 }
     : null;
 
   const attendanceComparison = comparePeriods(overview.attendance.confirmed, previousOverview.attendance.confirmed);
 
-  return { overview, alerts, retention, referrals: referralBi, topVenueByNativeSales, eventsToday, attendanceComparison };
+  return { overview, alerts, retention, referrals: referralBi, topVenueByEcosystemSales, eventsToday, attendanceComparison };
 }
 
 export const dashboardRouter = router({

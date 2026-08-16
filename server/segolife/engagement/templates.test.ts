@@ -60,6 +60,25 @@ describe("templates — renderTemplate", () => {
     expect(rendered.deepLink).toBeNull();
   });
 
+  // Fase 16 (auditoría) — bug real encontrado: sanitizeDeepLink() exige que
+  // el deep link sea relativo (whitelist anti-phishing), pero el HTML de
+  // email lo usaba TAL CUAL como href — un link relativo no navega a
+  // ningún sitio dentro de un cliente de correo (no hay "página actual"
+  // contra la que resolverlo). El CTA de CUALQUIER plantilla con deep link
+  // quedaba roto en email (incluido password_reset_requested, la más
+  // crítica: sin este fix el estudiante no podía resetear su contraseña).
+  it("el deep link relativo se absolutiza con el host canónico SOLO en el HTML de email, nunca en result.deepLink (que sigue sirviendo para navegación in-app)", () => {
+    const rendered = renderTemplate("password_reset_requested", { expiryMinutes: "60" }, "/nueva-contrasena?token=abc123");
+    expect(rendered.deepLink).toBe("/nueva-contrasena?token=abc123");
+    expect(rendered.emailHtmlEn).toContain('href="https://www.segolife.es/nueva-contrasena?token=abc123"');
+    expect(rendered.emailHtmlEs).toContain('href="https://www.segolife.es/nueva-contrasena?token=abc123"');
+  });
+
+  it("sin deep link, el email nunca renderiza un botón CTA roto (ni relativo ni con host vacío)", () => {
+    const rendered = renderTemplate("password_reset_requested", { expiryMinutes: "60" }, null);
+    expect(rendered.emailHtmlEn).not.toContain("<a href=");
+  });
+
   it("cada plantilla declara audienceType y esto determina si respeta preferencias (transactional siempre pasa)", () => {
     expect(ENGAGEMENT_TEMPLATES.benefit_granted.audienceType).toBe("transactional");
     expect(ENGAGEMENT_TEMPLATES.event_tonight.audienceType).toBe("marketing");

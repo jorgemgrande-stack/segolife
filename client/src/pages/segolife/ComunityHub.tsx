@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { Link } from "wouter";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { trpc } from "@/lib/trpc";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
@@ -12,14 +14,22 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Vote, Coins, Heart, Loader2, Send, Flame } from "lucide-react";
-import { timeLeftLabel, QUESTION_TYPE_LABEL, type ComunityQuestionType } from "@/lib/comunity";
+import { type ComunityQuestionType } from "@/lib/comunity";
 
 /**
  * Hub de COMUNITY — /:community/comunity (spec puntos 22-23). Secciones
  * ACTIVAS/RESPONDIDAS/RESULTADOS/PROPONER como pestañas de una sola pantalla
  * (nunca un formulario administrativo — social y rápido, spec punto 84).
+ *
+ * Fase 16 (auditoría) — esta página estaba enteramente en español
+ * hardcodeado, sin useTranslation en absoluto, pese a que /ie (defaultLocale
+ * "en") depende del mismo mecanismo i18n que el resto de la Student App. Usa
+ * un namespace `comunity.*` propio (nunca los labels de lib/comunity.ts, que
+ * siguen siendo español fijo a propósito — se comparten con las pantallas de
+ * Admin, que no son bilingües).
  */
 export default function ComunityHub() {
+  const { t } = useTranslation();
   const { slug } = useCommunity();
 
   return (
@@ -32,10 +42,10 @@ export default function ComunityHub() {
 
         <Tabs defaultValue="activas">
           <TabsList className="w-full">
-            <TabsTrigger value="activas" className="flex-1">Activas</TabsTrigger>
-            <TabsTrigger value="respondidas" className="flex-1">Respondidas</TabsTrigger>
-            <TabsTrigger value="resultados" className="flex-1">Resultados</TabsTrigger>
-            <TabsTrigger value="proponer" className="flex-1">Proponer</TabsTrigger>
+            <TabsTrigger value="activas" className="flex-1">{t("comunity.tabActive")}</TabsTrigger>
+            <TabsTrigger value="respondidas" className="flex-1">{t("comunity.tabResponded")}</TabsTrigger>
+            <TabsTrigger value="resultados" className="flex-1">{t("comunity.tabResults")}</TabsTrigger>
+            <TabsTrigger value="proponer" className="flex-1">{t("comunity.tabPropose")}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="activas" className="mt-4"><ActivasTab slug={slug!} /></TabsContent>
@@ -48,14 +58,33 @@ export default function ComunityHub() {
   );
 }
 
+/** Traducción de QUESTION_TYPE_LABEL (lib/comunity.ts es español fijo, compartido con Admin). */
+function questionTypeLabel(t: TFunction, type: ComunityQuestionType): string {
+  return t(`comunity.questionType.${type}`);
+}
+
+/** Cuenta atrás compacta traducida — misma lógica que lib/comunity.ts:timeLeftLabel, versión i18n (Admin sigue usando la fija en español). */
+function timeLeftLabelI18n(t: TFunction, endsAt: Date | string | null | undefined): string {
+  if (!endsAt) return t("comunity.timeLeft.noDeadline");
+  const diffMs = new Date(endsAt).getTime() - Date.now();
+  if (diffMs <= 0) return t("comunity.timeLeft.closed");
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 60) return t("comunity.timeLeft.minutes", { count: minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return t("comunity.timeLeft.hoursMinutes", { hours, minutes: minutes % 60 });
+  const days = Math.floor(hours / 24);
+  return t("comunity.timeLeft.daysHours", { days, hours: hours % 24 });
+}
+
 // ─── ACTIVAS ─────────────────────────────────────────────────────────────
 
 function ActivasTab({ slug }: { slug: string }) {
+  const { t } = useTranslation();
   const { community } = useCommunity();
   const { data, isLoading } = trpc.community.myActive.useQuery();
   const utils = trpc.useUtils();
   const respondMut = trpc.community.respond.useMutation({
-    onSuccess: () => { toast.success("¡Voto registrado!"); utils.community.myActive.invalidate(); utils.community.myResponded.invalidate(); },
+    onSuccess: () => { toast.success(t("comunity.voteRegistered")); utils.community.myActive.invalidate(); utils.community.myResponded.invalidate(); },
     onError: e => toast.error(e.message),
   });
 
@@ -72,7 +101,7 @@ function ActivasTab({ slug }: { slug: string }) {
 
   if (isLoading) return <Loader2 className="size-5 animate-spin text-muted-foreground" />;
   if (!data || data.length === 0) {
-    return <SegolifeEmptyState icon={<Vote className="size-6" />} title="Sin preguntas activas ahora mismo" description="Vuelve más tarde o propón tú un plan." />;
+    return <SegolifeEmptyState icon={<Vote className="size-6" />} title={t("comunity.noActiveQuestions")} description={t("comunity.noActiveQuestionsDescription")} />;
   }
 
   return (
@@ -85,7 +114,7 @@ function ActivasTab({ slug }: { slug: string }) {
                 {p.urgencyType === "flash" && <span className="text-xs font-bold text-amber-500">⚡ FLASH</span>}
                 <p className="font-semibold text-foreground truncate">{p.title}</p>
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5">⏳ {timeLeftLabel(p.endsAt)} · {QUESTION_TYPE_LABEL[p.questionType as ComunityQuestionType]}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">⏳ {timeLeftLabelI18n(t, p.endsAt)} · {questionTypeLabel(t, p.questionType as ComunityQuestionType)}</p>
             </div>
             {responseReward > 0 && <span className="flex items-center gap-1 text-xs font-medium text-primary shrink-0"><Coins className="size-3.5" />+{responseReward}</span>}
           </div>
@@ -93,13 +122,13 @@ function ActivasTab({ slug }: { slug: string }) {
           {/* Respuesta rápida desde la card (spec punto 24) — solo tipos seguros sin abrir detalle */}
           {p.questionType === "yes_no" ? (
             <div className="mt-3 flex gap-2">
-              <Button size="sm" className="flex-1" variant="outline" disabled={respondMut.isPending} onClick={() => respondMut.mutate({ proposalId: p.id, payload: { questionType: "yes_no", value: "yes" } })}>👍 Sí</Button>
-              <Button size="sm" className="flex-1" variant="outline" disabled={respondMut.isPending} onClick={() => respondMut.mutate({ proposalId: p.id, payload: { questionType: "yes_no", value: "no" } })}>👎 No</Button>
+              <Button size="sm" className="flex-1" variant="outline" disabled={respondMut.isPending} onClick={() => respondMut.mutate({ proposalId: p.id, payload: { questionType: "yes_no", value: "yes" } })}>{t("comunity.yes")}</Button>
+              <Button size="sm" className="flex-1" variant="outline" disabled={respondMut.isPending} onClick={() => respondMut.mutate({ proposalId: p.id, payload: { questionType: "yes_no", value: "no" } })}>{t("comunity.no")}</Button>
             </div>
           ) : p.questionType === "me_apunto" ? (
-            <Button size="sm" className="w-full mt-3" disabled={respondMut.isPending} onClick={() => respondMut.mutate({ proposalId: p.id, payload: { questionType: "me_apunto" } })}>🙋 Me apunto</Button>
+            <Button size="sm" className="w-full mt-3" disabled={respondMut.isPending} onClick={() => respondMut.mutate({ proposalId: p.id, payload: { questionType: "me_apunto" } })}>{t("comunity.imIn")}</Button>
           ) : (
-            <Link href={`/${slug}/comunity/${p.id}`}><Button size="sm" variant="outline" className="w-full mt-3">Responder →</Button></Link>
+            <Link href={`/${slug}/comunity/${p.id}`}><Button size="sm" variant="outline" className="w-full mt-3">{t("comunity.respond")}</Button></Link>
           )}
         </div>
       ))}
@@ -110,31 +139,34 @@ function ActivasTab({ slug }: { slug: string }) {
 // ─── RESPONDIDAS / RESULTADOS ───────────────────────────────────────────────
 
 function RespondidasTab({ slug }: { slug: string }) {
+  const { t } = useTranslation();
   const { data, isLoading } = trpc.community.myResponded.useQuery();
   if (isLoading) return <Loader2 className="size-5 animate-spin text-muted-foreground" />;
   if (!data || data.length === 0) {
-    return <SegolifeEmptyState icon={<Vote className="size-6" />} title="Todavía no has respondido nada" />;
+    return <SegolifeEmptyState icon={<Vote className="size-6" />} title={t("comunity.notRespondedYet")} />;
   }
   return <ProposalLinkList slug={slug} items={data} />;
 }
 
 function ResultadosTab({ slug }: { slug: string }) {
+  const { t } = useTranslation();
   const { data, isLoading } = trpc.community.myResponded.useQuery();
   const closed = (data ?? []).filter(p => p.status === "closed");
   if (isLoading) return <Loader2 className="size-5 animate-spin text-muted-foreground" />;
   if (closed.length === 0) {
-    return <SegolifeEmptyState icon={<Vote className="size-6" />} title="Sin resultados cerrados todavía" description="Aquí verás los resultados finales de lo que ya has votado." />;
+    return <SegolifeEmptyState icon={<Vote className="size-6" />} title={t("comunity.noResultsYet")} description={t("comunity.noResultsYetDescription")} />;
   }
   return <ProposalLinkList slug={slug} items={closed} />;
 }
 
 function ProposalLinkList({ slug, items }: { slug: string; items: { id: number; title: string; questionType: string; endsAt: Date | string | null; status: string }[] }) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-2">
       {items.map(p => (
         <Link key={p.id} href={`/${slug}/comunity/${p.id}`} className="block rounded-xl border border-border bg-card px-4 py-3 hover:bg-accent/50">
           <p className="text-sm font-medium text-foreground">{p.title}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">{QUESTION_TYPE_LABEL[p.questionType as ComunityQuestionType]} · {p.status === "closed" ? "Cerrada" : "Activa"}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{questionTypeLabel(t, p.questionType as ComunityQuestionType)} · {p.status === "closed" ? t("comunity.statusClosed") : t("comunity.statusActive")}</p>
         </Link>
       ))}
     </div>
@@ -144,6 +176,7 @@ function ProposalLinkList({ slug, items }: { slug: string; items: { id: number; 
 // ─── PROPONER ────────────────────────────────────────────────────────────
 
 function ProponerTab() {
+  const { t } = useTranslation();
   const { community } = useCommunity();
   const utils = trpc.useUtils();
   const { data: myProposals } = trpc.community.myProposals.useQuery();
@@ -153,7 +186,7 @@ function ProponerTab() {
   const [description, setDescription] = useState("");
 
   const submitMut = trpc.community.submitProposal.useMutation({
-    onSuccess: () => { toast.success("Idea enviada — la revisará el equipo antes de publicarla"); setTitle(""); setDescription(""); utils.community.myProposals.invalidate(); },
+    onSuccess: () => { toast.success(t("comunity.ideaSubmitted")); setTitle(""); setDescription(""); utils.community.myProposals.invalidate(); },
     onError: e => toast.error(e.message),
   });
 
@@ -172,12 +205,12 @@ function ProponerTab() {
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
-        <p className="text-sm font-semibold text-foreground">Propón un plan</p>
-        <div><Label>¿Qué propones? *</Label><Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Ej: Torneo de pádel entre comunidades" maxLength={256} /></div>
-        <div><Label>Cuéntanos más (opcional)</Label><Textarea rows={3} value={description} onChange={e => setDescription(e.target.value)} maxLength={2000} /></div>
+        <p className="text-sm font-semibold text-foreground">{t("comunity.proposeAPlan")}</p>
+        <div><Label>{t("comunity.whatDoYouPropose")}</Label><Input value={title} onChange={e => setTitle(e.target.value)} placeholder={t("comunity.proposePlaceholder")} maxLength={256} /></div>
+        <div><Label>{t("comunity.tellUsMore")}</Label><Textarea rows={3} value={description} onChange={e => setDescription(e.target.value)} maxLength={2000} /></div>
         {approvedReward > 0 && (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Coins className="size-3.5 shrink-0 text-primary" /> Si tu idea se aprueba, ganas +{approvedReward} ST
+            <Coins className="size-3.5 shrink-0 text-primary" /> {t("comunity.approvedRewardHint", { amount: approvedReward })}
           </p>
         )}
         <Button
@@ -185,13 +218,13 @@ function ProponerTab() {
           disabled={!title.trim() || !community?.id || submitMut.isPending}
           onClick={() => community?.id && submitMut.mutate({ communityId: community.id, title: title.trim(), description: description.trim() || null })}
         >
-          {submitMut.isPending ? <Loader2 className="size-4 animate-spin mr-1.5" /> : <Send className="size-4 mr-1.5" />} Enviar idea
+          {submitMut.isPending ? <Loader2 className="size-4 animate-spin mr-1.5" /> : <Send className="size-4 mr-1.5" />} {t("comunity.submitIdea")}
         </Button>
       </div>
 
       {!!trending?.length && (
         <div>
-          <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground mb-2"><Flame className="size-4 text-accent" /> Tendencia ahora</p>
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground mb-2"><Flame className="size-4 text-accent" /> {t("comunity.trendingNow")}</p>
           <div className="space-y-2">
             {trending.map(idea => <TrendingIdeaRow key={idea.id} idea={idea} />)}
           </div>
@@ -200,12 +233,12 @@ function ProponerTab() {
 
       {!!myProposals?.length && (
         <div>
-          <p className="text-sm font-semibold text-foreground mb-2">Tus ideas</p>
+          <p className="text-sm font-semibold text-foreground mb-2">{t("comunity.yourIdeas")}</p>
           <div className="space-y-2">
             {myProposals.map(idea => (
               <div key={idea.id} className="rounded-xl border border-border bg-card px-4 py-3">
                 <p className="text-sm font-medium text-foreground">{idea.title}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">{ideaStatusLabel(idea.status)} · {idea.supportCount} apoyo(s)</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{ideaStatusLabel(t, idea.status)} · {t("comunity.supportCount", { count: idea.supportCount })}</p>
               </div>
             ))}
           </div>
@@ -238,10 +271,7 @@ function TrendingIdeaRow({ idea }: { idea: { id: number; title: string; supportC
   );
 }
 
-function ideaStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    pending_moderation: "En revisión", approved: "Aprobada", rejected: "No aprobada",
-    scheduled: "Programada", active: "Activa", closed: "Cerrada", converted: "¡Convertida en pregunta!",
-  };
-  return labels[status] ?? status;
+function ideaStatusLabel(t: TFunction, status: string): string {
+  const known = ["pending_moderation", "approved", "rejected", "scheduled", "active", "closed", "converted"];
+  return known.includes(status) ? t(`comunity.ideaStatus.${status}`) : status;
 }

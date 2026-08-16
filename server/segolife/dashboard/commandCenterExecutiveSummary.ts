@@ -76,7 +76,13 @@ export interface ExecutiveBriefInputs {
   alerts: ActionCenterAlert[];
   retention?: RetentionSnapshot;
   referrals?: ReferralBiSnapshot;
-  topVenueByNativeSales?: { venueName: string; sharePct: number } | null;
+  // Fase 16 (auditoría) — renombrado desde `topVenueByNativeSales`: el valor
+  // que alimenta esto (venuePerf.totalEcosystemRevenueCents) SIEMPRE incluye
+  // ventas Fourvenues además de nativas (commandCenterVenues.ts no filtra
+  // por provider en el ticket query) — la frase decía "ventas nativas" sobre
+  // un dato que no lo era, un KPI engañoso real. El nombre y el texto ahora
+  // describen lo que el dato realmente es.
+  topVenueByEcosystemSales?: { venueName: string; sharePct: number } | null;
   eventsToday?: number | null;
   attendanceComparison?: PeriodComparison | null;
 }
@@ -95,8 +101,8 @@ export function buildExecutiveBrief(inputs: ExecutiveBriefInputs): ExecutiveBrie
       : "No hay eventos activos hoy.");
   }
 
-  if (inputs.topVenueByNativeSales && inputs.topVenueByNativeSales.sharePct > 0) {
-    sentences.push(`${inputs.topVenueByNativeSales.venueName} concentra el ${inputs.topVenueByNativeSales.sharePct}% de las ventas nativas del periodo.`);
+  if (inputs.topVenueByEcosystemSales && inputs.topVenueByEcosystemSales.sharePct > 0) {
+    sentences.push(`${inputs.topVenueByEcosystemSales.venueName} concentra el ${inputs.topVenueByEcosystemSales.sharePct}% de las ventas del ecosistema (nativas + Fourvenues) del periodo.`);
   }
 
   const attendanceDeltaPct = inputs.attendanceComparison?.deltaPct;

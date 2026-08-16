@@ -29,14 +29,14 @@ type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
  * estaba sembrado). Nunca se toca aquí la generación/validación del token —
  * solo qué plantilla/remitente construye el email.
  */
-async function sendResetEmail(user: { id: number; email: string; name: string | null }, resetUrl: string, tokenId: number, db: Db) {
+async function sendResetEmail(user: { id: number; email: string; name: string | null }, resetPath: string, resetUrl: string, tokenId: number, db: Db) {
   // Comunidad de origen best-effort (para resolver EN/ES) — un usuario de
   // staff sin comunidad simplemente cae al fallback de plataforma "es".
   const [membership] = await db.select({ communityId: userCommunities.communityId })
     .from(userCommunities).where(eq(userCommunities.userId, user.id)).orderBy(asc(userCommunities.joinedAt)).limit(1);
   const communityId = membership?.communityId ?? null;
 
-  const rendered = renderTemplate("password_reset_requested", { expiryMinutes: String(TOKEN_EXPIRY_MINUTES) }, resetUrl);
+  const rendered = renderTemplate("password_reset_requested", { expiryMinutes: String(TOKEN_EXPIRY_MINUTES) }, resetPath);
 
   const result = await createNotification({
     userId: user.id,
@@ -62,7 +62,15 @@ async function sendResetEmail(user: { id: number; email: string; name: string | 
   // Fallback de desarrollo: si el provider de email no está configurado
   // (SEGOLIFE_ENGAGEMENT_EMAIL_FROM vacío en local), imprimir el enlace en
   // consola — mismo comportamiento de antes, ahora leído de la entrega real.
-  if (result.status === "created") {
+  //
+  // Fase 16 (auditoría de seguridad) — este `if` nunca comprobaba NODE_ENV a
+  // pesar de que el propio comentario lo describe como "fallback de
+  // desarrollo": cualquier fallo de entrega de email en PRODUCCIÓN (Brevo
+  // caído, remitente mal configurado, lo que sea) escribía el enlace de
+  // reseteo — con el token real, capaz de tomar la cuenta — en texto plano
+  // en los logs del servidor, accesibles a cualquiera con acceso a Railway.
+  // Nunca se debe imprimir un secreto de sesión/cuenta en logs de producción.
+  if (result.status === "created" && process.env.NODE_ENV !== "production") {
     const [delivery] = await db.select({ status: notificationDeliveries.status })
       .from(notificationDeliveries)
       .where(and(eq(notificationDeliveries.notificationId, result.notification.id), eq(notificationDeliveries.channel, "email")))
@@ -159,9 +167,20 @@ export function createPasswordResetRouter(): Router {
       const baseUrl = (origin && typeof origin === "string")
         ? origin.replace(/\/$/, "")
         : (process.env.APP_URL ?? "http://localhost:3000");
-      const resetUrl = `${baseUrl}/nueva-contrasena?token=${rawToken}`;
+      const resetPath = `/nueva-contrasena?token=${rawToken}`;
+      const resetUrl = `${baseUrl}${resetPath}`;
 
-      await sendResetEmail({ id: user.id, email: user.email ?? email, name: user.name ?? "" }, resetUrl, tokenId, db);
+      // Fase 16 (auditoría de seguridad/comunicación) — sendResetEmail() pasa
+      // este valor a renderTemplate() como `deepLink`, que sanitizeDeepLink()
+      // exige que sea una ruta RELATIVA (`startsWith("/")`, nunca una URL
+      // absoluta — es una whitelist anti-phishing, spec deepLinkPolicy.ts).
+      // Pasar `resetUrl` (absoluto) aquí hacía que sanitizeDeepLink lo
+      // rechazara SIEMPRE, así que el email de recuperación se enviaba sin
+      // botón "Set new password" — el estudiante no tenía forma de resetear
+      // su contraseña por email. `resetUrl` (absoluto) se sigue usando tal
+      // cual para el fallback de consola en desarrollo, donde sí hace falta
+      // pegable en el navegador.
+      await sendResetEmail({ id: user.id, email: user.email ?? email, name: user.name ?? "" }, resetPath, resetUrl, tokenId, db);
 
       res.json({ ok: true, message: "Si el email existe, recibirás un enlace en breve." });
     } catch (err) {

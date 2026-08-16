@@ -43,4 +43,16 @@ describe("deepLinkPolicy — sanitizeDeepLink", () => {
     expect(sanitizeDeepLink("/ie/explore?tab=events")).toBe("/ie/explore?tab=events");
     expect(sanitizeDeepLink("/ie/explore#top")).toBe("/ie/explore#top");
   });
+
+  // Fase 16 — /nueva-contrasena es una ruta global (sin prefijo de
+  // comunidad), a diferencia de todo lo demás en la whitelist. El token
+  // real va en la query, que sanitizeDeepLink conserva sin validarla contra
+  // el patrón (solo el path se compara).
+  it("acepta /nueva-contrasena (reset de contraseña) con su token en la query", () => {
+    expect(sanitizeDeepLink("/nueva-contrasena?token=abc123")).toBe("/nueva-contrasena?token=abc123");
+  });
+
+  it("rechaza una URL absoluta a /nueva-contrasena — nunca basta con que el path final coincida", () => {
+    expect(sanitizeDeepLink("https://www.segolife.es/nueva-contrasena?token=abc123")).toBeNull();
+  });
 });

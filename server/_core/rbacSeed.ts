@@ -48,6 +48,19 @@ const BASELINE_ROLES: Array<[string, string, string, boolean]> = [
 // venue se aplica en server/segolife/benefits/venueStaffAccess.ts, no aquí.
 const STAFF_ROLE: [string, string, string, boolean] = ["staff", "Staff de venue", "Validación de beneficios en puerta/caja", false];
 
+// Fase 16 (auditoría de producción) — auditoría confirmó que NINGÚN Venue
+// Admin real tiene hoy fila en rbac_user_roles: el paso 5 de abajo sincroniza
+// rbac_user_roles emparejando `rbac_roles.key = users.role` literalmente, así
+// que un usuario con users.role='venue_admin' (el enum real, ver
+// drizzle/schema.ts) necesita un rol RBAC con key EXACTAMENTE 'venue_admin'
+// — no basta con que exista 'staff', pese a lo que decía el comentario del
+// paso 3b (aspiracional, nunca cierto para el mecanismo de sync automático
+// de este archivo). Sin esta fila, un Venue Admin recién creado por
+// UsersManager.tsx (que nunca pasa rbacRoleKeys, ver server/routers.ts
+// createUser) se queda sin ningún permiso RBAC — TPV/Entradas/Escanear/Caja
+// devuelven FORBIDDEN a pesar de tener venue_staff correctamente asignado.
+const VENUE_ADMIN_ROLE: [string, string, string, boolean] = ["venue_admin", "Administrador de local", "Operación de TPV/Entradas/Escaneo/Caja de un venue", false];
+
 const STUDENTS_PERMISSIONS: Array<[string, string, string, string]> = [
   ["students.view",   "students", "view",   "Ver perfiles y datos de estudiantes"],
   ["students.manage", "students", "manage", "Gestionar (crear/editar/anotar) perfiles de estudiantes"],
@@ -209,7 +222,7 @@ export async function seedRbacIfNeeded(): Promise<{
 
   try {
     // 1. Catálogo mínimo de roles — defensivo, no depende de que db:migrate haya corrido.
-    for (const [key, name, description, isLegacy] of [...BASELINE_ROLES, STAFF_ROLE]) {
+    for (const [key, name, description, isLegacy] of [...BASELINE_ROLES, STAFF_ROLE, VENUE_ADMIN_ROLE]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_roles (\`key\`, name, description, is_legacy, is_active, sort_order)
          VALUES (?, ?, ?, ?, 1, 0)`,
@@ -253,18 +266,27 @@ export async function seedRbacIfNeeded(): Promise<{
     //     aplicado a comunidad). Fase 10: stock.view/stock.adjust (merma,
     //     ajuste, apertura) y cash.view/cash.operate (abrir/cerrar turno,
     //     movimientos) — mismo criterio, nunca stock.manage/cash.manage
-    //     (config global, exclusiva de admin). Un Venue Admin YA usa este
-    //     mismo rol RBAC `staff` (asignado en su alta, ver server/routers.ts
-    //     createUser) para operar su Venue App — hereda estos permisos
-    //     nuevos automáticamente, sin migración de datos de usuario.
-    for (const key of ["benefits.view", "benefits.redeem", "attendance.view", "attendance.redeem", "commerce.view", "commerce.record", "stock.view", "stock.adjust", "cash.view", "cash.operate"]) {
-      const [result] = await conn.execute(
-        `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
-         SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p
-         WHERE r.\`key\` = 'staff' AND p.\`key\` = ?`,
-        [key]
-      ) as any[];
-      if ((result as any).affectedRows > 0) grantsEnsured.push(`staff -> ${key}`);
+    //     (config global, exclusiva de admin).
+    //
+    // Fase 16 — el mismo bundle se concede TAMBIÉN al rol `venue_admin`
+    // (nunca solo a `staff`, pese a lo que decía antes este comentario): el
+    // paso 5 sincroniza rbac_user_roles emparejando `rbac_roles.key =
+    // users.role` literalmente, y `users.role` para un Administrador de
+    // local es el enum real `'venue_admin'` (ver drizzle/schema.ts) — sin
+    // esta fila un Venue Admin recién creado se queda sin ningún permiso
+    // RBAC, aunque tenga venue_staff correctamente asignado (auditoría de
+    // esta fase confirmó 0 usuarios reales con este rol en producción).
+    const VENUE_OPERATIONAL_PERMISSIONS = ["benefits.view", "benefits.redeem", "attendance.view", "attendance.redeem", "commerce.view", "commerce.record", "stock.view", "stock.adjust", "cash.view", "cash.operate"];
+    for (const roleKey of ["staff", "venue_admin"]) {
+      for (const key of VENUE_OPERATIONAL_PERMISSIONS) {
+        const [result] = await conn.execute(
+          `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
+           SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p
+           WHERE r.\`key\` = ? AND p.\`key\` = ?`,
+          [roleKey, key]
+        ) as any[];
+        if ((result as any).affectedRows > 0) grantsEnsured.push(`${roleKey} -> ${key}`);
+      }
     }
 
     // 4. Verificación de settings.manage (ya sembrado en 0070 vía CROSS JOIN a admin).

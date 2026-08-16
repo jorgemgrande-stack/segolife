@@ -20,7 +20,7 @@ import {
   settlementLines,
   suppliers,
 } from "../drizzle/schema";
-import { verifySessionToken } from "./localAuth";
+import { verifySessionToken, COOKIE_NAME } from "./localAuth";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
 const db = drizzle(_pool);
@@ -37,7 +37,7 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
       return [c.slice(0, idx).trim(), decodeURIComponent(c.slice(idx + 1).trim())];
     })
   );
-  const token = cookies["nayade_session"];
+  const token = cookies[COOKIE_NAME];
   if (!token) {
     res.status(401).json({ error: "No autenticado" });
     return;

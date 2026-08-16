@@ -42,19 +42,27 @@ const LEAD_EVENTS = new Set([
 const ghlWebhookRouter = express.Router();
 
 ghlWebhookRouter.post("/api/ghl/webhook", express.json({ limit: "1mb" }), async (req, res) => {
-  // 1. Validación de secreto opcional
-  // IMPORTANTE: usar GHL_LEAD_WEBHOOK_SECRET (NO GHL_WEBHOOK_SECRET) para no
-  // colisionar con el secreto del inbox webhook. El workflow de GHL llama a este
-  // endpoint sin secreto — el check solo se activa si se configura esta variable.
+  // 1. Validación de secreto — SIEMPRE obligatoria (Fase 16, auditoría de
+  // seguridad). Antes, sin GHL_LEAD_WEBHOOK_SECRET configurado (el estado
+  // real hoy — no aparece en las variables de entorno de producción de
+  // Segolife), este endpoint aceptaba CUALQUIER POST sin autenticar y creaba
+  // un lead/client real en BD a partir de datos controlados por el
+  // atacante — mismo fallo ya encontrado y corregido en vapiWebhookRouter.ts
+  // (503 si no está configurado, 401 si no coincide, nunca "si no hay
+  // secreto, aceptar todo"). Ningún llamador legítimo depende del
+  // comportamiento anterior: sin GHL_LEAD_WEBHOOK_SECRET configurado no hay
+  // integración GHL real activa en este entorno.
   const secret = process.env.GHL_LEAD_WEBHOOK_SECRET || "";
-  if (secret) {
-    const provided =
-      (req.headers["x-ghl-secret"] as string | undefined) ??
-      (req.query.secret as string | undefined);
-    if (provided !== secret) {
-      console.warn("[GHL Webhook] Petición rechazada — secreto inválido");
-      return res.status(401).json({ ok: false });
-    }
+  if (!secret) {
+    console.warn("[GHL Webhook] Petición rechazada — GHL_LEAD_WEBHOOK_SECRET no configurado");
+    return res.status(503).json({ ok: false, error: "GHL webhook not configured" });
+  }
+  const provided =
+    (req.headers["x-ghl-secret"] as string | undefined) ??
+    (req.query.secret as string | undefined);
+  if (provided !== secret) {
+    console.warn("[GHL Webhook] Petición rechazada — secreto inválido");
+    return res.status(401).json({ ok: false });
   }
 
   const payload = req.body ?? {};

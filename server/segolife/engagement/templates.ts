@@ -22,6 +22,7 @@
  * cuando se active.
  */
 import { sanitizeDeepLink } from "./deepLinkPolicy";
+import { canonicalBaseUrl } from "../../_core/canonicalHost";
 import type { NotificationCategory } from "./notificationPreferencesService";
 import {
   renderEmailShell, renderPlainText, heroBlock, contentBlock, eventCard, tokensCard, benefitCard,
@@ -524,8 +525,17 @@ export function renderTemplate(templateKey: string, vars: Record<string, string>
     const preheaderEs = template.preheaderEs ? interpolate(template.preheaderEs, template.allowedVariables, varsEsFinal) : "";
     const prefsUrl = template.audienceType === "marketing" ? (preferencesUrl ?? null) : null;
 
-    const en = template.buildEmailBody(varsFinal, "en", { deepLinkUrl: safeDeepLink, preferencesUrl: prefsUrl });
-    const es = template.buildEmailBody(varsEsFinal, "es", { deepLinkUrl: safeDeepLink, preferencesUrl: prefsUrl });
+    // Fase 16 (auditoría) — `safeDeepLink` es SIEMPRE relativo (sanitizeDeepLink
+    // lo exige, es una whitelist anti-phishing). Correcto para deep links
+    // in-app (push/notificaciones dentro de la propia SPA), pero un email no
+    // tiene "origen actual" contra el que resolver una URL relativa — un
+    // href="/ie/explore" en un cliente de correo no navega a ningún sitio.
+    // Ningún llamador de renderTemplate() en todo el repo absolutizaba esto
+    // antes de este fix — el botón CTA de CUALQUIER plantilla (incluida
+    // password_reset_requested) quedaba con un href relativo roto en email.
+    const emailDeepLinkUrl = safeDeepLink ? `${canonicalBaseUrl()}${safeDeepLink}` : null;
+    const en = template.buildEmailBody(varsFinal, "en", { deepLinkUrl: emailDeepLinkUrl, preferencesUrl: prefsUrl });
+    const es = template.buildEmailBody(varsEsFinal, "es", { deepLinkUrl: emailDeepLinkUrl, preferencesUrl: prefsUrl });
 
     result.emailHtmlEn = renderEmailShell({ locale: "en", preheader: preheaderEn || result.subjectEn!, bodyRows: en.rows, preferencesUrl: prefsUrl });
     result.emailHtmlEs = renderEmailShell({ locale: "es", preheader: preheaderEs || result.subjectEs!, bodyRows: es.rows, preferencesUrl: prefsUrl });

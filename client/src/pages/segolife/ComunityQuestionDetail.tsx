@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
@@ -11,17 +12,35 @@ import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import { ArrowUp, ArrowDown, Loader2, CheckCircle2, Coins } from "lucide-react";
-import { ATTENDANCE_INTENTION_LABEL, timeLeftLabel } from "@/lib/comunity";
 
 type QuestionType =
   | "single_choice" | "yes_no" | "percentage_scale" | "scale_1_5"
   | "multiselect" | "ranking" | "attendance_intention" | "me_apunto" | "open_text";
+
+const ATTENDANCE_INTENTION_KEYS = ["definitely", "probably", "maybe", "no"] as const;
+
+/** Cuenta atrás compacta traducida — misma lógica que lib/comunity.ts:timeLeftLabel, versión i18n (Admin sigue usando la fija en español, ver Fase 16). */
+function timeLeftLabelI18n(t: TFunction, endsAt: Date | string | null | undefined): string {
+  if (!endsAt) return t("comunity.timeLeft.noDeadline");
+  const diffMs = new Date(endsAt).getTime() - Date.now();
+  if (diffMs <= 0) return t("comunity.timeLeft.closed");
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 60) return t("comunity.timeLeft.minutes", { count: minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return t("comunity.timeLeft.hoursMinutes", { hours, minutes: minutes % 60 });
+  const days = Math.floor(hours / 24);
+  return t("comunity.timeLeft.daysHours", { days, hours: hours % 24 });
+}
 
 /**
  * Detalle de una pregunta COMUNITY + votar — /:community/comunity/:id (spec
  * puntos 24-30). Toda la lógica de "¿qué puede ver este estudiante?" ya la
  * resuelve el servidor (getPublicById) — aquí solo se renderiza, nunca se
  * decide visibilidad de resultados en el cliente.
+ *
+ * Fase 16 (auditoría) — página casi entera en español hardcodeado pese a
+ * usar useTranslation solo para 1 string; namespace `comunity.*` propio,
+ * nunca los labels fijos de lib/comunity.ts (compartidos con Admin).
  */
 export default function ComunityQuestionDetail() {
   const { id } = useParams<{ id: string }>();
@@ -76,7 +95,7 @@ export default function ComunityQuestionDetail() {
           <h1 className="text-xl font-semibold text-foreground">{proposal.title}</h1>
           {proposal.description && <p className="mt-1 text-sm text-muted-foreground">{proposal.description}</p>}
           <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
-            {isOpen ? <span>⏳ {timeLeftLabel(proposal.endsAt)}</span> : <span>Cerrada</span>}
+            {isOpen ? <span>⏳ {timeLeftLabelI18n(t, proposal.endsAt)}</span> : <span>{t("comunity.statusClosed")}</span>}
             {responseReward > 0 && (
               <span className="flex items-center gap-1 text-primary"><Coins className="size-3.5" /> +{responseReward} ST</span>
             )}
@@ -86,7 +105,7 @@ export default function ComunityQuestionDetail() {
         {justResponded && (
           <div className="flex items-center gap-2 rounded-2xl border border-primary/30 bg-primary/5 p-4 text-sm text-foreground">
             <CheckCircle2 className="size-5 text-primary shrink-0" />
-            {t("comunity.thanksForVoting", "¡Gracias por participar!")}
+            {t("comunity.thanksForVoting")}
           </div>
         )}
 
@@ -99,19 +118,19 @@ export default function ComunityQuestionDetail() {
             onSubmit={payload => respondMut.mutate({ proposalId, payload: payload as never })}
           />
         ) : !isOpen ? (
-          <p className="text-sm text-muted-foreground">Esta pregunta ya no admite respuestas.</p>
+          <p className="text-sm text-muted-foreground">{t("comunity.cannotRespondClosed")}</p>
         ) : (
-          <p className="text-sm text-muted-foreground">Ya has respondido y esta pregunta no admite cambios.</p>
+          <p className="text-sm text-muted-foreground">{t("comunity.alreadyRespondedNoChanges")}</p>
         )}
 
         {results && (
           <div className="rounded-2xl border border-border bg-card p-4">
-            <p className="text-sm font-semibold text-foreground mb-3">Resultados{results.totalResponses > 0 ? ` (${results.totalResponses})` : ""}</p>
+            <p className="text-sm font-semibold text-foreground mb-3">{t("comunity.results")}{results.totalResponses > 0 ? ` (${results.totalResponses})` : ""}</p>
             <PublicResults qType={qType} results={results} />
           </div>
         )}
 
-        <Button variant="ghost" onClick={() => navigate(`/${slug}/comunity`)}>← Volver a COMUNITY</Button>
+        <Button variant="ghost" onClick={() => navigate(`/${slug}/comunity`)}>{t("comunity.backToComunity")}</Button>
       </SegolifePageContainer>
     </SegolifeAppShell>
   );
@@ -126,6 +145,7 @@ function VoteForm({ qType, options, existing, pending, onSubmit }: {
   pending: boolean;
   onSubmit: (payload: Record<string, unknown> & { questionType: QuestionType }) => void;
 }) {
+  const { t } = useTranslation();
   const [singleChoice, setSingleChoice] = useState<number | null>(existing?.values[0]?.optionId ?? null);
   const [yesNo, setYesNo] = useState<"yes" | "no" | null>((existing?.values[0]?.valueText as "yes" | "no") ?? null);
   const [percentages, setPercentages] = useState<Record<number, number>>(() => {
@@ -154,7 +174,7 @@ function VoteForm({ qType, options, existing, pending, onSubmit }: {
           <button key={o.id} className={`w-full text-left ${btn(singleChoice === o.id)}`} onClick={() => setSingleChoice(o.id)}>{o.label}</button>
         ))}
         <Button className="w-full mt-2" disabled={singleChoice == null || pending} onClick={() => onSubmit({ questionType: qType, optionId: singleChoice! })}>
-          {pending ? <Loader2 className="size-4 animate-spin" /> : "Votar"}
+          {pending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.vote")}
         </Button>
       </div>
     );
@@ -164,11 +184,11 @@ function VoteForm({ qType, options, existing, pending, onSubmit }: {
     return (
       <div className="space-y-2">
         <div className="flex gap-3">
-          <button className={`flex-1 ${btn(yesNo === "yes")}`} onClick={() => setYesNo("yes")}>👍 Sí</button>
-          <button className={`flex-1 ${btn(yesNo === "no")}`} onClick={() => setYesNo("no")}>👎 No</button>
+          <button className={`flex-1 ${btn(yesNo === "yes")}`} onClick={() => setYesNo("yes")}>{t("comunity.yes")}</button>
+          <button className={`flex-1 ${btn(yesNo === "no")}`} onClick={() => setYesNo("no")}>{t("comunity.no")}</button>
         </div>
         <Button className="w-full" disabled={!yesNo || pending} onClick={() => onSubmit({ questionType: qType, value: yesNo })}>
-          {pending ? <Loader2 className="size-4 animate-spin" /> : "Votar"}
+          {pending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.vote")}
         </Button>
       </div>
     );
@@ -193,7 +213,7 @@ function VoteForm({ qType, options, existing, pending, onSubmit }: {
           disabled={pending}
           onClick={() => onSubmit({ questionType: qType, values: options.map(o => ({ optionId: o.id, value: percentages[o.id] })) })}
         >
-          {pending ? <Loader2 className="size-4 animate-spin" /> : "Enviar"}
+          {pending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.send")}
         </Button>
       </div>
     );
@@ -208,7 +228,7 @@ function VoteForm({ qType, options, existing, pending, onSubmit }: {
           ))}
         </div>
         <Button className="w-full" disabled={pending} onClick={() => onSubmit({ questionType: qType, value: scale })}>
-          {pending ? <Loader2 className="size-4 animate-spin" /> : "Votar"}
+          {pending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.vote")}
         </Button>
       </div>
     );
@@ -223,7 +243,7 @@ function VoteForm({ qType, options, existing, pending, onSubmit }: {
           </button>
         ))}
         <Button className="w-full mt-2" disabled={multi.length === 0 || pending} onClick={() => onSubmit({ questionType: qType, optionIds: multi })}>
-          {pending ? <Loader2 className="size-4 animate-spin" /> : "Votar"}
+          {pending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.vote")}
         </Button>
       </div>
     );
@@ -246,12 +266,12 @@ function VoteForm({ qType, options, existing, pending, onSubmit }: {
           <div key={optId} className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2.5">
             <span className="w-5 text-sm font-semibold text-muted-foreground">{i + 1}</span>
             <span className="flex-1 text-sm text-foreground">{labelById.get(optId)}</span>
-            <button aria-label="Subir" disabled={i === 0} onClick={() => move(i, -1)} className="p-1 disabled:opacity-30"><ArrowUp className="size-4" /></button>
-            <button aria-label="Bajar" disabled={i === ranked.length - 1} onClick={() => move(i, 1)} className="p-1 disabled:opacity-30"><ArrowDown className="size-4" /></button>
+            <button aria-label={t("comunity.moveUp")} disabled={i === 0} onClick={() => move(i, -1)} className="p-1 disabled:opacity-30"><ArrowUp className="size-4" /></button>
+            <button aria-label={t("comunity.moveDown")} disabled={i === ranked.length - 1} onClick={() => move(i, 1)} className="p-1 disabled:opacity-30"><ArrowDown className="size-4" /></button>
           </div>
         ))}
         <Button className="w-full mt-2" disabled={pending} onClick={() => onSubmit({ questionType: qType, orderedOptionIds: ranked })}>
-          {pending ? <Loader2 className="size-4 animate-spin" /> : "Enviar orden"}
+          {pending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.sendOrder")}
         </Button>
       </div>
     );
@@ -260,11 +280,11 @@ function VoteForm({ qType, options, existing, pending, onSubmit }: {
   if (qType === "attendance_intention") {
     return (
       <div className="space-y-2">
-        {(["definitely", "probably", "maybe", "no"] as const).map(k => (
-          <button key={k} className={`w-full text-left ${btn(intention === k)}`} onClick={() => setIntention(k)}>{ATTENDANCE_INTENTION_LABEL[k]}</button>
+        {ATTENDANCE_INTENTION_KEYS.map(k => (
+          <button key={k} className={`w-full text-left ${btn(intention === k)}`} onClick={() => setIntention(k)}>{t(`comunity.attendanceIntention.${k}`)}</button>
         ))}
         <Button className="w-full mt-2" disabled={!intention || pending} onClick={() => onSubmit({ questionType: qType, value: intention })}>
-          {pending ? <Loader2 className="size-4 animate-spin" /> : "Votar"}
+          {pending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.vote")}
         </Button>
       </div>
     );
@@ -273,7 +293,7 @@ function VoteForm({ qType, options, existing, pending, onSubmit }: {
   if (qType === "me_apunto") {
     return (
       <Button className="w-full" size="lg" disabled={!!existing || pending} onClick={() => onSubmit({ questionType: qType })}>
-        {pending ? <Loader2 className="size-4 animate-spin" /> : existing ? "✅ Ya te has apuntado" : "🙋 Me apunto"}
+        {pending ? <Loader2 className="size-4 animate-spin" /> : existing ? t("comunity.alreadyJoined") : t("comunity.imIn")}
       </Button>
     );
   }
@@ -281,10 +301,10 @@ function VoteForm({ qType, options, existing, pending, onSubmit }: {
   // open_text
   return (
     <div className="space-y-2">
-      <Textarea rows={4} maxLength={1000} value={openText} onChange={e => setOpenText(e.target.value)} placeholder="Escribe tu respuesta…" />
+      <Textarea rows={4} maxLength={1000} value={openText} onChange={e => setOpenText(e.target.value)} placeholder={t("comunity.responsePlaceholder")} />
       <p className="text-right text-xs text-muted-foreground">{openText.length}/1000</p>
       <Button className="w-full" disabled={!openText.trim() || pending} onClick={() => onSubmit({ questionType: qType, text: openText.trim() })}>
-        {pending ? <Loader2 className="size-4 animate-spin" /> : "Enviar"}
+        {pending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.send")}
       </Button>
     </div>
   );
@@ -293,7 +313,8 @@ function VoteForm({ qType, options, existing, pending, onSubmit }: {
 // ─── Resultados (vista estudiante — sin acciones de moderación) ────────────
 
 function PublicResults({ qType, results }: { qType: QuestionType; results: any }) {
-  if (results.totalResponses === 0) return <p className="text-sm text-muted-foreground">Todavía nadie ha respondido.</p>;
+  const { t } = useTranslation();
+  if (results.totalResponses === 0) return <p className="text-sm text-muted-foreground">{t("comunity.noResponsesYet")}</p>;
 
   if ((qType === "single_choice" || qType === "multiselect")) {
     const items = results.singleChoice ?? results.multiselect ?? [];
@@ -312,7 +333,7 @@ function PublicResults({ qType, results }: { qType: QuestionType; results: any }
   if (results.yesNo) {
     return (
       <div className="space-y-2">
-        <div className="flex items-center justify-between text-sm mb-1"><span>👍 Sí</span><span>{results.yesNo.yesPercentage}%</span></div>
+        <div className="flex items-center justify-between text-sm mb-1"><span>{t("comunity.yes")}</span><span>{results.yesNo.yesPercentage}%</span></div>
         <Progress value={results.yesNo.yesPercentage} className="h-2" />
       </div>
     );
@@ -332,7 +353,7 @@ function PublicResults({ qType, results }: { qType: QuestionType; results: any }
   }
 
   if (results.scale15) {
-    return <p className="text-sm text-foreground">Media: <span className="font-semibold">{results.scale15.average}</span> / 5</p>;
+    return <p className="text-sm text-foreground">{t("comunity.average")} <span className="font-semibold">{results.scale15.average}</span> / 5</p>;
   }
 
   if (results.ranking) {
@@ -347,9 +368,9 @@ function PublicResults({ qType, results }: { qType: QuestionType; results: any }
     const b = results.attendanceIntention.breakdown;
     return (
       <div className="space-y-2">
-        {(["definitely", "probably", "maybe", "no"] as const).map(k => (
+        {ATTENDANCE_INTENTION_KEYS.map(k => (
           <div key={k} className="flex items-center justify-between text-sm">
-            <span>{ATTENDANCE_INTENTION_LABEL[k]}</span><span className="text-muted-foreground">{b[k] ?? 0}</span>
+            <span>{t(`comunity.attendanceIntention.${k}`)}</span><span className="text-muted-foreground">{b[k] ?? 0}</span>
           </div>
         ))}
       </div>
@@ -357,7 +378,7 @@ function PublicResults({ qType, results }: { qType: QuestionType; results: any }
   }
 
   if (results.meApunto) {
-    return <p className="text-lg font-semibold text-foreground">{results.meApunto.count} se apuntan</p>;
+    return <p className="text-lg font-semibold text-foreground">{t("comunity.countJoining", { count: results.meApunto.count })}</p>;
   }
 
   if (results.openText) {
@@ -365,7 +386,7 @@ function PublicResults({ qType, results }: { qType: QuestionType; results: any }
     const list = featured.length ? featured : results.openText.slice(0, 10);
     return (
       <div className="space-y-2">
-        {list.map((t: any) => <p key={t.id} className="text-sm text-foreground rounded-xl bg-secondary px-3 py-2">{t.text}</p>)}
+        {list.map((entry: any) => <p key={entry.id} className="text-sm text-foreground rounded-xl bg-secondary px-3 py-2">{entry.text}</p>)}
       </div>
     );
   }
