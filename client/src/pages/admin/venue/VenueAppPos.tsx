@@ -163,8 +163,17 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
     });
   }
 
+  // Fase 10.7 (spec §19 "double-tap/network retry safety") — un ref se
+  // actualiza SÍNCRONAMENTE, a diferencia de `recordSaleMut.isPending`
+  // (estado de React, puede tardar un tick en reflejarse en el botón
+  // deshabilitado) — dos taps en el mismo evento nunca disparan dos
+  // mutate() con distinta idempotencyKey.
+  const submittingRef = useRef(false);
+
   function handleConfirmSale() {
     if (!cartItems.length) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     recordSaleMut.mutate({
       venueId,
       items: cartItems,
@@ -173,6 +182,8 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
       tokensToApply: requestedTokensNum > 0 ? requestedTokensNum : undefined,
       identityToken: requestedTokensNum > 0 ? (identifiedToken ?? undefined) : undefined,
       moneyPaymentMethod: moneyMethod,
+    }, {
+      onSettled: () => { submittingRef.current = false; },
     });
   }
 
