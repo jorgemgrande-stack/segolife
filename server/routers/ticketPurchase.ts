@@ -17,6 +17,7 @@ import { expireStaleHoldsForUser } from "../segolife/ticketing/inventoryHoldServ
 import { listMyOrders, getMyOrderById, listMyTickets, getMyTicketById, type MyTicketWithEvent } from "../segolife/ticketing/ticketingDb";
 import { getOrCreateMyIdentityToken, rotateMyIdentityToken } from "../segolife/commerce/studentIdentityService";
 import { getEventById } from "../db/eventsDb";
+import { getUserCommunitiesWithDetails } from "../db/communitiesDb";
 
 function mapCheckoutError(err: unknown): never {
   if (err instanceof CheckoutError) {
@@ -44,21 +45,24 @@ export const ticketPurchaseRouter = router({
       eventId: z.number().int().positive(),
       items: z.array(z.object({ ticketTypeId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1),
       idempotencyKey: z.string().min(8).max(191),
-      // Fase 15 (spec §17, "checkout must preserve the event/community
-      // relationship... server-side truth wins"): auditoría de esta fase
-      // confirmó que checkout no tenía NINGÚN concepto de comunidad — un
-      // Student podía comprar una entrada para un evento restringido a otra
-      // comunidad con solo conocer el eventId. Opcional para no romper
-      // ningún consumidor sin contexto de comunidad; mismo criterio
-      // permisivo que publicGetBySlug — un evento sin comunidades
-      // asignadas nunca se bloquea.
+      // Fase 15 (spec §17) introdujo este check pero lo dejó opcional y
+      // basado en el `communityId` que el CLIENTE afirmaba estar viendo
+      // (derivado de la URL, nunca de su membresía real) — omitirlo, o
+      // simplemente afirmar cualquier communityId del evento, lo saltaba
+      // por completo. PRE-16 overnight hardening (auditoría real): ya no se
+      // usa como filtro de autorización — solo la membresía REAL del
+      // comprador (resuelta server-side abajo) decide. Se conserva en el
+      // input únicamente por compatibilidad de firma con clientes
+      // existentes; su valor nunca se lee más abajo.
       communityId: z.number().int().positive().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      if (input.communityId != null) {
-        const detail = await getEventById(input.eventId);
-        if (detail && detail.communities.length > 0 && !detail.communities.some(c => c.id === input.communityId)) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Este evento no está disponible en esta comunidad." });
+      const detail = await getEventById(input.eventId);
+      if (detail && detail.communities.length > 0) {
+        const myCommunities = await getUserCommunitiesWithDetails(ctx.user.id);
+        const myCommunityIds = new Set(myCommunities.map(c => c.id));
+        if (!detail.communities.some(c => myCommunityIds.has(c.id))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Este evento no está disponible en tu comunidad." });
         }
       }
       try {
