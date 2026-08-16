@@ -21,6 +21,9 @@ const ALLOWED_PATTERNS: RegExp[] = [
   // COMUNITY (spec punto 20/45) — hub y detalle de una propuesta.
   /^\/[a-z0-9-]+\/comunity$/,
   /^\/[a-z0-9-]+\/comunity\/\d+$/,
+  // Pre-16.1 — solicitud de pago presencial con SegoTokens (TPV/puerta), el
+  // Student confirma/rechaza aquí tras recibir la notificación.
+  /^\/[a-z0-9-]+\/payment-requests\/\d+$/,
   // Fase 16 — reset de contraseña (server/passwordReset.ts). Ruta global,
   // sin prefijo de comunidad. El token va en la query string, preservada
   // aparte por sanitizeDeepLink (solo el path se compara contra el patrón).

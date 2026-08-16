@@ -73,6 +73,7 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
   const [identifiedToken, setIdentifiedToken] = useState<string | null>(null);
   const [manualToken, setManualToken] = useState("");
   const [tokensToApply, setTokensToApply] = useState("");
+  const [tokenRequestId, setTokenRequestId] = useState<number | null>(null);
   const [moneyMethod, setMoneyMethod] = useState<"cash" | "card">("cash");
   const [lastSale, setLastSale] = useState<{ totalCents: number; tokensSpent: number; promotionalValueCents: number; moneyDueCents: number; moneyMethod: "cash" | "card"; studentName: string | null; tokensEarned: number | null; transactionId: number | null } | null>(null);
   const [benefitManualToken, setBenefitManualToken] = useState("");
@@ -112,7 +113,36 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
     { enabled: !!identifiedStudent && cartItems.length > 0 && requestedTokensNum > 0 }
   );
 
-  const moneyDueCents = tokenQuote?.eligible && requestedTokensNum > 0 ? tokenQuote.moneyDueCents : totalCents;
+  // SEGOLIFE PRE-16.1 (spec §3/§4) — el operador SOLICITA, el Student
+  // confirma desde su propio teléfono; polling corto (3s) porque hay una
+  // persona esperando en vivo delante de la barra, se detiene en cuanto el
+  // estado deja de ser "pending".
+  const tokenRequestStatusQ = trpc.commerce.getTokenPaymentRequestStatus.useQuery(
+    { requestId: tokenRequestId ?? 0 },
+    {
+      enabled: !!tokenRequestId,
+      refetchInterval: query => (query.state.data?.status === "pending" ? 3000 : false),
+    }
+  );
+  const tokenRequestStatus = tokenRequestStatusQ.data?.status ?? "pending";
+  const tokenReservation = tokenRequestStatusQ.data?.reservation ?? null;
+  const tokenRequestSettled = tokenRequestStatus === "rejected" || tokenRequestStatus === "expired" || tokenRequestStatus === "cancelled";
+  const showCheckoutControls = !tokenRequestId || tokenRequestStatus === "confirmed";
+
+  const requestTokenPaymentMut = trpc.commerce.posRequestTokenPayment.useMutation({
+    onSuccess: result => setTokenRequestId(result.requestId),
+    onError: e => toast.error(e.message),
+  });
+  const cancelTokenPaymentMut = trpc.commerce.cancelTokenPaymentRequest.useMutation({
+    onSuccess: () => setTokenRequestId(null),
+    onError: e => toast.error(e.message),
+  });
+
+  const moneyDueCents = tokenRequestId && !tokenRequestSettled
+    ? (tokenReservation?.moneyDueCents ?? totalCents)
+    : tokenQuote?.eligible && requestedTokensNum > 0
+      ? tokenQuote.moneyDueCents
+      : totalCents;
 
   // SEGOTOKENS REWARD PREVIEW (Fase 10.6/10.7, spec §11) — SOLO informativo,
   // nunca calculado aquí: reutiliza el mismo read model de previewMyReward,
@@ -131,8 +161,8 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
     onSuccess: result => {
       setLastSale({
         totalCents,
-        tokensSpent: tokenQuote?.eligible ? tokenQuote.tokensToSpend : 0,
-        promotionalValueCents: tokenQuote?.eligible ? tokenQuote.promotionalValueCents : 0,
+        tokensSpent: tokenRequestId && tokenRequestStatus === "confirmed" && tokenReservation ? tokenReservation.tokensReserved : 0,
+        promotionalValueCents: tokenRequestId && tokenRequestStatus === "confirmed" && tokenReservation ? tokenReservation.promotionalValueCents : 0,
         moneyDueCents,
         moneyMethod,
         studentName: identifiedStudent?.name ?? null,
@@ -142,6 +172,7 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
       setCart({});
       setIdentifiedToken(null);
       setTokensToApply("");
+      setTokenRequestId(null);
     },
     onError: e => toast.error(e.message),
   });
@@ -170,6 +201,23 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
   // mutate() con distinta idempotencyKey.
   const submittingRef = useRef(false);
 
+  function handleRequestTokenPayment() {
+    if (!identifiedStudent || !identifiedToken || !cartItems.length || requestedTokensNum <= 0) return;
+    requestTokenPaymentMut.mutate({
+      venueId,
+      items: cartItems,
+      identifiedUserId: identifiedStudent.userId,
+      requestedTokens: requestedTokensNum,
+      identityToken: identifiedToken,
+      idempotencyKey: `tpv-tok:${venueId}:${crypto.randomUUID()}`,
+    });
+  }
+
+  function handleCancelTokenRequest() {
+    if (!tokenRequestId) return;
+    cancelTokenPaymentMut.mutate({ requestId: tokenRequestId });
+  }
+
   function handleConfirmSale() {
     if (!cartItems.length) return;
     if (submittingRef.current) return;
@@ -179,8 +227,7 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
       items: cartItems,
       identifiedUserId: identifiedStudent?.userId ?? null,
       idempotencyKey: `tpv:${venueId}:${crypto.randomUUID()}`,
-      tokensToApply: requestedTokensNum > 0 ? requestedTokensNum : undefined,
-      identityToken: requestedTokensNum > 0 ? (identifiedToken ?? undefined) : undefined,
+      confirmedTokenRequestId: tokenRequestId && tokenRequestStatus === "confirmed" ? tokenRequestId : undefined,
       moneyPaymentMethod: moneyMethod,
     }, {
       onSettled: () => { submittingRef.current = false; },
@@ -413,7 +460,7 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
         </div>
 
         {/* ─── SegoTokens (spec §8/§9) ────────────────────────────────────── */}
-        {identifiedStudent && cartItems.length > 0 && (
+        {identifiedStudent && cartItems.length > 0 && !tokenRequestId && (
           <div className="rounded-2xl border border-dashed border-border p-3.5">
             <p className="flex items-center gap-1.5 text-sm font-medium"><Coins className="size-4 text-amber-500" /> SegoTokens a aplicar</p>
             <div className="mt-2 flex gap-2">
@@ -425,32 +472,72 @@ export default function VenueAppPos({ venueId }: { venueId: number }) {
             ) : tokenQuote && !tokenQuote.eligible && requestedTokensNum > 0 ? (
               <p className="mt-1.5 text-xs text-destructive">No hay política de canje activa para este venue</p>
             ) : tokenQuote && tokenQuote.eligible && requestedTokensNum > 0 ? (
-              <p className="mt-1.5 text-xs text-muted-foreground">−{tokenQuote.tokensToSpend} ST = <span className="font-medium text-foreground">−{euro(tokenQuote.promotionalValueCents)}</span></p>
+              <>
+                <p className="mt-1.5 text-xs text-muted-foreground">−{tokenQuote.tokensToSpend} ST = <span className="font-medium text-foreground">−{euro(tokenQuote.promotionalValueCents)}</span></p>
+                <Button variant="outline" size="sm" className="mt-2 w-full" disabled={!identifiedToken || requestTokenPaymentMut.isPending} onClick={handleRequestTokenPayment}>
+                  {requestTokenPaymentMut.isPending ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Coins className="mr-1.5 size-3.5" />}
+                  Solicitar pago con SegoTokens
+                </Button>
+              </>
             ) : null}
           </div>
         )}
 
-        {/* ─── Método de pago del dinero restante (spec §10) ─────────────── */}
-        {moneyDueCents > 0 && (
-          <div className="flex gap-2">
-            <Button variant={moneyMethod === "cash" ? "default" : "outline"} className="flex-1" size="sm" onClick={() => setMoneyMethod("cash")}>
-              <Banknote className="mr-1.5 size-4" /> Efectivo
-            </Button>
-            <Button variant={moneyMethod === "card" ? "default" : "outline"} className="flex-1" size="sm" onClick={() => setMoneyMethod("card")}>
-              <CreditCard className="mr-1.5 size-4" /> Tarjeta
-            </Button>
+        {/* ─── Solicitud de pago con SegoTokens en curso (Pre-16.1, spec §3/§4/§13/§14) ─── */}
+        {tokenRequestId && (
+          <div className="rounded-2xl border border-dashed border-border p-3.5 text-center">
+            {tokenRequestStatus === "confirmed" ? (
+              <>
+                <p className="flex items-center justify-center gap-1.5 text-sm font-medium text-emerald-600"><CheckCircle2 className="size-4" /> SegoTokens confirmados</p>
+                {tokenReservation && (
+                  <p className="mt-1 text-xs text-muted-foreground">−{tokenReservation.tokensReserved} ST = <span className="font-medium text-foreground">−{euro(tokenReservation.promotionalValueCents)}</span></p>
+                )}
+              </>
+            ) : tokenRequestSettled ? (
+              <>
+                <p className="text-sm font-medium text-destructive">
+                  {tokenRequestStatus === "rejected" ? "Pago con SegoTokens rechazado" : tokenRequestStatus === "expired" ? "La solicitud caducó" : "Solicitud cancelada"}
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <Button variant="outline" size="sm" className="flex-1" onClick={() => setTokenRequestId(null)}>Reintentar</Button>
+                  <Button variant="outline" size="sm" className="flex-1" onClick={() => { setTokenRequestId(null); setTokensToApply(""); }}>Continuar sin SegoTokens</Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />
+                <p className="mt-2 text-sm text-muted-foreground">Esperando confirmación del Student…</p>
+                <Button variant="outline" size="sm" className="mt-2 w-full" disabled={cancelTokenPaymentMut.isPending} onClick={handleCancelTokenRequest}>Cancelar solicitud</Button>
+              </>
+            )}
           </div>
         )}
 
-        <div className="flex items-center justify-between border-t border-border pt-3 text-base font-bold">
-          <span>Total</span>
-          <span className="tabular-nums">{euro(moneyDueCents)}</span>
-        </div>
+        {showCheckoutControls && (
+          <>
+            {/* ─── Método de pago del dinero restante (spec §10) ─────────────── */}
+            {moneyDueCents > 0 && (
+              <div className="flex gap-2">
+                <Button variant={moneyMethod === "cash" ? "default" : "outline"} className="flex-1" size="sm" onClick={() => setMoneyMethod("cash")}>
+                  <Banknote className="mr-1.5 size-4" /> Efectivo
+                </Button>
+                <Button variant={moneyMethod === "card" ? "default" : "outline"} className="flex-1" size="sm" onClick={() => setMoneyMethod("card")}>
+                  <CreditCard className="mr-1.5 size-4" /> Tarjeta
+                </Button>
+              </div>
+            )}
 
-        <Button className="h-14 w-full rounded-full text-base font-semibold" disabled={!cartItems.length || recordSaleMut.isPending} onClick={handleConfirmSale}>
-          {recordSaleMut.isPending ? <Loader2 className="mr-2 size-5 animate-spin" /> : <Receipt className="mr-2 size-5" />}
-          COBRAR
-        </Button>
+            <div className="flex items-center justify-between border-t border-border pt-3 text-base font-bold">
+              <span>Total</span>
+              <span className="tabular-nums">{euro(moneyDueCents)}</span>
+            </div>
+
+            <Button className="h-14 w-full rounded-full text-base font-semibold" disabled={!cartItems.length || recordSaleMut.isPending} onClick={handleConfirmSale}>
+              {recordSaleMut.isPending ? <Loader2 className="mr-2 size-5 animate-spin" /> : <Receipt className="mr-2 size-5" />}
+              {tokenRequestId && tokenRequestStatus === "confirmed" ? "CONFIRMAR VENTA" : "COBRAR"}
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );

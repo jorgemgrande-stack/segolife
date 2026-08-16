@@ -28,6 +28,7 @@ export default function StaffPos() {
   const [manualToken, setManualToken] = useState("");
   const [lastSaleAt, setLastSaleAt] = useState<number | null>(null);
   const [tokensToApply, setTokensToApply] = useState("");
+  const [tokenRequestId, setTokenRequestId] = useState<number | null>(null);
   const scannerRef = useRef<{ stop: () => Promise<void>; clear: () => void } | null>(null);
 
   const { data: authorized } = trpc.commerce.myAuthorizedVenuesForPos.useQuery();
@@ -52,8 +53,33 @@ export default function StaffPos() {
       setCart({});
       setIdentifiedToken(null);
       setTokensToApply("");
+      setTokenRequestId(null);
       setLastSaleAt(Date.now());
     },
+    onError: e => toast.error(e.message),
+  });
+
+  // SEGOLIFE PRE-16.1 (spec §3/§4) — el operador SOLICITA, el Student
+  // confirma desde su propio teléfono; polling corto (3s) porque hay una
+  // persona esperando en vivo, se detiene en cuanto el estado deja de ser
+  // "pending".
+  const tokenRequestStatusQ = trpc.commerce.getTokenPaymentRequestStatus.useQuery(
+    { requestId: tokenRequestId ?? 0 },
+    {
+      enabled: !!tokenRequestId,
+      refetchInterval: query => (query.state.data?.status === "pending" ? 3000 : false),
+    }
+  );
+  const tokenRequestStatus = tokenRequestStatusQ.data?.status ?? "pending";
+  const tokenReservation = tokenRequestStatusQ.data?.reservation ?? null;
+  const tokenRequestSettled = tokenRequestStatus === "rejected" || tokenRequestStatus === "expired" || tokenRequestStatus === "cancelled";
+
+  const requestTokenPaymentMut = trpc.commerce.posRequestTokenPayment.useMutation({
+    onSuccess: result => setTokenRequestId(result.requestId),
+    onError: e => toast.error(e.message),
+  });
+  const cancelTokenPaymentMut = trpc.commerce.cancelTokenPaymentRequest.useMutation({
+    onSuccess: () => setTokenRequestId(null),
     onError: e => toast.error(e.message),
   });
 
@@ -106,6 +132,30 @@ export default function StaffPos() {
     { enabled: !!venueId && !!identifiedStudent && cartItems.length > 0 && requestedTokensNum > 0 }
   );
 
+  const moneyDueCents = tokenRequestId && !tokenRequestSettled
+    ? (tokenReservation?.moneyDueCents ?? totalCents)
+    : tokenQuote?.eligible && requestedTokensNum > 0
+      ? tokenQuote.moneyDueCents
+      : totalCents;
+  const showCheckoutControls = !tokenRequestId || tokenRequestStatus === "confirmed";
+
+  const handleRequestTokenPayment = () => {
+    if (!venueId || !identifiedStudent || !identifiedToken || !cartItems.length || requestedTokensNum <= 0) return;
+    requestTokenPaymentMut.mutate({
+      venueId: Number(venueId),
+      items: cartItems,
+      identifiedUserId: identifiedStudent.userId,
+      requestedTokens: requestedTokensNum,
+      identityToken: identifiedToken,
+      idempotencyKey: `pos-tok:${venueId}:${crypto.randomUUID()}`,
+    });
+  };
+
+  const handleCancelTokenRequest = () => {
+    if (!tokenRequestId) return;
+    cancelTokenPaymentMut.mutate({ requestId: tokenRequestId });
+  };
+
   const handleRecordSale = () => {
     if (!venueId || !cartItems.length) return;
     recordSaleMut.mutate({
@@ -113,8 +163,7 @@ export default function StaffPos() {
       items: cartItems,
       identifiedUserId: identifiedStudent?.userId ?? null,
       idempotencyKey: `pos:${venueId}:${crypto.randomUUID()}`,
-      tokensToApply: requestedTokensNum > 0 ? requestedTokensNum : undefined,
-      identityToken: requestedTokensNum > 0 ? (identifiedToken ?? undefined) : undefined,
+      confirmedTokenRequestId: tokenRequestId && tokenRequestStatus === "confirmed" ? tokenRequestId : undefined,
     });
   };
 
@@ -195,7 +244,7 @@ export default function StaffPos() {
               <p className="mt-1.5 text-[11px] text-muted-foreground">{t("pos.studentOptionalNote")}</p>
             </div>
 
-            {identifiedStudent && cartItems.length > 0 && (
+            {identifiedStudent && cartItems.length > 0 && !tokenRequestId && (
               <div className="rounded-lg border border-dashed border-border p-3">
                 <div className="flex items-center justify-between text-sm font-medium">
                   <span className="flex items-center gap-1.5"><Coins className="size-4 text-amber-500" /> {t("pos.applyTokensLabel")}</span>
@@ -213,21 +262,58 @@ export default function StaffPos() {
                     <p className="font-semibold text-foreground">{t("pos.moneyDue")}: {(tokenQuote.moneyDueCents / 100).toFixed(2)} €</p>
                   </div>
                 ) : null}
+                {tokenQuote?.eligible && requestedTokensNum > 0 && (
+                  <Button variant="outline" size="sm" className="mt-2 w-full" disabled={!identifiedToken || requestTokenPaymentMut.isPending} onClick={handleRequestTokenPayment}>
+                    {requestTokenPaymentMut.isPending ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Coins className="mr-1.5 size-3.5" />}
+                    {t("pos.requestTokenPaymentButton")}
+                  </Button>
+                )}
               </div>
             )}
 
-            <div className="flex items-center justify-between border-t border-border pt-3 text-sm font-semibold">
-              <span>{t("ticketing.orderTotal")}</span>
-              <span className="tabular-nums">
-                {tokenQuote?.eligible && requestedTokensNum > 0 ? (tokenQuote.moneyDueCents / 100).toFixed(2) : (totalCents / 100).toFixed(2)} €
-              </span>
-            </div>
+            {tokenRequestId && (
+              <div className="rounded-lg border border-dashed border-border p-3 text-center">
+                {tokenRequestStatus === "confirmed" ? (
+                  <>
+                    <p className="flex items-center justify-center gap-1.5 text-xs font-medium text-emerald-600"><CheckCircle2 className="size-3.5" /> {t("pos.tokenPaymentConfirmed")}</p>
+                    {tokenReservation && (
+                      <p className="mt-1 text-xs text-muted-foreground">{t("pos.tokensApplied", { tokens: tokenReservation.tokensReserved })}: <span className="font-medium text-foreground">−{(tokenReservation.promotionalValueCents / 100).toFixed(2)} €</span></p>
+                    )}
+                  </>
+                ) : tokenRequestSettled ? (
+                  <>
+                    <p className="text-xs font-medium text-destructive">
+                      {tokenRequestStatus === "rejected" ? t("pos.tokenPaymentRejected") : tokenRequestStatus === "expired" ? t("pos.tokenPaymentExpired") : t("pos.tokenPaymentCancelled")}
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <Button variant="outline" size="sm" className="flex-1" onClick={() => setTokenRequestId(null)}>{t("pos.retryTokenPaymentButton")}</Button>
+                      <Button variant="outline" size="sm" className="flex-1" onClick={() => { setTokenRequestId(null); setTokensToApply(""); }}>{t("pos.proceedWithoutTokensButton")}</Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Loader2 className="mx-auto size-4 animate-spin text-muted-foreground" />
+                    <p className="mt-2 text-xs text-muted-foreground">{t("pos.waitingForStudentConfirmation")}</p>
+                    <Button variant="outline" size="sm" className="mt-2 w-full" disabled={cancelTokenPaymentMut.isPending} onClick={handleCancelTokenRequest}>{t("pos.cancelRequestButton")}</Button>
+                  </>
+                )}
+              </div>
+            )}
 
-            <Button className="w-full h-12" disabled={!cartItems.length || recordSaleMut.isPending} onClick={handleRecordSale}>
-              {recordSaleMut.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-              {t("pos.recordSaleButton")}
-            </Button>
-            <p className="text-center text-[11px] text-muted-foreground">{t("pos.cashOnlyNote")}</p>
+            {showCheckoutControls && (
+              <>
+                <div className="flex items-center justify-between border-t border-border pt-3 text-sm font-semibold">
+                  <span>{t("ticketing.orderTotal")}</span>
+                  <span className="tabular-nums">{(moneyDueCents / 100).toFixed(2)} €</span>
+                </div>
+
+                <Button className="w-full h-12" disabled={!cartItems.length || recordSaleMut.isPending} onClick={handleRecordSale}>
+                  {recordSaleMut.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                  {t("pos.recordSaleButton")}
+                </Button>
+                <p className="text-center text-[11px] text-muted-foreground">{t("pos.cashOnlyNote")}</p>
+              </>
+            )}
           </>
         )}
       </div>

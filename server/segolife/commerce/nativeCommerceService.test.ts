@@ -10,14 +10,23 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { mockIngestCommerceTransaction } = vi.hoisted(() => ({ mockIngestCommerceTransaction: vi.fn() }));
 vi.mock("./commercePipeline", () => ({ ingestCommerceTransaction: mockIngestCommerceTransaction }));
 
-// SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7).
-const { mockReserveAndCaptureTokenSpend, mockReverseTokenSpend } = vi.hoisted(() => ({
-  mockReserveAndCaptureTokenSpend: vi.fn(),
-  mockReverseTokenSpend: vi.fn(),
-}));
-vi.mock("../tokens/tokenSpendService", () => ({
-  reserveAndCaptureTokenSpend: mockReserveAndCaptureTokenSpend,
-  reverseTokenSpend: mockReverseTokenSpend,
+// SEGOLIFE — SEGOTOKENS PRESENCIALES (Pre-16.1): recordNativeSale ya no
+// decide/captura tokens por su cuenta — solo liquida una autorización que
+// el Student ya confirmó, vía tokenPaymentRequestService.settleTokenPaymentRequest.
+const { mockReverseTokenSpend } = vi.hoisted(() => ({ mockReverseTokenSpend: vi.fn() }));
+vi.mock("../tokens/tokenSpendService", () => ({ reverseTokenSpend: mockReverseTokenSpend }));
+
+const { mockSettleTokenPaymentRequest, mockLinkSettledOrder, MockTokenPaymentRequestError } = vi.hoisted(() => {
+  class MockTokenPaymentRequestError extends Error {
+    code: string;
+    constructor(code: string, message: string) { super(message); this.name = "TokenPaymentRequestError"; this.code = code; }
+  }
+  return { mockSettleTokenPaymentRequest: vi.fn(), mockLinkSettledOrder: vi.fn(), MockTokenPaymentRequestError };
+});
+vi.mock("../tokens/tokenPaymentRequestService", () => ({
+  settleTokenPaymentRequest: mockSettleTokenPaymentRequest,
+  linkSettledOrder: mockLinkSettledOrder,
+  TokenPaymentRequestError: MockTokenPaymentRequestError,
 }));
 
 import { recordNativeSale, PosError, resolvePaymentMethod } from "./nativeCommerceService";
@@ -53,51 +62,74 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockIngestCommerceTransaction.mockResolvedValue({ status: "processed_with_loyalty", transaction: { id: 1 } });
   mockReverseTokenSpend.mockResolvedValue(undefined);
+  mockLinkSettledOrder.mockResolvedValue(undefined);
 });
 
-// SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7, spec §22/§23/§27).
-describe("nativeCommerceService — recordNativeSale con SegoTokens (spec §22/§23)", () => {
-  it("tokensToApply sin identifiedUserId: rechaza ANTES de tocar el motor de tokens", async () => {
+// SEGOLIFE — SEGOTOKENS PRESENCIALES (Pre-16.1, spec §2): recordNativeSale
+// solo LIQUIDA una autorización ya confirmada por el Student — nunca decide
+// ni captura tokens de un Student meramente identificado por staff.
+describe("nativeCommerceService — recordNativeSale con SegoTokens presenciales (Pre-16.1)", () => {
+  it("confirmedTokenRequestId sin identifiedUserId: rechaza ANTES de tocar el motor de tokens", async () => {
     const db = makeMockDb([productFixture()]);
-    await expect(recordNativeSale({ venueId: 10, items: [{ venueProductId: 1, quantity: 1 }], staffUserId: 9, idempotencyKey: "k7", tokensToApply: 100 }, db))
+    await expect(recordNativeSale({ venueId: 10, items: [{ venueProductId: 1, quantity: 1 }], staffUserId: 9, idempotencyKey: "k7", confirmedTokenRequestId: 1 }, db))
       .rejects.toBeInstanceOf(PosError);
-    expect(mockReserveAndCaptureTokenSpend).not.toHaveBeenCalled();
+    expect(mockSettleTokenPaymentRequest).not.toHaveBeenCalled();
   });
 
-  it("sin política activa (no_policy): rechaza, nunca llega a registrar la venta", async () => {
-    mockReserveAndCaptureTokenSpend.mockResolvedValue({ status: "no_policy" });
+  it("solicitud no liquidable (p.ej. aún no confirmada por el Student): rechaza, nunca llega a registrar la venta", async () => {
+    mockSettleTokenPaymentRequest.mockRejectedValue(new MockTokenPaymentRequestError("INVALID_STATE", "El Student debe confirmar primero"));
     const db = makeMockDb([productFixture()]);
-    await expect(recordNativeSale({ venueId: 10, items: [{ venueProductId: 1, quantity: 1 }], identifiedUserId: 42, staffUserId: 9, idempotencyKey: "k8", tokensToApply: 100 }, db))
+    await expect(recordNativeSale({ venueId: 10, items: [{ venueProductId: 1, quantity: 1 }], identifiedUserId: 42, staffUserId: 9, idempotencyKey: "k8", confirmedTokenRequestId: 1 }, db))
       .rejects.toBeInstanceOf(PosError);
     expect(mockIngestCommerceTransaction).not.toHaveBeenCalled();
   });
 
-  it("captura exitosa: la venta se registra con el precio BRUTO sin cambios (nunca muta subtotalCents/totalCents, spec §10)", async () => {
-    mockReserveAndCaptureTokenSpend.mockResolvedValue({ reservation: { id: 501 }, alreadyCaptured: false });
+  it("liquidación exitosa: la venta se registra con el precio BRUTO sin cambios (nunca muta subtotalCents/totalCents, spec §10)", async () => {
+    mockSettleTokenPaymentRequest.mockResolvedValue({ reservation: { id: 501, userId: 42, grossAmountCents: 1700, promotionalValueCents: 500 }, request: { id: 1 } });
     const db = makeMockDb([productFixture({ price: "8.50" })]);
-    await recordNativeSale({ venueId: 10, items: [{ venueProductId: 1, quantity: 2 }], identifiedUserId: 42, staffUserId: 9, idempotencyKey: "k9", tokensToApply: 100 }, db);
+    await recordNativeSale({ venueId: 10, items: [{ venueProductId: 1, quantity: 2 }], identifiedUserId: 42, staffUserId: 9, idempotencyKey: "k9", confirmedTokenRequestId: 1 }, db);
 
-    expect(mockReserveAndCaptureTokenSpend).toHaveBeenCalledOnce();
-    expect(mockReserveAndCaptureTokenSpend.mock.calls[0][0]).toMatchObject({ userId: 42, grossAmountCents: 1700, requestedTokens: 100, referenceType: "commerce_transaction" });
+    expect(mockSettleTokenPaymentRequest).toHaveBeenCalledOnce();
+    expect(mockSettleTokenPaymentRequest.mock.calls[0][0]).toBe(1);
+    expect(mockSettleTokenPaymentRequest.mock.calls[0][1]).toBe("pos");
     expect(mockIngestCommerceTransaction).toHaveBeenCalledOnce();
     expect(mockIngestCommerceTransaction.mock.calls[0][0].transaction.totalCents).toBe(1700); // precio bruto real, sin descontar
+    expect(mockLinkSettledOrder).toHaveBeenCalledWith(1, 1, expect.anything());
   });
 
-  it("si ingestCommerceTransaction falla TRAS capturar tokens reales, se revierte la captura (compensación — nunca tokens gastados sin ninguna venta asociada)", async () => {
-    mockReserveAndCaptureTokenSpend.mockResolvedValue({ reservation: { id: 502 }, alreadyCaptured: false });
+  it("reservation.userId no coincide con el Student identificado en esta venta: rechaza (nunca confía en el userId enviado por el frontend)", async () => {
+    mockSettleTokenPaymentRequest.mockResolvedValue({ reservation: { id: 503, userId: 999, grossAmountCents: 1700, promotionalValueCents: 500 }, request: { id: 1 } });
+    const db = makeMockDb([productFixture({ price: "8.50" })]);
+    await expect(recordNativeSale({ venueId: 10, items: [{ venueProductId: 1, quantity: 2 }], identifiedUserId: 42, staffUserId: 9, idempotencyKey: "k13", confirmedTokenRequestId: 1 }, db))
+      .rejects.toMatchObject({ code: "REQUEST_STUDENT_MISMATCH" });
+    expect(mockIngestCommerceTransaction).not.toHaveBeenCalled();
+    // Ya se capturó dentro de settleTokenPaymentRequest — el mismatch se detecta DESPUÉS, así que debe revertirse.
+    expect(mockReverseTokenSpend).toHaveBeenCalledOnce();
+  });
+
+  it("el carrito cambió entre la solicitud y la confirmación (total distinto al aprobado por el Student): rechaza y revierte", async () => {
+    mockSettleTokenPaymentRequest.mockResolvedValue({ reservation: { id: 504, userId: 42, grossAmountCents: 999, promotionalValueCents: 500 }, request: { id: 1 } });
+    const db = makeMockDb([productFixture({ price: "8.50" })]);
+    await expect(recordNativeSale({ venueId: 10, items: [{ venueProductId: 1, quantity: 2 }], identifiedUserId: 42, staffUserId: 9, idempotencyKey: "k14", confirmedTokenRequestId: 1 }, db))
+      .rejects.toMatchObject({ code: "CART_CHANGED_SINCE_REQUEST" });
+    expect(mockReverseTokenSpend).toHaveBeenCalledOnce();
+  });
+
+  it("si ingestCommerceTransaction falla TRAS liquidar tokens reales, se revierte la captura (compensación — nunca tokens gastados sin ninguna venta asociada)", async () => {
+    mockSettleTokenPaymentRequest.mockResolvedValue({ reservation: { id: 502, userId: 42, grossAmountCents: 850, promotionalValueCents: 500 }, request: { id: 1 } });
     mockIngestCommerceTransaction.mockRejectedValue(new Error("fallo de BD"));
     const db = makeMockDb([productFixture()]);
 
-    await expect(recordNativeSale({ venueId: 10, items: [{ venueProductId: 1, quantity: 1 }], identifiedUserId: 42, staffUserId: 9, idempotencyKey: "k10", tokensToApply: 100 }, db))
+    await expect(recordNativeSale({ venueId: 10, items: [{ venueProductId: 1, quantity: 1 }], identifiedUserId: 42, staffUserId: 9, idempotencyKey: "k10", confirmedTokenRequestId: 1 }, db))
       .rejects.toThrow("fallo de BD");
     expect(mockReverseTokenSpend).toHaveBeenCalledOnce();
     expect(mockReverseTokenSpend.mock.calls[0][0]).toMatchObject({ reservationId: 502 });
   });
 
-  it("sin tokensToApply, nunca invoca el motor de SegoTokens — la venta en efectivo tradicional queda intacta", async () => {
+  it("sin confirmedTokenRequestId, nunca invoca el motor de SegoTokens — la venta en efectivo tradicional queda intacta", async () => {
     const db = makeMockDb([productFixture()]);
     await recordNativeSale({ venueId: 10, items: [{ venueProductId: 1, quantity: 1 }], identifiedUserId: 42, staffUserId: 9, idempotencyKey: "k11" }, db);
-    expect(mockReserveAndCaptureTokenSpend).not.toHaveBeenCalled();
+    expect(mockSettleTokenPaymentRequest).not.toHaveBeenCalled();
   });
 });
 

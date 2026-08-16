@@ -73,6 +73,68 @@ const ACTIVITY_KICKER_KEY: Record<string, string> = {
 };
 
 /**
+ * SEGOLIFE PRE-16.1 "PRESENTIAL SEGOTOKENS PAYMENTS" — banner de solicitud de
+ * pago pendiente. Mismo patrón estructural que HistoricalClaimBanner
+ * (Profile.tsx): consulta condicional, se pinta o desaparece según haya
+ * dato, un único CTA. Vive en Home (no en una sección de navegación nueva,
+ * spec: "no new nav section unless truly necessary") porque es lo más
+ * urgente que le puede pasar a un Student en este momento — está físicamente
+ * de pie en el venue esperando a que confirme o rechace, así que va ANTES
+ * incluso que el wallet, por delante del ranking (`summary.ranking`) que
+ * decide el resto de Home — un pago pendiente no es una recomendación, es
+ * una interrupción real que requiere acción inmediata.
+ *
+ * Polling más agresivo que el resto de la Student App (15s en vez de los
+ * 30s de la campana de notificaciones en SegolifeAppShell) — mismo criterio
+ * que ya fija el propio backend (tokenPaymentRequestService.ts: "cada 10-20s
+ * desde operador y Student"). Nunca websocket/SSE (decisión arquitectónica
+ * explícita del proyecto).
+ */
+function PendingPaymentRequestBanner() {
+  const { t } = useTranslation();
+  const { slug } = useCommunity();
+
+  const { data: pending } = trpc.tokenPaymentRequests.myPending.useQuery(undefined, {
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+  });
+
+  const soonest = pending && pending.length > 0
+    ? [...pending].sort((a, b) => new Date(a.reservation.expiresAt).getTime() - new Date(b.reservation.expiresAt).getTime())[0]
+    : null;
+  const communityId = soonest?.reservation.communityId ?? undefined;
+  const { data: venues } = trpc.venues.publicActive.useQuery({ communityId }, { enabled: !!communityId });
+  const venueName = soonest?.reservation.venueId != null
+    ? venues?.find(v => v.id === soonest.reservation.venueId)?.name
+    : undefined;
+
+  if (!pending || pending.length === 0 || !soonest) return null;
+
+  return (
+    <Link
+      href={`/${slug}/payment-requests/${soonest.request.id}`}
+      className="segolife-card-shadow flex items-center gap-3 rounded-2xl border border-accent/30 bg-accent/10 p-4"
+    >
+      <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground">
+        <Coins className="size-5" aria-hidden="true" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold text-foreground">
+          {pending.length > 1
+            ? t("paymentRequest.bannerTitleCount", { count: pending.length })
+            : (venueName ?? t("paymentRequest.bannerVenueFallback"))}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {t("paymentRequest.bannerTokens", { count: soonest.reservation.tokensReserved })} · {(soonest.reservation.promotionalValueCents / 100).toFixed(2)} €
+        </p>
+      </div>
+      <span className="shrink-0 text-xs font-semibold text-accent">{t("paymentRequest.bannerCta")}</span>
+      <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+    </Link>
+  );
+}
+
+/**
  * Home definitiva de Segolife (STUDENT APP, PERSONALIZED HOME) — responde
  * "¿qué pasa para mí?" en vez de listar módulos. Orden: saludo → wallet →
  * HERO (Next Best Action, spec §8) → For You (resto de candidatos
@@ -266,6 +328,8 @@ function AuthenticatedHome() {
         <p className="text-xl font-semibold text-foreground">{greeting}{firstName ? `, ${firstName}` : ""}</p>
         {community?.name && <p className="text-sm text-muted-foreground">{community.name}</p>}
       </div>
+
+      <PendingPaymentRequestBanner />
 
       {isLoading ? (
         <SegolifeWalletSkeleton />

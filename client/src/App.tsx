@@ -31,6 +31,9 @@ const Activity = lazy(() => import("./pages/segolife/Activity"));
 // Fase 7: Engagement Core — inbox de notificaciones + ajustes de preferencias.
 const SegolifeNotifications = lazy(() => import("./pages/segolife/Notifications"));
 const NotificationPreferences = lazy(() => import("./pages/segolife/NotificationPreferences"));
+// SEGOLIFE PRE-16.1 — Presential SegoTokens Payments: confirmación/rechazo
+// del Student ante una solicitud de pago con SegoTokens en persona.
+const PaymentRequestConfirm = lazy(() => import("./pages/segolife/PaymentRequestConfirm"));
 // Fase 8: Native Ticketing — checkout, My Tickets, staff scanner/POS.
 const TicketCheckout = lazy(() => import("./pages/segolife/TicketCheckout"));
 const MyTickets = lazy(() => import("./pages/segolife/MyTickets"));
@@ -570,6 +573,7 @@ function Router() {
       <Route path="/:community/activity">{() => <Suspense fallback={null}><Activity /></Suspense>}</Route>
       <Route path="/:community/settings/notifications">{() => <Suspense fallback={null}><NotificationPreferences /></Suspense>}</Route>
       <Route path="/:community/notifications">{() => <Suspense fallback={null}><SegolifeNotifications /></Suspense>}</Route>
+      <Route path="/:community/payment-requests/:requestId">{() => <Suspense fallback={null}><PaymentRequestConfirm /></Suspense>}</Route>
       <Route path="/:community/checkout/:orderId">{() => <Suspense fallback={null}><TicketCheckout /></Suspense>}</Route>
       <Route path="/:community/tickets/:id">{() => <Suspense fallback={null}><TicketDetail /></Suspense>}</Route>
       <Route path="/:community/tickets">{() => <Suspense fallback={null}><MyTickets /></Suspense>}</Route>

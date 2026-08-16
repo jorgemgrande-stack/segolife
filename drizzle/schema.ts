@@ -4345,6 +4345,52 @@ export const tokenSpendReservations = mysqlTable("token_spend_reservations", {
 export type TokenSpendReservation = typeof tokenSpendReservations.$inferSelect;
 export type InsertTokenSpendReservation = typeof tokenSpendReservations.$inferInsert;
 
+// ─── SEGOLIFE: TOKEN_PAYMENT_REQUESTS (Pre-16.1 — pagos presenciales) ──────
+// Envuelve UNA reserva de token_spend_reservations (nunca la duplica: monto/
+// tokens/venue/student/operador se leen SIEMPRE vía tokenReservationId, join,
+// nunca copiados aquí) añadiendo lo único que la reserva no representa: que
+// el Student, no el operador, debe autorizar el gasto desde su propio
+// teléfono antes de que se capture nada. Reservar ya "aparta" los tokens
+// (countActiveReservedTokens) sin tocar el ledger — este estado de
+// autorización vive en paralelo, nunca sustituye el ciclo de vida propio de
+// la reserva (reserved→captured/released/reversed).
+//
+// FLUJO: pending (creada junto a la reserva, notifica al Student) →
+// confirmed (el Student aprobó — la reserva SIGUE en 'reserved', la captura
+// real se difiere hasta que el operador también complete el cobro del
+// dinero restante, spec §16 patrón A "reserve → capture after remaining
+// payment succeeds") → settled (el operador cerró la venta completa: captura
+// + orden creada, mismo paso atómico). O bien: rejected (el Student
+// rechazó — libera la reserva de inmediato) | expired (nadie respondió a
+// tiempo, ver expiresAt de la propia reserva) | cancelled (el operador
+// abortó, antes o después de la confirmación del Student — p.ej. el cobro
+// del dinero restante falla, spec §16).
+//
+// order_context_type identifica qué flujo la originó (POS de barra vs.
+// puerta de evento) — necesario para que el operador sepa a qué mutación de
+// finalización volver; el pedido comercial en sí (commerce_transactions /
+// ticket_orders) no existe todavía cuando se crea esta fila — solo se crea
+// al liquidar (settledOrderId), igual que hoy no existe hasta confirmar la
+// venta síncrona sin SegoTokens.
+export const tokenPaymentRequests = mysqlTable("token_payment_requests", {
+  id:                     int("id").autoincrement().primaryKey(),
+  tokenReservationId:     int("token_reservation_id").notNull(),
+  status:                 mysqlEnum("status", ["pending", "confirmed", "rejected", "expired", "cancelled", "settled"]).notNull().default("pending"),
+  idempotencyKey:         varchar("idempotency_key", { length: 191 }).notNull(),
+  orderContextType:       mysqlEnum("order_context_type", ["pos", "door"]).notNull(),
+  settledOrderId:         int("settled_order_id"),
+  createdAt:              timestamp("created_at").defaultNow().notNull(),
+  respondedAt:            timestamp("responded_at"),
+  settledAt:              timestamp("settled_at"),
+  cancelledAt:            timestamp("cancelled_at"),
+}, (table) => ({
+  idempotencyKeyUnique: unique("token_payment_requests_idempotency_key_unique").on(table.idempotencyKey),
+  reservationIdx: index("token_payment_requests_reservation_idx").on(table.tokenReservationId),
+  statusIdx: index("token_payment_requests_status_idx").on(table.status),
+}));
+export type TokenPaymentRequest = typeof tokenPaymentRequests.$inferSelect;
+export type InsertTokenPaymentRequest = typeof tokenPaymentRequests.$inferInsert;
+
 // ─── SEGOLIFE: CAMPAIGN_COMMUNITIES / CAMPAIGN_VENUES / CAMPAIGN_EVENTS (Fase 2) ─
 // Tablas puente M2M del alcance de una campaña — mismo patrón exacto que
 // community_venues/community_events. Una campaña puede afectar a varias

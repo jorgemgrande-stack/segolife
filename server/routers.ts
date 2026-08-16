@@ -188,6 +188,7 @@ import { studentAnalyticsRouter } from "./routers/studentAnalytics";
 import { integrationsRouter } from "./routers/integrations";
 import { eventTicketingRouter } from "./routers/eventTicketing";
 import { commerceRouter } from "./routers/commerce";
+import { tokenPaymentRequestsRouter } from "./routers/tokenPaymentRequests";
 import { studentNotificationsRouter } from "./routers/studentNotifications";
 import { engagementRouter } from "./routers/engagement";
 import { dashboardRouter } from "./routers/dashboard";
@@ -2205,6 +2206,7 @@ export const appRouter = router({
   integrations: integrationsRouter,
   eventTicketing: eventTicketingRouter,
   commerce: commerceRouter,
+  tokenPaymentRequests: tokenPaymentRequestsRouter,
   studentNotifications: studentNotificationsRouter,
   engagement: engagementRouter,
   dashboard: dashboardRouter,

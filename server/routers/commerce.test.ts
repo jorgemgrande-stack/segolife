@@ -55,6 +55,24 @@ vi.mock("../segolife/tokens/tokenSpendService", async (importOriginal) => {
   return { ...actual, quoteTokenSpend: mockQuoteTokenSpend };
 });
 
+// SEGOLIFE — SEGOTOKENS PRESENCIALES (Pre-16.1).
+const { mockRequestTokenPayment, mockGetTokenPaymentRequestView, mockCancelTokenPaymentRequest, MockTokenPaymentRequestError } = vi.hoisted(() => {
+  class MockTokenPaymentRequestError extends Error {
+    code: string;
+    constructor(code: string, message: string) { super(message); this.name = "TokenPaymentRequestError"; this.code = code; }
+  }
+  return {
+    mockRequestTokenPayment: vi.fn(), mockGetTokenPaymentRequestView: vi.fn(), mockCancelTokenPaymentRequest: vi.fn(),
+    MockTokenPaymentRequestError,
+  };
+});
+vi.mock("../segolife/tokens/tokenPaymentRequestService", () => ({
+  requestTokenPayment: mockRequestTokenPayment,
+  getTokenPaymentRequestView: mockGetTokenPaymentRequestView,
+  cancelTokenPaymentRequest: mockCancelTokenPaymentRequest,
+  TokenPaymentRequestError: MockTokenPaymentRequestError,
+}));
+
 // SEGOLIFE — COMMERCE CORE (Fase 9): venta de puerta + reembolso parcial POS.
 const { mockQuoteDoorEntry, mockRecordDoorSale, mockRefundDoorSale, mockListDoorEntryTicketTypesForVenue } = vi.hoisted(() => ({
   mockQuoteDoorEntry: vi.fn(),
@@ -168,15 +186,53 @@ describe("commerce router — IDOR CRITICAL: Venue Admin de Casanova no puede le
   });
 });
 
-// SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7, spec §33/§34, §41 tests
-// #44-45): "identidad no es un cheque en blanco de pago" — posRecordSale
-// exige un escaneo FRESCO del QR del Student para autorizar el gasto,
-// nunca confía en un identifiedUserId que el cliente ya tenía guardado de
-// un paso anterior.
-describe("commerce.posRecordSale — autorización de gasto de SegoTokens (spec §33/§34)", () => {
+// SEGOLIFE — SEGOTOKENS PRESENCIALES (Pre-16.1, spec §2/§3): el operador
+// solo puede SOLICITAR — nunca hay una vía en la que posRecordSale por sí
+// solo mueva tokens. Mismo criterio de re-verificación fresca del QR que
+// antes vivía aquí (spec §33/§34, §41 tests #44-45), ahora en
+// posRequestTokenPayment.
+describe("commerce.posRequestTokenPayment — autorización de gasto de SegoTokens (spec §33/§34)", () => {
   beforeEach(() => {
     mockGetVenueStaffAccess.mockReset();
     mockLookupStudentByIdentityToken.mockReset();
+    mockResolveCartTotalCents.mockReset();
+    mockRequestTokenPayment.mockReset();
+    mockGetVenueStaffAccess.mockResolvedValue([CASANOVA]);
+    mockResolveCartTotalCents.mockResolvedValue({ totalCents: 1000, items: [] });
+    mockRequestTokenPayment.mockResolvedValue({ request: { id: 77 }, reservation: { id: 501 } });
+  });
+
+  const BASE = { venueId: CASANOVA, items: [{ venueProductId: 1, quantity: 1 }], identifiedUserId: 42, requestedTokens: 100, idempotencyKey: "req-idem-1" };
+
+  it("identityToken que no resuelve a ningún Student: NOT_FOUND, nunca solicita el pago", async () => {
+    mockLookupStudentByIdentityToken.mockResolvedValue(null);
+    await expect(callerAs(10).posRequestTokenPayment({ ...BASE, identityToken: "a".repeat(20) })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mockRequestTokenPayment).not.toHaveBeenCalled();
+  });
+
+  it("identityToken que resuelve a un Student DISTINTO del ya identificado: rechazado — impide sustituir de quién se piden los tokens (spec §41 test #44)", async () => {
+    mockLookupStudentByIdentityToken.mockResolvedValue({ userId: 999, name: "Otro Student" });
+    await expect(callerAs(10).posRequestTokenPayment({ ...BASE, identityToken: "a".repeat(20) })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(mockRequestTokenPayment).not.toHaveBeenCalled();
+  });
+
+  it("identityToken válido y coincidente: solicita, recalculando el total SIEMPRE desde el catálogo (nunca del cliente)", async () => {
+    mockLookupStudentByIdentityToken.mockResolvedValue({ userId: 42, name: "Ana" });
+    const result = await callerAs(10).posRequestTokenPayment({ ...BASE, identityToken: "a".repeat(20) });
+    expect(result).toEqual({ requestId: 77, reservation: { id: 501 } });
+    expect(mockRequestTokenPayment).toHaveBeenCalledOnce();
+    expect(mockRequestTokenPayment.mock.calls[0][0]).toMatchObject({ userId: 42, grossAmountCents: 1000, requestedTokens: 100, orderContextType: "pos", operatorUserId: 10 });
+  });
+
+  it("IDOR: Venue Admin de Casanova no puede solicitar pago con SegoTokens en Tía Felisa", async () => {
+    await expect(callerAs(10).posRequestTokenPayment({ ...BASE, venueId: TIA_FELISA, identityToken: "a".repeat(20) })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockRequestTokenPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("commerce.posRecordSale — liquida una solicitud ya confirmada, nunca decide tokens por su cuenta", () => {
+  beforeEach(() => {
+    mockGetVenueStaffAccess.mockReset();
     mockRecordNativeSale.mockReset();
     mockGetVenueStaffAccess.mockResolvedValue([CASANOVA]);
     mockRecordNativeSale.mockResolvedValue({ status: "processed_with_loyalty", transaction: { id: 1 } });
@@ -184,39 +240,54 @@ describe("commerce.posRecordSale — autorización de gasto de SegoTokens (spec 
 
   const BASE_SALE = { venueId: CASANOVA, items: [{ venueProductId: 1, quantity: 1 }], idempotencyKey: "sale-idempotency-1" };
 
-  it("aplicar tokens SIN identityToken: rechazado antes de llegar al servicio (spec §41 test #45)", async () => {
-    await expect(callerAs(10).posRecordSale({ ...BASE_SALE, tokensToApply: 100 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
-    expect(mockRecordNativeSale).not.toHaveBeenCalled();
-  });
-
-  it("identityToken que no resuelve a ningún Student: NOT_FOUND, nunca procede a la venta", async () => {
-    mockLookupStudentByIdentityToken.mockResolvedValue(null);
-    await expect(callerAs(10).posRecordSale({ ...BASE_SALE, tokensToApply: 100, identityToken: "a".repeat(20) })).rejects.toMatchObject({ code: "NOT_FOUND" });
-  });
-
-  it("identityToken que resuelve a un Student DISTINTO del ya identificado para la venta: rechazado — impide sustituir de quién se gastan los tokens (spec §41 test #44)", async () => {
-    mockLookupStudentByIdentityToken.mockResolvedValue({ userId: 999, name: "Otro Student" });
-    await expect(callerAs(10).posRecordSale({ ...BASE_SALE, identifiedUserId: 42, tokensToApply: 100, identityToken: "a".repeat(20) }))
-      .rejects.toMatchObject({ code: "BAD_REQUEST" });
-    expect(mockRecordNativeSale).not.toHaveBeenCalled();
-  });
-
-  it("identityToken válido y coincidente: procede, pasando el userId RESUELTO por el servidor (nunca el del cliente sin verificar)", async () => {
-    mockLookupStudentByIdentityToken.mockResolvedValue({ userId: 42, name: "Ana" });
-    await callerAs(10).posRecordSale({ ...BASE_SALE, identifiedUserId: 42, tokensToApply: 100, identityToken: "a".repeat(20) });
+  it("confirmedTokenRequestId se propaga tal cual — la validación real vive en el servicio (settleTokenPaymentRequest)", async () => {
+    await callerAs(10).posRecordSale({ ...BASE_SALE, identifiedUserId: 42, confirmedTokenRequestId: 77 });
     expect(mockRecordNativeSale).toHaveBeenCalledOnce();
-    expect(mockRecordNativeSale.mock.calls[0][0]).toMatchObject({ identifiedUserId: 42, tokensToApply: 100 });
+    expect(mockRecordNativeSale.mock.calls[0][0]).toMatchObject({ identifiedUserId: 42, confirmedTokenRequestId: 77 });
   });
 
-  it("sin tokensToApply, no exige ningún identityToken — la venta en efectivo sin SegoTokens sigue funcionando sin cambios", async () => {
+  it("sin confirmedTokenRequestId, la venta en efectivo sin SegoTokens sigue funcionando sin cambios", async () => {
     await callerAs(10).posRecordSale({ ...BASE_SALE, identifiedUserId: 42 });
-    expect(mockLookupStudentByIdentityToken).not.toHaveBeenCalled();
     expect(mockRecordNativeSale).toHaveBeenCalledOnce();
+    expect(mockRecordNativeSale.mock.calls[0][0].confirmedTokenRequestId).toBeFalsy();
   });
 
-  it("IDOR: Venue Admin de Casanova no puede registrar venta/aplicar tokens en Tía Felisa", async () => {
+  it("IDOR: Venue Admin de Casanova no puede registrar venta en Tía Felisa", async () => {
     await expect(callerAs(10).posRecordSale({ ...BASE_SALE, venueId: TIA_FELISA })).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(mockRecordNativeSale).not.toHaveBeenCalled();
+  });
+});
+
+describe("commerce.getTokenPaymentRequestStatus / cancelTokenPaymentRequest — polling y cancelación del operador", () => {
+  beforeEach(() => {
+    mockGetVenueStaffAccess.mockReset();
+    mockGetTokenPaymentRequestView.mockReset();
+    mockCancelTokenPaymentRequest.mockReset();
+    mockGetVenueStaffAccess.mockResolvedValue([CASANOVA]);
+  });
+
+  it("getTokenPaymentRequestStatus resuelve el venueId vía la reserva — nunca confía en un venueId del cliente", async () => {
+    mockGetTokenPaymentRequestView.mockResolvedValue({ request: { id: 77, status: "pending" }, reservation: { id: 501, venueId: CASANOVA }, effectiveStatus: "pending" });
+    const result = await callerAs(10).getTokenPaymentRequestStatus({ requestId: 77 });
+    expect(result.status).toBe("pending");
+  });
+
+  it("IDOR: getTokenPaymentRequestStatus de una solicitud de OTRO venue (Tía Felisa) denegado", async () => {
+    mockGetTokenPaymentRequestView.mockResolvedValue({ request: { id: 77, status: "pending" }, reservation: { id: 501, venueId: TIA_FELISA }, effectiveStatus: "pending" });
+    await expect(callerAs(10).getTokenPaymentRequestStatus({ requestId: 77 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("cancelTokenPaymentRequest: el operador puede cancelar una solicitud de SU venue", async () => {
+    mockGetTokenPaymentRequestView.mockResolvedValue({ request: { id: 77, status: "confirmed" }, reservation: { id: 501, venueId: CASANOVA }, effectiveStatus: "confirmed" });
+    mockCancelTokenPaymentRequest.mockResolvedValue({ effectiveStatus: "cancelled" });
+    const result = await callerAs(10).cancelTokenPaymentRequest({ requestId: 77 });
+    expect(result).toEqual({ status: "cancelled" });
+  });
+
+  it("IDOR: no puede cancelar una solicitud de OTRO venue", async () => {
+    mockGetTokenPaymentRequestView.mockResolvedValue({ request: { id: 77, status: "pending" }, reservation: { id: 501, venueId: TIA_FELISA }, effectiveStatus: "pending" });
+    await expect(callerAs(10).cancelTokenPaymentRequest({ requestId: 77 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockCancelTokenPaymentRequest).not.toHaveBeenCalled();
   });
 });
 
@@ -272,13 +343,13 @@ describe("commerce router — venta de puerta (Fase 9, IDOR + RBAC)", () => {
     expect(mockRecordDoorSale).not.toHaveBeenCalled();
   });
 
-  it("recordDoorSale con SegoTokens sin identityToken: rechazado antes del servicio (mismo criterio que posRecordSale)", async () => {
-    await expect(callerAs(10).recordDoorSale({ venueId: CASANOVA, eventId: 1, ticketTypeId: 1, quantity: 1, idempotencyKey: "door-idem-2", tokensToApply: 50 }))
-      .rejects.toMatchObject({ code: "BAD_REQUEST" });
-    expect(mockRecordDoorSale).not.toHaveBeenCalled();
+  it("recordDoorSale con confirmedTokenRequestId lo propaga tal cual — la validación real vive en el servicio", async () => {
+    mockRecordDoorSale.mockResolvedValue({ order: { id: 1 }, tickets: [] });
+    await callerAs(10).recordDoorSale({ venueId: CASANOVA, eventId: 1, ticketTypeId: 1, quantity: 1, idempotencyKey: "door-idem-2", confirmedTokenRequestId: 77 });
+    expect(mockRecordDoorSale.mock.calls[0][0]).toMatchObject({ confirmedTokenRequestId: 77 });
   });
 
-  it("recordDoorSale sin SegoTokens no exige identityToken — venta anónima/en efectivo sigue funcionando", async () => {
+  it("recordDoorSale sin SegoTokens sigue funcionando sin cambios — venta anónima/en efectivo", async () => {
     mockRecordDoorSale.mockResolvedValue({ order: { id: 1 }, tickets: [] });
     await callerAs(10).recordDoorSale({ venueId: CASANOVA, eventId: 1, ticketTypeId: 1, quantity: 1, idempotencyKey: "door-idem-3" });
     expect(mockLookupStudentByIdentityToken).not.toHaveBeenCalled();
@@ -291,6 +362,40 @@ describe("commerce router — venta de puerta (Fase 9, IDOR + RBAC)", () => {
     // rol de staff real — ver referrals.test.ts para el mismo patrón.
     mockRefundDoorSale.mockResolvedValue({ id: 1, status: "refunded" });
     await expect(callerAs(10).refundDoorSale({ orderId: 1, reason: "motivo" })).resolves.toMatchObject({ status: "refunded" });
+  });
+});
+
+// SEGOLIFE — SEGOTOKENS PRESENCIALES (Pre-16.1): mismo criterio que
+// posRequestTokenPayment, ahora para el flujo de puerta.
+describe("commerce.doorRequestTokenPayment — autorización de gasto de SegoTokens en la puerta", () => {
+  beforeEach(() => {
+    mockGetVenueStaffAccess.mockReset();
+    mockLookupStudentByIdentityToken.mockReset();
+    mockQuoteDoorEntry.mockReset();
+    mockRequestTokenPayment.mockReset();
+    mockGetVenueStaffAccess.mockResolvedValue([CASANOVA]);
+    mockQuoteDoorEntry.mockResolvedValue({ grossAmountCents: 4600, ticketTypeName: "General", tokenQuote: null });
+    mockRequestTokenPayment.mockResolvedValue({ request: { id: 88 }, reservation: { id: 502 } });
+  });
+
+  const BASE = { venueId: CASANOVA, eventId: 1, ticketTypeId: 1, quantity: 1, identifiedUserId: 42, requestedTokens: 1500, idempotencyKey: "door-req-1" };
+
+  it("identityToken válido: solicita, recalculando el precio SIEMPRE desde el tipo de entrada real (nunca del cliente)", async () => {
+    mockLookupStudentByIdentityToken.mockResolvedValue({ userId: 42, name: "Ana" });
+    const result = await callerAs(10).doorRequestTokenPayment({ ...BASE, identityToken: "a".repeat(20) });
+    expect(result).toEqual({ requestId: 88, reservation: { id: 502 } });
+    expect(mockRequestTokenPayment.mock.calls[0][0]).toMatchObject({ userId: 42, grossAmountCents: 4600, requestedTokens: 1500, orderContextType: "door" });
+  });
+
+  it("identityToken que resuelve a otro Student: rechazado, nunca solicita el pago", async () => {
+    mockLookupStudentByIdentityToken.mockResolvedValue({ userId: 999, name: "Otro" });
+    await expect(callerAs(10).doorRequestTokenPayment({ ...BASE, identityToken: "a".repeat(20) })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(mockRequestTokenPayment).not.toHaveBeenCalled();
+  });
+
+  it("IDOR: Venue Admin de Casanova no puede solicitar pago con SegoTokens en la puerta de Tía Felisa", async () => {
+    await expect(callerAs(10).doorRequestTokenPayment({ ...BASE, venueId: TIA_FELISA, identityToken: "a".repeat(20) })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockRequestTokenPayment).not.toHaveBeenCalled();
   });
 });
 

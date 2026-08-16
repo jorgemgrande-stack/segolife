@@ -31,6 +31,15 @@
  * real), pero sin fila de asistencia (no hay a quién atribuírsela) ni
  * SegoTokens (ni gasto ni recompensa — ninguno de los dos existe sin
  * identidad).
+ *
+ * SEGOTOKENS PRESENCIALES (Pre-16.1, spec §2 "IDENTIFICATION != PAYMENT
+ * AUTHORIZATION"): este servicio YA NO llama a reserveAndCaptureTokenSpend()
+ * directo — eso permitía a un operador de puerta aplicar tokens de un
+ * Student identificado sin que el Student autorizara nada desde su
+ * teléfono. Ahora solo acepta `confirmedTokenRequestId`: el id de un
+ * token_payment_request ya CONFIRMADO por el Student
+ * (tokenPaymentRequestService.ts, creado antes vía
+ * `commerce.requestTokenPayment`). Sin ese id, la venta no lleva SegoTokens.
  */
 import { eq, and } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -44,7 +53,8 @@ import { reverseNativePurchaseReward } from "../ticketing/ticketCancellationServ
 import { ingestAttendance } from "../ticketing/attendancePipeline";
 import { isEventCurrentlyOpen } from "../ticketing/unifiedCheckinService";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
-import { quoteTokenSpend, reserveAndCaptureTokenSpend, reverseTokenSpend, type TokenSpendReservation } from "../tokens/tokenSpendService";
+import { quoteTokenSpend, reverseTokenSpend, type TokenSpendReservation } from "../tokens/tokenSpendService";
+import { settleTokenPaymentRequest, linkSettledOrder, TokenPaymentRequestError } from "../tokens/tokenPaymentRequestService";
 import { recordCommerceRefund } from "./refundOrchestrator";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 3 });
@@ -127,7 +137,13 @@ export interface RecordDoorSaleInput {
   /** Comprador identificado (QR de identidad) — opcional, spec §17. Sin esto: sin SegoTokens, sin asistencia atribuible, venta igualmente válida. */
   identifiedUserId?: number | null;
   operatorUserId: number;
-  tokensToApply?: number | null;
+  /**
+   * SEGOLIFE — SEGOTOKENS PRESENCIALES (Pre-16.1): id de un
+   * token_payment_request ya CONFIRMADO por el Student desde su propio
+   * teléfono (creado antes vía `commerce.requestTokenPayment`). Sustituye al
+   * antiguo `tokensToApply` directo.
+   */
+  confirmedTokenRequestId?: number | null;
   idempotencyKey: string;
 }
 
@@ -168,33 +184,40 @@ export async function recordDoorSale(input: RecordDoorSaleInput, db?: DbHandle):
   }
   const order = holdResult.order;
 
-  // ─── SegoTokens Universal Spend (Fase 7, reutilizado sin cambios) ─────────
+  // ─── SegoTokens Presenciales (Pre-16.1) — liquida una autorización que el
+  // Student ya confirmó, nunca decide/captura por cuenta propia. Dentro del
+  // MISMO try que el resto de la venta (spec §16): si cualquier validación
+  // de aquí en adelante falla DESPUÉS de haber capturado tokens reales, el
+  // catch de abajo debe poder revertirlos — nunca dejar tokens gastados sin
+  // ninguna venta asociada. ─────────────────────────────────────────────
   let reservation: TokenSpendReservation | null = null;
-  if (input.tokensToApply != null && input.tokensToApply > 0) {
-    if (!input.identifiedUserId) throw new DoorSaleError("STUDENT_REQUIRED", "Se necesita identificar al Student para aplicar SegoTokens");
-    const spendResult = await reserveAndCaptureTokenSpend({
-      userId: input.identifiedUserId,
-      venueId: event.venueId ?? null,
-      eventId: input.eventId,
-      grossAmountCents: order.totalCents,
-      requestedTokens: input.tokensToApply,
-      referenceType: "ticket_order",
-      referenceId: order.id,
-      idempotencyKey: `door_sale_tokens:${input.idempotencyKey}`,
-      createdByUserId: input.operatorUserId,
-    }, conn);
-    if ("status" in spendResult && spendResult.status !== "reserved") {
-      throw new DoorSaleError(spendResult.status === "no_policy" ? "NO_REDEMPTION_POLICY" : "INVALID_TOKEN_AMOUNT", "No se pudo aplicar SegoTokens a esta venta");
-    }
-    reservation = "reservation" in spendResult ? spendResult.reservation : null;
-  }
-
-  const moneyDueCents = order.totalCents - (reservation?.promotionalValueCents ?? 0);
-  const paymentMethod = reservation
-    ? (moneyDueCents === 0 ? "segotokens" : "mixed")
-    : "cash";
-
   try {
+    if (input.confirmedTokenRequestId != null) {
+      if (!input.identifiedUserId) throw new DoorSaleError("STUDENT_REQUIRED", "Se necesita identificar al Student para aplicar SegoTokens");
+      let settleResult;
+      try {
+        settleResult = await settleTokenPaymentRequest(input.confirmedTokenRequestId, "door", conn);
+      } catch (err) {
+        if (err instanceof TokenPaymentRequestError) throw new DoorSaleError(err.code, err.message);
+        throw err;
+      }
+      // Asignado ANTES de validar: los tokens ya se capturaron dentro de
+      // settleTokenPaymentRequest — si algo de lo siguiente lanza, el catch
+      // de más abajo debe poder revertirlo.
+      reservation = settleResult.reservation;
+      if (reservation.userId !== input.identifiedUserId) {
+        throw new DoorSaleError("REQUEST_STUDENT_MISMATCH", "La solicitud de pago no corresponde al Student identificado para esta venta");
+      }
+      if (reservation.grossAmountCents !== order.totalCents) {
+        throw new DoorSaleError("CART_CHANGED_SINCE_REQUEST", "El precio de la entrada cambió desde que se solicitó el pago con SegoTokens — vuelve a solicitarlo");
+      }
+    }
+
+    const moneyDueCents = order.totalCents - (reservation?.promotionalValueCents ?? 0);
+    const paymentMethod = reservation
+      ? (moneyDueCents === 0 ? "segotokens" : "mixed")
+      : "cash";
+
     // Confirmación SÍNCRONA — el staff ya cobró el remanente en persona
     // (spec §46: "staff-confirmed", nunca un PaymentProvider inexistente).
     // pending→awaiting_payment→paid en la MISMA llamada, mismas dos
@@ -206,6 +229,10 @@ export async function recordDoorSale(input: RecordDoorSaleInput, db?: DbHandle):
       paymentMethod,
       tokenReservationId: reservation?.id ?? null,
     }, conn);
+
+    if (input.confirmedTokenRequestId != null) {
+      await linkSettledOrder(input.confirmedTokenRequestId, paidOrder.id, conn);
+    }
 
     const issued = await issueTicketsForOrder(paidOrder, conn);
 

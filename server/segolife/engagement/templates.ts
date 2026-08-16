@@ -453,6 +453,23 @@ export const ENGAGEMENT_TEMPLATES: Record<string, EngagementTemplate> = {
     allowedVariables: ["proposalTitle"],
   },
 
+  // Pre-16.1 — pago presencial con SegoTokens (TPV/puerta): un operador
+  // solicitó, el Student debe confirmar/rechazar. Solo in_app — es una
+  // acción urgente mientras el Student está físicamente en el venue, un
+  // email nunca llegaría a tiempo. El cuerpo es deliberadamente genérico
+  // (sin desglose de importes): el detalle completo y en vivo (nombre del
+  // venue, tokens/valor/restante/saldo antes-después) se lee siempre del
+  // propio tRPC al abrir la pantalla vía deepLink, nunca se congela en el
+  // texto de la notificación.
+  token_payment_requested: {
+    key: "token_payment_requested", version: 1, category: "account", adminCategory: "SEGOTOKENS",
+    audienceType: "transactional", channels: ["in_app"], status: "active",
+    description: "Un operador de venue solicitó pagar parte de una compra con SegoTokens — requiere confirmación del Student.", triggerEvent: "TokenPaymentRequested",
+    titleEn: "Confirm your SegoTokens payment", titleEs: "Confirma tu pago con SegoTokens",
+    bodyEn: "{{venueName}} is requesting {{requestedTokens}} ST. Tap to review and confirm.", bodyEs: "{{venueName}} solicita {{requestedTokens}} ST. Toca para revisar y confirmar.",
+    allowedVariables: ["venueName", "requestedTokens"],
+  },
+
   // ── Pre-existentes (Fase 7 original) — sin tocar contenido, solo se les añade adminCategory/status ──
   recurrence_progress: {
     key: "recurrence_progress", version: 1, category: "rewards", adminCategory: "SEGOTOKENS",

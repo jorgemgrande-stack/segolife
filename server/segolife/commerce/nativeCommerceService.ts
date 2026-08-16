@@ -22,13 +22,24 @@
  * `commercePipeline.ingestCommerceTransaction()` sigue siendo el ÚNICO
  * punto de entrada a loyalty — este servicio nunca llama a earnTokens()/
  * evaluateBenefitsForOrigin() directamente.
+ *
+ * SEGOTOKENS PRESENCIALES (Pre-16.1, spec §2 "IDENTIFICATION != PAYMENT
+ * AUTHORIZATION"): este servicio YA NO llama a reserveAndCaptureTokenSpend()
+ * directo — eso permitía a un operador aplicar tokens de un Student
+ * identificado sin que el Student autorizara nada desde su teléfono. Ahora
+ * solo acepta `confirmedTokenRequestId`: el id de un token_payment_request
+ * que el Student YA confirmó (tokenPaymentRequestService.ts), creado antes
+ * mediante el router `commerce.requestTokenPayment`. Sin ese id, la venta
+ * simplemente no lleva SegoTokens — ninguna vía sigue permitiendo un gasto
+ * unilateral del operador.
  */
 import { eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { venueProducts, commerceTransactions, type VenueProduct } from "../../../drizzle/schema";
 import { ingestCommerceTransaction, type IngestCommerceResult } from "./commercePipeline";
-import { reserveAndCaptureTokenSpend, reverseTokenSpend, type TokenSpendReservation } from "../tokens/tokenSpendService";
+import { reverseTokenSpend, type TokenSpendReservation } from "../tokens/tokenSpendService";
+import { settleTokenPaymentRequest, linkSettledOrder, TokenPaymentRequestError } from "../tokens/tokenPaymentRequestService";
 import { reserveAndDecrementForSale, reverseStockForSale, linkStockMovementsToTransaction, StockError } from "../stock/stockService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
@@ -60,17 +71,15 @@ export interface RecordNativeSaleInput {
   staffUserId: number;
   idempotencyKey: string;
   /**
-   * SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7, spec §22/§23/§71-74):
-   * cantidad de SegoTokens que el Student aplica contra el precio bruto de
-   * esta venta. Requiere `identifiedUserId` — el ROUTER (server/routers/
-   * commerce.ts) es quien re-verifica ese userId contra un escaneo FRESCO
-   * del QR de identidad antes de llegar aquí (spec §33/§34: "identidad no
-   * es un cheque en blanco de pago") — este servicio confía en el userId
-   * que recibe, igual que confía en `staffUserId`, nunca revalida el QR él
-   * mismo (esa responsabilidad es de la capa de router, como en el resto
-   * del código base).
+   * SEGOLIFE — SEGOTOKENS PRESENCIALES (Pre-16.1): id de un
+   * token_payment_request ya CONFIRMADO por el Student desde su propio
+   * teléfono (tokenPaymentRequestService.ts, creado antes vía
+   * `commerce.requestTokenPayment`). Sustituye al antiguo `tokensToApply`
+   * directo — este servicio ya no decide por sí mismo cuántos tokens
+   * aplicar, solo liquida una autorización que ya existe y ya fue aprobada.
+   * Sin este id, la venta no lleva SegoTokens.
    */
-  tokensToApply?: number | null;
+  confirmedTokenRequestId?: number | null;
   /** Fase 10.7 — cómo se cobró la porción en DINERO (nunca la porción en SegoTokens). Por defecto "cash" (compatibilidad con el comportamiento previo a esta fase). */
   moneyPaymentMethod?: "cash" | "card" | null;
 }
@@ -162,29 +171,41 @@ export async function recordNativeSale(input: RecordNativeSaleInput, db?: DbHand
     throw err;
   }
 
-  // SEGOLIFE — SEGOTOKENS UNIVERSAL SPEND (Fase 7): totalCents/subtotalCents
+  // SEGOLIFE — SEGOTOKENS PRESENCIALES (Pre-16.1): totalCents/subtotalCents
   // de commerce_transactions siguen siendo el precio BRUTO real — nunca se
-  // muta para reflejar lo cobrado tras aplicar SegoTokens (spec §10, "do
-  // NOT mutate the product price"). El valor promocional/dinero debido vive
-  // en token_spend_reservations, enlazada vía token_reservation_id.
+  // muta para reflejar lo aplicado en SegoTokens (spec §10, "do NOT mutate
+  // the product price"). El valor promocional/dinero debido vive en
+  // token_spend_reservations, enlazada vía token_reservation_id.
+  //
+  // La captura (liquidación) ocurre AQUÍ, ANTES de crear la orden — mismo
+  // orden que el reserveAndCaptureTokenSpend() que sustituye, para que el
+  // catch-and-reverse de más abajo siga cubriendo el caso "se capturaron
+  // tokens pero la orden no se pudo crear" sin ningún cambio.
   let reservation: TokenSpendReservation | null = null;
   try {
-    if (input.tokensToApply != null && input.tokensToApply > 0) {
+    if (input.confirmedTokenRequestId != null) {
       if (!input.identifiedUserId) throw new PosError("STUDENT_REQUIRED", "Se necesita identificar al Student para aplicar SegoTokens");
-      const spendResult = await reserveAndCaptureTokenSpend({
-        userId: input.identifiedUserId,
-        venueId: input.venueId,
-        grossAmountCents: totalCents,
-        requestedTokens: input.tokensToApply,
-        referenceType: "commerce_transaction",
-        idempotencyKey: `pos_sale_tokens:${input.idempotencyKey}`,
-        createdByUserId: input.staffUserId,
-      }, conn);
-      if ("status" in spendResult) {
-        if (spendResult.status === "no_policy") throw new PosError("NO_REDEMPTION_POLICY", "No hay ninguna política de canje de SegoTokens activa para este venue");
-        throw new PosError("INVALID_TOKEN_AMOUNT", "Importe de SegoTokens no válido");
+      let settleResult;
+      try {
+        settleResult = await settleTokenPaymentRequest(input.confirmedTokenRequestId, "pos", conn);
+      } catch (err) {
+        if (err instanceof TokenPaymentRequestError) throw new PosError(err.code, err.message);
+        throw err;
       }
-      reservation = spendResult.reservation;
+      // Se asigna ANTES de las validaciones siguientes (no solo al final):
+      // los tokens YA se capturaron dentro de settleTokenPaymentRequest —
+      // settleResult existe. Si alguna validación de abajo lanza, el catch
+      // de más abajo debe poder revertir esta captura, y solo puede hacerlo
+      // si `reservation` ya está asignada aquí.
+      reservation = settleResult.reservation;
+      if (reservation.userId !== input.identifiedUserId) {
+        throw new PosError("REQUEST_STUDENT_MISMATCH", "La solicitud de pago no corresponde al Student identificado para esta venta");
+      }
+      if (reservation.grossAmountCents !== totalCents) {
+        // El carrito cambió entre la solicitud y esta confirmación — nunca
+        // se liquida contra un total distinto del que el Student aprobó.
+        throw new PosError("CART_CHANGED_SINCE_REQUEST", "El carrito cambió desde que se solicitó el pago con SegoTokens — vuelve a solicitarlo");
+      }
     }
 
     const moneyDueCents = totalCents - (reservation?.promotionalValueCents ?? 0);
@@ -213,6 +234,9 @@ export async function recordNativeSale(input: RecordNativeSaleInput, db?: DbHand
       // verdad económica (token_spend_reservations, ya capturada) no se ve
       // afectada, solo el atajo de navegación para el reembolso simétrico.
       await conn.update(commerceTransactions).set({ tokenReservationId: reservation.id }).where(eq(commerceTransactions.id, result.transaction.id));
+      if (input.confirmedTokenRequestId != null) {
+        await linkSettledOrder(input.confirmedTokenRequestId, result.transaction.id, conn);
+      }
     }
     await linkStockMovementsToTransaction(stockKeyPrefix, result.transaction.id, conn).catch(() => {});
     return result;

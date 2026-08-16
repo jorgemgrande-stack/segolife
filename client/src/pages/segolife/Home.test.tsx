@@ -25,6 +25,7 @@ const {
   mockRewardBatch,
   mockTrack,
   mockUseCommunity,
+  mockPendingPaymentRequests,
   noopQuery,
 } = vi.hoisted(() => ({
   mockAuthMe: vi.fn(),
@@ -36,6 +37,7 @@ const {
   mockRewardBatch: vi.fn(),
   mockTrack: vi.fn(),
   mockUseCommunity: vi.fn(),
+  mockPendingPaymentRequests: vi.fn(),
   noopQuery: () => ({ data: undefined, isLoading: false }),
 }));
 
@@ -53,6 +55,7 @@ vi.mock("@/lib/trpc", () => ({
     students: { me: { useQuery: mockStudentsMe } },
     events: { publicActive: { useQuery: mockEventsPublicActive } },
     venues: { publicActive: { useQuery: mockVenuesPublicActive } },
+    tokenPaymentRequests: { myPending: { useQuery: mockPendingPaymentRequests } },
     studentAnalytics: { track: { useMutation: () => ({ mutate: mockTrack }) } },
     studentNotifications: { unreadCount: { useQuery: noopQuery } },
     communities: { list: { useQuery: noopQuery }, myMemberships: { useQuery: noopQuery } },
@@ -116,6 +119,7 @@ beforeEach(() => {
   mockEventsPublicActive.mockReturnValue({ data: [], isLoading: false });
   mockVenuesPublicActive.mockReturnValue({ data: [], isLoading: false });
   mockRewardBatch.mockReturnValue({ data: undefined });
+  mockPendingPaymentRequests.mockReturnValue({ data: [], isLoading: false });
 });
 
 afterEach(cleanup);
@@ -267,5 +271,34 @@ describe("Home (/:community) — estudiante autenticado ve su dashboard personal
     mockAuthenticated();
     renderAt("/ie");
     expect(mockHomeSummary).toHaveBeenCalledWith({ communityId: 1 }, expect.anything());
+  });
+
+  // SEGOLIFE PRE-16.1 "Presential SegoTokens Payments" — banner de solicitud
+  // de pago pendiente (PendingPaymentRequestBanner). Sin solicitudes
+  // pendientes, el banner nunca se pinta (mismo patrón que HistoricalClaimBanner).
+  it("sin solicitudes de pago pendientes: no muestra ningún banner de pago", () => {
+    mockAuthenticated();
+    renderAt("/ie");
+    expect(document.querySelector('a[href^="/ie/payment-requests/"]')).not.toBeInTheDocument();
+  });
+
+  it("con una solicitud de pago pendiente: muestra el banner con enlace a la pantalla de confirmación real", () => {
+    mockAuthenticated();
+    mockPendingPaymentRequests.mockReturnValue({
+      data: [{
+        request: { id: 501, status: "pending" },
+        reservation: {
+          id: 900, communityId: 1, venueId: 12, tokensReserved: 40,
+          promotionalValueCents: 800, moneyDueCents: 1200, grossAmountCents: 2000,
+          expiresAt: new Date(Date.now() + 5 * 60_000),
+        },
+        effectiveStatus: "pending",
+      }],
+      isLoading: false,
+    });
+    renderAt("/ie");
+    const link = document.querySelector('a[href="/ie/payment-requests/501"]');
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveTextContent("40");
   });
 });

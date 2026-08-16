@@ -34,14 +34,23 @@ vi.mock("../ticketing/attendancePipeline", () => ({ ingestAttendance: mockIngest
 const { mockIsEventCurrentlyOpen } = vi.hoisted(() => ({ mockIsEventCurrentlyOpen: vi.fn() }));
 vi.mock("../ticketing/unifiedCheckinService", () => ({ isEventCurrentlyOpen: mockIsEventCurrentlyOpen }));
 
-const { mockReserveAndCaptureTokenSpend, mockReverseTokenSpend } = vi.hoisted(() => ({
-  mockReserveAndCaptureTokenSpend: vi.fn(),
-  mockReverseTokenSpend: vi.fn(),
-}));
-vi.mock("../tokens/tokenSpendService", () => ({
-  reserveAndCaptureTokenSpend: mockReserveAndCaptureTokenSpend,
-  reverseTokenSpend: mockReverseTokenSpend,
-  quoteTokenSpend: vi.fn(),
+const { mockReverseTokenSpend } = vi.hoisted(() => ({ mockReverseTokenSpend: vi.fn() }));
+vi.mock("../tokens/tokenSpendService", () => ({ reverseTokenSpend: mockReverseTokenSpend, quoteTokenSpend: vi.fn() }));
+
+// SEGOLIFE — SEGOTOKENS PRESENCIALES (Pre-16.1): recordDoorSale ya no
+// decide/captura tokens por su cuenta — solo liquida una autorización que
+// el Student ya confirmó, vía tokenPaymentRequestService.settleTokenPaymentRequest.
+const { mockSettleTokenPaymentRequest, mockLinkSettledOrder, MockTokenPaymentRequestError } = vi.hoisted(() => {
+  class MockTokenPaymentRequestError extends Error {
+    code: string;
+    constructor(code: string, message: string) { super(message); this.name = "TokenPaymentRequestError"; this.code = code; }
+  }
+  return { mockSettleTokenPaymentRequest: vi.fn(), mockLinkSettledOrder: vi.fn(), MockTokenPaymentRequestError };
+});
+vi.mock("../tokens/tokenPaymentRequestService", () => ({
+  settleTokenPaymentRequest: mockSettleTokenPaymentRequest,
+  linkSettledOrder: mockLinkSettledOrder,
+  TokenPaymentRequestError: MockTokenPaymentRequestError,
 }));
 
 const { mockEmitEngagementEvent } = vi.hoisted(() => ({ mockEmitEngagementEvent: vi.fn() }));
@@ -114,10 +123,11 @@ let ledgerSeq = 1;
 beforeEach(() => {
   vi.clearAllMocks();
   ledgerSeq = 1;
-  mockReserveAndCaptureTokenSpend.mockImplementation(async (input: { requestedTokens: number }) => ({
-    status: "reserved",
-    reservation: { id: ledgerSeq++, tokensReserved: input.requestedTokens, promotionalValueCents: input.requestedTokens, moneyDueCents: 0 },
+  mockSettleTokenPaymentRequest.mockImplementation(async () => ({
+    reservation: { id: ledgerSeq++, userId: 42, grossAmountCents: 1500, tokensReserved: 100, promotionalValueCents: 100, moneyDueCents: 0 },
+    request: { id: 1 },
   }));
+  mockLinkSettledOrder.mockResolvedValue(undefined);
   mockReverseTokenSpend.mockResolvedValue({ tokensReserved: 10 });
   mockCreateHold.mockImplementation(async (input: { idempotencyKey: string }) => ({ status: "created", order: orderRow({ idempotencyKey: input.idempotencyKey }) }));
   mockTransitionOrderStatus.mockImplementation(async (_id: number, _from: string[], to: string, extra: Record<string, unknown>) => orderRow({ status: to, ...extra }));
@@ -144,7 +154,7 @@ describe("doorSaleService — venta de puerta (Commerce Core, spec §14-15)", ()
     const { db } = makeMockDb();
     const result = await recordDoorSale({ eventId: 10, ticketTypeId: 1, quantity: 1, operatorUserId: 9, idempotencyKey: "door:3" }, db);
     expect(result.order).toBeTruthy();
-    expect(mockReserveAndCaptureTokenSpend).not.toHaveBeenCalled();
+    expect(mockSettleTokenPaymentRequest).not.toHaveBeenCalled();
     expect(mockIngestAttendance).not.toHaveBeenCalled();
     expect(mockGrantNativePurchaseReward).not.toHaveBeenCalled();
   });
@@ -162,24 +172,42 @@ describe("doorSaleService — venta de puerta (Commerce Core, spec §14-15)", ()
     expect(mockGrantNativePurchaseReward).toHaveBeenCalledOnce();
   });
 
-  it("#6 aplica SegoTokens (reserveAndCaptureTokenSpend) con referenceType='ticket_order' — nunca un motor de gasto nuevo", async () => {
+  it("#6 liquida una solicitud de pago ya confirmada por el Student (settleTokenPaymentRequest, contexto 'door') — nunca decide/captura por su cuenta", async () => {
     const { db } = makeMockDb();
-    await recordDoorSale({ eventId: 10, ticketTypeId: 1, quantity: 1, identifiedUserId: 42, operatorUserId: 9, idempotencyKey: "door:6", tokensToApply: 100 }, db);
-    expect(mockReserveAndCaptureTokenSpend).toHaveBeenCalledOnce();
-    expect(mockReserveAndCaptureTokenSpend.mock.calls[0][0]).toMatchObject({ userId: 42, requestedTokens: 100, referenceType: "ticket_order" });
+    await recordDoorSale({ eventId: 10, ticketTypeId: 1, quantity: 1, identifiedUserId: 42, operatorUserId: 9, idempotencyKey: "door:6", confirmedTokenRequestId: 7 }, db);
+    expect(mockSettleTokenPaymentRequest).toHaveBeenCalledOnce();
+    expect(mockSettleTokenPaymentRequest.mock.calls[0][0]).toBe(7);
+    expect(mockSettleTokenPaymentRequest.mock.calls[0][1]).toBe("door");
+    expect(mockLinkSettledOrder).toHaveBeenCalledOnce();
   });
 
   it("#7 SegoTokens sin identifiedUserId es rechazado ANTES de tocar el motor de tokens", async () => {
     const { db } = makeMockDb();
-    await expect(recordDoorSale({ eventId: 10, ticketTypeId: 1, quantity: 1, operatorUserId: 9, idempotencyKey: "door:7", tokensToApply: 100 }, db))
+    await expect(recordDoorSale({ eventId: 10, ticketTypeId: 1, quantity: 1, operatorUserId: 9, idempotencyKey: "door:7", confirmedTokenRequestId: 7 }, db))
       .rejects.toMatchObject({ code: "STUDENT_REQUIRED" });
-    expect(mockReserveAndCaptureTokenSpend).not.toHaveBeenCalled();
+    expect(mockSettleTokenPaymentRequest).not.toHaveBeenCalled();
   });
 
-  it("#8 si falla la emisión tras capturar SegoTokens reales, se revierte la captura (compensación)", async () => {
+  it("#7b reservation.userId de la solicitud liquidada no coincide con el Student identificado: rechaza y revierte", async () => {
+    mockSettleTokenPaymentRequest.mockResolvedValueOnce({ reservation: { id: 900, userId: 999, grossAmountCents: 1500, promotionalValueCents: 100 }, request: { id: 7 } });
+    const { db } = makeMockDb();
+    await expect(recordDoorSale({ eventId: 10, ticketTypeId: 1, quantity: 1, identifiedUserId: 42, operatorUserId: 9, idempotencyKey: "door:7b", confirmedTokenRequestId: 7 }, db))
+      .rejects.toMatchObject({ code: "REQUEST_STUDENT_MISMATCH" });
+    expect(mockReverseTokenSpend).toHaveBeenCalledOnce();
+  });
+
+  it("#7c el precio cambió desde la solicitud (grossAmountCents distinto de order.totalCents): rechaza y revierte", async () => {
+    mockSettleTokenPaymentRequest.mockResolvedValueOnce({ reservation: { id: 901, userId: 42, grossAmountCents: 999, promotionalValueCents: 100 }, request: { id: 7 } });
+    const { db } = makeMockDb();
+    await expect(recordDoorSale({ eventId: 10, ticketTypeId: 1, quantity: 1, identifiedUserId: 42, operatorUserId: 9, idempotencyKey: "door:7c", confirmedTokenRequestId: 7 }, db))
+      .rejects.toMatchObject({ code: "CART_CHANGED_SINCE_REQUEST" });
+    expect(mockReverseTokenSpend).toHaveBeenCalledOnce();
+  });
+
+  it("#8 si falla la emisión tras liquidar SegoTokens reales, se revierte la captura (compensación)", async () => {
     const { db } = makeMockDb();
     mockIssueTicketsForOrder.mockRejectedValueOnce(new Error("fallo de BD"));
-    await expect(recordDoorSale({ eventId: 10, ticketTypeId: 1, quantity: 1, identifiedUserId: 42, operatorUserId: 9, idempotencyKey: "door:8", tokensToApply: 100 }, db))
+    await expect(recordDoorSale({ eventId: 10, ticketTypeId: 1, quantity: 1, identifiedUserId: 42, operatorUserId: 9, idempotencyKey: "door:8", confirmedTokenRequestId: 7 }, db))
       .rejects.toThrow();
     expect(mockReverseTokenSpend).toHaveBeenCalledOnce();
   });
@@ -190,7 +218,7 @@ describe("doorSaleService — venta de puerta (Commerce Core, spec §14-15)", ()
     const { db } = makeMockDb({ order: existing, tickets: [ticketRow({ status: "used" })] });
     const result = await recordDoorSale({ eventId: 10, ticketTypeId: 1, quantity: 1, identifiedUserId: 42, operatorUserId: 9, idempotencyKey: "door:9" }, db);
     expect(result.order.status).toBe("paid");
-    expect(mockReserveAndCaptureTokenSpend).not.toHaveBeenCalled();
+    expect(mockSettleTokenPaymentRequest).not.toHaveBeenCalled();
     expect(mockGrantNativePurchaseReward).not.toHaveBeenCalled();
     expect(mockTransitionOrderStatus).not.toHaveBeenCalled();
   });

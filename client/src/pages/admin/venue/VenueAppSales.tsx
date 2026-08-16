@@ -16,10 +16,11 @@ import { useQrScanner } from "@/hooks/useQrScanner";
 
 const SCAN_REGION_ID = "segolife-venueapp-sales-scan-region";
 
-type Step = "pick" | "identify" | "confirm" | "submitting" | "success";
+type Step = "pick" | "identify" | "confirm" | "tokenWait" | "submitting" | "success";
 
 interface DoorTicketType { id: number; name: string; priceCents: number }
 interface EventGroup { event: { id: number; name: string }; ticketTypes: DoorTicketType[] }
+interface TokenReservationInfo { tokensReserved: number; promotionalValueCents: number; moneyDueCents: number; grossAmountCents: number }
 
 function centsToEuro(cents: number) {
   return (cents / 100).toLocaleString("es-ES", { style: "currency", currency: "EUR" });
@@ -37,6 +38,8 @@ export default function VenueAppSales({ venueId }: { venueId: number }) {
   const [manualCode, setManualCode] = useState("");
   const [successInfo, setSuccessInfo] = useState<{ ticketCount: number } | null>(null);
   const [pendingIdentifyToken, setPendingIdentifyToken] = useState<string | null>(null);
+  const [tokenRequestId, setTokenRequestId] = useState<number | null>(null);
+  const [tokenReservation, setTokenReservation] = useState<TokenReservationInfo | null>(null);
 
   const scanner = useQrScanner(SCAN_REGION_ID);
   const utils = trpc.useUtils();
@@ -46,8 +49,10 @@ export default function VenueAppSales({ venueId }: { venueId: number }) {
   const selectedGroup = groups.find(g => g.event.id === eventId) ?? null;
   const selectedType = selectedGroup?.ticketTypes.find(t => t.id === ticketTypeId) ?? null;
 
+  const requestedTokensNum = Number(tokensToApply) || 0;
+
   const quoteQ = trpc.commerce.quoteDoorEntry.useQuery(
-    { venueId, eventId: eventId!, ticketTypeId: ticketTypeId!, quantity, identifiedUserId: identifiedUserId ?? undefined, requestedTokens: Number(tokensToApply) || 0 },
+    { venueId, eventId: eventId!, ticketTypeId: ticketTypeId!, quantity, identifiedUserId: identifiedUserId ?? undefined, requestedTokens: requestedTokensNum },
     { enabled: step === "confirm" && !!eventId && !!ticketTypeId }
   );
 
@@ -75,13 +80,52 @@ export default function VenueAppSales({ venueId }: { venueId: number }) {
       setStep("success");
       void utils.commerce.doorEntryTicketTypes.invalidate();
     },
-    onError: e => { toast.error(e.message); setStep("confirm"); },
+    onError: e => { toast.error(e.message); setStep(tokenRequestId ? "tokenWait" : "confirm"); },
   });
+
+  const requestTokenMut = trpc.commerce.doorRequestTokenPayment.useMutation({
+    onSuccess: (res) => {
+      setTokenRequestId(res.requestId);
+      setTokenReservation(res.reservation);
+      setStep("tokenWait");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const cancelTokenMut = trpc.commerce.cancelTokenPaymentRequest.useMutation({
+    onSuccess: () => {
+      setTokenRequestId(null);
+      setTokenReservation(null);
+      setStep("confirm");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const statusQ = trpc.commerce.getTokenPaymentRequestStatus.useQuery(
+    { requestId: tokenRequestId ?? 0 },
+    {
+      enabled: !!tokenRequestId && step === "tokenWait",
+      refetchInterval: query => (query.state.data?.status === "pending" ? 3000 : false),
+    }
+  );
+  const tokenStatus = statusQ.data?.status;
+
+  useEffect(() => {
+    if (statusQ.data) setTokenReservation(statusQ.data.reservation);
+  }, [statusQ.data]);
+
+  useEffect(() => {
+    if (tokenStatus === "confirmed" && statusQ.data?.reservation.moneyDueCents === 0 && tokenRequestId) {
+      finalizeSale(tokenRequestId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenStatus]);
 
   function reset() {
     setStep("pick"); setEventId(null); setTicketTypeId(null); setQuantity(1);
     setIdentifiedUserId(null); setIdentityToken(null); setStudentName(null);
     setTokensToApply(""); setManualCode(""); setSuccessInfo(null);
+    setTokenRequestId(null); setTokenReservation(null);
   }
 
   function submitIdentity(token: string) {
@@ -89,15 +133,25 @@ export default function VenueAppSales({ venueId }: { venueId: number }) {
     setPendingIdentifyToken(token);
   }
 
-  function confirmSale() {
+  function finalizeSale(confirmedTokenRequestId?: number) {
     if (!eventId || !ticketTypeId) return;
     setStep("submitting");
     recordMut.mutate({
       venueId, eventId, ticketTypeId, quantity,
       identifiedUserId: identifiedUserId ?? undefined,
       idempotencyKey: `door:${venueId}:${eventId}:${ticketTypeId}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
-      tokensToApply: Number(tokensToApply) || undefined,
-      identityToken: identityToken ?? undefined,
+      confirmedTokenRequestId,
+    });
+  }
+
+  function requestTokenPayment() {
+    if (!eventId || !ticketTypeId || !identifiedUserId || !identityToken || requestedTokensNum <= 0) return;
+    requestTokenMut.mutate({
+      venueId, eventId, ticketTypeId, quantity,
+      identifiedUserId,
+      requestedTokens: requestedTokensNum,
+      identityToken,
+      idempotencyKey: `doortok:${venueId}:${eventId}:${ticketTypeId}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
     });
   }
 
@@ -209,9 +263,83 @@ export default function VenueAppSales({ venueId }: { venueId: number }) {
           )}
 
           <p className="text-xs text-muted-foreground text-center">Cobro en efectivo/tarjeta física confirmado por ti — sin pasarela online.</p>
-          <Button className="w-full h-12" disabled={recordMut.isPending} onClick={confirmSale}>
-            {recordMut.isPending ? <Loader2 className="size-4 animate-spin" /> : "Confirmar venta y admitir"}
+          <Button
+            className="w-full h-12"
+            disabled={requestTokenMut.isPending || recordMut.isPending}
+            onClick={requestedTokensNum > 0 ? requestTokenPayment : () => finalizeSale(undefined)}
+          >
+            {requestTokenMut.isPending
+              ? <Loader2 className="size-4 animate-spin" />
+              : requestedTokensNum > 0 ? "Solicitar pago con SegoTokens" : "Confirmar venta y admitir"}
           </Button>
+        </div>
+      )}
+
+      {step === "tokenWait" && (
+        <div className="space-y-4">
+          <p className="text-sm font-medium text-foreground text-center">Pago con SegoTokens</p>
+          <div className="rounded-xl border border-border bg-card p-4 space-y-2 text-center">
+            {tokenStatus === "confirmed" ? (
+              <>
+                <CheckCircle2 className="size-8 text-emerald-600 mx-auto" />
+                <p className="text-sm font-medium text-foreground">✓ SegoTokens confirmados</p>
+                {tokenReservation && (
+                  <p className="text-xs text-muted-foreground">−{tokenReservation.tokensReserved} ST ({centsToEuro(tokenReservation.promotionalValueCents)})</p>
+                )}
+                {tokenReservation && tokenReservation.moneyDueCents > 0 && (
+                  <p className="text-xs text-muted-foreground">Queda por cobrar: {centsToEuro(tokenReservation.moneyDueCents)}</p>
+                )}
+              </>
+            ) : tokenStatus === "rejected" ? (
+              <>
+                <X className="size-8 text-destructive mx-auto" />
+                <p className="text-sm font-medium text-foreground">El Student ha rechazado la solicitud</p>
+              </>
+            ) : tokenStatus === "expired" ? (
+              <>
+                <X className="size-8 text-destructive mx-auto" />
+                <p className="text-sm font-medium text-foreground">La solicitud ha caducado</p>
+              </>
+            ) : tokenStatus === "cancelled" ? (
+              <>
+                <X className="size-8 text-muted-foreground mx-auto" />
+                <p className="text-sm font-medium text-foreground">Solicitud cancelada</p>
+              </>
+            ) : (
+              <>
+                <Loader2 className="size-8 animate-spin text-primary mx-auto" />
+                <p className="text-sm font-medium text-foreground">Esperando confirmación del Student…</p>
+              </>
+            )}
+          </div>
+
+          {tokenStatus === "confirmed" && (tokenReservation?.moneyDueCents ?? 0) > 0 && (
+            <Button className="w-full h-12" disabled={recordMut.isPending} onClick={() => finalizeSale(tokenRequestId ?? undefined)}>
+              {recordMut.isPending ? <Loader2 className="size-4 animate-spin" /> : "Confirmar venta y admitir"}
+            </Button>
+          )}
+
+          {(tokenStatus === "rejected" || tokenStatus === "expired" || tokenStatus === "cancelled") && (
+            <div className="space-y-2">
+              <Button className="w-full h-12" onClick={() => { setTokenRequestId(null); setTokenReservation(null); setStep("confirm"); }}>
+                Reintentar
+              </Button>
+              <Button variant="outline" className="w-full h-12" onClick={() => { setTokensToApply(""); setTokenRequestId(null); setTokenReservation(null); finalizeSale(undefined); }}>
+                Vender sin SegoTokens
+              </Button>
+            </div>
+          )}
+
+          {(tokenStatus === undefined || tokenStatus === "pending" || tokenStatus === "confirmed") && (
+            <Button
+              variant="outline"
+              className="w-full h-12"
+              disabled={cancelTokenMut.isPending}
+              onClick={() => tokenRequestId && cancelTokenMut.mutate({ requestId: tokenRequestId })}
+            >
+              {cancelTokenMut.isPending ? <Loader2 className="size-4 animate-spin" /> : "Cancelar solicitud"}
+            </Button>
+          )}
         </div>
       )}
 
