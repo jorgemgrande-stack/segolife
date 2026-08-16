@@ -87,7 +87,7 @@ function RefundPanel({ venueId, transactionId, onDone }: { venueId: number; tran
       <Button
         size="sm" variant="destructive" className="w-full"
         disabled={!lines.length || !reason.trim() || refundMut.isPending}
-        onClick={() => refundMut.mutate({ transactionId, lines, reason: reason.trim(), restock })}
+        onClick={() => refundMut.mutate({ transactionId, lines, reason: reason.trim(), restock, idempotencyKey: `pos-refund:${transactionId}:${crypto.randomUUID()}` })}
       >
         {refundMut.isPending ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null} Reembolsar líneas seleccionadas
       </Button>

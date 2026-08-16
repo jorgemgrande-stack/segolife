@@ -402,7 +402,7 @@ describe("commerce.doorRequestTokenPayment — autorización de gasto de SegoTok
 describe("commerce router — refundTransactionLines (reembolso parcial POS, Fase 9 spec §21)", () => {
   it("delega en refundPosSale (Commerce Core) — nunca reimplementa el cálculo en el router", async () => {
     mockRefundPosSale.mockResolvedValue({ transaction: { id: 1 }, isFullRefund: false, refundedAmountCents: 500, tokensReversed: false, purchaseRewardReversed: false });
-    const result = await callerAs(10).refundTransactionLines({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "motivo real" });
+    const result = await callerAs(10).refundTransactionLines({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "motivo real", idempotencyKey: "refund-test-router-1" });
     expect(result.isFullRefund).toBe(false);
     expect(mockRefundPosSale).toHaveBeenCalledWith(expect.objectContaining({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }] }));
   });

@@ -26,6 +26,37 @@ vi.mock("../engagement/engagementEvents", () => ({ emitEngagementEvent: mockEmit
 import { refundPosSale, RefundOrchestratorError } from "./refundOrchestrator";
 import { commerceTransactions, commerceTransactionItems, commerceRefunds } from "../../../drizzle/schema";
 
+// ─── mismo extractor/matcher de condiciones que tokenSpendService.test.ts ──
+type CondPair = [column: string, op: "=" | "<>", value: unknown];
+function extractCondPairs(node: any, pairs: CondPair[] = []): CondPair[] {
+  if (!node || typeof node !== "object" || !Array.isArray(node.queryChunks)) return pairs;
+  const chunks = node.queryChunks;
+  for (let i = 0; i < chunks.length; i++) {
+    const c = chunks[i];
+    if (c && typeof c === "object" && "columnType" in c && typeof c.name === "string") {
+      for (let j = i + 1; j < chunks.length; j++) {
+        const p = chunks[j];
+        if (p && typeof p === "object" && "brand" in p && "value" in p && !("columnType" in p)) {
+          pairs.push([c.name as string, "=", (p as { value: unknown }).value]);
+          break;
+        }
+        if (p && typeof p === "object" && Array.isArray((p as { queryChunks?: unknown }).queryChunks)) break;
+      }
+    } else if (c && typeof c === "object" && Array.isArray(c.queryChunks)) {
+      extractCondPairs(c, pairs);
+    }
+  }
+  return pairs;
+}
+function toCamelCase(snake: string): string {
+  return snake.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+}
+function matchesCondition(row: Record<string, unknown>, cond: unknown): boolean {
+  const pairs = extractCondPairs(cond);
+  if (pairs.length === 0) return true;
+  return pairs.every(([col, , val]) => row[toCamelCase(col)] === val);
+}
+
 function txFixture(overrides: Partial<Record<string, unknown>> = {}) {
   // totalCents=1000 coincide a propósito con itemFixture() (2 × 500) — así
   // "reembolsar toda la cantidad de la línea" y "reembolsar el 100% de la
@@ -73,6 +104,7 @@ function makeMockDb(config: { tx?: Record<string, unknown> | null; items?: Array
       }
       if (table === commerceTransactions) return resolve(tx ? [tx] : []);
       if (table === commerceTransactionItems) return resolve(items);
+      if (table === commerceRefunds) return resolve(refunds.filter(r => matchesCondition(r, whereCond)));
       return resolve([]);
     };
     return b;
@@ -92,7 +124,7 @@ beforeEach(() => {
 describe("refundPosSale — reembolso parcial por línea (spec §21)", () => {
   it("#1 reembolso parcial (1 de 2 unidades) marca la transacción 'partially_refunded', nunca 'refunded'", async () => {
     const { db, getTx } = makeMockDb({ items: [itemFixture()] });
-    const result = await refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "una unidad en mal estado", refundedByUserId: 9 }, db);
+    const result = await refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "una unidad en mal estado", refundedByUserId: 9, idempotencyKey: "refund-test-1" }, db);
     expect(result.isFullRefund).toBe(false);
     expect(getTx().status).toBe("partially_refunded");
     expect(result.refundedAmountCents).toBe(500);
@@ -100,44 +132,44 @@ describe("refundPosSale — reembolso parcial por línea (spec §21)", () => {
 
   it("#2 reembolso que cubre TODA la cantidad restante marca 'refunded' (total)", async () => {
     const { db, getTx } = makeMockDb({ items: [itemFixture()] });
-    const result = await refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 2 }], reason: "toda la venta", refundedByUserId: 9 }, db);
+    const result = await refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 2 }], reason: "toda la venta", refundedByUserId: 9, idempotencyKey: "refund-test-2" }, db);
     expect(result.isFullRefund).toBe(true);
     expect(getTx().status).toBe("refunded");
   });
 
   it("#3 rechaza reembolsar más unidades de las disponibles (quantity > remaining)", async () => {
     const { db } = makeMockDb({ items: [itemFixture({ refundedQuantity: 1 })] }); // ya 1 de 2 reembolsada, queda 1
-    await expect(refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 2 }], reason: "x", refundedByUserId: 9 }, db))
+    await expect(refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 2 }], reason: "x", refundedByUserId: 9, idempotencyKey: "refund-test-3" }, db))
       .rejects.toMatchObject({ code: "INVALID_QUANTITY" });
   });
 
   it("#4 rechaza una línea que no pertenece a esta transacción", async () => {
     const { db } = makeMockDb({ items: [itemFixture({ transactionId: 999 })] });
-    await expect(refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "x", refundedByUserId: 9 }, db))
+    await expect(refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "x", refundedByUserId: 9, idempotencyKey: "refund-test-4" }, db))
       .rejects.toMatchObject({ code: "INVALID_LINE" });
   });
 
   it("#5 exige motivo", async () => {
     const { db } = makeMockDb();
-    await expect(refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "", refundedByUserId: 9 }, db))
+    await expect(refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "", refundedByUserId: 9, idempotencyKey: "refund-test-5" }, db))
       .rejects.toMatchObject({ code: "REASON_REQUIRED" });
   });
 
   it("#6 rechaza una lista de líneas vacía", async () => {
     const { db } = makeMockDb();
-    await expect(refundPosSale({ transactionId: 1, lines: [], reason: "x", refundedByUserId: 9 }, db))
+    await expect(refundPosSale({ transactionId: 1, lines: [], reason: "x", refundedByUserId: 9, idempotencyKey: "refund-test-6" }, db))
       .rejects.toMatchObject({ code: "EMPTY_LINES" });
   });
 
   it("#7 rechaza reembolsar una transacción no confirmada/parcialmente reembolsada (p.ej. ya 'refunded')", async () => {
     const { db } = makeMockDb({ tx: txFixture({ status: "refunded" }) });
-    await expect(refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "x", refundedByUserId: 9 }, db))
+    await expect(refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "x", refundedByUserId: 9, idempotencyKey: "refund-test-7" }, db))
       .rejects.toMatchObject({ code: "INVALID_STATE" });
   });
 
   it("#8 reembolso PARCIAL nunca revierte SegoTokens ni recompensa (sin primitivo seguro de reversión parcial)", async () => {
     const { db } = makeMockDb({ tx: txFixture({ loyaltyLedgerId: 500, tokenReservationId: 700 }), items: [itemFixture()] });
-    const result = await refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "parcial", refundedByUserId: 9 }, db);
+    const result = await refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "parcial", refundedByUserId: 9, idempotencyKey: "refund-test-8" }, db);
     expect(result.isFullRefund).toBe(false);
     expect(result.tokensReversed).toBe(false);
     expect(result.purchaseRewardReversed).toBe(false);
@@ -147,7 +179,7 @@ describe("refundPosSale — reembolso parcial por línea (spec §21)", () => {
 
   it("#9 reembolso TOTAL sí revierte SegoTokens y recompensa de compra (loyaltyLedgerId + tokenReservationId presentes)", async () => {
     const { db } = makeMockDb({ tx: txFixture({ loyaltyLedgerId: 500, tokenReservationId: 700 }), items: [itemFixture()] });
-    const result = await refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 2 }], reason: "total", refundedByUserId: 9 }, db);
+    const result = await refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 2 }], reason: "total", refundedByUserId: 9, idempotencyKey: "refund-test-9" }, db);
     expect(result.isFullRefund).toBe(true);
     expect(result.tokensReversed).toBe(true);
     expect(result.purchaseRewardReversed).toBe(true);
@@ -157,7 +189,7 @@ describe("refundPosSale — reembolso parcial por línea (spec §21)", () => {
 
   it("#10 registra el reembolso en el feed unificado (commerce_refunds), marcado 'partial' correctamente", async () => {
     const { db, getRefunds } = makeMockDb({ items: [itemFixture()] });
-    await refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "motivo real", refundedByUserId: 9 }, db);
+    await refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "motivo real", refundedByUserId: 9, idempotencyKey: "refund-test-10" }, db);
     const refunds = getRefunds();
     expect(refunds).toHaveLength(1);
     expect(refunds[0]).toMatchObject({ sourceType: "commerce_transaction", sourceId: 1, partial: true, moneyRefundStatus: "completed" });
@@ -166,7 +198,7 @@ describe("refundPosSale — reembolso parcial por línea (spec §21)", () => {
   it("#11 reembolso ya revertido (isLedgerEntryReversed=true) no vuelve a revertir el ledger", async () => {
     mockIsLedgerEntryReversed.mockResolvedValueOnce(true);
     const { db } = makeMockDb({ tx: txFixture({ loyaltyLedgerId: 500 }), items: [itemFixture()] });
-    await refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 2 }], reason: "total", refundedByUserId: 9 }, db);
+    await refundPosSale({ transactionId: 1, lines: [{ itemId: 1, quantity: 2 }], reason: "total", refundedByUserId: 9, idempotencyKey: "refund-test-11" }, db);
     expect(mockReverseTransaction).not.toHaveBeenCalled();
   });
 });

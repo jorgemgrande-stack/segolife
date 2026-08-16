@@ -78,6 +78,17 @@ export interface RefundPosSaleInput {
   refundedByUserId: number;
   /** SEGOLIFE — FASE 10 (spec §33): "Refund does NOT always mean stock physically returned" — el operador decide explícitamente, nunca automático. false por defecto (producto consumido, ej. una bebida ya servida). */
   restock?: boolean;
+  /**
+   * PRE-16 overnight hardening (bug real encontrado en auditoría): antes,
+   * esta función generaba su propia idempotencyKey con `Date.now()`, lo que
+   * la hacía única en CADA llamada y anulaba por completo la deduplicación
+   * — un doble clic admin o un retry de red reembolsaba dos veces de
+   * verdad (refundedAmountCents duplicado, fila de auditoría duplicada,
+   * arqueo de caja/settlement corrompidos). Ahora, igual que
+   * doorRequestTokenPayment/recordDoorSale/posRecordSale en este mismo
+   * router, el cliente genera y envía una clave estable por intento.
+   */
+  idempotencyKey: string;
 }
 
 export interface RefundPosSaleResult {
@@ -94,6 +105,25 @@ export async function refundPosSale(input: RefundPosSaleInput, db?: DbHandle): P
   const conn = db ?? (await getDb());
 
   return conn.transaction(async (tx) => {
+    // Idempotencia real (spec §22): un reintento con la MISMA clave nunca
+    // vuelve a aplicar los efectos (cantidades reembolsadas, restock,
+    // reversión de tokens/recompensa) — se detecta ANTES de tocar nada y
+    // se devuelve el resultado ya asentado, leído del estado actual de la
+    // transacción (que ya refleja el primer intento).
+    const [existingRefund] = await tx.select().from(commerceRefunds).where(eq(commerceRefunds.idempotencyKey, input.idempotencyKey)).limit(1);
+    if (existingRefund) {
+      const [transaction] = await tx.select().from(commerceTransactions).where(eq(commerceTransactions.id, input.transactionId)).limit(1);
+      if (!transaction) throw new RefundOrchestratorError("NOT_FOUND", "Transacción no encontrada");
+      const isFullRefund = transaction.status === "refunded";
+      return {
+        transaction,
+        refundedAmountCents: existingRefund.amountCents,
+        isFullRefund,
+        tokensReversed: isFullRefund && transaction.tokenReservationId != null,
+        purchaseRewardReversed: isFullRefund && transaction.loyaltyLedgerId != null,
+      };
+    }
+
     const [transaction] = await tx.select().from(commerceTransactions).where(eq(commerceTransactions.id, input.transactionId)).limit(1).for("update");
     if (!transaction) throw new RefundOrchestratorError("NOT_FOUND", "Transacción no encontrada");
     if (transaction.status !== "confirmed" && transaction.status !== "partially_refunded") {
@@ -178,7 +208,7 @@ export async function refundPosSale(input: RefundPosSaleInput, db?: DbHandle): P
       reason: input.reason,
       partial: !isFullRefund,
       refundedByUserId: input.refundedByUserId,
-      idempotencyKey: `pos_refund:${transaction.id}:${Date.now()}`,
+      idempotencyKey: input.idempotencyKey,
     }, tx);
 
     const [refreshed] = await tx.select().from(commerceTransactions).where(eq(commerceTransactions.id, input.transactionId)).limit(1);

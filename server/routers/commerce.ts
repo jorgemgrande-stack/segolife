@@ -135,10 +135,11 @@ export const commerceRouter = router({
       // SEGOLIFE — FASE 10 (spec §33): el operador decide explícitamente si
       // el producto vuelve físicamente al stock — nunca automático.
       restock: z.boolean().optional(),
+      idempotencyKey: z.string().min(8).max(191),
     }))
     .mutation(async ({ ctx, input }) => {
       try {
-        return await refundPosSale({ transactionId: input.transactionId, lines: input.lines, reason: input.reason, refundedByUserId: ctx.user.id, restock: input.restock });
+        return await refundPosSale({ transactionId: input.transactionId, lines: input.lines, reason: input.reason, refundedByUserId: ctx.user.id, restock: input.restock, idempotencyKey: input.idempotencyKey });
       } catch (err) {
         mapCommerceError(err);
       }
