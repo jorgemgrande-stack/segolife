@@ -28,9 +28,14 @@ import type { OverviewSnapshot } from "./commandCenterOverview";
 import { getProvider } from "../engagement/providers/providerRegistry";
 import { isFourvenuesSchedulerRunning } from "../integrations/integrationScheduler";
 import { LIVE_LOYALTY_ENABLED } from "../tokens/tokenEngine";
+import type { StockAlertRow } from "../stock/stockService";
+import type { OpenCashSessionRow } from "../cash/cashSessionService";
+import type { Settlement } from "../../../drizzle/schema";
+import type { VenueMissingSellerRow } from "../fiscal/commercialEntityService";
+import type { EconomyConflict } from "../tokens/economyGovernanceService";
 
 export type AlertSeverity = "critical" | "warning" | "opportunity" | "info";
-export type AlertEntity = "event" | "venue" | "integration" | "benefit" | "proposal" | "historical";
+export type AlertEntity = "event" | "venue" | "integration" | "benefit" | "proposal" | "historical" | "stock" | "cash" | "settlement" | "fiscal" | "communication" | "economy";
 
 export interface ActionCenterAlert {
   severity: AlertSeverity;
@@ -46,11 +51,25 @@ export interface ActionCenterInputs {
   benefits: BenefitsPerformanceSnapshot;
   planAndPlay: PlanAndPlaySnapshot;
   overview: OverviewSnapshot;
+  /**
+   * Fase 12 (spec §6/§30-33) — opcionales para no romper ningún llamador
+   * existente que aún no las pase: cada dominio nuevo se compone igual que
+   * los de arriba, sobre snapshots YA calculados (nunca I/O aquí).
+   */
+  stockAlerts?: StockAlertRow[];
+  openCashSessions?: OpenCashSessionRow[];
+  settlementsNeedingAttention?: Settlement[];
+  venuesMissingFiscalConfig?: VenueMissingSellerRow[];
+  economyConflicts?: EconomyConflict[];
+  /** Fase 11 (Communication Center) — recuento de `lastErrors` ya calculado por getEngagementOverview(), nunca una nueva consulta aquí. */
+  communicationRecentFailures?: number;
 }
 
 const ZERO_SALES_CRITICAL_DAYS = 3;
 const OPPORTUNITY_MIN_RESPONSES = 20;
 const OPPORTUNITY_MIN_TOP_ANSWER_PCT = 75;
+/** Una sesión de caja abierta más de este tiempo probablemente debería haberse cerrado ya (spec §31, "unclosed previous session"). */
+const CASH_SESSION_STALE_HOURS = 18;
 
 export function getActionCenterAlerts(inputs: ActionCenterInputs): ActionCenterAlert[] {
   const alerts: ActionCenterAlert[] = [];
@@ -135,6 +154,70 @@ export function getActionCenterAlerts(inputs: ActionCenterInputs): ActionCenterA
       title: `${inputs.overview.attendance.unresolvedHistoricalCount} operación(es) históricas de asistencia sin resolver`,
       context: "Registros de Fourvenues sin identidad vinculada aún — consultar el directorio de Estudiantes históricos.",
       ctaEntity: "historical", ctaEntityId: null,
+    });
+  }
+
+  // Fase 12 (spec §6/§30) — stock.
+  for (const item of inputs.stockAlerts ?? []) {
+    alerts.push({
+      severity: item.status === "out_of_stock" ? "critical" : "warning",
+      title: item.status === "out_of_stock"
+        ? `"${item.productName}" agotado — ${item.venueName}`
+        : `"${item.productName}" con stock bajo (${item.currentStock}) — ${item.venueName}`,
+      context: item.lowStockThreshold != null ? `Umbral configurado: ${item.lowStockThreshold} unidades.` : "Sin unidades disponibles.",
+      ctaEntity: "stock", ctaEntityId: item.venueProductId,
+    });
+  }
+
+  // Fase 12 (spec §6/§31) — caja abierta más tiempo del esperado.
+  for (const session of inputs.openCashSessions ?? []) {
+    if (session.hoursOpen < CASH_SESSION_STALE_HOURS) continue;
+    alerts.push({
+      severity: "warning",
+      title: `Sesión de caja abierta desde hace ${session.hoursOpen}h — ${session.venueName}`,
+      context: `Abierta el ${session.openedAt.toISOString()}. Puede corresponder a un cierre pendiente de un turno anterior.`,
+      ctaEntity: "cash", ctaEntityId: session.sessionId,
+    });
+  }
+
+  // Fase 12 (spec §6/§32) — liquidaciones que ya empezaron el ciclo pero no llegaron a pagadas.
+  for (const settlement of inputs.settlementsNeedingAttention ?? []) {
+    alerts.push({
+      severity: "info",
+      title: `Liquidación ${settlement.status === "approved" ? "aprobada pendiente de pago" : "calculada pendiente de aprobación"} — venue #${settlement.venueId}`,
+      context: `Periodo ${settlement.periodStart.toISOString().slice(0, 10)} → ${settlement.periodEnd.toISOString().slice(0, 10)}.`,
+      ctaEntity: "settlement", ctaEntityId: settlement.id,
+    });
+  }
+
+  // Fase 12 (spec §6/§33) — venues sin configuración fiscal (nunca se afirma cumplimiento legal, solo config incompleta).
+  for (const venue of inputs.venuesMissingFiscalConfig ?? []) {
+    alerts.push({
+      severity: "warning",
+      title: `Sin vendedor fiscal configurado — ${venue.venueName}`,
+      context: "Las ventas de este venue no tienen entidad vendedora activa asignada (venue_seller_config).",
+      ctaEntity: "fiscal", ctaEntityId: venue.venueId,
+    });
+  }
+
+  // Fase 12 (spec §6/§19) — conflictos de configuración de la economía SegoTokens (Fase 10.5, reutilizado tal cual).
+  for (const conflict of inputs.economyConflicts ?? []) {
+    if (conflict.severity === "not_connected") continue; // hecho ya conocido/documentado (p.ej. Comunity idea-submitted), no una alerta operativa nueva
+    alerts.push({
+      severity: conflict.severity === "conflict" ? "warning" : "info",
+      title: conflict.message,
+      context: `Código: ${conflict.code}.`,
+      ctaEntity: "economy", ctaEntityId: null,
+    });
+  }
+
+  // Fase 12 (spec §6/§23) — fallos recientes de entrega de Communication Center (Fase 11, reutilizado).
+  if ((inputs.communicationRecentFailures ?? 0) > 0) {
+    alerts.push({
+      severity: "warning",
+      title: `${inputs.communicationRecentFailures} entrega(s) de comunicación fallida(s) recientemente`,
+      context: "Ver el detalle de entregas en Communication Center.",
+      ctaEntity: "communication", ctaEntityId: null,
     });
   }
 

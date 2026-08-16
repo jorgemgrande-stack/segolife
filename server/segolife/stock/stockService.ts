@@ -11,10 +11,10 @@
  * criterio anti-deadlock que inventoryHoldService.ts). Dos ventas
  * simultáneas de la última unidad quedan serializadas por MySQL.
  */
-import { eq, and, like } from "drizzle-orm";
+import { eq, and, like, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { venueProducts, inventoryMovements, type InventoryMovement, type VenueProduct } from "../../../drizzle/schema";
+import { venueProducts, inventoryMovements, venues, type InventoryMovement, type VenueProduct } from "../../../drizzle/schema";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 3 });
 const _db = drizzle(_pool);
@@ -238,6 +238,51 @@ export async function listStockProducts(venueId: number, db?: AnyDbHandle): Prom
 export async function listLowStock(venueId: number, db?: AnyDbHandle): Promise<VenueProduct[]> {
   const products = await listStockProducts(venueId, db);
   return products.filter(p => p.lowStockThreshold != null && (p.currentStockCached ?? 0) <= p.lowStockThreshold);
+}
+
+export interface StockAlertRow {
+  venueProductId: number;
+  productName: string;
+  venueId: number;
+  venueName: string;
+  currentStock: number;
+  lowStockThreshold: number | null;
+  status: "out_of_stock" | "low_stock";
+}
+
+/**
+ * SEGOLIFE ADMIN AI/BI/COMMAND CENTER (Fase 12, spec §30): "out of stock"
+ * cruzando TODOS los venues — solo `stockTracked=true`. "out_of_stock" nunca
+ * necesita un umbral configurado (stock<=0 siempre es agotado, salvo que el
+ * venue permita negativo explícitamente); "low_stock" SOLO se reporta si el
+ * propio producto tiene `lowStockThreshold` configurado — nunca un umbral
+ * global inventado (spec: "Do not invent an arbitrary threshold globally").
+ */
+export async function listStockAlertsAcrossVenues(db?: AnyDbHandle): Promise<StockAlertRow[]> {
+  const conn = db ?? (await getDb());
+  const rows = await conn.select({
+    id: venueProducts.id, name: venueProducts.name, venueId: venueProducts.venueId, venueName: venues.name,
+    currentStockCached: venueProducts.currentStockCached, lowStockThreshold: venueProducts.lowStockThreshold,
+    allowNegativeStock: venueProducts.allowNegativeStock,
+  }).from(venueProducts)
+    .innerJoin(venues, eq(venues.id, venueProducts.venueId))
+    .where(and(
+      eq(venueProducts.stockTracked, true),
+      or(
+        and(eq(venueProducts.allowNegativeStock, false), sql`COALESCE(${venueProducts.currentStockCached}, 0) <= 0`),
+        and(sql`${venueProducts.lowStockThreshold} IS NOT NULL`, sql`COALESCE(${venueProducts.currentStockCached}, 0) <= ${venueProducts.lowStockThreshold}`),
+      ),
+    ));
+
+  return rows.map(r => {
+    const stock = r.currentStockCached ?? 0;
+    const isOut = !r.allowNegativeStock && stock <= 0;
+    return {
+      venueProductId: r.id, productName: r.name, venueId: r.venueId, venueName: r.venueName,
+      currentStock: stock, lowStockThreshold: r.lowStockThreshold,
+      status: isOut ? "out_of_stock" : "low_stock",
+    };
+  });
 }
 
 export async function setStockConfig(venueProductId: number, config: { stockTracked?: boolean; lowStockThreshold?: number | null; allowNegativeStock?: boolean }, db?: AnyDbHandle): Promise<void> {

@@ -47,6 +47,12 @@ export interface EventTokenBreakdown {
   earned: number;
   spent: number;
 }
+/** Fase 12 (spec §17/§22): "¿qué acciones generan más ST?" — GROUP BY sobre `token_ledger.source_type` real, nunca sobre la config de reglas (economyGovernanceService.ORIGIN_LABELS solo etiqueta, nunca agrega histórico). */
+export interface OriginTokenBreakdown {
+  origin: string;
+  earned: number;
+  spent: number;
+}
 
 export interface LoyaltyEconomySnapshot {
   liveStatus: "LIVE_ACTIVE" | "LIVE_LOCKED";
@@ -58,13 +64,14 @@ export interface LoyaltyEconomySnapshot {
   topEarningRules: TokenRuleBreakdown[];
   tokensByVenue: VenueTokenBreakdown[];
   tokensByEvent: EventTokenBreakdown[];
+  tokensByOrigin: OriginTokenBreakdown[];
 }
 
 export async function getLoyaltyEconomy(ctx: DashboardFilterContext, db: AnyDbHandle): Promise<LoyaltyEconomySnapshot> {
   const ledgerCommunityCond = ctx.communityId != null ? sql`AND tl.user_id IN (SELECT user_id FROM user_communities WHERE community_id = ${ctx.communityId})` : sql``;
   const walletCommunityCond = ctx.communityId != null ? sql`AND w.user_id IN (SELECT user_id FROM user_communities WHERE community_id = ${ctx.communityId})` : sql``;
 
-  const [movementResult, walletResult, rulesResult, venueResult, eventResult] = await Promise.all([
+  const [movementResult, walletResult, rulesResult, venueResult, eventResult, originResult] = await Promise.all([
     db.execute(sql`
       SELECT
         COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE 0 END), 0) AS earned,
@@ -102,6 +109,18 @@ export async function getLoyaltyEconomy(ctx: DashboardFilterContext, db: AnyDbHa
       ORDER BY earned DESC
       LIMIT ${TOP_N}
     `),
+    // Fase 12 (spec §17 "earning by origin"/§22 Community "ST issued through Community")
+    // — origin real de token_rules.origin, persistido tal cual en cada movimiento
+    // (tokenEngine.ts: sourceType = input.origin) — nunca una etiqueta inventada aquí.
+    db.execute(sql`
+      SELECT tl.source_type AS origin,
+        COALESCE(SUM(CASE WHEN tl.direction = 'credit' THEN tl.amount ELSE 0 END), 0) AS earned,
+        COALESCE(SUM(CASE WHEN tl.direction = 'debit' THEN tl.amount ELSE 0 END), 0) AS spent
+      FROM token_ledger tl
+      WHERE tl.created_at >= ${ctx.from} AND tl.created_at < ${ctx.to} ${ledgerCommunityCond}
+      GROUP BY tl.source_type
+      ORDER BY earned DESC
+    `),
   ]);
 
   const movement = rowsOf<{ earned: number | string; spent: number | string }>(movementResult)[0] ?? { earned: 0, spent: 0 };
@@ -118,6 +137,7 @@ export async function getLoyaltyEconomy(ctx: DashboardFilterContext, db: AnyDbHa
     topEarningRules: rowsOf<{ rule_id: number | null; rule_name: string; total: number | string }>(rulesResult).map(r => ({ ruleId: r.rule_id, ruleName: r.rule_name, totalEarned: Number(r.total) })),
     tokensByVenue: rowsOf<{ venue_id: number; venue_name: string; earned: number | string; spent: number | string }>(venueResult).map(r => ({ venueId: Number(r.venue_id), venueName: r.venue_name, earned: Number(r.earned), spent: Number(r.spent) })),
     tokensByEvent: rowsOf<{ event_id: number; event_name: string; earned: number | string; spent: number | string }>(eventResult).map(r => ({ eventId: Number(r.event_id), eventName: r.event_name, earned: Number(r.earned), spent: Number(r.spent) })),
+    tokensByOrigin: rowsOf<{ origin: string | null; earned: number | string; spent: number | string }>(originResult).map(r => ({ origin: r.origin ?? "desconocido", earned: Number(r.earned), spent: Number(r.spent) })),
   };
 }
 
@@ -178,4 +198,60 @@ export async function getBenefitsPerformance(ctx: DashboardFilterContext, db: An
     expiringWithin48h,
     mostRedeemed: rowsOf<{ benefit_definition_id: number; benefit_name: string; redeemed_count: number | string }>(rankingResult).map(r => ({ benefitDefinitionId: Number(r.benefit_definition_id), benefitName: r.benefit_name, redeemedCount: Number(r.redeemed_count) })),
   };
+}
+
+/**
+ * Fase 12 (spec §20/§70, "estratégicamente importante"): "¿SEGOLIFE mueve
+ * Students entre negocios?" — únicamente hechos reales ya persistidos
+ * (`user_benefits.source_venue_id` = venue donde ocurrió el comportamiento
+ * que disparó el Benefit; `used_at_venue_id` = venue donde se canjeó).
+ * Solo filas con AMBOS venue reales y DISTINTOS entre sí (spec: nunca
+ * afirmar causalidad más allá del origen de regla registrado — un
+ * cross_venue_grants=0 real es tan válido como uno con datos).
+ */
+export interface CrossVenueBenefitFlowRow {
+  sourceVenueId: number;
+  sourceVenueName: string;
+  destinationVenueId: number;
+  destinationVenueName: string;
+  granted: number;
+  redeemed: number;
+  redemptionRatePct: number | null;
+}
+
+export async function getCrossVenueBenefitFlow(ctx: DashboardFilterContext, db: AnyDbHandle): Promise<CrossVenueBenefitFlowRow[]> {
+  const communityCond = ctx.communityId != null ? sql`AND ub.user_id IN (SELECT user_id FROM user_communities WHERE community_id = ${ctx.communityId})` : sql``;
+
+  const result = await db.execute(sql`
+    SELECT
+      ub.source_venue_id AS source_venue_id, v1.name AS source_venue_name,
+      ub.used_at_venue_id AS destination_venue_id, v2.name AS destination_venue_name,
+      COUNT(*) AS granted,
+      SUM(CASE WHEN ub.status = 'used' THEN 1 ELSE 0 END) AS redeemed
+    FROM user_benefits ub
+    JOIN venues v1 ON v1.id = ub.source_venue_id
+    JOIN venues v2 ON v2.id = ub.used_at_venue_id
+    WHERE ub.source_venue_id IS NOT NULL AND ub.used_at_venue_id IS NOT NULL
+      AND ub.source_venue_id != ub.used_at_venue_id
+      AND ub.granted_at >= ${ctx.from} AND ub.granted_at < ${ctx.to}
+      ${communityCond}
+    GROUP BY ub.source_venue_id, v1.name, ub.used_at_venue_id, v2.name
+    ORDER BY granted DESC
+    LIMIT ${TOP_N}
+  `);
+
+  return rowsOf<{
+    source_venue_id: number; source_venue_name: string;
+    destination_venue_id: number; destination_venue_name: string;
+    granted: number | string; redeemed: number | string;
+  }>(result).map(r => {
+    const granted = Number(r.granted);
+    const redeemed = Number(r.redeemed ?? 0);
+    return {
+      sourceVenueId: Number(r.source_venue_id), sourceVenueName: r.source_venue_name,
+      destinationVenueId: Number(r.destination_venue_id), destinationVenueName: r.destination_venue_name,
+      granted, redeemed,
+      redemptionRatePct: granted > 0 ? Math.round((redeemed / granted) * 1000) / 10 : null,
+    };
+  });
 }

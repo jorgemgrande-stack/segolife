@@ -5,7 +5,7 @@
  * más canjeados).
  */
 import { describe, it, expect, vi } from "vitest";
-import { getLoyaltyEconomy, getBenefitsPerformance } from "./commandCenterLoyalty";
+import { getLoyaltyEconomy, getBenefitsPerformance, getCrossVenueBenefitFlow } from "./commandCenterLoyalty";
 import type { DashboardFilterContext } from "./dashboardFilters";
 import { LIVE_LOYALTY_ENABLED } from "../tokens/tokenEngine";
 
@@ -23,7 +23,7 @@ describe("getLoyaltyEconomy", () => {
     const db = fakeExecuteDb([
       [{ earned: 500, spent: 200 }],
       [{ active_wallets: 30, circulating: 4000, avg_balance: 133.3 }],
-      [], [], [],
+      [], [], [], [],
     ]);
     const snapshot = await getLoyaltyEconomy(CTX, db as never);
     expect(snapshot.liveStatus).toBe(LIVE_LOYALTY_ENABLED ? "LIVE_ACTIVE" : "LIVE_LOCKED");
@@ -37,7 +37,7 @@ describe("getLoyaltyEconomy", () => {
     const db = fakeExecuteDb([
       [{ earned: 10, spent: 0 }],
       [{ active_wallets: 1, circulating: 10, avg_balance: 10 }],
-      [], [], [],
+      [], [], [], [],
     ]);
     const snapshot = await getLoyaltyEconomy(CTX, db as never);
     const keys = Object.keys(snapshot).join(",").toLowerCase();
@@ -48,7 +48,7 @@ describe("getLoyaltyEconomy", () => {
     const db = fakeExecuteDb([
       [{ earned: 0, spent: 0 }],
       [{ active_wallets: 0, circulating: 0, avg_balance: 0 }],
-      [], [], [],
+      [], [], [], [],
     ]);
     const snapshot = await getLoyaltyEconomy(CTX, db as never);
     expect(snapshot.avgBalance).toBeNull();
@@ -62,6 +62,7 @@ describe("getLoyaltyEconomy", () => {
       [{ rule_id: 3, rule_name: "Asistencia a evento", total: 80 }, { rule_id: null, rule_name: "Sin regla asociada (manual)", total: 20 }],
       [{ venue_id: 10, venue_name: "Casanova", earned: 60, spent: 10 }],
       [{ event_id: 55, event_name: "After Party", earned: 40, spent: 5 }],
+      [],
     ]);
     const snapshot = await getLoyaltyEconomy(CTX, db as never);
     expect(snapshot.topEarningRules).toEqual([
@@ -70,6 +71,50 @@ describe("getLoyaltyEconomy", () => {
     ]);
     expect(snapshot.tokensByVenue).toEqual([{ venueId: 10, venueName: "Casanova", earned: 60, spent: 10 }]);
     expect(snapshot.tokensByEvent).toEqual([{ eventId: 55, eventName: "After Party", earned: 40, spent: 5 }]);
+  });
+
+  // SEGOLIFE ADMIN AI/BI/COMMAND CENTER (Fase 12, spec §17/§22): "ST emitido
+  // por origen" — histórico real de token_ledger.source_type, nunca la
+  // config de reglas (economyGovernanceService solo etiqueta orígenes).
+  it("tokensByOrigin se mapea desde GROUP BY token_ledger.source_type, incluye orígenes de Comunity (spec §22)", async () => {
+    const db = fakeExecuteDb([
+      [{ earned: 100, spent: 20 }],
+      [{ active_wallets: 5, circulating: 500, avg_balance: 100 }],
+      [], [], [],
+      [
+        { origin: "ticket", earned: 500, spent: 0 },
+        { origin: "consumption", earned: 300, spent: 0 },
+        { origin: "community_response", earned: 50, spent: 0 },
+        { origin: null, earned: 0, spent: 10 },
+      ],
+    ]);
+    const snapshot = await getLoyaltyEconomy(CTX, db as never);
+    expect(snapshot.tokensByOrigin).toEqual([
+      { origin: "ticket", earned: 500, spent: 0 },
+      { origin: "consumption", earned: 300, spent: 0 },
+      { origin: "community_response", earned: 50, spent: 0 },
+      { origin: "desconocido", earned: 0, spent: 10 },
+    ]);
+  });
+});
+
+describe("getCrossVenueBenefitFlow (spec §20/§70 — flujo cruzado entre venues)", () => {
+  it("mapea venue origen → venue destino con tasa de canje, solo pares con AMBOS venues reales y distintos", async () => {
+    const db = fakeExecuteDb([
+      [
+        { source_venue_id: 10, source_venue_name: "Casanova", destination_venue_id: 20, destination_venue_name: "Tía Felisa", granted: 100, redeemed: 38 },
+      ],
+    ]);
+    const flow = await getCrossVenueBenefitFlow(CTX, db as never);
+    expect(flow).toEqual([
+      { sourceVenueId: 10, sourceVenueName: "Casanova", destinationVenueId: 20, destinationVenueName: "Tía Felisa", granted: 100, redeemed: 38, redemptionRatePct: 38 },
+    ]);
+  });
+
+  it("granted=0 (sin filas) → lista vacía honesta, nunca lanza", async () => {
+    const db = fakeExecuteDb([[]]);
+    const flow = await getCrossVenueBenefitFlow(CTX, db as never);
+    expect(flow).toEqual([]);
   });
 });
 

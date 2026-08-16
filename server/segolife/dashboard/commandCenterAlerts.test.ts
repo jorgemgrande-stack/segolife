@@ -99,6 +99,70 @@ describe("getActionCenterAlerts — reglas deterministas (nunca IA)", () => {
     expect(getActionCenterAlerts(baseInputs())).toEqual([]);
   });
 
+  // SEGOLIFE ADMIN AI/BI/COMMAND CENTER (Fase 12, spec §6/§30-33) — dominios
+  // nuevos, todos opcionales (spec: un input ausente nunca debe lanzar).
+  it("sin ninguno de los dominios nuevos informado (undefined) -> sigue devolviendo array vacío, nunca lanza", () => {
+    expect(getActionCenterAlerts(baseInputs({
+      stockAlerts: undefined, openCashSessions: undefined, settlementsNeedingAttention: undefined,
+      venuesMissingFiscalConfig: undefined, economyConflicts: undefined, communicationRecentFailures: undefined,
+    }))).toEqual([]);
+  });
+
+  it("producto agotado -> CRITICAL; producto con stock bajo -> WARNING", () => {
+    const inputs = baseInputs({
+      stockAlerts: [
+        { venueProductId: 1, productName: "Gin Tonic", venueId: 10, venueName: "Tía Felisa", currentStock: 0, lowStockThreshold: null, status: "out_of_stock" },
+        { venueProductId: 2, productName: "Cerveza", venueId: 10, venueName: "Tía Felisa", currentStock: 3, lowStockThreshold: 5, status: "low_stock" },
+      ],
+    });
+    const alerts = getActionCenterAlerts(inputs);
+    expect(alerts.find(a => a.ctaEntityId === 1)).toMatchObject({ severity: "critical", ctaEntity: "stock" });
+    expect(alerts.find(a => a.ctaEntityId === 2)).toMatchObject({ severity: "warning", ctaEntity: "stock" });
+  });
+
+  it("sesión de caja abierta >= 18h -> WARNING; por debajo del umbral, ninguna alerta", () => {
+    const stale = baseInputs({ openCashSessions: [{ sessionId: 1, venueId: 10, venueName: "Casanova", openedAt: new Date(), hoursOpen: 20 }] });
+    const fresh = baseInputs({ openCashSessions: [{ sessionId: 2, venueId: 10, venueName: "Casanova", openedAt: new Date(), hoursOpen: 3 }] });
+    expect(getActionCenterAlerts(stale).some(a => a.ctaEntity === "cash" && a.ctaEntityId === 1)).toBe(true);
+    expect(getActionCenterAlerts(fresh).some(a => a.ctaEntity === "cash")).toBe(false);
+  });
+
+  it("liquidación calculada/aprobada pendiente -> INFO con el periodo en el contexto", () => {
+    const inputs = baseInputs({
+      settlementsNeedingAttention: [
+        { id: 7, venueId: 10, status: "approved", periodStart: new Date("2026-08-01"), periodEnd: new Date("2026-08-07") } as never,
+      ],
+    });
+    const alert = getActionCenterAlerts(inputs).find(a => a.ctaEntity === "settlement");
+    expect(alert).toMatchObject({ severity: "info", ctaEntityId: 7 });
+    expect(alert?.context).toContain("2026-08-01");
+  });
+
+  it("venue sin vendedor fiscal configurado -> WARNING, nunca afirma cumplimiento legal", () => {
+    const inputs = baseInputs({ venuesMissingFiscalConfig: [{ venueId: 10, venueName: "Tanker" }] });
+    const alert = getActionCenterAlerts(inputs).find(a => a.ctaEntity === "fiscal");
+    expect(alert).toMatchObject({ severity: "warning", ctaEntityId: 10 });
+  });
+
+  it("conflicto de economía SegoTokens (severity='conflict') -> WARNING; 'not_connected' se omite (ya documentado, no es una alerta operativa nueva)", () => {
+    const inputs = baseInputs({
+      economyConflicts: [
+        { severity: "conflict", code: "OVERLAPPING_RULES", message: "Dos reglas activas para el mismo alcance" },
+        { severity: "not_connected", code: "COMMUNITY_IDEA_SUBMITTED_NOT_CONNECTED", message: "Sin productor real" },
+      ],
+    });
+    const alerts = getActionCenterAlerts(inputs);
+    expect(alerts.some(a => a.ctaEntity === "economy" && a.severity === "warning")).toBe(true);
+    expect(alerts.filter(a => a.ctaEntity === "economy")).toHaveLength(1);
+  });
+
+  it("entregas de comunicación fallidas recientes -> WARNING con el conteo real", () => {
+    const inputs = baseInputs({ communicationRecentFailures: 3 });
+    const alert = getActionCenterAlerts(inputs).find(a => a.ctaEntity === "communication");
+    expect(alert?.severity).toBe("warning");
+    expect(alert?.title).toContain("3");
+  });
+
   it("ordena SIEMPRE critical > warning > opportunity > info", () => {
     const inputs = baseInputs({
       planAndPlay: { activeProposals: 0, responsesInPeriod: 0, participationPct: null, pendingModerationStudentProposals: 3, endingSoon: [], mostActive: null },

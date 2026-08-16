@@ -36,3 +36,20 @@ describe("AdminLayout — 'Atención Comercial' ya no es un ítem de navegación
     expect(source).toMatch(/\/admin\/engagement\/overview/);
   });
 });
+
+// SEGOLIFE ADMIN AI/BI/COMMAND CENTER (Fase 12, spec §59, re-auditado): CRM
+// (Facturas/Clientes/Propuestas) se conservó visible en Fase 9/11 "por si
+// Fase 10 fiscal lo reutilizaba" — confirmado en esta fase que nunca ocurrió
+// (fiscal real vive en tablas propias de SEGOLIFE). Se oculta ahora.
+describe("AdminLayout — 'CRM' ya no es un ítem de navegación activo (Fase 12)", () => {
+  it("el nav activo (fuera de comentarios) no contiene ningún label 'CRM' ni sus hijos Propuestas/Facturas/Clientes con key crm-*", () => {
+    const source = stripComments(readFileSync(ADMIN_LAYOUT_PATH, "utf8"));
+    expect(source).not.toMatch(/label:\s*"CRM"/);
+    expect(source).not.toMatch(/key:\s*"crm-(propuestas|facturas|clientes)"/);
+  });
+
+  it("Command Center (Dashboard) SIGUE siendo el aterrizaje principal del admin (spec §2)", () => {
+    const source = stripComments(readFileSync(ADMIN_LAYOUT_PATH, "utf8"));
+    expect(source).toMatch(/href:\s*"\/admin"/);
+  });
+});

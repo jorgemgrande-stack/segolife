@@ -45,6 +45,8 @@ export interface PlanAndPlaySnapshot {
   responsesInPeriod: number;
   participationPct: number | null;
   pendingModerationStudentProposals: number;
+  /** Fase 12 (spec §22): ideas de estudiante aprobadas en el periodo — mismo hecho que dispara la regla real community_proposal_approved (Fase 10.6, id=9, +200 ST). */
+  approvedStudentProposalsInPeriod: number;
   endingSoon: EndingSoonProposal[];
   mostActive: MostActiveProposal | null;
 }
@@ -55,7 +57,9 @@ export async function getPlanAndPlay(ctx: DashboardFilterContext, db: AnyDbHandl
   const proposalCommunityJoin = ctx.communityId != null ? sql`JOIN community_proposal_communities cpc ON cpc.proposal_id = cp.id AND cpc.community_id = ${ctx.communityId}` : sql``;
   const soonThreshold = new Date(now.getTime() + ENDING_SOON_HOURS * 60 * 60 * 1000);
 
-  const [activeCountResult, responsesResult, audienceResult, pendingModerationResult, endingSoonResult] = await Promise.all([
+  const approvedCommunityCond = ctx.communityId != null ? sql`AND community_id = ${ctx.communityId}` : sql``;
+
+  const [activeCountResult, responsesResult, audienceResult, pendingModerationResult, endingSoonResult, approvedResult] = await Promise.all([
     db.execute(sql`SELECT COUNT(DISTINCT cp.id) AS n FROM community_proposals cp ${proposalCommunityJoin} WHERE cp.status = 'active'`),
     db.execute(sql`
       SELECT COUNT(*) AS n FROM community_responses cr
@@ -78,6 +82,10 @@ export async function getPlanAndPlay(ctx: DashboardFilterContext, db: AnyDbHandl
       ORDER BY cp.ends_at ASC
       LIMIT 10
     `),
+    db.execute(sql`
+      SELECT COUNT(*) AS n FROM community_student_proposals
+      WHERE status = 'approved' AND moderated_at >= ${ctx.from} AND moderated_at < ${ctx.to} ${approvedCommunityCond}
+    `),
   ]);
 
   const activeProposals = Number(rowsOf<{ n: number | string }>(activeCountResult)[0]?.n ?? 0);
@@ -86,6 +94,7 @@ export async function getPlanAndPlay(ctx: DashboardFilterContext, db: AnyDbHandl
   const pendingModerationStudentProposals = Number(rowsOf<{ n: number | string }>(pendingModerationResult)[0]?.n ?? 0);
   const endingSoon = rowsOf<{ proposal_id: number; title: string; ends_at: string | null }>(endingSoonResult)
     .map(r => ({ proposalId: Number(r.proposal_id), title: r.title, endsAt: r.ends_at != null ? String(r.ends_at) : null }));
+  const approvedStudentProposalsInPeriod = Number(rowsOf<{ n: number | string }>(approvedResult)[0]?.n ?? 0);
 
   const mostActive = await getMostActiveProposal(ctx, db);
 
@@ -93,6 +102,7 @@ export async function getPlanAndPlay(ctx: DashboardFilterContext, db: AnyDbHandl
     activeProposals,
     responsesInPeriod,
     participationPct: audienceSize > 0 ? Math.round((responsesInPeriod / audienceSize) * 1000) / 10 : null,
+    approvedStudentProposalsInPeriod,
     pendingModerationStudentProposals,
     endingSoon,
     mostActive,

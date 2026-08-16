@@ -13,6 +13,8 @@
 import { eq, inArray, type SQL } from "drizzle-orm";
 import { userCommunities, communityVenues, communityEvents } from "../../../drizzle/schema";
 import type { AnyDbHandle } from "../tokens/tokenLedgerService";
+import { resolveOperationalDate } from "../tokens/tokenScheduleService";
+import { madridStartOfDayUtc } from "../../utils/timezone";
 
 export type TimeRangeKey = "today" | "7d" | "30d" | "course";
 
@@ -42,12 +44,31 @@ function courseStart(now: Date): Date {
   return new Date(year, 8, 1, 0, 0, 0, 0); // 1 de septiembre
 }
 
+/**
+ * "Hoy" (spec Fase 12 §4, CRÍTICO): SEGOLIFE es nightlife — un sábado a las
+ * 02:30 pertenece operativamente al "viernes noche", nunca a la madrugada
+ * del sábado de calendario. Reutiliza el MISMO corte de 06:00 Europe/Madrid
+ * que ya usa `resolveOperationalDate` (tokenScheduleService.ts, Fase 6) —
+ * nunca una lógica de corte competidora nueva. Antes de esta fase, "today"
+ * usaba `setHours(0,0,0,0)` (medianoche de calendario, además en hora del
+ * SERVIDOR/UTC, ni siquiera medianoche de Madrid) — auditado como el ÚNICO
+ * punto real de inconsistencia dentro del propio Command Center; el resto
+ * de límites de día en el motor de SegoTokens (rewardEngine.ts/
+ * tokenEngine.ts/tokenRuleEngine.ts) siguen usando medianoche de calendario
+ * a propósito, sin cambios en esta fase — documentado en el informe final,
+ * no unificado aquí (tocar los topes de earn/spend está fuera de alcance).
+ */
+function operationalTodayStart(now: Date): Date {
+  const operationalDateKey = resolveOperationalDate(now);
+  const madridMidnightUtc = madridStartOfDayUtc(operationalDateKey);
+  return new Date(madridMidnightUtc.getTime() + 6 * 60 * 60 * 1000);
+}
+
 export function resolveTimeRange(range: TimeRangeKey, now: Date = new Date()): { from: Date; to: Date } {
   const to = now;
   switch (range) {
     case "today": {
-      const from = new Date(now); from.setHours(0, 0, 0, 0);
-      return { from, to };
+      return { from: operationalTodayStart(now), to };
     }
     case "7d": return { from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000), to };
     case "30d": return { from: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000), to };

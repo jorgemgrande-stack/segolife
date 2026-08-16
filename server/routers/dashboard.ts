@@ -32,9 +32,17 @@ import { getStudentIntelligence, getHistoricalAudience, getCrossVenueIntelligenc
 import { getEventPerformance } from "../segolife/dashboard/commandCenterEvents";
 import { getVenuePerformance } from "../segolife/dashboard/commandCenterVenues";
 import { getFourvenuesHealth } from "../segolife/dashboard/commandCenterFourvenues";
-import { getLoyaltyEconomy, getBenefitsPerformance } from "../segolife/dashboard/commandCenterLoyalty";
+import { getLoyaltyEconomy, getBenefitsPerformance, getCrossVenueBenefitFlow } from "../segolife/dashboard/commandCenterLoyalty";
 import { getPlanAndPlay, getCommunityFunnel } from "../segolife/dashboard/commandCenterPlanAndPlay";
 import { getActionCenterAlerts, getSystemHealth } from "../segolife/dashboard/commandCenterAlerts";
+import { getPosProductPerformance, getPaymentMix } from "../segolife/dashboard/commandCenterCommerce";
+import { listStockAlertsAcrossVenues } from "../segolife/stock/stockService";
+import { listOpenCashSessionsAcrossVenues } from "../segolife/cash/cashSessionService";
+import { listSettlementsNeedingAttention } from "../segolife/settlements/settlementService";
+import { listVenuesMissingSellerConfig } from "../segolife/fiscal/commercialEntityService";
+import { detectEconomyConflicts } from "../segolife/tokens/economyGovernanceService";
+import { getEngagementOverview } from "../segolife/engagement/engagementOverviewService";
+import { buildExecutiveSummary } from "../segolife/dashboard/commandCenterExecutiveSummary";
 
 async function requireDb(): Promise<AnyDbHandle> {
   const db = await getDb();
@@ -59,6 +67,8 @@ const studentsViewProcedure = permissionProcedure("students.view", ["admin"]);
 const tokensViewProcedure = permissionProcedure("tokens.view", ["admin"]);
 const benefitsViewProcedure = permissionProcedure("benefits.view", ["admin"]);
 const integrationsViewProcedure = permissionProcedure("integrations.view", ["admin"]);
+// Fase 12 (spec §15/§16/§69) — mismo permiso que el resto de Commerce (Fase 10.7), nunca uno nuevo duplicado.
+const commerceViewProcedure = permissionProcedure("commerce.view", ["admin"]);
 
 const CACHE_TTL_MS = 30_000;
 const fourvenuesCache = new Map<string, { value: Awaited<ReturnType<typeof getFourvenuesHealth>>; expiresAt: number }>();
@@ -71,6 +81,49 @@ async function getCachedFourvenuesHealth(communityId: number | null, db: AnyDbHa
   const value = await getFourvenuesHealth(communityId, db);
   fourvenuesCache.set(key, { value, expiresAt: now + CACHE_TTL_MS });
   return value;
+}
+
+/**
+ * Fase 12 — compartida entre `getAlerts` y `getExecutiveSummary` (el
+ * resumen ejecutivo reutiliza EXACTAMENTE las mismas alertas ya calculadas,
+ * nunca las recalcula con criterio distinto). Cada dominio nuevo es
+ * independiente y de solo lectura; un fallo aislado se degrada a "sin
+ * datos" (spec §75) en vez de tirar todo el endpoint.
+ */
+async function computeOverviewAndAlerts(ctx: ReturnType<typeof resolveCtx>, db: AnyDbHandle) {
+  const [overview, events, fourvenues, benefits, planAndPlay] = await Promise.all([
+    getOverviewSnapshot(ctx, db),
+    getEventPerformance(ctx, db),
+    getCachedFourvenuesHealth(ctx.communityId, db),
+    getBenefitsPerformance(ctx, db),
+    getPlanAndPlay(ctx, db),
+  ]);
+  // Estas 4 funciones tienen su propio DbHandle local (sin variante de
+  // transacción, mismo caso ya resuelto en Fase 10.6): nunca se llaman
+  // dentro de una transacción de escritura (Action Center es de solo
+  // lectura), así que se dejan resolver contra su propio pool en vez de
+  // forzar el tipo AnyDbHandle del router aquí.
+  const [stockR, cashR, settlementsR, fiscalR, economyR, commsR] = await Promise.allSettled([
+    listStockAlertsAcrossVenues(),
+    listOpenCashSessionsAcrossVenues(),
+    listSettlementsNeedingAttention(),
+    listVenuesMissingSellerConfig(),
+    detectEconomyConflicts(),
+    getEngagementOverview(),
+  ]);
+  const ok = <T>(r: PromiseSettledResult<T>): T | undefined => r.status === "fulfilled" ? r.value : undefined;
+
+  const alerts = getActionCenterAlerts({
+    overview, events, fourvenues, benefits, planAndPlay,
+    stockAlerts: ok(stockR),
+    openCashSessions: ok(cashR),
+    settlementsNeedingAttention: ok(settlementsR),
+    venuesMissingFiscalConfig: ok(fiscalR),
+    economyConflicts: ok(economyR),
+    communicationRecentFailures: ok(commsR)?.lastErrors.length,
+  });
+
+  return { overview, alerts };
 }
 
 export const dashboardRouter = router({
@@ -116,6 +169,21 @@ export const dashboardRouter = router({
     .input(filterInputSchema)
     .query(async ({ input }) => getBenefitsPerformance(resolveCtx(input), await requireDb())),
 
+  // SEGOLIFE ADMIN AI/BI/COMMAND CENTER (Fase 12, spec §20/§70) — "¿SEGOLIFE
+  // mueve Students entre negocios?", mismo permiso que el resto de Benefits.
+  getCrossVenueBenefitFlow: benefitsViewProcedure
+    .input(filterInputSchema)
+    .query(async ({ input }) => getCrossVenueBenefitFlow(resolveCtx(input), await requireDb())),
+
+  // SEGOLIFE ADMIN AI/BI/COMMAND CENTER (Fase 12, spec §15/§16/§69).
+  getPosProducts: commerceViewProcedure
+    .input(filterInputSchema)
+    .query(async ({ input }) => getPosProductPerformance(resolveCtx(input), await requireDb())),
+
+  getPaymentMix: commerceViewProcedure
+    .input(filterInputSchema)
+    .query(async ({ input }) => getPaymentMix(resolveCtx(input), await requireDb())),
+
   getPlanAndPlay: dashboardViewProcedure
     .input(filterInputSchema)
     .query(async ({ input }) => getPlanAndPlay(resolveCtx(input), await requireDb())),
@@ -129,14 +197,19 @@ export const dashboardRouter = router({
     .query(async ({ input }) => {
       const ctx = resolveCtx(input);
       const db = await requireDb();
-      const [overview, events, fourvenues, benefits, planAndPlay] = await Promise.all([
-        getOverviewSnapshot(ctx, db),
-        getEventPerformance(ctx, db),
-        getCachedFourvenuesHealth(ctx.communityId, db),
-        getBenefitsPerformance(ctx, db),
-        getPlanAndPlay(ctx, db),
-      ]);
-      return getActionCenterAlerts({ overview, events, fourvenues, benefits, planAndPlay });
+      const { alerts } = await computeOverviewAndAlerts(ctx, db);
+      return alerts;
+    }),
+
+  // SEGOLIFE ADMIN AI/BI/COMMAND CENTER (Fase 12, spec §35/§64) — resumen
+  // determinista, sin proveedor de IA conectado (ver commandCenterExecutiveSummary.ts).
+  getExecutiveSummary: dashboardViewProcedure
+    .input(filterInputSchema)
+    .query(async ({ input }) => {
+      const ctx = resolveCtx(input);
+      const db = await requireDb();
+      const { overview, alerts } = await computeOverviewAndAlerts(ctx, db);
+      return buildExecutiveSummary(overview, alerts);
     }),
 
   getSystemHealth: dashboardViewProcedure

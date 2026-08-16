@@ -237,6 +237,29 @@ export async function listCashSessions(venueId: number, limit = 50, db?: DbHandl
   return conn.select().from(cashSessions).where(eq(cashSessions.venueId, venueId)).orderBy(cashSessions.openedAt).limit(limit);
 }
 
+export interface OpenCashSessionRow {
+  sessionId: number;
+  venueId: number;
+  venueName: string;
+  openedAt: Date;
+  hoursOpen: number;
+}
+
+/** SEGOLIFE ADMIN AI/BI/COMMAND CENTER (Fase 12, spec §31): sesiones de caja abiertas en TODOS los venues — no existía ninguna consulta sin venueId. */
+export async function listOpenCashSessionsAcrossVenues(db?: DbHandle, now: Date = new Date()): Promise<OpenCashSessionRow[]> {
+  const conn = db ?? (await getDb());
+  const rows = await conn.select({ id: cashSessions.id, venueId: cashSessions.venueId, venueName: venues.name, openedAt: cashSessions.openedAt })
+    .from(cashSessions)
+    .innerJoin(venues, eq(venues.id, cashSessions.venueId))
+    .where(eq(cashSessions.status, "open"))
+    .orderBy(cashSessions.openedAt);
+
+  return rows.map(r => ({
+    sessionId: r.id, venueId: r.venueId, venueName: r.venueName, openedAt: r.openedAt,
+    hoursOpen: Math.round(((now.getTime() - r.openedAt.getTime()) / (60 * 60 * 1000)) * 10) / 10,
+  }));
+}
+
 export async function getCashSession(sessionId: number, db?: DbHandle): Promise<CashSession | null> {
   const conn = db ?? (await getDb());
   const [row] = await conn.select().from(cashSessions).where(eq(cashSessions.id, sessionId)).limit(1);

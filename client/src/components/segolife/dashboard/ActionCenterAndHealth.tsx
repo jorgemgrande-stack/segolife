@@ -32,6 +32,13 @@ function resolveAlertHref(entity: string | null, entityId: number | null): strin
   if (entity === "integration") return "/admin/integrations";
   if (entity === "benefit") return "/admin/benefits";
   if (entity === "historical") return "/admin/students/historical";
+  // Fase 12 (spec §56 "No dead CTAs") — solo se enlaza donde hay una ficha
+  // administrativa real confirmada; stock/cash/settlement son alertas
+  // por-venue sin una ruta admin global equivalente todavía (se quedan sin
+  // href, nunca un enlace roto).
+  if (entity === "fiscal") return "/admin/gestoria";
+  if (entity === "economy") return "/admin/tokens/economy";
+  if (entity === "communication") return "/admin/engagement/deliveries";
   return undefined;
 }
 

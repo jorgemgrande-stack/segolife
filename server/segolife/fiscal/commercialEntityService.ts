@@ -9,11 +9,11 @@
  * GLOBAL_ADMIN exclusivamente (spec §5: "keep sensitive fiscal configuration
  * GLOBAL_ADMIN") — RBAC lo aplica en server/routers/fiscal.ts vía fiscal.manage.
  */
-import { eq } from "drizzle-orm";
+import { eq, and, notInArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import {
-  commercialEntities, venueSellerConfig,
+  commercialEntities, venueSellerConfig, venues,
   type CommercialEntity, type VenueSellerConfig,
 } from "../../../drizzle/schema";
 
@@ -150,6 +150,30 @@ export async function resolveSellerForVenue(venueId: number, db?: DbHandle): Pro
     collectorEntity = row ?? null;
   }
   return { configured: true, sellerEntity, collectorEntity };
+}
+
+export interface VenueMissingSellerRow {
+  venueId: number;
+  venueName: string;
+}
+
+/**
+ * SEGOLIFE ADMIN AI/BI/COMMAND CENTER (Fase 12, spec §33): venues SIN
+ * vendedor fiscal activo configurado — nunca se inventa un vendedor por
+ * defecto (mismo criterio que resolveSellerForVenue: `configured=false` es
+ * un estado real, no un error a ocultar). Solo venues activos — uno recién
+ * dado de baja no necesita alertar.
+ */
+export async function listVenuesMissingSellerConfig(db?: DbHandle): Promise<VenueMissingSellerRow[]> {
+  const conn = db ?? (await getDb());
+  const configuredRows = await conn.select({ venueId: venueSellerConfig.venueId }).from(venueSellerConfig).where(eq(venueSellerConfig.active, true));
+  const configuredVenueIds = configuredRows.map(r => r.venueId);
+
+  const rows = configuredVenueIds.length > 0
+    ? await conn.select({ id: venues.id, name: venues.name }).from(venues).where(and(eq(venues.status, "active"), notInArray(venues.id, configuredVenueIds)))
+    : await conn.select({ id: venues.id, name: venues.name }).from(venues).where(eq(venues.status, "active"));
+
+  return rows.map(r => ({ venueId: r.id, venueName: r.name }));
 }
 
 export async function getVenueSellerConfig(venueId: number, db?: DbHandle): Promise<VenueSellerConfig | null> {

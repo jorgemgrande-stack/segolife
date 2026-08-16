@@ -221,6 +221,17 @@ export async function listSettlements(venueId?: number, db?: DbHandle): Promise<
   return conn.select().from(settlements).orderBy(settlements.periodStart);
 }
 
+/**
+ * SEGOLIFE ADMIN AI/BI/COMMAND CENTER (Fase 12, spec §32): "needing
+ * attention" = liquidaciones que ya empezaron su ciclo de vida real
+ * (calculated/approved) pero todavía no llegaron a `paid` — nunca se infiere
+ * un pago completado sin evidencia (`markSettlementPaid` real).
+ */
+export async function listSettlementsNeedingAttention(db?: DbHandle): Promise<Settlement[]> {
+  const conn = db ?? (await getDb());
+  return conn.select().from(settlements).where(inArray(settlements.status, ["calculated", "approved"])).orderBy(settlements.periodStart);
+}
+
 export async function getSettlementDetail(settlementId: number, db?: DbHandle): Promise<{ settlement: Settlement; lines: SettlementLine[] } | null> {
   const conn = db ?? (await getDb());
   const [settlement] = await conn.select().from(settlements).where(eq(settlements.id, settlementId)).limit(1);

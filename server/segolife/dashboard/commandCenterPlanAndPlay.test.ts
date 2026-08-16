@@ -33,6 +33,7 @@ describe("getPlanAndPlay", () => {
       [{ n: 300 }], // audienceSize
       [{ n: 5 }], // pendingModeration
       [], // endingSoon
+      [{ n: 2 }], // approvedStudentProposalsInPeriod
       // getMostActiveProposal:
       [{ proposal_id: 1, title: "After Party Casanova", min_sample_size: 5, response_count: 243 }], // ranking
       [{ label: "yes", n: 199 }], // answer breakdown (top)
@@ -41,12 +42,13 @@ describe("getPlanAndPlay", () => {
     expect(snapshot.activeProposals).toBe(3);
     expect(snapshot.responsesInPeriod).toBe(243);
     expect(snapshot.participationPct).toBe(81);
+    expect(snapshot.approvedStudentProposalsInPeriod).toBe(2);
     expect(snapshot.mostActive).toEqual({ proposalId: 1, title: "After Party Casanova", responseCount: 243, topAnswerLabel: "yes", topAnswerPct: Math.round((199 / 243) * 1000) / 10 });
   });
 
   it("respeta el anonimato: si la muestra de la propuesta ganadora está por debajo de su min_sample_size, no desglosa la respuesta dominante", async () => {
     const db = fakeExecuteDb([
-      [{ n: 1 }], [{ n: 3 }], [{ n: 10 }], [{ n: 0 }], [],
+      [{ n: 1 }], [{ n: 3 }], [{ n: 10 }], [{ n: 0 }], [], [{ n: 0 }],
       [{ proposal_id: 2, title: "Propuesta con poca muestra", min_sample_size: 5, response_count: 3 }],
     ]);
     const snapshot = await getPlanAndPlay(CTX, db as never, NOW);
@@ -55,7 +57,7 @@ describe("getPlanAndPlay", () => {
 
   it("sin ninguna propuesta activa → 'No hay propuestas activas' (mostActive null, activeProposals 0), nunca inventa datos", async () => {
     const db = fakeExecuteDb([
-      [{ n: 0 }], [{ n: 0 }], [{ n: 0 }], [{ n: 0 }], [],
+      [{ n: 0 }], [{ n: 0 }], [{ n: 0 }], [{ n: 0 }], [], [{ n: 0 }],
       [], // ranking vacío -> sin most active
     ]);
     const snapshot = await getPlanAndPlay(CTX, db as never, NOW);
@@ -66,12 +68,26 @@ describe("getPlanAndPlay", () => {
 
   it("comunidad filtrada: usa el JOIN real a community_proposal_communities, nunca infiere del venue", async () => {
     const db = fakeExecuteDb([
-      [{ n: 1 }], [{ n: 5 }], [{ n: 10 }], [{ n: 2 }], [],
+      [{ n: 1 }], [{ n: 5 }], [{ n: 10 }], [{ n: 2 }], [], [{ n: 0 }],
       [],
     ]);
     await getPlanAndPlay({ ...CTX, communityId: 3 }, db as never, NOW);
     const firstCallSql = JSON.stringify(db.execute.mock.calls[0][0]);
     expect(firstCallSql).toContain("community_proposal_communities");
+  });
+
+  // SEGOLIFE ADMIN AI/BI/COMMAND CENTER (Fase 12, spec §22): ideas
+  // aprobadas — mismo hecho que dispara la regla real community_proposal_approved.
+  it("approvedStudentProposalsInPeriod cuenta community_student_proposals.status='approved' filtrado por moderated_at, con comunidad si se pide", async () => {
+    const db = fakeExecuteDb([
+      [{ n: 0 }], [{ n: 0 }], [{ n: 0 }], [{ n: 0 }], [], [{ n: 7 }],
+      [],
+    ]);
+    const snapshot = await getPlanAndPlay({ ...CTX, communityId: 3 }, db as never, NOW);
+    expect(snapshot.approvedStudentProposalsInPeriod).toBe(7);
+    const approvedCallSql = JSON.stringify(db.execute.mock.calls[5][0]);
+    expect(approvedCallSql).toContain("community_student_proposals");
+    expect(approvedCallSql).toContain("approved");
   });
 });
 

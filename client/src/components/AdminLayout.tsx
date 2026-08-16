@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import {
-  LayoutDashboard, Package, FileText, BarChart3,
+  LayoutDashboard, Package, BarChart3,
   Settings, Menu, X, LogOut, Users, Image, ChevronDown,
   Bell, Search, User, BedDouble, Sparkles, UtensilsCrossed, AlertCircle,
   UserPlus, FileCheck, ChevronRight, Receipt, Truck, Monitor, Tag, Ticket,
@@ -172,25 +172,17 @@ const navItems = [
       { label: "Moderación de ideas", href: "/admin/comunity/moderacion" },
     ],
   },
-  {
-    // SEGOLIFE — COMMERCE CORE (Fase 9, spec §29/§75): Leads/Presupuestos/
-    // Reservas/Anulaciones eran el embudo comercial de turismo heredado de
-    // Náyade — auditado sin ninguna dependencia real de Segolife (Students/
-    // Venues/Events/Benefits/SegoTokens/Referrals no los tocan) y ya
-    // sustituidos por "Ventas y Operaciones" para todo lo que es Segolife
-    // real. Se OCULTAN del nav (nunca se borran rutas/código/datos) —
-    // Facturas/Clientes/Propuestas se conservan explícitamente porque Fase
-    // 10 (fiscal) puede necesitar reutilizarlos.
-    label: "CRM",
-    href: "/admin/crm/clientes",
-    icon: FileText,
-    roles: ["admin", "agente"],
-    children: [
-      { label: "Propuestas", href: "/admin/crm/propuestas", key: "crm-propuestas" },
-      { label: "Facturas", href: "/admin/crm?tab=invoices", key: "crm-facturas" },
-      { label: "Clientes", href: "/admin/crm/clientes", key: "crm-clientes" },
-    ],
-  },
+  // SEGOLIFE — COMMERCE CORE (Fase 9, spec §29/§75) → ADMIN AI/BI/COMMAND
+  // CENTER (Fase 12, spec §59, re-auditado): "CRM" (Leads/Presupuestos/
+  // Reservas/Anulaciones) ya se ocultó en Fase 9 salvo Facturas/Clientes/
+  // Propuestas, conservadas entonces "por si Fase 10 (fiscal) las
+  // reutilizaba". Fase 10 nunca lo hizo — el fiscal real de SEGOLIFE vive en
+  // tablas propias (commercial_entities/venue_seller_config/tax_rates/
+  // fiscal_transaction_snapshots), re-confirmado en esta fase (cero
+  // referencias a `clients`/`invoices` desde server/segolife/fiscal/ o
+  // server/segolife/commerce/). Sin ninguna dependencia real de Segolife
+  // pendiente, se oculta el resto del nav de "CRM" — nunca se borran
+  // rutas/código/tablas (mismo criterio que el resto de este bloque).
   {
     label: "Partners",
     href: "/admin/partners",
