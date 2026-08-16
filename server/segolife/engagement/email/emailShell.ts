@@ -16,6 +16,7 @@
  * Identidad visual: violeta/lila sobre negro/blanco, estética nightlife/
  * university lifestyle premium — ver docs/engagement/communication-center.md.
  */
+import { canonicalBaseUrl } from "../../../_core/canonicalHost";
 
 // ─── Tokens ──────────────────────────────────────────────────────────────────
 
@@ -167,8 +168,11 @@ export function renderEmailShell(opts: EmailShellOptions): string {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${EMAIL_TOKENS.paper};">
 <tr><td align="center" style="padding:24px 12px;">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:${EMAIL_TOKENS.white};border-radius:16px;overflow:hidden;">
-<tr><td style="background:${EMAIL_TOKENS.ink};padding:22px 32px;">
-<span style="font-family:${FONT_STACK};font-size:18px;font-weight:800;letter-spacing:0.04em;color:${EMAIL_TOKENS.white};">SEGO<span style="color:#C4B5FD;">LIFE</span></span>
+<tr><td style="background:${EMAIL_TOKENS.ink};padding:18px 32px;">
+<table role="presentation" cellpadding="0" cellspacing="0"><tr>
+<td style="padding-right:10px;"><img src="${canonicalBaseUrl()}/icons/segolife-icon.svg" width="28" height="28" alt="SEGOLIFE" style="display:block;border:0;border-radius:7px;" /></td>
+<td><span style="font-family:${FONT_STACK};font-size:18px;font-weight:800;letter-spacing:0.04em;color:${EMAIL_TOKENS.white};">SEGO<span style="color:#C4B5FD;">LIFE</span></span></td>
+</tr></table>
 </td></tr>
 ${opts.bodyRows}
 ${footer({ locale: opts.locale, preferencesUrl: opts.preferencesUrl, legalText: opts.legalText })}

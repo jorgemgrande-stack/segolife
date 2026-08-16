@@ -77,6 +77,11 @@ describe("renderEmailShell — compatibilidad y branding", () => {
     expect(html).not.toMatch(/@import|fonts\.googleapis|<link/);
   });
 
+  it("la cabecera incluye el logo real de SEGOLIFE (icono cuadrado) con URL absoluta y alt de marca — nunca un <img> roto en un cliente de email", () => {
+    expect(html).toContain('src="https://www.segolife.es/icons/segolife-icon.svg"');
+    expect(html).toContain('alt="SEGOLIFE"');
+  });
+
   it("preferencesUrl solo aparece en el footer si se pasa explícitamente", () => {
     const withPrefs = renderEmailShell({ locale: "en", preheader: "x", bodyRows: "<tr><td>x</td></tr>", preferencesUrl: "/ie/preferences" });
     expect(withPrefs).toContain("/ie/preferences");
