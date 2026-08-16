@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { VENUE_ADMIN_PERMISSION_BUNDLE, isGlobalScopePermission, isForbiddenModule } from "./venueAdminPolicy";
 
 describe("VENUE_ADMIN_PERMISSION_BUNDLE — invariantes de seguridad (spec §22/§35, self-escalation)", () => {
@@ -18,6 +20,22 @@ describe("VENUE_ADMIN_PERMISSION_BUNDLE — invariantes de seguridad (spec §22/
     expect([...VENUE_ADMIN_PERMISSION_BUNDLE].sort()).toEqual(
       ["attendance.redeem", "benefits.redeem", "cash.operate", "cash.view", "commerce.record", "commerce.view", "stock.adjust", "stock.view"]
     );
+  });
+
+  // PRE-16 overnight hardening — regresión del bug real encontrado en
+  // auditoría (CRÍTICO): rbacSeed.ts duplicaba este bundle a mano y había
+  // divergido, concediendo "benefits.view"/"attendance.view" (alcance
+  // GLOBAL, nunca de venue_admin/staff) — un IDOR cross-venue real. No hay
+  // infraestructura de test con BD mockeada para rbacSeed.ts (script de
+  // seed puro, sin punto de inyección de conexión) — en vez de construirla
+  // desde cero, esta prueba comprueba el ÚNICO invariante estructural que
+  // impide que la divergencia se repita: rbacSeed.ts debe importar y
+  // REUTILIZAR este mismo bundle, nunca volver a declarar uno propio.
+  it("rbacSeed.ts concede permisos de venue iterando ESTE bundle importado, nunca una lista propia hardcodeada aparte (la divergencia real que causó el bug)", () => {
+    const source = readFileSync(join(__dirname, "..", "..", "_core", "rbacSeed.ts"), "utf8");
+    expect(source).toMatch(/import\s*\{\s*VENUE_ADMIN_PERMISSION_BUNDLE\s*\}\s*from\s*["']\.\.\/segolife\/rbac\/venueAdminPolicy["']/);
+    expect(source).toContain("for (const key of VENUE_ADMIN_PERMISSION_BUNDLE)");
+    expect(source).not.toContain("VENUE_OPERATIONAL_PERMISSIONS");
   });
 
   describe("isGlobalScopePermission — detector", () => {

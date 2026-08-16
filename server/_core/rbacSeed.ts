@@ -33,6 +33,7 @@
  * Todo con INSERT IGNORE / comprobación previa — seguro de re-ejecutar.
  */
 import mysql from "mysql2/promise";
+import { VENUE_ADMIN_PERMISSION_BUNDLE } from "../segolife/rbac/venueAdminPolicy";
 
 const BASELINE_ROLES: Array<[string, string, string, boolean]> = [
   ["admin",   "Administrador",       "Acceso total a la plataforma", true],
@@ -276,9 +277,22 @@ export async function seedRbacIfNeeded(): Promise<{
     // esta fila un Venue Admin recién creado se queda sin ningún permiso
     // RBAC, aunque tenga venue_staff correctamente asignado (auditoría de
     // esta fase confirmó 0 usuarios reales con este rol en producción).
-    const VENUE_OPERATIONAL_PERMISSIONS = ["benefits.view", "benefits.redeem", "attendance.view", "attendance.redeem", "commerce.view", "commerce.record", "stock.view", "stock.adjust", "cash.view", "cash.operate"];
+    // PRE-16 overnight hardening (bug real de seguridad CRÍTICO encontrado en
+    // auditoría): esta lista solía duplicar a mano el bundle documentado y
+    // probado en venueAdminPolicy.ts, y había divergido — incluía
+    // "benefits.view"/"attendance.view", DOS permisos que el propio archivo
+    // de política (y sus tests) documentan como exclusivos de admin global.
+    // Con ellos, `staff`/`venue_admin` podían llamar procedimientos que
+    // nunca comprueban venue (benefits.getVenueStats, listRedemptionAttempts,
+    // listDefinitions/listRules/getRuleStats, eventTicketing.listEventAttendance,
+    // dashboard.getBenefits/getCrossVenueBenefitFlow) y ver datos de
+    // CUALQUIER venue — un IDOR cross-tenant real. Ahora se importa el MISMO
+    // bundle canónico (nunca se vuelve a duplicar a mano) y se RETRACTA
+    // explícitamente cualquier grant ya escrito en una ejecución anterior de
+    // este seed (INSERT IGNORE es solo aditivo — sin este DELETE, un entorno
+    // donde este script ya corrió seguiría teniendo la fila de más).
     for (const roleKey of ["staff", "venue_admin"]) {
-      for (const key of VENUE_OPERATIONAL_PERMISSIONS) {
+      for (const key of VENUE_ADMIN_PERMISSION_BUNDLE) {
         const [result] = await conn.execute(
           `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
            SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p
@@ -286,6 +300,16 @@ export async function seedRbacIfNeeded(): Promise<{
           [roleKey, key]
         ) as any[];
         if ((result as any).affectedRows > 0) grantsEnsured.push(`${roleKey} -> ${key}`);
+      }
+      for (const overGrantedKey of ["benefits.view", "attendance.view"]) {
+        const [result] = await conn.execute(
+          `DELETE rp FROM rbac_role_permissions rp
+           JOIN rbac_roles r ON r.id = rp.role_id
+           JOIN rbac_permissions p ON p.id = rp.permission_id
+           WHERE r.\`key\` = ? AND p.\`key\` = ?`,
+          [roleKey, overGrantedKey]
+        ) as any[];
+        if ((result as any).affectedRows > 0) grantsEnsured.push(`RETRACTED ${roleKey} -> ${overGrantedKey}`);
       }
     }
 
