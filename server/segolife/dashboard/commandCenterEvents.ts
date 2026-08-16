@@ -252,3 +252,25 @@ async function computeNeedsAttention(ctx: DashboardFilterContext, db: AnyDbHandl
 
   return { items, sufficient: true };
 }
+
+/**
+ * Fase 14 (spec §21 "AI Executive Brief", "Esta noche hay N eventos
+ * activos") — a diferencia del ranking de arriba (revenue de PEDIDOS en el
+ * rango), esto cuenta eventos cuyo `starts_at` cae DENTRO del rango
+ * filtrado — la pregunta real de "cuántos eventos hay hoy", no "cuántos
+ * eventos vendieron algo hoy". Se usa solo cuando el router ya resolvió
+ * `ctx` al rango operativo de "hoy" — nunca se etiqueta como "hoy" un
+ * conteo de un rango distinto.
+ */
+export async function countEventsStartingInRange(ctx: DashboardFilterContext, db: AnyDbHandle): Promise<number> {
+  const communityJoin = ctx.communityId != null
+    ? sql`AND e.id IN (SELECT event_id FROM community_events WHERE community_id = ${ctx.communityId})`
+    : sql``;
+  const result = await db.execute(sql`
+    SELECT COUNT(*) AS n FROM events e
+    WHERE e.starts_at >= ${ctx.from} AND e.starts_at < ${ctx.to} AND e.status = 'active'
+    ${communityJoin}
+  `);
+  const rows = (result as unknown as [Array<{ n: number | string }>])[0] ?? [];
+  return Number(rows[0]?.n ?? 0);
+}

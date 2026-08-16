@@ -2,7 +2,9 @@
  * LoyaltyAndBenefits.tsx — spec §19 (SegoTokens Economy, READ-ONLY, badge
  * LIVE ON/OFF dinámico desde `loyalty.data.liveStatus`, nunca "tokens
  * expirando") + §20 (Benefits Performance, expiración perezosa,
- * expiringWithin48h, ranking de más canjeados).
+ * expiringWithin48h, ranking de más canjeados) + Fase 14 (spec §13/§16:
+ * ST por origen y flujo cruzado de Benefits — datos ya existentes desde la
+ * Fase 12, pendientes de superficie visual hasta ahora).
  */
 import { Link } from "wouter";
 import { Coins, Gift } from "lucide-react";
@@ -13,6 +15,7 @@ import type { DashboardQueryInput } from "./useDashboardFilters";
 export function LoyaltyAndBenefits({ filters }: { filters: DashboardQueryInput }) {
   const loyalty = trpc.dashboard.getLoyalty.useQuery(filters);
   const benefits = trpc.dashboard.getBenefits.useQuery(filters);
+  const crossVenueFlow = trpc.dashboard.getCrossVenueBenefitFlow.useQuery(filters);
   const shadowStatus = trpc.loyaltyShadow.getStatus.useQuery();
 
   return (
@@ -40,6 +43,14 @@ export function LoyaltyAndBenefits({ filters }: { filters: DashboardQueryInput }
                 ))}
               </div>
             )}
+            {loyalty.data.tokensByOrigin.length > 0 && (
+              <div className="pt-2 mt-2 border-t border-border/20">
+                <p className="text-[10px] font-bold uppercase text-muted-foreground mb-1">ST por origen</p>
+                {loyalty.data.tokensByOrigin.map(o => (
+                  <StatRow key={o.origin} label={o.origin} value={o.earned} sub={o.spent > 0 ? `−${o.spent} gastado` : undefined} />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </Panel>
@@ -62,6 +73,20 @@ export function LoyaltyAndBenefits({ filters }: { filters: DashboardQueryInput }
                 <p className="text-[10px] font-bold uppercase text-muted-foreground mb-1">Más canjeados</p>
                 {benefits.data.mostRedeemed.slice(0, 3).map(b => (
                   <StatRow key={b.benefitDefinitionId} label={b.benefitName} value={b.redeemedCount} />
+                ))}
+              </div>
+            )}
+            {/* Fase 14 (spec §20) — "¿SEGOLIFE mueve Students entre negocios?" */}
+            {crossVenueFlow.data && crossVenueFlow.data.length > 0 && (
+              <div className="pt-2 mt-2 border-t border-border/20">
+                <p className="text-[10px] font-bold uppercase text-muted-foreground mb-1">Flujo cruzado entre venues</p>
+                {crossVenueFlow.data.slice(0, 3).map((f, i) => (
+                  <StatRow
+                    key={i}
+                    label={`${f.sourceVenueName} → ${f.destinationVenueName}`}
+                    value={f.granted}
+                    sub={f.redemptionRatePct != null ? `${fmtPct(f.redemptionRatePct)} canjeado` : undefined}
+                  />
                 ))}
               </div>
             )}

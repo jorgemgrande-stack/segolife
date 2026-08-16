@@ -4,7 +4,7 @@
  * objetivas de NEEDS ATTENTION (nunca capacity/occupancy — spec §11).
  */
 import { describe, it, expect, vi } from "vitest";
-import { getEventPerformance } from "./commandCenterEvents";
+import { getEventPerformance, countEventsStartingInRange } from "./commandCenterEvents";
 import type { DashboardFilterContext } from "./dashboardFilters";
 
 function fakeExecuteDb(queue: unknown[][]) {
@@ -139,5 +139,31 @@ describe("getEventPerformance — NEEDS ATTENTION (regla objetiva, nunca capacit
     const serialized = JSON.stringify(snapshot);
     expect(serialized.toLowerCase()).not.toContain("capacity");
     expect(serialized.toLowerCase()).not.toContain("occupancy");
+  });
+});
+
+describe("countEventsStartingInRange — Fase 14 spec §21 ('eventos activos hoy', no confundir con ventas del día)", () => {
+  it("cuenta eventos por starts_at dentro del rango, no por actividad de pedidos", async () => {
+    const db = fakeExecuteDb([[{ n: 3 }]]);
+    const n = await countEventsStartingInRange(CTX, db as never);
+    expect(n).toBe(3);
+  });
+
+  it("0 eventos -> 0, nunca error", async () => {
+    const db = fakeExecuteDb([[]]);
+    const n = await countEventsStartingInRange(CTX, db as never);
+    expect(n).toBe(0);
+  });
+
+  it("solo cuenta eventos con status='active'", async () => {
+    const db = fakeExecuteDb([[{ n: 0 }]]);
+    await countEventsStartingInRange(CTX, db as never);
+    expect(JSON.stringify(db.execute.mock.calls[0][0])).toContain("active");
+  });
+
+  it("aplica filtro de comunidad vía community_events cuando communityId no es null", async () => {
+    const db = fakeExecuteDb([[{ n: 0 }]]);
+    await countEventsStartingInRange({ ...CTX, communityId: 3 }, db as never);
+    expect(JSON.stringify(db.execute.mock.calls[0][0])).toContain("community_events");
   });
 });

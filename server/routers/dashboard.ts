@@ -42,7 +42,13 @@ import { listSettlementsNeedingAttention } from "../segolife/settlements/settlem
 import { listVenuesMissingSellerConfig } from "../segolife/fiscal/commercialEntityService";
 import { detectEconomyConflicts } from "../segolife/tokens/economyGovernanceService";
 import { getEngagementOverview } from "../segolife/engagement/engagementOverviewService";
-import { buildExecutiveSummary } from "../segolife/dashboard/commandCenterExecutiveSummary";
+import { buildExecutiveSummary, buildExecutiveBrief, buildRecommendations } from "../segolife/dashboard/commandCenterExecutiveSummary";
+import { getEventFunnel, getReferralFunnel, getBenefitFunnel } from "../segolife/dashboard/commandCenterFunnels";
+import { getRetentionSnapshot } from "../segolife/dashboard/commandCenterRetention";
+import { getHeatmapSnapshot } from "../segolife/dashboard/commandCenterHeatmap";
+import { getReferralBi } from "../segolife/dashboard/commandCenterReferrals";
+import { previousPeriodContext, comparePeriods } from "../segolife/dashboard/commandCenterComparison";
+import { countEventsStartingInRange } from "../segolife/dashboard/commandCenterEvents";
 
 async function requireDb(): Promise<AnyDbHandle> {
   const db = await getDb();
@@ -69,6 +75,8 @@ const benefitsViewProcedure = permissionProcedure("benefits.view", ["admin"]);
 const integrationsViewProcedure = permissionProcedure("integrations.view", ["admin"]);
 // Fase 12 (spec §15/§16/§69) — mismo permiso que el resto de Commerce (Fase 10.7), nunca uno nuevo duplicado.
 const commerceViewProcedure = permissionProcedure("commerce.view", ["admin"]);
+// Fase 14 — mismo permiso "referrals.view" que ya usa server/routers/referrals.ts, nunca uno nuevo duplicado (spec §3).
+const referralsViewProcedureDashboard = permissionProcedure("referrals.view", ["admin"]);
 
 const CACHE_TTL_MS = 30_000;
 const fourvenuesCache = new Map<string, { value: Awaited<ReturnType<typeof getFourvenuesHealth>>; expiresAt: number }>();
@@ -124,6 +132,36 @@ async function computeOverviewAndAlerts(ctx: ReturnType<typeof resolveCtx>, db: 
   });
 
   return { overview, alerts };
+}
+
+/**
+ * Fase 14 (spec §21 "AI Executive Brief") — reutiliza computeOverviewAndAlerts
+ * (nunca recalcula alertas con criterio distinto) y añade retención/
+ * referrals/venue líder/comparación con el periodo anterior. `eventsToday`
+ * solo se calcula cuando el filtro activo es literalmente "today" (spec:
+ * nunca etiquetar "hoy" un conteo de un rango distinto).
+ */
+async function computeExecutiveBriefInputs(ctx: ReturnType<typeof resolveCtx>, db: AnyDbHandle) {
+  const { overview, alerts } = await computeOverviewAndAlerts(ctx, db);
+  const previousCtx = previousPeriodContext(ctx);
+
+  const [retention, referralBi, venuePerf, previousOverview, eventsToday] = await Promise.all([
+    getRetentionSnapshot(ctx, db),
+    getReferralBi(ctx, db),
+    getVenuePerformance(ctx, db),
+    getOverviewSnapshot(previousCtx, db),
+    ctx.rangeLabel === "today" ? countEventsStartingInRange(ctx, db) : Promise.resolve(null),
+  ]);
+
+  const totalNativeRevenue = venuePerf.rows.reduce((sum, r) => sum + r.totalEcosystemRevenueCents, 0);
+  const topVenueRow = [...venuePerf.rows].sort((a, b) => b.totalEcosystemRevenueCents - a.totalEcosystemRevenueCents)[0];
+  const topVenueByNativeSales = topVenueRow && totalNativeRevenue > 0
+    ? { venueName: topVenueRow.venueName, sharePct: Math.round((topVenueRow.totalEcosystemRevenueCents / totalNativeRevenue) * 1000) / 10 }
+    : null;
+
+  const attendanceComparison = comparePeriods(overview.attendance.confirmed, previousOverview.attendance.confirmed);
+
+  return { overview, alerts, retention, referrals: referralBi, topVenueByNativeSales, eventsToday, attendanceComparison };
 }
 
 export const dashboardRouter = router({
@@ -210,6 +248,53 @@ export const dashboardRouter = router({
       const db = await requireDb();
       const { overview, alerts } = await computeOverviewAndAlerts(ctx, db);
       return buildExecutiveSummary(overview, alerts);
+    }),
+
+  // SEGOLIFE ADMIN COMMAND CENTER (Fase 14, spec §14) — funnels de
+  // conversión REALES, distintos de getCommunityFunnel (snapshot de
+  // poblaciones, spec §22). Un único procedimiento agrupa los 3 para evitar
+  // 3 round-trips (spec §31 "prefer batching").
+  getFunnels: dashboardViewProcedure
+    .input(filterInputSchema)
+    .query(async ({ input }) => {
+      const ctx = resolveCtx(input);
+      const db = await requireDb();
+      const [event, referral, benefit] = await Promise.all([
+        getEventFunnel(ctx, db), getReferralFunnel(ctx, db), getBenefitFunnel(ctx, db),
+      ]);
+      return { event, referral, benefit };
+    }),
+
+  // Fase 14, spec §15 — primera vez vs recurrente, frecuencia, multi-venue.
+  getRetention: dashboardViewProcedure
+    .input(filterInputSchema)
+    .query(async ({ input }) => getRetentionSnapshot(resolveCtx(input), await requireDb())),
+
+  // Fase 14, spec §16 — actividad por hora/día de semana (asistencia + ventas).
+  getHeatmap: dashboardViewProcedure
+    .input(filterInputSchema)
+    .query(async ({ input }) => getHeatmapSnapshot(resolveCtx(input), await requireDb())),
+
+  // Fase 14, spec §17 — Referral BI del Command Center. Mismo permiso que
+  // el admin real de Referrals ("referrals.view"), nunca uno nuevo.
+  getReferralBi: referralsViewProcedureDashboard
+    .input(filterInputSchema)
+    .query(async ({ input }) => getReferralBi(resolveCtx(input), await requireDb())),
+
+  // Fase 14, spec §21/§22 — "Resumen de hoy" en prosa + recomendaciones,
+  // ambos 100% deterministas (sin proveedor de IA conectado, confirmado de
+  // nuevo en esta fase). Un único procedimiento: ambos comparten exactamente
+  // los mismos inputs computados una sola vez.
+  getExecutiveBrief: dashboardViewProcedure
+    .input(filterInputSchema)
+    .query(async ({ input }) => {
+      const ctx = resolveCtx(input);
+      const db = await requireDb();
+      const briefInputs = await computeExecutiveBriefInputs(ctx, db);
+      return {
+        brief: buildExecutiveBrief(briefInputs),
+        recommendations: buildRecommendations(briefInputs),
+      };
     }),
 
   getSystemHealth: dashboardViewProcedure

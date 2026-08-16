@@ -14,13 +14,18 @@ import { DashboardErrorBoundary } from "@/components/segolife/dashboard/Dashboar
 import { DashboardFilterBar } from "@/components/segolife/dashboard/DashboardFilterBar";
 import { useDashboardFilters } from "@/components/segolife/dashboard/useDashboardFilters";
 import { CommandCenterHeader } from "@/components/segolife/dashboard/CommandCenterHeader";
+import { ExecutiveBriefPanel } from "@/components/segolife/dashboard/ExecutiveBriefPanel";
 import { SegolifeLive } from "@/components/segolife/dashboard/SegolifeLive";
 import { CommunityPulse } from "@/components/segolife/dashboard/CommunityPulse";
 import { StudentIntelligence } from "@/components/segolife/dashboard/StudentIntelligence";
 import { EventPerformance } from "@/components/segolife/dashboard/EventPerformance";
 import { VenuePerformance } from "@/components/segolife/dashboard/VenuePerformance";
+import { CommercePos } from "@/components/segolife/dashboard/CommercePos";
 import { FourvenuesHealth } from "@/components/segolife/dashboard/FourvenuesHealth";
 import { LoyaltyAndBenefits } from "@/components/segolife/dashboard/LoyaltyAndBenefits";
+import { ConversionFunnels } from "@/components/segolife/dashboard/ConversionFunnels";
+import { RetentionAndActivity } from "@/components/segolife/dashboard/RetentionAndActivity";
+import { ReferralIntelligence } from "@/components/segolife/dashboard/ReferralIntelligence";
 import { PlanAndPlayAndFunnel } from "@/components/segolife/dashboard/PlanAndPlayAndFunnel";
 import { ActionCenterAndHealth } from "@/components/segolife/dashboard/ActionCenterAndHealth";
 
@@ -40,6 +45,10 @@ export default function AdminDashboard() {
             <DashboardFilterBar communityId={communityId} onCommunityChange={setCommunityId} range={range} onRangeChange={setRange} communities={communities} />
           </div>
         </div>
+
+        <DashboardErrorBoundary moduleName="Resumen de hoy">
+          <ExecutiveBriefPanel filters={queryInput} />
+        </DashboardErrorBoundary>
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <DashboardErrorBoundary moduleName="Segolife Live">
@@ -63,12 +72,28 @@ export default function AdminDashboard() {
           </DashboardErrorBoundary>
         </div>
 
+        <DashboardErrorBoundary moduleName="Commerce POS">
+          <CommercePos filters={queryInput} />
+        </DashboardErrorBoundary>
+
         <DashboardErrorBoundary moduleName="Fourvenues Health">
           <FourvenuesHealth />
         </DashboardErrorBoundary>
 
         <DashboardErrorBoundary moduleName="Loyalty y Benefits">
           <LoyaltyAndBenefits filters={queryInput} />
+        </DashboardErrorBoundary>
+
+        <DashboardErrorBoundary moduleName="Funnels de conversión">
+          <ConversionFunnels filters={queryInput} />
+        </DashboardErrorBoundary>
+
+        <DashboardErrorBoundary moduleName="Retención y Actividad">
+          <RetentionAndActivity filters={queryInput} />
+        </DashboardErrorBoundary>
+
+        <DashboardErrorBoundary moduleName="Referrals">
+          <ReferralIntelligence filters={queryInput} />
         </DashboardErrorBoundary>
 
         <DashboardErrorBoundary moduleName="Comunity y Funnel">

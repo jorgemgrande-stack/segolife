@@ -7,14 +7,19 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 
-const { mockLoyaltyQuery, mockBenefitsQuery, mockShadowStatusQuery } = vi.hoisted(() => ({
+const { mockLoyaltyQuery, mockBenefitsQuery, mockShadowStatusQuery, mockCrossVenueFlowQuery } = vi.hoisted(() => ({
   mockLoyaltyQuery: vi.fn(),
   mockBenefitsQuery: vi.fn(),
   mockShadowStatusQuery: vi.fn(() => ({ data: { enabled: false }, isLoading: false, error: null })),
+  mockCrossVenueFlowQuery: vi.fn((): { data: Array<{ sourceVenueId: number; sourceVenueName: string; destinationVenueId: number; destinationVenueName: string; granted: number; redeemed: number; redemptionRatePct: number | null }>; isLoading: boolean; error: null } => ({ data: [], isLoading: false, error: null })),
 }));
 vi.mock("@/lib/trpc", () => ({
   trpc: {
-    dashboard: { getLoyalty: { useQuery: mockLoyaltyQuery }, getBenefits: { useQuery: mockBenefitsQuery } },
+    dashboard: {
+      getLoyalty: { useQuery: mockLoyaltyQuery },
+      getBenefits: { useQuery: mockBenefitsQuery },
+      getCrossVenueBenefitFlow: { useQuery: mockCrossVenueFlowQuery },
+    },
     loyaltyShadow: { getStatus: { useQuery: mockShadowStatusQuery } },
   },
 }));
@@ -33,7 +38,7 @@ describe("LoyaltyAndBenefits — SegoTokens Economy", () => {
 
   it("con liveStatus='LIVE_LOCKED' real, muestra 'LIVE OFF'", () => {
     mockLoyaltyQuery.mockReturnValue({
-      data: { liveStatus: "LIVE_LOCKED", earnedInPeriod: 500, spentInPeriod: 100, circulatingBalance: 4000, activeWallets: 20, avgBalance: 200, topEarningRules: [], tokensByVenue: [], tokensByEvent: [] },
+      data: { liveStatus: "LIVE_LOCKED", earnedInPeriod: 500, spentInPeriod: 100, circulatingBalance: 4000, activeWallets: 20, avgBalance: 200, topEarningRules: [], tokensByVenue: [], tokensByEvent: [], tokensByOrigin: [] },
       isLoading: false, error: null,
     });
     mockBenefitsQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });
@@ -44,7 +49,7 @@ describe("LoyaltyAndBenefits — SegoTokens Economy", () => {
 
   it("con liveStatus='LIVE_ACTIVE' real (SegoTokens Live Activation), muestra 'LIVE ON'", () => {
     mockLoyaltyQuery.mockReturnValue({
-      data: { liveStatus: "LIVE_ACTIVE", earnedInPeriod: 42, spentInPeriod: 0, circulatingBalance: 42, activeWallets: 3, avgBalance: 14, topEarningRules: [], tokensByVenue: [], tokensByEvent: [] },
+      data: { liveStatus: "LIVE_ACTIVE", earnedInPeriod: 42, spentInPeriod: 0, circulatingBalance: 42, activeWallets: 3, avgBalance: 14, topEarningRules: [], tokensByVenue: [], tokensByEvent: [], tokensByOrigin: [] },
       isLoading: false, error: null,
     });
     mockBenefitsQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });
@@ -55,7 +60,7 @@ describe("LoyaltyAndBenefits — SegoTokens Economy", () => {
 
   it("nunca renderiza ningún KPI de 'tokens expirando' (spec §19 — no existe expires_at)", () => {
     mockLoyaltyQuery.mockReturnValue({
-      data: { liveStatus: "LIVE_LOCKED", earnedInPeriod: 0, spentInPeriod: 0, circulatingBalance: 0, activeWallets: 0, avgBalance: null, topEarningRules: [], tokensByVenue: [], tokensByEvent: [] },
+      data: { liveStatus: "LIVE_LOCKED", earnedInPeriod: 0, spentInPeriod: 0, circulatingBalance: 0, activeWallets: 0, avgBalance: null, topEarningRules: [], tokensByVenue: [], tokensByEvent: [], tokensByOrigin: [] },
       isLoading: false, error: null,
     });
     mockBenefitsQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });
@@ -87,12 +92,60 @@ describe("LoyaltyAndBenefits — Benefits Performance", () => {
 
   it("error de red en Benefits -> mensaje de error real, el widget de Loyalty sigue funcionando en paralelo", () => {
     mockLoyaltyQuery.mockReturnValue({
-      data: { liveStatus: "LIVE_LOCKED", earnedInPeriod: 777, spentInPeriod: 0, circulatingBalance: 20, activeWallets: 1, avgBalance: 20, topEarningRules: [], tokensByVenue: [], tokensByEvent: [] },
+      data: { liveStatus: "LIVE_LOCKED", earnedInPeriod: 777, spentInPeriod: 0, circulatingBalance: 20, activeWallets: 1, avgBalance: 20, topEarningRules: [], tokensByVenue: [], tokensByEvent: [], tokensByOrigin: [] },
       isLoading: false, error: null,
     });
     mockBenefitsQuery.mockReturnValue({ data: undefined, isLoading: false, error: { message: "Network error" } });
     render(<LoyaltyAndBenefits filters={{}} />);
     expect(screen.getByText(/No se pudo cargar Benefits/)).toBeInTheDocument();
     expect(screen.getByText("777")).toBeInTheDocument();
+  });
+});
+
+describe("LoyaltyAndBenefits — Fase 14: ST por origen y flujo cruzado de Benefits", () => {
+  it("con tokensByOrigin, muestra cada origen real con su ST ganado", () => {
+    mockLoyaltyQuery.mockReturnValue({
+      data: { liveStatus: "LIVE_ACTIVE", earnedInPeriod: 100, spentInPeriod: 20, circulatingBalance: 80, activeWallets: 5, avgBalance: 16, topEarningRules: [], tokensByVenue: [], tokensByEvent: [], tokensByOrigin: [{ origin: "consumption", earned: 60, spent: 10 }, { origin: "attendance", earned: 40, spent: 0 }] },
+      isLoading: false, error: null,
+    });
+    mockBenefitsQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });
+    render(<LoyaltyAndBenefits filters={{}} />);
+    expect(screen.getByText("consumption")).toBeInTheDocument();
+    expect(screen.getByText("attendance")).toBeInTheDocument();
+  });
+
+  it("sin tokensByOrigin (vacío), no renderiza la sección 'ST por origen'", () => {
+    mockLoyaltyQuery.mockReturnValue({
+      data: { liveStatus: "LIVE_ACTIVE", earnedInPeriod: 0, spentInPeriod: 0, circulatingBalance: 0, activeWallets: 0, avgBalance: null, topEarningRules: [], tokensByVenue: [], tokensByEvent: [], tokensByOrigin: [] },
+      isLoading: false, error: null,
+    });
+    mockBenefitsQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });
+    render(<LoyaltyAndBenefits filters={{}} />);
+    expect(screen.queryByText("ST por origen")).not.toBeInTheDocument();
+  });
+
+  it("con flujo cruzado real, muestra venue origen → venue destino", () => {
+    mockLoyaltyQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });
+    mockBenefitsQuery.mockReturnValue({
+      data: { generated: 10, available: 3, redeemed: 5, expired: 2, redemptionRatePct: 50, expiringWithin48h: 0, mostRedeemed: [] },
+      isLoading: false, error: null,
+    });
+    mockCrossVenueFlowQuery.mockReturnValue({
+      data: [{ sourceVenueId: 1, sourceVenueName: "Casanova", destinationVenueId: 2, destinationVenueName: "Tía Felisa", granted: 20, redeemed: 8, redemptionRatePct: 40 }],
+      isLoading: false, error: null,
+    });
+    render(<LoyaltyAndBenefits filters={{}} />);
+    expect(screen.getByText("Casanova → Tía Felisa")).toBeInTheDocument();
+  });
+
+  it("sin flujo cruzado (vacío), no renderiza la sección — nunca una tabla en blanco", () => {
+    mockLoyaltyQuery.mockReturnValue({ data: undefined, isLoading: true, error: null });
+    mockBenefitsQuery.mockReturnValue({
+      data: { generated: 10, available: 3, redeemed: 5, expired: 2, redemptionRatePct: 50, expiringWithin48h: 0, mostRedeemed: [] },
+      isLoading: false, error: null,
+    });
+    mockCrossVenueFlowQuery.mockReturnValue({ data: [], isLoading: false, error: null });
+    render(<LoyaltyAndBenefits filters={{}} />);
+    expect(screen.queryByText("Flujo cruzado entre venues")).not.toBeInTheDocument();
   });
 });

@@ -26,9 +26,18 @@ vi.mock("@/lib/trpc", () => ({
       getFourvenuesHealth: { useQuery: noopQuery },
       getLoyalty: { useQuery: noopQuery },
       getBenefits: { useQuery: noopQuery },
+      getCrossVenueBenefitFlow: { useQuery: noopQuery },
+      getPosProducts: { useQuery: noopQuery },
+      getPaymentMix: { useQuery: noopQuery },
       getPlanAndPlay: { useQuery: noopQuery },
       getCommunityFunnel: { useQuery: noopQuery },
       getAlerts: { useQuery: noopQuery },
+      getExecutiveSummary: { useQuery: noopQuery },
+      getExecutiveBrief: { useQuery: noopQuery },
+      getFunnels: { useQuery: noopQuery },
+      getRetention: { useQuery: noopQuery },
+      getHeatmap: { useQuery: noopQuery },
+      getReferralBi: { useQuery: noopQuery },
       getSystemHealth: { useQuery: noopQuery },
     },
     loyaltyShadow: { getStatus: { useQuery: noopQuery } },
@@ -62,5 +71,11 @@ describe("AdminDashboard — aislamiento de errores por widget (spec §32)", () 
     expect(screen.getByText("SegoTokens Economy")).toBeInTheDocument();
     expect(screen.getAllByText("Comunity").length).toBeGreaterThan(0); // título del Panel + acceso rápido (spec §29-30: "Plan & Play" retirado del texto visible)
     expect(screen.getByText("Requiere tu atención")).toBeInTheDocument();
+
+    // Fase 14 — paneles nuevos, mismo criterio de aislamiento por widget:
+    expect(screen.getByText("Resumen de hoy")).toBeInTheDocument();
+    expect(screen.getByText("Funnels de conversión")).toBeInTheDocument();
+    expect(screen.getByText("Retención")).toBeInTheDocument();
+    expect(screen.getByText("Referrals")).toBeInTheDocument();
   });
 });
