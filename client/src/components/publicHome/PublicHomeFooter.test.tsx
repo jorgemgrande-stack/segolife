@@ -73,3 +73,30 @@ describe("PublicHomeFooter — lista de comunidades dinámica, nunca hardcodeada
     expect(screen.queryByRole("link", { name: /Segolife/ })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * PRE-16.17 (QA manual, BLOCK A) — hallazgo real: este footer (el único
+ * footer real de la Home pública y de /ie, /uva anónimo) portó las
+ * columnas Comunidades/Producto del footer antiguo de Náyade
+ * (PublicFooter.tsx) pero nunca portó los enlaces legales — Términos,
+ * Privacidad, Cookies, Condiciones de cancelación quedaron sin ningún
+ * punto de navegación real desde la superficie pública (confirmado:
+ * /condiciones-cancelacion estaba completamente huérfana). Las 4 páginas
+ * ya existían y funcionaban (PRE-16.16 las limpió de branding Náyade),
+ * solo faltaba enlazarlas.
+ */
+describe("PublicHomeFooter — enlaces legales (PRE-16.17, hallazgo QA)", () => {
+  it("enlaza las 4 páginas legales reales, con sus rutas reales", () => {
+    render(<PublicHomeFooter />);
+    expect(screen.getByRole("link", { name: "Términos y condiciones" })).toHaveAttribute("href", "/terminos");
+    expect(screen.getByRole("link", { name: "Política de privacidad" })).toHaveAttribute("href", "/privacidad");
+    expect(screen.getByRole("link", { name: "Política de cookies" })).toHaveAttribute("href", "/cookies");
+    expect(screen.getByRole("link", { name: "Condiciones de cancelación" })).toHaveAttribute("href", "/condiciones-cancelacion");
+  });
+
+  it("los enlaces legales aparecen incluso sin comunidades activas cargadas todavía", () => {
+    mockCommunitiesList.mockReturnValue({ data: undefined });
+    render(<PublicHomeFooter />);
+    expect(screen.getByRole("link", { name: "Términos y condiciones" })).toBeInTheDocument();
+  });
+});

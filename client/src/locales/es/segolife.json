@@ -87,7 +87,12 @@
       "explore": "Explorar",
       "rewards": "Rewards",
       "login": "Iniciar sesión",
-      "rights": "Todos los derechos reservados."
+      "rights": "Todos los derechos reservados.",
+      "legal": "Legal",
+      "terms": "Términos y condiciones",
+      "privacy": "Política de privacidad",
+      "cookies": "Política de cookies",
+      "cancellation": "Condiciones de cancelación"
     }
   },
   "communityHome": {

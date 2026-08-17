@@ -48,6 +48,15 @@ export function PublicHomeFooter() {
               <li><a href={getLoginUrl()} className="hover:text-white">{t("publicHome.footer.login")}</a></li>
             </ul>
           </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-white/40">{t("publicHome.footer.legal")}</p>
+            <ul className="mt-3 space-y-2 text-sm">
+              <li><Link href="/terminos" className="hover:text-white">{t("publicHome.footer.terms")}</Link></li>
+              <li><Link href="/privacidad" className="hover:text-white">{t("publicHome.footer.privacy")}</Link></li>
+              <li><Link href="/cookies" className="hover:text-white">{t("publicHome.footer.cookies")}</Link></li>
+              <li><Link href="/condiciones-cancelacion" className="hover:text-white">{t("publicHome.footer.cancellation")}</Link></li>
+            </ul>
+          </div>
         </div>
         <div className="mt-10 border-t border-white/10 pt-6 text-xs text-white/40">
           © {year} SEGOLIFE · {t("publicHome.footer.rights")}

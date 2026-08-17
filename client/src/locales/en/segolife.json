@@ -87,7 +87,12 @@
       "explore": "Explore",
       "rewards": "Rewards",
       "login": "Log in",
-      "rights": "All rights reserved."
+      "rights": "All rights reserved.",
+      "legal": "Legal",
+      "terms": "Terms and conditions",
+      "privacy": "Privacy policy",
+      "cookies": "Cookie policy",
+      "cancellation": "Cancellation policy"
     }
   },
   "communityHome": {
