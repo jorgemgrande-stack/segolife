@@ -20,6 +20,13 @@ scripts/push-enum-changes.mjs
 .env.development.local
 .env.test.local
 .env.production.local
+.env.e2e.local
+
+# PRE-16.17A — evidencia de QA de navegador contra producción (capturas,
+# trazas, resultados) — nunca a git, ver docs/PRE16_17_BROWSER_QA.md
+artifacts/pre16-17-browser/
+playwright-report/
+test-results/
 
 # IDE and editor files
 .vscode/
