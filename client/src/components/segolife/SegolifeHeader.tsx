@@ -24,10 +24,17 @@ export function SegolifeHeader({
   slug,
   availableLocales,
   unreadCount = 0,
+  isAuthenticated = false,
 }: {
   slug: string;
   availableLocales: string[];
   unreadCount?: number;
+  /** PRE-16.15 (auditoría overnight): el QR de identidad es una acción privada del
+   * Student — antes se mostraba también a visitantes anónimos, que al abrirlo
+   * disparaban una query sin sesión y acababan expulsados a /login SIN
+   * returnTo (a diferencia del resto de la app). Nunca se expone la acción
+   * sin sesión — mejor ocultarla que forzar un login desde un Dialog. */
+  isAuthenticated?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const showLanguageSwitcher = availableLocales.length > 1;
@@ -61,7 +68,7 @@ export function SegolifeHeader({
               ))}
             </div>
           )}
-          <SegolifeIdentityQrButton />
+          {isAuthenticated && <SegolifeIdentityQrButton />}
           <Link
             href={`/${slug}/notifications`}
             aria-label={t("notifications.bellLabel")}
