@@ -300,13 +300,20 @@ export default function Settings() {
     notifSmsEnabled: "false",
   });
 
+  // PRE-16.15 (auditoría overnight): estos campos eran defaults de useState
+  // heredados de un negocio anterior (NEXTAIR, S.L. / Granada) — si el admin
+  // abría esta pestaña antes de que site_legal_name/brand_nif/brand_address
+  // estuvieran rellenos, el formulario mostraba esa identidad ajena como si
+  // fuera la actual, con riesgo de auto-guardarla. Vacío es el default
+  // seguro (igual que ya hacían email/phone/iban) — el valor real siempre
+  // llega de rawSettings.
   const [legalCompany, setLegalCompany] = useState({
-    legalCompanyName:     "NEXTAIR, S.L.",
-    legalCompanyCif:      "B16408031",
-    legalCompanyAddress:  "C/JOSE LUIS PEREZ PUJADAS, Nº 14, PLTA.1, PUERTA D EDIFICIO FORUM",
-    legalCompanyCity:     "GRANADA",
-    legalCompanyZip:      "18006",
-    legalCompanyProvince: "Granada",
+    legalCompanyName:     "",
+    legalCompanyCif:      "",
+    legalCompanyAddress:  "",
+    legalCompanyCity:     "",
+    legalCompanyZip:      "",
+    legalCompanyProvince: "",
     legalCompanyEmail:    "",
     legalCompanyPhone:    "",
     legalCompanyIban:     "",

@@ -16,8 +16,6 @@ import {
   CheckCircle,
   Clock,
   FileText,
-  Phone,
-  Mail,
   AlertTriangle,
   Star,
   Loader2,
@@ -204,7 +202,7 @@ export default function ProposalView() {
           <p className="text-white/60 text-base leading-relaxed">
             Hemos recibido tu respuesta. Nuestro equipo se pondrá en contacto contigo en breve para dar los próximos pasos.
           </p>
-          <p className="text-white/30 text-sm mt-6">Náyade Experiences · contacto@skicenter.es</p>
+          <p className="text-white/30 text-sm mt-6">HAYQUE CAPITAL, S.L.</p>
         </div>
       </div>
     );
@@ -323,21 +321,8 @@ export default function ProposalView() {
           </div>
         )}
 
-        {/* Contact footer */}
-        <div className="rounded-xl bg-white/[0.03] border border-white/10 px-5 py-4">
-          <p className="text-xs font-bold uppercase tracking-widest text-white/30 mb-3">¿Tienes alguna pregunta?</p>
-          <div className="flex flex-wrap gap-4 text-sm">
-            <a href="tel:+34639576627" className="flex items-center gap-2 text-amber-400 hover:text-amber-300 transition-colors">
-              <Phone className="w-4 h-4" /> +34 639 57 66 27
-            </a>
-            <a href="mailto:contacto@skicenter.es" className="flex items-center gap-2 text-amber-400 hover:text-amber-300 transition-colors">
-              <Mail className="w-4 h-4" /> contacto@skicenter.es
-            </a>
-          </div>
-        </div>
-
         <p className="text-center text-white/20 text-xs pb-4">
-          Náyade Experiences · {proposal.proposalNumber}
+          HAYQUE CAPITAL, S.L. · {proposal.proposalNumber}
         </p>
       </div>
     </div>

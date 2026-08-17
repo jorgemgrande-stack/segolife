@@ -197,8 +197,8 @@ export default function ReservationTicket({ open, reservation, onClose }: Props)
             <div className="center bold text-sm" style={{ fontSize: "14px" }}>NÁYADE EXPERIENCES</div>
             <div className="center text-xs" style={{ fontSize: "12px" }}>Los Ángeles de San Rafael · Segovia</div>
             <div className="line" style={{ borderTop: "1px dashed #000", margin: "4px 0" }} />
-            <div className="center small" style={{ fontSize: "11px" }}>Iron Elephant Consulting S.L. · CIF: B26987875</div>
-            <div className="center small" style={{ fontSize: "11px" }}>C/ Corazón de María 57, 1º D · 28002 Madrid</div>
+            <div className="center small" style={{ fontSize: "11px" }}>HAYQUE CAPITAL, S.L. · CIF: B13989264</div>
+            <div className="center small" style={{ fontSize: "11px" }}>Finca Lindaraja, s/n · 40420 Segovia</div>
             <div className="line" style={{ borderTop: "1px dashed #000", margin: "4px 0" }} />
             <div className="row" style={{ display: "flex", justifyContent: "space-between" }}>
               <span>{dateStr} {timeStr}</span>

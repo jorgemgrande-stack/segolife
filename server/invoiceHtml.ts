@@ -42,12 +42,12 @@ export async function getLegalCompanySettings(): Promise<{
     .where(sql`\`key\` IN ('legalCompanyName','legalCompanyCif','legalCompanyAddress','legalCompanyCity','legalCompanyZip','legalCompanyProvince','legalCompanyEmail','legalCompanyPhone','legalCompanyIban')`);
   const s: Record<string, string> = Object.fromEntries(rows.map(r => [r.key, r.value ?? ""]));
   return {
-    name:     s.legalCompanyName     || "Iron Elephant Consulting S.L.",
-    cif:      s.legalCompanyCif      || "B26987875",
-    address:  s.legalCompanyAddress  || "C/ Corazón de María 57, 1º D",
-    city:     s.legalCompanyCity     || "Madrid",
-    zip:      s.legalCompanyZip      || "28002",
-    province: s.legalCompanyProvince || "Madrid",
+    name:     s.legalCompanyName     || "HAYQUE CAPITAL, S.L.",
+    cif:      s.legalCompanyCif      || "B13989264",
+    address:  s.legalCompanyAddress  || "Finca Lindaraja, s/n",
+    city:     s.legalCompanyCity     || "Segovia",
+    zip:      s.legalCompanyZip      || "40420",
+    province: s.legalCompanyProvince || "Segovia",
     email:    s.legalCompanyEmail    || "",
     phone:    s.legalCompanyPhone    || "",
     iban:     s.legalCompanyIban     || "",

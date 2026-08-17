@@ -125,16 +125,15 @@ async function generateSettlementPdfAndUpload(data: {
 <body>
   <div class="doc-header">
     <div class="logo-block">
-      <img src="https://d2xsxph8kpxj0f.cloudfront.net/310519663410228097/AV298FS8t5SaTurBBRqhgQ/logo-nayade_20a42bc4.jpg" alt="Náyade" />
+      <img src="https://www.segolife.es/local-storage/segolife/uploads/1786874257171-c8vhw5.png" alt="Segolife" />
       <div class="brand-text">
-        <div class="brand-name">Náyade</div>
-        <div class="brand-sub">Experiences</div>
+        <div class="brand-name">Segolife</div>
       </div>
     </div>
     <div class="company-info">
-      <strong>${data.companyData?.name ?? "Náyade Experiences S.L."}</strong>
-      ${data.companyData?.address ?? "Los Ángeles de San Rafael, Segovia"}<br/>
-      ${data.companyData?.email ?? "reservas@nayadeexperiences.es"} &middot; ${data.companyData?.phone ?? "+34 639 57 66 27"}
+      <strong>${data.companyData?.name ?? "HAYQUE CAPITAL, S.L."}</strong>
+      ${data.companyData?.address ?? "Finca Lindaraja, s/n · 40420 Segovia"}<br/>
+      ${data.companyData?.email ?? ""} &middot; ${data.companyData?.phone ?? ""}
     </div>
   </div>
   <div class="doc-type-band">
@@ -146,8 +145,8 @@ async function generateSettlementPdfAndUpload(data: {
   <div class="parties">
     <div class="party">
       <h3>Emisor</h3>
-      <p><strong>${data.companyData?.name ?? "Náyade Experiences S.L."}</strong><br/>
-      ${data.companyData?.address ?? "Los Ángeles de San Rafael, Segovia"}<br/>
+      <p><strong>${data.companyData?.name ?? "HAYQUE CAPITAL, S.L."}</strong><br/>
+      ${data.companyData?.address ?? "Finca Lindaraja, s/n · 40420 Segovia"}<br/>
       CIF: ${data.companyData?.cif ?? ""}</p>
     </div>
     <div class="party">
@@ -188,7 +187,7 @@ async function generateSettlementPdfAndUpload(data: {
 
   </div>
   <div class="footer">
-    <p>${data.companyData?.name ?? "Náyade Experiences S.L."} &middot; www.skicenter.es</p>
+    <p>${data.companyData?.name ?? "HAYQUE CAPITAL, S.L."} &middot; www.segolife.es</p>
     <p>Documento de liquidación de servicios prestados por el proveedor durante el período indicado.</p>
   </div>
 </body>
@@ -1685,11 +1684,11 @@ export const settlementsRouter = router({
         .where(sql`\`key\` IN ('legalCompanyName','legalCompanyCif','legalCompanyAddress','legalCompanyEmail','legalCompanyPhone')`);
       const s: Record<string, string> = Object.fromEntries(settingsRows.map(r => [r.key, r.value ?? ""]));
       const companyData = {
-        name: s.legalCompanyName || "Náyade Experiences S.L.",
+        name: s.legalCompanyName || "HAYQUE CAPITAL, S.L.",
         cif: s.legalCompanyCif || "",
-        address: s.legalCompanyAddress || "Los Ángeles de San Rafael, Segovia",
-        email: s.legalCompanyEmail || "reservas@nayadeexperiences.es",
-        phone: s.legalCompanyPhone || "+34 639 57 66 27",
+        address: s.legalCompanyAddress || "Finca Lindaraja, s/n · 40420 Segovia",
+        email: s.legalCompanyEmail || "",
+        phone: s.legalCompanyPhone || "",
       };
 
       const { url, key } = await generateSettlementPdfAndUpload({
