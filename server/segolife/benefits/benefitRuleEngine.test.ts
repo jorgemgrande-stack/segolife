@@ -124,6 +124,7 @@ function makeRuleEngineMockDb(config: {
     b.insert = (t: unknown) => { mode = "insert"; table = t; return b; };
     b.where = (cond: unknown) => { lastCond = cond; return b; };
     b.limit = () => b;
+    b.for = () => b;
     b.values = (v: Record<string, unknown>) => {
       if (table === userBenefits) {
         if (v.idempotencyKey != null) {
@@ -150,7 +151,14 @@ function makeRuleEngineMockDb(config: {
     return b;
   }
 
-  return { db: makeBuilder() as any, getUserBenefitRows: () => userBenefitRows };
+  const outer: any = makeBuilder();
+  // PRE-16.15 — evaluateBenefitsForOrigin envuelve las reglas con tope
+  // numérico en conn.transaction(tx => ...) (lock de fila sobre benefit_rules)
+  // — el mock reutiliza el MISMO builder como `tx` (no modela el lock real,
+  // igual que el resto de mocks de este repo que no simulan concurrencia
+  // real salvo que el test la necesite explícitamente).
+  outer.transaction = (cb: (tx: unknown) => Promise<unknown>) => cb(makeBuilder());
+  return { db: outer, getUserBenefitRows: () => userBenefitRows };
 }
 
 describe("evaluateBenefitsForOrigin — matching básico", () => {
@@ -308,6 +316,87 @@ describe("evaluateBenefitsForOrigin — límites", () => {
     });
     const result = await evaluateBenefitsForOrigin(blankOrigin(), db);
     expect(result).toEqual([]);
+  });
+
+  // ─── PRE-16.15 — concurrencia REAL de topes (auditoría overnight: bug real,
+  // "leer contador -> decidir -> insertar" sin lock). Reutiliza el MISMO
+  // patrón de simulación de concurrencia ya establecido en
+  // tokenLedgerService.test.ts: encadena cada `.transaction()` tras el
+  // anterior, de forma que la 2ª llamada solo empieza a leer una vez la 1ª
+  // ya ha terminado — exactamente lo que un `SELECT...FOR UPDATE` real
+  // garantiza. No se mockea eliminando la condición de carrera: las dos
+  // llamadas parten del MISMO estado inicial (0 concedidos) y compiten de
+  // verdad por el mismo hueco.
+  function makeConcurrentRuleEngineMockDb(config: { rules: Array<Record<string, unknown>>; definition: Record<string, unknown> }) {
+    const userBenefitRows: Array<Record<string, unknown>> = [];
+    let nextId = 1;
+    let lockChain: Promise<unknown> = Promise.resolve();
+
+    function makeBuilder() {
+      let mode: "select" | "insert" = "select";
+      let table: unknown = null;
+      let lastCond: unknown = null;
+      const b: any = {};
+      b.select = () => { mode = "select"; return b; };
+      b.from = (t: unknown) => { table = t; return b; };
+      b.insert = (t: unknown) => { mode = "insert"; table = t; return b; };
+      b.where = (cond: unknown) => { lastCond = cond; return b; };
+      b.limit = () => b;
+      b.for = () => b;
+      b.values = (v: Record<string, unknown>) => {
+        if (table === userBenefits) {
+          const row = { id: nextId++, status: "active", qrToken: "tok", qrTokenHash: "hash", ...v };
+          userBenefitRows.push(row);
+          return Promise.resolve([{ insertId: row.id }]);
+        }
+        return Promise.resolve([{ insertId: 1 }]);
+      };
+      b.then = (resolve: (v: unknown) => void) => {
+        if (table === benefitRules) return resolve(config.rules);
+        if (table === benefitDefinitions) return resolve([config.definition]);
+        if (table === benefitCommunities) return resolve([]);
+        if (table === tokenLedger) return resolve([]);
+        if (table === userBenefits) return resolve(userBenefitRows.filter(r => matchesCondition(r, lastCond)));
+        return resolve([]);
+      };
+      return b;
+    }
+
+    const outer: any = makeBuilder();
+    outer.transaction = (cb: (tx: unknown) => Promise<unknown>) => {
+      const run = lockChain.then(() => cb(makeBuilder()));
+      lockChain = run.catch(() => {});
+      return run;
+    };
+    return { db: outer, getUserBenefitRows: () => userBenefitRows };
+  }
+
+  it("CONCURRENCIA REAL: dos hechos DISTINTOS que cualifican casi a la vez para maxPerUser=1 — solo UNO concede, nunca los dos", async () => {
+    const rule = blankRule({ id: 1, maxPerUser: 1, oncePerOrigin: false });
+    const { db, getUserBenefitRows } = makeConcurrentRuleEngineMockDb({ rules: [rule], definition: blankDefinition() });
+
+    const results = await Promise.allSettled([
+      evaluateBenefitsForOrigin(blankOrigin({ sourceId: 201 }), db),
+      evaluateBenefitsForOrigin(blankOrigin({ sourceId: 202 }), db),
+    ]);
+
+    const granted = results.flatMap(r => r.status === "fulfilled" ? r.value : []);
+    expect(granted).toHaveLength(1); // nunca 2 — el tope es 1
+    expect(getUserBenefitRows()).toHaveLength(1);
+  });
+
+  it("CONCURRENCIA REAL: dos usuarios DISTINTOS compitiendo por maxTotal=1 — solo UNO concede, nunca los dos", async () => {
+    const rule = blankRule({ id: 1, maxTotal: 1, oncePerOrigin: false });
+    const { db, getUserBenefitRows } = makeConcurrentRuleEngineMockDb({ rules: [rule], definition: blankDefinition() });
+
+    const results = await Promise.allSettled([
+      evaluateBenefitsForOrigin(blankOrigin({ userId: 42, sourceId: 301 }), db),
+      evaluateBenefitsForOrigin(blankOrigin({ userId: 43, sourceId: 302 }), db),
+    ]);
+
+    const granted = results.flatMap(r => r.status === "fulfilled" ? r.value : []);
+    expect(granted).toHaveLength(1); // nunca 2 — maxTotal=1 es GLOBAL, no por usuario
+    expect(getUserBenefitRows()).toHaveLength(1);
   });
 
   it("oncePerRule ya concedido (cualquier origen) no concede de nuevo para ese usuario", async () => {

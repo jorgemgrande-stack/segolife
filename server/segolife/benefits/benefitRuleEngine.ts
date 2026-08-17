@@ -214,6 +214,43 @@ function buildIdempotencyKey(rule: BenefitRule, origin: BenefitOrigin, index: nu
   return rule.quantity > 1 ? `${base}:${index}` : base;
 }
 
+/**
+ * Concede (o no) UNA regla ya pre-filtrada (recurrencia/definición/comunidad
+ * ya comprobadas por el llamador) — separada de `evaluateBenefitsForOrigin`
+ * para poder envolverla, cuando la regla tiene un tope numérico, en su
+ * propia transacción con lock de fila (ver más abajo, PRE-16.15 BUG:
+ * concurrencia de topes de concesión).
+ */
+async function checkLimitsAndGrant(
+  rule: BenefitRule, origin: BenefitOrigin, definition: BenefitDefinition, conn: AnyDbHandle,
+): Promise<UnlockedBenefit[]> {
+  if (!(await passesLimits(rule, origin, conn))) return [];
+
+  const window = computeValidityWindow(rule, origin.occurredAt);
+  const quantity = Math.max(1, rule.quantity);
+  const results: UnlockedBenefit[] = [];
+  for (let i = 0; i < quantity; i++) {
+    const granted = await grantBenefit({
+      userId: origin.userId,
+      benefitDefinitionId: rule.benefitDefinitionId,
+      benefitRuleId: rule.id,
+      sourceType: origin.type,
+      sourceId: origin.sourceId ?? null,
+      sourceVenueId: origin.venueId ?? null,
+      sourceEventId: origin.eventId ?? null,
+      sourceLedgerId: origin.ledgerId ?? null,
+      communityId: origin.communityId ?? null,
+      validFrom: window.validFrom,
+      validUntil: window.validUntil,
+      idempotencyKey: buildIdempotencyKey(rule, origin, i),
+    }, conn);
+    if (granted.created) {
+      results.push({ userBenefit: granted.benefit, definition, rule, qrToken: granted.qrToken });
+    }
+  }
+  return results;
+}
+
 export async function evaluateBenefitsForOrigin(origin: BenefitOrigin, db?: AnyDbHandle): Promise<UnlockedBenefit[]> {
   const conn = db ?? (await getDb());
   const candidateRules = await findApplicableBenefitRules(origin, conn);
@@ -227,30 +264,32 @@ export async function evaluateBenefitsForOrigin(origin: BenefitOrigin, db?: AnyD
     if (!definition) continue;
 
     if (origin.communityId != null && !(await isDefinitionAllowedForCommunity(rule.benefitDefinitionId, origin.communityId, conn))) continue;
-    if (!(await passesLimits(rule, origin, conn))) continue;
 
-    const window = computeValidityWindow(rule, origin.occurredAt);
-    const quantity = Math.max(1, rule.quantity);
-
-    for (let i = 0; i < quantity; i++) {
-      const granted = await grantBenefit({
-        userId: origin.userId,
-        benefitDefinitionId: rule.benefitDefinitionId,
-        benefitRuleId: rule.id,
-        sourceType: origin.type,
-        sourceId: origin.sourceId ?? null,
-        sourceVenueId: origin.venueId ?? null,
-        sourceEventId: origin.eventId ?? null,
-        sourceLedgerId: origin.ledgerId ?? null,
-        communityId: origin.communityId ?? null,
-        validFrom: window.validFrom,
-        validUntil: window.validUntil,
-        idempotencyKey: buildIdempotencyKey(rule, origin, i),
-      }, conn);
-      if (granted.created) {
-        unlocked.push({ userBenefit: granted.benefit, definition, rule, qrToken: granted.qrToken });
-      }
+    // PRE-16.15 (auditoría overnight, bug real): maxPerUser/maxPerDay/
+    // maxTotal eran "leer contador -> decidir -> insertar" sin ningún lock
+    // — dos hechos DISTINTOS que cualifican casi a la vez (dos transacciones
+    // de comercio, dos asistencias) podían leer ambos "todavía no llego al
+    // tope" antes de que cualquiera confirmara, y las dos conceder,
+    // superando el tope real (a diferencia de oncePerRule, que ya estaba
+    // protegido por una idempotencyKey fija — ver comentario de
+    // buildIdempotencyKey). Reutiliza el MISMO patrón ya probado en
+    // tokenLedgerService.ts/tokenSpendService.ts: `SELECT...FOR UPDATE`
+    // sobre una fila real (aquí, la propia regla) dentro de una transacción
+    // — nunca una tabla de contadores nueva. Solo se paga el coste de la
+    // transacción/lock cuando la regla REALMENTE tiene un tope numérico
+    // configurado; oncePerRule/oncePerOrigin sin tope adicional siguen su
+    // camino rápido de siempre.
+    const hasNumericCap = rule.maxPerUser != null || rule.maxPerDay != null || rule.maxTotal != null;
+    if (hasNumericCap) {
+      const results = await conn.transaction(async (tx) => {
+        await tx.select({ id: benefitRules.id }).from(benefitRules).where(eq(benefitRules.id, rule.id)).limit(1).for("update");
+        return checkLimitsAndGrant(rule, origin, definition, tx);
+      });
+      unlocked.push(...results);
+      continue;
     }
+
+    unlocked.push(...(await checkLimitsAndGrant(rule, origin, definition, conn)));
   }
 
   return unlocked;
