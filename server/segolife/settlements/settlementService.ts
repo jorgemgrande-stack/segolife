@@ -49,13 +49,16 @@ export interface CalculateSettlementInput {
 }
 
 /** Suma cruda de promotionalValueCents de una lista de reservas — SIN aplicar todavía ningún reparto por tokenFundingModel (spec Pre-16.15 §5-8: separar "cuánto valor ST hay" de "quién lo financia" para poder nettear reembolsos antes de repartir). */
+// PRE-16.15 (auditoría overnight, Q — performance, trivial y seguro junto a
+// BUG-10): una consulta por reservationId (N+1 real en periodos con muchas
+// ventas) sustituida por un único inArray + suma en JS — mismo resultado,
+// una sola ida a BD. reservationIds nunca repite un id (cada venta tiene su
+// propia reserva), así que no hay riesgo de doble conteo.
 async function sumPromotionalValueCents(reservationIds: number[], conn: DbHandle): Promise<number> {
-  let total = 0;
-  for (const id of reservationIds) {
-    const [r] = await conn.select({ promotionalValueCents: tokenSpendReservations.promotionalValueCents }).from(tokenSpendReservations).where(eq(tokenSpendReservations.id, id)).limit(1);
-    total += r?.promotionalValueCents ?? 0;
-  }
-  return total;
+  if (reservationIds.length === 0) return 0;
+  const rows = await conn.select({ promotionalValueCents: tokenSpendReservations.promotionalValueCents })
+    .from(tokenSpendReservations).where(inArray(tokenSpendReservations.id, reservationIds));
+  return rows.reduce((sum, r) => sum + (r.promotionalValueCents ?? 0), 0);
 }
 
 /** Aplica el reparto de tokenFundingModel sobre un valor de ST ya neto (ventas del periodo menos lo revertido por reembolsos totales del periodo — ver calculateSettlement). */
