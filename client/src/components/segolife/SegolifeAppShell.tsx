@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next";
 import { Loader2, MapPinOff, Bell, User as UserIcon } from "lucide-react";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { isSupportedLocale, type SupportedLocale } from "@/lib/i18n";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
 import { SegolifeHeader } from "./SegolifeHeader";
@@ -176,7 +175,7 @@ export function SegolifeAppShell({
         <div className="xl:hidden">
           <SegolifeHeader slug={slug} availableLocales={availableLocales} unreadCount={unreadCount ?? 0} isAuthenticated={!!user} />
         </div>
-        {!hideNav && <SegolifeDesktopTopBar slug={slug} unreadCount={unreadCount ?? 0} availableLocales={availableLocales} />}
+        {!hideNav && <SegolifeDesktopTopBar slug={slug} unreadCount={unreadCount ?? 0} />}
         {/* pb-32: pb-24 dejaba el último elemento de páginas largas (ej. "Log
             out" en Profile) tocando el bottom nav en el punto de scroll máximo
             — visto en revisión visual real, no solo margen visual de sobra.
@@ -193,42 +192,14 @@ export function SegolifeAppShell({
 }
 
 /**
- * Top bar de escritorio — selector de idioma + QR de identidad +
- * notificaciones + perfil (el resto del header mobile, logo y wordmark, ya
- * vive en el sidebar fijo, repetirlo aquí sería ruido). Visible únicamente
- * junto al sidebar (>=1200px).
- *
- * PRE-16.17A (hallazgo F03/F05): el selector de idioma vivía en
- * SegolifeHeader (mobile, oculto en xl:) y en Profile.tsx (persiste
- * preferredLocale), pero se perdió al dividir el shell en sidebar+topbar en
- * la Fase 8.5 — el desktop topbar solo llevó QR/campana/perfil, nunca el
- * idioma. Un Student de escritorio sin preferencia guardada aún podía
- * cambiarlo desde Profile, pero perdía el atajo de 1 toque disponible en
- * cualquier página — inconsistencia real entre shells, no un rediseño.
- * Mismo patrón visual/comportamiento que SegolifeHeader (visual/de sesión,
- * vía i18n.changeLanguage), no el guardado persistente de Profile.tsx —
- * evita construir un segundo sistema de idioma.
+ * Top bar de escritorio — QR de identidad + notificaciones + perfil (el
+ * resto del header mobile, logo y wordmark, ya vive en el sidebar fijo,
+ * repetirlo aquí sería ruido). Visible únicamente junto al sidebar (>=1200px).
  */
-function SegolifeDesktopTopBar({ slug, unreadCount, availableLocales }: { slug: string; unreadCount: number; availableLocales: string[] }) {
-  const { t, i18n } = useTranslation();
-  const showLanguageSwitcher = availableLocales.length > 1;
+function SegolifeDesktopTopBar({ slug, unreadCount }: { slug: string; unreadCount: number }) {
+  const { t } = useTranslation();
   return (
     <header className="hidden h-16 items-center justify-end gap-3 border-b border-border px-8 xl:flex">
-      {showLanguageSwitcher && (
-        <div className="flex gap-1">
-          {availableLocales.filter(isSupportedLocale).map((locale: SupportedLocale) => (
-            <button
-              key={locale}
-              onClick={() => i18n.changeLanguage(locale)}
-              className={`rounded-full px-2 py-0.5 text-[11px] font-medium border transition-colors ${
-                i18n.language === locale ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground"
-              }`}
-            >
-              {locale.toUpperCase()}
-            </button>
-          ))}
-        </div>
-      )}
       <SegolifeIdentityQrButton size="size-9" />
       <Link
         href={`/${slug}/notifications`}
