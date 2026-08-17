@@ -23,6 +23,7 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
+import { timingSafeEqual } from "crypto";
 import { notificationDeliveries } from "../drizzle/schema";
 import { suppressEmail } from "./segolife/engagement/emailSuppressionService";
 
@@ -37,10 +38,19 @@ const brevoEventSchema = z.object({
   "message-id": z.string().optional(),
 });
 
+// PRE-16.15 (auditoría overnight): antes comparaba con `===` — una
+// comparación de string normal en V8 puede salir antes en el primer byte
+// distinto, filtrando por temporización cuánto del token es correcto.
+// timingSafeEqual compara en tiempo constante; solo se aplica cuando ambas
+// cadenas ya tienen la MISMA longitud (una longitud distinta ya descarta el
+// match sin necesitar comparación byte a byte, y timingSafeEqual lanzaría
+// si los buffers no miden igual).
 function isTokenValid(req: express.Request): boolean {
   const expected = process.env.BREVO_WEBHOOK_TOKEN;
   if (!expected) return false;
-  return req.query.token === expected;
+  const provided = req.query.token;
+  if (typeof provided !== "string" || provided.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
 }
 
 brevoWebhookRouter.get("/api/engagement/brevo-webhook/health", (_req, res) => {
