@@ -4,6 +4,7 @@
  * Flujo: Lead → Propuesta → (cliente acepta) → Presupuesto → Reserva → Factura
  */
 import { router, staffProcedure, publicProcedure } from "../_core/trpc";
+import { assertModuleEnabled } from "../_core/flagGuard";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -61,12 +62,26 @@ const proposalOptionSchema = z.object({
   sortOrder: z.number().int().default(0),
 });
 
+// PRE-16.16 (§10/§62): módulo Propuestas Comerciales, parte del mismo
+// embudo leads→presupuestos heredado que crm.ts — mismo crm_module_enabled,
+// aplicado también al flujo público de aceptación por token (si staff no
+// puede crear/enviar propuestas nuevas, el flujo público de aceptación
+// queda igualmente inerte — estado consistente, nunca a medias).
+const gatedStaffProcedure = staffProcedure.use(async ({ ctx, next }) => {
+  await assertModuleEnabled("crm_module_enabled");
+  return next({ ctx });
+});
+const gatedPublicProcedure = publicProcedure.use(async ({ ctx, next }) => {
+  await assertModuleEnabled("crm_module_enabled");
+  return next({ ctx });
+});
+
 // ─── ROUTER ───────────────────────────────────────────────────────────────────
 
 export const proposalsRouter = router({
 
   // ── list ──────────────────────────────────────────────────────────────────
-  list: staffProcedure
+  list: gatedStaffProcedure
     .input(z.object({
       leadId: z.number().int().optional(),
       status: z.enum(["borrador", "enviado", "visualizado", "aceptado", "rechazado", "expirado"]).optional(),
@@ -116,7 +131,7 @@ export const proposalsRouter = router({
     }),
 
   // ── getById ───────────────────────────────────────────────────────────────
-  getById: staffProcedure
+  getById: gatedStaffProcedure
     .input(z.object({ id: z.number().int() }))
     .query(async ({ input }) => {
       const [proposal] = await db.select().from(proposals).where(eq(proposals.id, input.id)).limit(1);
@@ -128,7 +143,7 @@ export const proposalsRouter = router({
     }),
 
   // ── getByLeadId ───────────────────────────────────────────────────────────
-  getByLeadId: staffProcedure
+  getByLeadId: gatedStaffProcedure
     .input(z.object({ leadId: z.number().int() }))
     .query(async ({ input }) => {
       return db.select().from(proposals)
@@ -137,7 +152,7 @@ export const proposalsRouter = router({
     }),
 
   // ── create ────────────────────────────────────────────────────────────────
-  create: staffProcedure
+  create: gatedStaffProcedure
     .input(z.object({
       leadId: z.number().int(),
       title: z.string().min(1),
@@ -203,7 +218,7 @@ export const proposalsRouter = router({
     }),
 
   // ── update ────────────────────────────────────────────────────────────────
-  update: staffProcedure
+  update: gatedStaffProcedure
     .input(z.object({
       id: z.number().int(),
       title: z.string().min(1).optional(),
@@ -264,7 +279,7 @@ export const proposalsRouter = router({
     }),
 
   // ── send ──────────────────────────────────────────────────────────────────
-  send: staffProcedure
+  send: gatedStaffProcedure
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ input, ctx }) => {
       const agentId = (ctx.user as { id: number }).id;
@@ -372,7 +387,7 @@ export const proposalsRouter = router({
     }),
 
   // ── generateLink (genera token/URL sin enviar email) ─────────────────────
-  generateLink: staffProcedure
+  generateLink: gatedStaffProcedure
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ input }) => {
       const [proposal] = await db.select().from(proposals).where(eq(proposals.id, input.id)).limit(1);
@@ -387,7 +402,7 @@ export const proposalsRouter = router({
     }),
 
   // ── delete ────────────────────────────────────────────────────────────────
-  delete: staffProcedure
+  delete: gatedStaffProcedure
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ input, ctx }) => {
       const agentId = (ctx.user as { id: number }).id;
@@ -402,7 +417,7 @@ export const proposalsRouter = router({
     }),
 
   // ── bulkDelete ────────────────────────────────────────────────────────────
-  bulkDelete: staffProcedure
+  bulkDelete: gatedStaffProcedure
     .input(z.object({ ids: z.array(z.number().int()).min(1) }))
     .mutation(async ({ input }) => {
       const rows = await db.select({ id: proposals.id, status: proposals.status }).from(proposals).where(inArray(proposals.id, input.ids));
@@ -416,7 +431,7 @@ export const proposalsRouter = router({
     }),
 
   // ── bulkUpdateStatus ──────────────────────────────────────────────────────
-  bulkUpdateStatus: staffProcedure
+  bulkUpdateStatus: gatedStaffProcedure
     .input(z.object({
       ids: z.array(z.number().int()).min(1),
       status: z.enum(["borrador", "enviado", "visualizado", "aceptado", "rechazado", "expirado"]),
@@ -427,7 +442,7 @@ export const proposalsRouter = router({
     }),
 
   // ── convertToQuote ────────────────────────────────────────────────────────
-  convertToQuote: staffProcedure
+  convertToQuote: gatedStaffProcedure
     .input(z.object({
       id: z.number().int(),
       selectedOptionId: z.number().int().optional(),
@@ -493,7 +508,7 @@ export const proposalsRouter = router({
     }),
 
   // ── PUBLIC: getByToken (client view) ─────────────────────────────────────
-  getByToken: publicProcedure
+  getByToken: gatedPublicProcedure
     .input(z.object({ token: z.string().min(1) }))
     .query(async ({ input }) => {
       const [proposal] = await db.select().from(proposals).where(eq(proposals.token, input.token)).limit(1);
@@ -522,7 +537,7 @@ export const proposalsRouter = router({
     }),
 
   // ── PUBLIC: acceptOption (client selects an option) ──────────────────────
-  acceptOption: publicProcedure
+  acceptOption: gatedPublicProcedure
     .input(z.object({
       token: z.string().min(1),
       selectedOptionId: z.number().int().optional(),

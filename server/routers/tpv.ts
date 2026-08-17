@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { permissionProcedure, router } from "../_core/trpc";
+import { assertModuleEnabled } from "../_core/flagGuard";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { buildReservationConfirmHtml, buildTpvTicketHtml, buildCashOpenHtml, buildCashCloseHtml, type ChannelSummary } from "../emailTemplates";
@@ -48,10 +49,30 @@ const db = drizzle(_pool);
 // --- RBAC-AWARE PROCEDURES ----------------------------------------------------
 // Fallback: legacy staff roles (admin + agente) for all TPV access.
 // RBAC expands access to commercial_agent / sales_cashier without touching fallback.
-const tpvAccessProc    = permissionProcedure("tpv.access",     ["admin", "agente"]);
-const tpvSellProc      = permissionProcedure("tpv.sell",       ["admin", "agente"]);
-const tpvOpenCloseProc = permissionProcedure("tpv.open_close", ["admin", "agente"]);
-const tpvBackofficeProc= permissionProcedure("tpv.backoffice", ["admin"]);
+// PRE-16.16 (§25/§62): TPV heredado (hotel/spa/experiencias vía tablas
+// Náyade — nunca venue_products) es un stack de venta física paralelo e
+// independiente del Venue Bar POS real de Segolife (server/segolife/
+// commerce/nativeCommerceService.ts). El nav ya lo gatea con
+// tpv_enabled=false, pero ningún procedure de este router lo comprobaba
+// server-side — cualquier admin/agente podía seguir abriendo caja/vendiendo
+// aquí aunque el flag esté a 0, con riesgo real de doble contabilidad de
+// ventas frente al POS real.
+const tpvAccessProc    = permissionProcedure("tpv.access",     ["admin", "agente"]).use(async ({ ctx, next }) => {
+  await assertModuleEnabled("tpv_enabled");
+  return next({ ctx });
+});
+const tpvSellProc      = permissionProcedure("tpv.sell",       ["admin", "agente"]).use(async ({ ctx, next }) => {
+  await assertModuleEnabled("tpv_enabled");
+  return next({ ctx });
+});
+const tpvOpenCloseProc = permissionProcedure("tpv.open_close", ["admin", "agente"]).use(async ({ ctx, next }) => {
+  await assertModuleEnabled("tpv_enabled");
+  return next({ ctx });
+});
+const tpvBackofficeProc= permissionProcedure("tpv.backoffice", ["admin"]).use(async ({ ctx, next }) => {
+  await assertModuleEnabled("tpv_enabled");
+  return next({ ctx });
+});
 
 // --- HELPERS -----------------------------------------------------------------
 // generateTicketNumber y generateReservationRef reemplazadas por el helper centralizado

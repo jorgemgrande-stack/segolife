@@ -21,6 +21,7 @@ import {
   suppliers,
 } from "../drizzle/schema";
 import { verifySessionToken, COOKIE_NAME } from "./localAuth";
+import { getFeatureFlag } from "./config";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
 const db = drizzle(_pool);
@@ -45,6 +46,24 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const userId = await verifySessionToken(token);
   if (!userId) {
     res.status(401).json({ error: "Sesión inválida o expirada" });
+    return;
+  }
+  next();
+}
+
+// PRE-16.16 (§10/§62): esta exportación pertenece al motor de liquidaciones
+// de PROVEEDORES heredado de Náyade (supplier_settlements/settlement_lines)
+// — un sistema separado del motor de liquidaciones de VENUE real de
+// Segolife (server/segolife/settlements/settlementService.ts, tablas
+// settlements/venue_settlement_lines). A diferencia de las procedures tRPC
+// de suppliers.ts (ya gateadas con suppliers_module_enabled), esta ruta
+// REST no comprobaba ningún flag — solo exigía sesión válida, sin rol ni
+// permiso — así que cualquier usuario autenticado podía descargarla aunque
+// el módulo de proveedores esté desactivado.
+export async function requireModuleEnabled(req: Request, res: Response, next: NextFunction) {
+  const enabled = await getFeatureFlag("suppliers_module_enabled", false);
+  if (!enabled) {
+    res.status(404).json({ error: "No encontrado" });
     return;
   }
   next();
@@ -105,6 +124,7 @@ const S_PCT = { numFmt: '0.00"%"' };
 settlementExportRouter.get(
   "/api/settlements/:id/export-excel",
   requireAuth,
+  requireModuleEnabled,
   async (req: Request, res: Response) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {

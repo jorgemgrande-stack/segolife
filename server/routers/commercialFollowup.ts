@@ -3,6 +3,7 @@
  * Gestión de seguimiento de presupuestos no convertidos.
  */
 import { router, protectedProcedure } from "../_core/trpc";
+import { assertModuleEnabled } from "../_core/flagGuard";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -30,7 +31,14 @@ import {
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
 const db = drizzle(_pool);
 
-const staff = protectedProcedure;
+// PRE-16.16 (§10/§62): módulo "Atención Comercial" heredado — seguimiento
+// de presupuestos vía GHL/email. Confirmado sin credenciales/datos reales
+// (AdminLayout.tsx, auditoría Fase 11), reutiliza el mismo crm_module_enabled
+// que el resto del embudo leads→presupuestos del que depende por completo.
+const staff = protectedProcedure.use(async ({ ctx, next }) => {
+  await assertModuleEnabled("crm_module_enabled");
+  return next({ ctx });
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

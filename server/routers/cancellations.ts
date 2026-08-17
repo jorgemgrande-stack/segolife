@@ -413,9 +413,17 @@ const adminProcedure = permissionProcedure("crm.reservations.manage", ["admin"])
 
 // --- Router -------------------------------------------------------------------
 
+// PRE-16.16 (§62): la gate por flag solo cubría adminProcedure (línea
+// arriba) — el procedure público (el que realmente recibe tráfico externo
+// vía SolicitarAnulacion.tsx) nunca comprobaba cancellations_module_enabled.
+const gatedPublicProcedure = publicProcedure.use(async ({ ctx, next }) => {
+  await assertModuleEnabled("cancellations_module_enabled");
+  return next({ ctx });
+});
+
 export const cancellationsRouter = router({
   // -- Crear solicitud (público — desde landing) -----------------------------
-  createRequest: publicProcedure
+  createRequest: gatedPublicProcedure
     .input(
       z.object({
         fullName: z.string().min(2),

@@ -6,6 +6,7 @@
 const SITE_URL = (process.env.APP_URL ?? 'https://www.skicenter.es').trim();
 
 import { router, protectedProcedure, publicProcedure, staffProcedure, adminProcedure } from "../_core/trpc";
+import { assertModuleEnabled } from "../_core/flagGuard";
 import { createLead, createBookingFromReservation, createReavExpedient, attachReavDocument, upsertClientFromReservation, postConfirmOperation, getGHLCredentials } from "../db";
 import { confirmReservationAndNotify } from "../reservationEmails";
 import { calcularREAVSimple, validarConfiguracionREAV } from "../reav";
@@ -319,8 +320,32 @@ async function sendTransferConfirmationEmail(data: {
 
 // --- CRM ROUTER --------------------------------------------------------------
 
-const staff = staffProcedure;
-const admin = adminProcedure;
+// PRE-16.16 (§10/§62, "dos CRM operativos por accidente"): este router
+// (leads/presupuestos/reservas/facturas/clientes) es el CRM heredado del
+// negocio turístico de Náyade — su modelo de datos (reservas de
+// hotel/experiencias) no corresponde al producto real de Segolife.
+// crm_module_enabled ya estaba a 0 en producción (confirmado), pero
+// NINGÚN procedure de este archivo lo comprobaba — el nav lo oculta desde
+// Fase 9, pero seguía siendo alcanzable vía la campana de notificaciones
+// del admin y por URL directa. Se aplica aquí de una sola vez a los dos
+// alias que cubren el 100% de los procedures admin/staff, más los 3
+// procedures públicos por token (aceptación de presupuesto) — si el
+// negocio reactiva crm_module_enabled más adelante para reutilizar leads/
+// presupuestos (clasificación B, "reutilizable"), todo vuelve a funcionar
+// junto, sin un estado intermedio inconsistente (staff sin poder crear
+// presupuestos pero con el flujo público de aceptación aún vivo).
+const staff = staffProcedure.use(async ({ ctx, next }) => {
+  await assertModuleEnabled("crm_module_enabled");
+  return next({ ctx });
+});
+const admin = adminProcedure.use(async ({ ctx, next }) => {
+  await assertModuleEnabled("crm_module_enabled");
+  return next({ ctx });
+});
+const gatedPublicProcedure = publicProcedure.use(async ({ ctx, next }) => {
+  await assertModuleEnabled("crm_module_enabled");
+  return next({ ctx });
+});
 
 /**
  * El producto es la fuente de verdad fiscal. Para cada línea de presupuesto con
@@ -1139,7 +1164,7 @@ export const crmRouter = router({
       }),
 
     // --- Previsualizar líneas desde activitiesJson (sin guardar en BD) ---------------------------
-    previewFromLead: staffProcedure
+    previewFromLead: staff
       .input(z.object({ leadId: z.number() }))
       .query(async ({ input }) => {
         const [lead] = await db.select().from(leads).where(eq(leads.id, input.leadId));
@@ -3076,7 +3101,7 @@ export const crmRouter = router({
      * Endpoint público — no requiere autenticación.
      * Registra viewedAt y actualiza status a 'visualizado' si era 'enviado'.
      */
-    getByToken: publicProcedure
+    getByToken: gatedPublicProcedure
       .input(z.object({ token: z.string().min(10) }))
       .query(async ({ input }) => {
         const [quote] = await db
@@ -3255,7 +3280,7 @@ export const crmRouter = router({
     /**
      * El cliente rechaza el presupuesto desde el enlace.
      */
-    rejectByToken: publicProcedure
+    rejectByToken: gatedPublicProcedure
       .input(z.object({ token: z.string().min(10), reason: z.string().max(500).optional() }))
       .mutation(async ({ input }) => {
         const [quote] = await db
@@ -3284,7 +3309,7 @@ export const crmRouter = router({
      * Los precios están CONGELADOS — se usan los del presupuesto, nunca los del catálogo.
      * Devuelve el formulario Redsys para que el frontend lo envíe.
      */
-    payWithToken: publicProcedure
+    payWithToken: gatedPublicProcedure
       .input(z.object({
         token: z.string().min(10),
         origin: z.string().url(),
