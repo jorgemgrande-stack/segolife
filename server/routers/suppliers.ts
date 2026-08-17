@@ -610,12 +610,12 @@ export const suppliersRouter = router({
       const inviteUrl = `${origin}/supplier/activar?token=${token}`;
       await sendEmail({
         to: email,
-        subject: "Invitación al portal de proveedores — Skicenter",
+        subject: "Invitación al portal de proveedores",
         html: `
           <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:32px;">
             <h2 style="color:#ea580c">Portal de Proveedores</h2>
             <p>Hola <strong>${name}</strong>,</p>
-            <p>Has sido invitado al portal de proveedores de <strong>Skicenter</strong>, donde podrás ver las ventas de tus productos por todos los canales y tus liquidaciones.</p>
+            <p>Has sido invitado al portal de proveedores, donde podrás ver las ventas de tus productos por todos los canales y tus liquidaciones.</p>
             <p style="margin:24px 0">
               <a href="${inviteUrl}" style="background:#ea580c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">Activar mi cuenta</a>
             </p>
@@ -1754,7 +1754,7 @@ export const settlementsRouter = router({
 
       await sendEmail({
         to: toEmail,
-        subject: `Liquidación ${settlement.settlementNumber} — Náyade Experiences`,
+        subject: `Liquidación ${settlement.settlementNumber}`,
         html: `
           <h2>Liquidación de servicios</h2>
           <p>Estimado/a ${settlement.supplierName},</p>
@@ -1762,7 +1762,7 @@ export const settlementsRouter = router({
           <p>Importe neto a abonar: <strong>${parseFloat(settlement.netAmountProvider ?? "0").toFixed(2)} €</strong></p>
           ${settlement.pdfUrl ? `<p><a href="${settlement.pdfUrl}">Descargar liquidación en PDF</a></p>` : ""}
           <p>Gracias por su colaboración.</p>
-          <p>Náyade Experiences</p>
+          <p>Segolife</p>
         `,
       });
 

@@ -6,6 +6,7 @@
  */
 import { z } from "zod";
 import { adminProcedure, partnerProcedure, publicProcedure, router } from "../_core/trpc";
+import { assertModuleEnabled } from "../_core/flagGuard";
 import { TRPCError } from "@trpc/server";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
@@ -186,12 +187,32 @@ async function generatePartnerBillingPdfAndUpload(data: {
   }
 }
 
+// PRE-16.16 (§24/§62): módulo Partners heredado (comisión sobre ventas de
+// experiencias Náyade) — nav ya lo gatea con partners_module_enabled=0/0
+// por defecto (legacyMaintenance.ts), pero ningún procedure de este router
+// lo comprobaba server-side. No tiene relación con el Venue App real de
+// Segolife (venue_staff/venueStaffAccess.ts, confirmado sin referencias
+// cruzadas). Se gatea admin+partner+público de una sola vez, mismo
+// criterio que crm.ts/proposals.ts.
+const gatedAdminProcedure = adminProcedure.use(async ({ ctx, next }) => {
+  await assertModuleEnabled("partners_module_enabled");
+  return next({ ctx });
+});
+const gatedPartnerProcedure = partnerProcedure.use(async ({ ctx, next }) => {
+  await assertModuleEnabled("partners_module_enabled");
+  return next({ ctx });
+});
+const gatedPublicProcedure = publicProcedure.use(async ({ ctx, next }) => {
+  await assertModuleEnabled("partners_module_enabled");
+  return next({ ctx });
+});
+
 // ─── Router ──────────────────────────────────────────────────────────────────
 
 export const partnersRouter = router({
 
   // ── ADMIN: Listar todos los partners ───────────────────────────────────────
-  list: adminProcedure
+  list: gatedAdminProcedure
     .input(z.object({
       search: z.string().optional(),
       onlyActive: z.boolean().optional(),
@@ -218,7 +239,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Detalle de un partner ───────────────────────────────────────────
-  get: adminProcedure
+  get: gatedAdminProcedure
     .input(z.object({ id: z.number().int() }))
     .query(async ({ input }) => {
       const [row] = await db
@@ -231,7 +252,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Crear partner ───────────────────────────────────────────────────
-  create: adminProcedure
+  create: gatedAdminProcedure
     .input(z.object({
       name: z.string().min(2),
       slug: z.string().optional(),
@@ -302,7 +323,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Editar partner ──────────────────────────────────────────────────
-  update: adminProcedure
+  update: gatedAdminProcedure
     .input(z.object({
       id: z.number().int(),
       name: z.string().min(2).optional(),
@@ -339,7 +360,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Activar / desactivar partner ────────────────────────────────────
-  toggleActive: adminProcedure
+  toggleActive: gatedAdminProcedure
     .input(z.object({ id: z.number().int(), active: z.boolean() }))
     .mutation(async ({ input }) => {
       await db.update(partners)
@@ -349,7 +370,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Usuarios vinculados a un partner ────────────────────────────────
-  listUsers: adminProcedure
+  listUsers: gatedAdminProcedure
     .input(z.object({ partnerId: z.number().int() }))
     .query(async ({ input }) => {
       const rows = await db
@@ -371,7 +392,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Invitar recepcionista a un partner ──────────────────────────────
-  inviteUser: adminProcedure
+  inviteUser: gatedAdminProcedure
     .input(z.object({
       partnerId: z.number().int(),
       name: z.string().min(2),
@@ -443,7 +464,7 @@ export const partnersRouter = router({
           <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:32px;">
             <h2 style="color:#ea580c">Bienvenido al portal de colaboradores</h2>
             <p>Hola <strong>${input.name}</strong>,</p>
-            <p>Has sido invitado a acceder al portal de colaboradores de <strong>Skicenter</strong> como miembro de <strong>${partner.name}</strong>.</p>
+            <p>Has sido invitado a acceder al portal de colaboradores como miembro de <strong>${partner.name}</strong>.</p>
             <p style="margin:24px 0">
               <a href="${inviteUrl}" style="background:#ea580c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">
                 Activar mi cuenta
@@ -458,7 +479,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Desvincular usuario de un partner ───────────────────────────────
-  removeUser: adminProcedure
+  removeUser: gatedAdminProcedure
     .input(z.object({ userId: z.number().int() }))
     .mutation(async ({ input }) => {
       await db.update(users)
@@ -468,7 +489,7 @@ export const partnersRouter = router({
     }),
 
   // ── PARTNER: Datos de mi partner (para el portal) ─────────────────────────
-  getMyPartner: partnerProcedure
+  getMyPartner: gatedPartnerProcedure
     .query(async ({ ctx }) => {
       const user = ctx.user as any;
       const [row] = await db
@@ -481,7 +502,7 @@ export const partnersRouter = router({
     }),
 
   // ── PUBLIC: Activar cuenta de partner (desde enlace de invitación) ─────────
-  activateInvite: publicProcedure
+  activateInvite: gatedPublicProcedure
     .input(z.object({
       token: z.string(),
       password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),
@@ -500,7 +521,7 @@ export const partnersRouter = router({
     }),
 
   // ── PARTNER: Crear lead desde el portal ───────────────────────────────────
-  createLead: partnerProcedure
+  createLead: gatedPartnerProcedure
     .input(z.object({
       name: z.string().min(2),
       email: z.string().email(),
@@ -550,7 +571,7 @@ export const partnersRouter = router({
     }),
 
   // ── PARTNER: Listar mis leads ─────────────────────────────────────────────
-  listMyLeads: partnerProcedure
+  listMyLeads: gatedPartnerProcedure
     .query(async ({ ctx }) => {
       const user = ctx.user as any;
       const rows = await db
@@ -563,7 +584,7 @@ export const partnersRouter = router({
     }),
 
   // ── PARTNER: Crear reserva directa confirmada ─────────────────────────────
-  createReservation: partnerProcedure
+  createReservation: gatedPartnerProcedure
     .input(z.object({
       customerName: z.string().min(2),
       customerEmail: z.string().email(),
@@ -675,7 +696,7 @@ export const partnersRouter = router({
           });
           sendEmail({
             to: input.customerEmail,
-            subject: `✅ Reserva confirmada — ${input.productName} · Náyade Experiences`,
+            subject: `✅ Reserva confirmada — ${input.productName}`,
             html,
           })
             // Trazabilidad: evita un segundo envío si más tarde se toca esta
@@ -749,7 +770,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Productos disponibles para crear una reserva de partner ────────
-  adminAvailableProducts: adminProcedure
+  adminAvailableProducts: gatedAdminProcedure
     .query(async () => {
       // Catálogo COMPLETO para el administrador cuando registra una reserva
       // delegada de un partner desde /admin/partners. A diferencia del endpoint
@@ -787,7 +808,7 @@ export const partnersRouter = router({
   //
   // Email: se envía UN solo email al cliente listando todas las actividades
   // (no N emails idénticos) — ver bloque al final del handler.
-  adminCreateReservation: adminProcedure
+  adminCreateReservation: gatedAdminProcedure
     .input(z.object({
       partnerId: z.number().int(),
       customerName: z.string().min(2),
@@ -951,8 +972,8 @@ export const partnersRouter = router({
             reservationUrl,
           });
           const subject = isMulti
-            ? `✅ Reserva confirmada — ${created.length} actividades · Náyade Experiences`
-            : `✅ Reserva confirmada — ${created[0].line.productName} · Náyade Experiences`;
+            ? `✅ Reserva confirmada — ${created.length} actividades`
+            : `✅ Reserva confirmada — ${created[0].line.productName}`;
           sendEmail({ to: input.customerEmail, subject, html })
             // Trazabilidad: evita un segundo envío si más tarde se toca alguna
             // de estas reservas desde el editor genérico de CRM.
@@ -982,7 +1003,7 @@ export const partnersRouter = router({
     }),
 
   // ── PARTNER: Listar mis reservas directas ─────────────────────────────────
-  listMyReservations: partnerProcedure
+  listMyReservations: gatedPartnerProcedure
     .query(async ({ ctx }) => {
       const user = ctx.user as any;
       const rows = await db
@@ -997,7 +1018,7 @@ export const partnersRouter = router({
   // ─── FACTURACIÓN AGRUPADA ─────────────────────────────────────────────────
 
   // ── ADMIN: Listar liquidaciones ───────────────────────────────────────────
-  listBatches: adminProcedure
+  listBatches: gatedAdminProcedure
     .input(z.object({
       partnerId: z.number().int().optional(),
       status: z.enum(["borrador", "emitida", "cobrada", "anulada"]).optional(),
@@ -1030,7 +1051,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Detalle de una liquidación ─────────────────────────────────────
-  getBatch: adminProcedure
+  getBatch: gatedAdminProcedure
     .input(z.object({ id: z.number().int() }))
     .query(async ({ input }) => {
       const [batch] = await db
@@ -1082,7 +1103,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Generar PDF descargable de una liquidación ──────────────────────
-  generateBatchPdf: adminProcedure
+  generateBatchPdf: gatedAdminProcedure
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ input }) => {
       const [batch] = await db
@@ -1158,7 +1179,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Reservas sin liquidar de un partner en un período ──────────────
-  getUnbilled: adminProcedure
+  getUnbilled: gatedAdminProcedure
     .input(z.object({
       partnerId: z.number().int(),
       periodStart: z.string().min(1),
@@ -1186,7 +1207,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Crear una liquidación ──────────────────────────────────────────
-  createBatch: adminProcedure
+  createBatch: gatedAdminProcedure
     .input(z.object({
       partnerId: z.number().int(),
       periodType: z.enum(["weekly", "biweekly", "monthly", "manual"]).default("monthly"),
@@ -1253,7 +1274,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Cambiar estado de una liquidación ──────────────────────────────
-  updateBatchStatus: adminProcedure
+  updateBatchStatus: gatedAdminProcedure
     .input(z.object({
       id: z.number().int(),
       status: z.enum(["borrador", "emitida", "cobrada", "anulada"]),
@@ -1345,7 +1366,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Eliminar liquidación (solo borrador) ───────────────────────────
-  deleteBatch: adminProcedure
+  deleteBatch: gatedAdminProcedure
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ input }) => {
       const [existing] = await db
@@ -1363,7 +1384,7 @@ export const partnersRouter = router({
     }),
 
   // ── PARTNER: Notas/anuncios del admin al partner ─────────────────────────
-  getAnnouncements: partnerProcedure
+  getAnnouncements: gatedPartnerProcedure
     .query(async ({ ctx }) => {
       const user = ctx.user as any;
       const [partner] = await db
@@ -1377,7 +1398,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Guardar notas/anuncios para un partner ─────────────────────────
-  adminSaveAnnouncements: adminProcedure
+  adminSaveAnnouncements: gatedAdminProcedure
     .input(z.object({
       partnerId: z.number().int(),
       announcements: z.array(z.object({
@@ -1396,7 +1417,7 @@ export const partnersRouter = router({
     }),
 
   // ── PARTNER: Productos disponibles para reservar ─────────────────────────
-  getAvailableProducts: partnerProcedure
+  getAvailableProducts: gatedPartnerProcedure
     .query(async ({ ctx }) => {
       const user = ctx.user as any;
       const [partner] = await db
@@ -1424,7 +1445,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Todos los productos (para configurar allowed en el formulario) ─
-  adminGetAllProducts: adminProcedure
+  adminGetAllProducts: gatedAdminProcedure
     .query(async () => {
       return db
         .select({
@@ -1439,7 +1460,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Leads generados por un partner ────────────────────────────────
-  adminListLeads: adminProcedure
+  adminListLeads: gatedAdminProcedure
     .input(z.object({ partnerId: z.number().int() }))
     .query(async ({ input }) => {
       const rows = await db
@@ -1462,7 +1483,7 @@ export const partnersRouter = router({
     }),
 
   // ── ADMIN: Reservas generadas por un partner ─────────────────────────────
-  adminListReservations: adminProcedure
+  adminListReservations: gatedAdminProcedure
     .input(z.object({ partnerId: z.number().int() }))
     .query(async ({ input }) => {
       const rows = await db
