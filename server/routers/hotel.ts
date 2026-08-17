@@ -21,12 +21,23 @@ const adminProcedure = permissionProcedure("settings.manage", ["admin"]).use(asy
   return next({ ctx });
 });
 
+// PRE-16.16 — la gate por flag solo cubría adminProcedure; los procedures
+// públicos (búsqueda de disponibilidad, creación de reserva con cargo real
+// vía Redsys) no comprobaban hotel_module_enabled en absoluto — el nav
+// oculto no impedía que nadie con la URL/schema tRPC siguiera reservando
+// hoteles reales aunque el flag esté a 0. Mismo guard, ahora también en el
+// lado público.
+const publicHotelProcedure = publicProcedure.use(async ({ ctx, next }) => {
+  await assertModuleEnabled("hotel_module_enabled");
+  return next({ ctx });
+});
+
 export const hotelRouter = router({
 
   // ── PUBLIC ────────────────────────────────────────────────────────────────
 
   /** Lista pública de tipologías activas con puntuación media */
-  getRoomTypes: publicProcedure.query(async () => {
+  getRoomTypes: publicHotelProcedure.query(async () => {
     const [rooms, ratings] = await Promise.all([
       getActiveRoomTypes(),
       getRatingsByEntityType("hotel"),
@@ -39,7 +50,7 @@ export const hotelRouter = router({
   }),
 
   /** Detalle de una habitación por slug */
-  getRoomTypeBySlug: publicProcedure
+  getRoomTypeBySlug: publicHotelProcedure
     .input(z.object({ slug: z.string() }))
     .query(async ({ input }) => {
       const room = await getRoomTypeBySlug(input.slug);
@@ -48,7 +59,7 @@ export const hotelRouter = router({
     }),
 
   /** Buscar disponibilidad para un rango de fechas */
-  searchAvailability: publicProcedure
+  searchAvailability: publicHotelProcedure
     .input(z.object({
       checkIn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       checkOut: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -58,7 +69,7 @@ export const hotelRouter = router({
     .query(({ input }) => searchAvailability(input)),
 
   /** Calendario de precios y disponibilidad para una habitación */
-  getRoomCalendar: publicProcedure
+  getRoomCalendar: publicHotelProcedure
     .input(z.object({
       roomTypeId: z.number().int(),
       year: z.number().int().min(2024).max(2030),
@@ -292,7 +303,7 @@ export const hotelRouter = router({
    * Crea una pre-reserva de hotel y devuelve el formulario Redsys para el pago.
    * El importe se calcula SIEMPRE en backend: precio_noche × noches × personas.
    */
-  createHotelBooking: publicProcedure
+  createHotelBooking: publicHotelProcedure
     .input(z.object({
       roomTypeId: z.number().int(),
       checkIn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),

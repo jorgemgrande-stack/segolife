@@ -25,13 +25,21 @@ const adminProcedure = permissionProcedure("settings.manage", ["admin"]).use(asy
   return next({ ctx });
 });
 
+// PRE-16.16 — mismo hueco que hotel.ts: la gate solo cubría adminProcedure,
+// los procedures públicos (incluida la creación de reserva con cargo real
+// vía Redsys) no comprobaban spa_module_enabled en absoluto.
+const publicSpaProcedure = publicProcedure.use(async ({ ctx, next }) => {
+  await assertModuleEnabled("spa_module_enabled");
+  return next({ ctx });
+});
+
 export const spaRouter = router({
 
   // ── PUBLIC ────────────────────────────────────────────────────────────────
 
-  getCategories: publicProcedure.query(() => getActiveSpaCategories()),
+  getCategories: publicSpaProcedure.query(() => getActiveSpaCategories()),
 
-  getTreatments: publicProcedure
+  getTreatments: publicSpaProcedure
     .input(z.object({ categoryId: z.number().int().optional() }))
     .query(async ({ input }) => {
       const [treatments, ratings] = await Promise.all([
@@ -45,7 +53,7 @@ export const spaRouter = router({
       }));
     }),
 
-  getTreatmentBySlug: publicProcedure
+  getTreatmentBySlug: publicSpaProcedure
     .input(z.object({ slug: z.string() }))
     .query(async ({ input }) => {
       const t = await getSpaTreatmentBySlug(input.slug);
@@ -54,7 +62,7 @@ export const spaRouter = router({
     }),
 
   /** Slots disponibles para un mes completo (para el calendario de disponibilidad) */
-  getSlotsByMonth: publicProcedure
+  getSlotsByMonth: publicSpaProcedure
     .input(z.object({
       treatmentId: z.number().int(),
       startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -68,7 +76,7 @@ export const spaRouter = router({
     }),
 
   /** Slots disponibles para un tratamiento en una fecha */
-  getAvailableSlots: publicProcedure
+  getAvailableSlots: publicSpaProcedure
     .input(z.object({
       treatmentId: z.number().int(),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -341,7 +349,7 @@ export const spaRouter = router({
    * Crea una reserva de tratamiento SPA y genera el formulario Redsys para el pago.
    * El precio se calcula en backend (precio_tratamiento × personas) para evitar manipulación.
    */
-  createSpaBooking: publicProcedure
+  createSpaBooking: publicSpaProcedure
     .input(z.object({
       treatmentId: z.number().int(),
       slotId: z.number().int(),
