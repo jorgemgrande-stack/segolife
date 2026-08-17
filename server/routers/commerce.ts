@@ -5,7 +5,7 @@ import { listCommerceTransactionsByVenue, listCommerceTransactionsByVenueWithNam
 import { listPosProducts, recordNativeSale, resolveCartTotalCents, PosError } from "../segolife/commerce/nativeCommerceService";
 import { refundCommerceTransaction, CommerceError } from "../segolife/commerce/commercePipeline";
 import { refundPosSale, RefundOrchestratorError } from "../segolife/commerce/refundOrchestrator";
-import { quoteDoorEntry, recordDoorSale, refundDoorSale, listDoorEntryTicketTypesForVenue, DoorSaleError } from "../segolife/commerce/doorSaleService";
+import { quoteDoorEntry, recordDoorSale, refundDoorSale, listDoorEntryTicketTypesForVenue, getDoorSaleVenueId, DoorSaleError } from "../segolife/commerce/doorSaleService";
 import { lookupStudentByIdentityToken } from "../segolife/commerce/studentIdentityService";
 import { getVenueStaffAccess } from "../segolife/benefits/venueStaffAccess";
 import { quoteTokenSpend, TokenSpendError } from "../segolife/tokens/tokenSpendService";
@@ -112,9 +112,18 @@ export const commerceRouter = router({
       return listCommerceTransactionsByVenueWithNames(input.venueId);
     }),
 
+  // PRE-16.15 (auditoría overnight, defensa en profundidad §O): commerce.manage
+  // hoy es admin-only (sin alcance por venue), así que esto no es explotable
+  // todavía — pero es el mismo hueco de diseño que listByVenue/listItems ya
+  // corrigieron: si algún día se concede commerce.manage con alcance de
+  // venue_admin, un reembolso sin este check podría afectar la transacción
+  // de OTRO venue con solo cambiar transactionId.
   refundTransaction: commerceManageProcedure
     .input(z.object({ transactionId: z.number().int().positive(), reason: z.string().min(1).max(500) }))
     .mutation(async ({ ctx, input }) => {
+      const venueId = await getCommerceTransactionVenueId(input.transactionId);
+      if (venueId == null) throw new TRPCError({ code: "NOT_FOUND", message: "Transacción no encontrada" });
+      await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, venueId);
       try {
         return await refundCommerceTransaction({ transactionId: input.transactionId, reason: input.reason, refundedByUserId: ctx.user.id });
       } catch (err) {
@@ -138,6 +147,10 @@ export const commerceRouter = router({
       idempotencyKey: z.string().min(8).max(191),
     }))
     .mutation(async ({ ctx, input }) => {
+      // PRE-16.15 — defensa en profundidad (§O), mismo criterio que refundTransaction.
+      const venueId = await getCommerceTransactionVenueId(input.transactionId);
+      if (venueId == null) throw new TRPCError({ code: "NOT_FOUND", message: "Transacción no encontrada" });
+      await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, venueId);
       try {
         return await refundPosSale({ transactionId: input.transactionId, lines: input.lines, reason: input.reason, refundedByUserId: ctx.user.id, restock: input.restock, idempotencyKey: input.idempotencyKey });
       } catch (err) {
@@ -251,6 +264,10 @@ export const commerceRouter = router({
   refundDoorSale: commerceManageProcedure
     .input(z.object({ orderId: z.number().int().positive(), reason: z.string().min(1).max(500) }))
     .mutation(async ({ ctx, input }) => {
+      // PRE-16.15 — defensa en profundidad (§O), mismo criterio que refundTransaction.
+      const venueId = await getDoorSaleVenueId(input.orderId);
+      if (venueId == null) throw new TRPCError({ code: "NOT_FOUND", message: "Venta no encontrada" });
+      await assertVenueAuthorized(ctx.user.id, ctx.user.role as string, venueId);
       try {
         return await refundDoorSale({ orderId: input.orderId, refundedByUserId: ctx.user.id, reason: input.reason });
       } catch (err) {

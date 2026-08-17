@@ -74,11 +74,12 @@ vi.mock("../segolife/tokens/tokenPaymentRequestService", () => ({
 }));
 
 // SEGOLIFE — COMMERCE CORE (Fase 9): venta de puerta + reembolso parcial POS.
-const { mockQuoteDoorEntry, mockRecordDoorSale, mockRefundDoorSale, mockListDoorEntryTicketTypesForVenue } = vi.hoisted(() => ({
+const { mockQuoteDoorEntry, mockRecordDoorSale, mockRefundDoorSale, mockListDoorEntryTicketTypesForVenue, mockGetDoorSaleVenueId } = vi.hoisted(() => ({
   mockQuoteDoorEntry: vi.fn(),
   mockRecordDoorSale: vi.fn(),
   mockRefundDoorSale: vi.fn(),
   mockListDoorEntryTicketTypesForVenue: vi.fn(),
+  mockGetDoorSaleVenueId: vi.fn(),
 }));
 vi.mock("../segolife/commerce/doorSaleService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/commerce/doorSaleService")>();
@@ -88,7 +89,17 @@ vi.mock("../segolife/commerce/doorSaleService", async (importOriginal) => {
     recordDoorSale: mockRecordDoorSale,
     refundDoorSale: mockRefundDoorSale,
     listDoorEntryTicketTypesForVenue: mockListDoorEntryTicketTypesForVenue,
+    getDoorSaleVenueId: mockGetDoorSaleVenueId,
   };
+});
+
+// PRE-16.15 (auditoría overnight, defensa en profundidad §O): refundTransaction/
+// refundTransactionLines/refundDoorSale ahora resuelven venueId ANTES de
+// reembolsar, mismo criterio que listByVenue/listItems.
+const { mockRefundCommerceTransaction } = vi.hoisted(() => ({ mockRefundCommerceTransaction: vi.fn() }));
+vi.mock("../segolife/commerce/commercePipeline", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/commerce/commercePipeline")>();
+  return { ...actual, refundCommerceTransaction: mockRefundCommerceTransaction };
 });
 
 const { mockRefundPosSale } = vi.hoisted(() => ({ mockRefundPosSale: vi.fn() }));
@@ -324,7 +335,9 @@ describe("commerce router — venta de puerta (Fase 9, IDOR + RBAC)", () => {
     mockRefundDoorSale.mockReset();
     mockListDoorEntryTicketTypesForVenue.mockReset();
     mockLookupStudentByIdentityToken.mockReset();
+    mockGetDoorSaleVenueId.mockReset();
     mockGetVenueStaffAccess.mockResolvedValue([CASANOVA]);
+    mockGetDoorSaleVenueId.mockResolvedValue(CASANOVA);
   });
 
   it("doorEntryTicketTypes de SU propio venue: permitido", async () => {
@@ -363,6 +376,18 @@ describe("commerce router — venta de puerta (Fase 9, IDOR + RBAC)", () => {
     mockRefundDoorSale.mockResolvedValue({ id: 1, status: "refunded" });
     await expect(callerAs(10).refundDoorSale({ orderId: 1, reason: "motivo" })).resolves.toMatchObject({ status: "refunded" });
   });
+
+  it("PRE-16.15 (§O, defensa en profundidad): IDOR — refundDoorSale de una venta de OTRO venue (Tía Felisa) denegado, nunca llega al servicio", async () => {
+    mockGetDoorSaleVenueId.mockResolvedValue(TIA_FELISA);
+    await expect(callerAs(10).refundDoorSale({ orderId: 1, reason: "motivo" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockRefundDoorSale).not.toHaveBeenCalled();
+  });
+
+  it("refundDoorSale de una venta inexistente: NOT_FOUND, nunca llega al servicio", async () => {
+    mockGetDoorSaleVenueId.mockResolvedValue(null);
+    await expect(callerAs(10).refundDoorSale({ orderId: 999, reason: "motivo" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mockRefundDoorSale).not.toHaveBeenCalled();
+  });
 });
 
 // SEGOLIFE — SEGOTOKENS PRESENCIALES (Pre-16.1): mismo criterio que
@@ -400,6 +425,14 @@ describe("commerce.doorRequestTokenPayment — autorización de gasto de SegoTok
 });
 
 describe("commerce router — refundTransactionLines (reembolso parcial POS, Fase 9 spec §21)", () => {
+  beforeEach(() => {
+    mockGetVenueStaffAccess.mockReset();
+    mockGetTxVenueId.mockReset();
+    mockRefundPosSale.mockReset();
+    mockGetVenueStaffAccess.mockResolvedValue([CASANOVA]);
+    mockGetTxVenueId.mockResolvedValue(CASANOVA);
+  });
+
   it("delega en refundPosSale (Commerce Core) — nunca reimplementa el cálculo en el router", async () => {
     mockRefundPosSale.mockResolvedValue({ transaction: { id: 1 }, isFullRefund: false, refundedAmountCents: 500, tokensReversed: false, purchaseRewardReversed: false });
     const result = await callerAs(10).refundTransactionLines({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "motivo real", idempotencyKey: "refund-test-router-1" });
@@ -409,6 +442,53 @@ describe("commerce router — refundTransactionLines (reembolso parcial POS, Fas
 
   it("rechaza sin sesión", async () => {
     await expect(callerWithoutSession().refundTransactionLines({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "x" })).rejects.toThrow(/please login/i);
+  });
+
+  it("PRE-16.15 (§O, defensa en profundidad): IDOR — refundTransactionLines de una transacción de OTRO venue (Tía Felisa) denegado", async () => {
+    mockGetTxVenueId.mockResolvedValue(TIA_FELISA);
+    await expect(callerAs(10).refundTransactionLines({ transactionId: 1, lines: [{ itemId: 1, quantity: 1 }], reason: "motivo", idempotencyKey: "refund-test-router-idor" }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockRefundPosSale).not.toHaveBeenCalled();
+  });
+
+  it("refundTransactionLines de una transacción inexistente: NOT_FOUND, nunca llega al servicio", async () => {
+    mockGetTxVenueId.mockResolvedValue(null);
+    await expect(callerAs(10).refundTransactionLines({ transactionId: 999, lines: [{ itemId: 1, quantity: 1 }], reason: "motivo", idempotencyKey: "refund-test-router-404" }))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mockRefundPosSale).not.toHaveBeenCalled();
+  });
+});
+
+describe("commerce router — refundTransaction (reembolso total, Fase 9 spec §21)", () => {
+  beforeEach(() => {
+    mockGetVenueStaffAccess.mockReset();
+    mockGetTxVenueId.mockReset();
+    mockRefundCommerceTransaction.mockReset();
+    mockGetVenueStaffAccess.mockResolvedValue([CASANOVA]);
+    mockGetTxVenueId.mockResolvedValue(CASANOVA);
+  });
+
+  it("delega en refundCommerceTransaction (Commerce Pipeline) — nunca reimplementa el cálculo en el router", async () => {
+    mockRefundCommerceTransaction.mockResolvedValue({ transaction: { id: 1, status: "refunded" } });
+    const result = await callerAs(10).refundTransaction({ transactionId: 1, reason: "motivo real" });
+    expect(result).toMatchObject({ transaction: { id: 1, status: "refunded" } });
+    expect(mockRefundCommerceTransaction).toHaveBeenCalledWith(expect.objectContaining({ transactionId: 1, reason: "motivo real" }));
+  });
+
+  it("rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().refundTransaction({ transactionId: 1, reason: "x" })).rejects.toThrow(/please login/i);
+  });
+
+  it("PRE-16.15 (§O, defensa en profundidad): IDOR — refundTransaction de una transacción de OTRO venue (Tía Felisa) denegado, nunca llega al servicio", async () => {
+    mockGetTxVenueId.mockResolvedValue(TIA_FELISA);
+    await expect(callerAs(10).refundTransaction({ transactionId: 1, reason: "motivo" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockRefundCommerceTransaction).not.toHaveBeenCalled();
+  });
+
+  it("refundTransaction de una transacción inexistente: NOT_FOUND, nunca llega al servicio", async () => {
+    mockGetTxVenueId.mockResolvedValue(null);
+    await expect(callerAs(10).refundTransaction({ transactionId: 999, reason: "motivo" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mockRefundCommerceTransaction).not.toHaveBeenCalled();
   });
 });
 

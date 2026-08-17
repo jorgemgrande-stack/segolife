@@ -288,6 +288,15 @@ export interface RefundDoorSaleInput {
   reason: string;
 }
 
+/** PRE-16.15 (auditoría overnight, defensa en profundidad §O): resuelve el venueId real de una venta de puerta para poder autorizar ANTES de reembolsar — mismo criterio que commerceDb.getCommerceTransactionVenueId. */
+export async function getDoorSaleVenueId(orderId: number, db?: DbHandle): Promise<number | null> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select({ eventId: ticketOrders.eventId }).from(ticketOrders).where(eq(ticketOrders.id, orderId)).limit(1);
+  if (!row) return null;
+  const [event] = await conn.select({ venueId: events.venueId }).from(events).where(eq(events.id, row.eventId)).limit(1);
+  return event?.venueId ?? null;
+}
+
 /**
  * Reembolso de una venta de puerta (spec §20/§55) — servicio DEDICADO,
  * nunca `ticketCancellationService.refundOrder` sin más: esa función
