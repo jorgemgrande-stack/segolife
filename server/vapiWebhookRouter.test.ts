@@ -115,4 +115,22 @@ describe("POST /api/vapi/webhook — puerta de autenticación (Fase 11)", () => 
     expect(res.status).not.toBe(401);
     expect(res.status).not.toBe(503);
   });
+
+  // ─── PRE-16.15 — aislamiento de secretos entre integraciones ───────────────
+  it("un GHL_WEBHOOK_SECRET configurado NUNCA autentica VAPI: sin VAPI_WEBHOOK_SECRET propio, sigue siendo 503", async () => {
+    process.env.GHL_WEBHOOK_SECRET = "ghl-secret-no-relacionado";
+    await startServer();
+    const res = await post("/api/vapi/webhook", { email: "test@example.com" }, { "x-vapi-secret": "ghl-secret-no-relacionado" });
+    expect(res.status).toBe(503);
+    expect(mockCreateLead).not.toHaveBeenCalled();
+  });
+
+  it("con VAPI_WEBHOOK_SECRET propio configurado, enviar el GHL_WEBHOOK_SECRET (no relacionado) como credencial se rechaza con 401", async () => {
+    process.env.VAPI_WEBHOOK_SECRET = "vapi-secret-real";
+    process.env.GHL_WEBHOOK_SECRET = "ghl-secret-no-relacionado";
+    await startServer();
+    const res = await post("/api/vapi/webhook", { email: "test@example.com" }, { "x-vapi-secret": "ghl-secret-no-relacionado" });
+    expect(res.status).toBe(401);
+    expect(mockCreateLead).not.toHaveBeenCalled();
+  });
 });

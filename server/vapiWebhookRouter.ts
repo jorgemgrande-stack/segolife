@@ -150,9 +150,15 @@ vapiWebhookRouter.post("/api/vapi/webhook", express.json({ limit: "1mb" }), asyn
     "SELECT `value` FROM site_settings WHERE `key` = 'vapiWebhookSecret' LIMIT 1"
   ).catch(() => [[]]);
   const dbSecret = (secretRows as any[])[0]?.value ?? "";
-  const secret = process.env.VAPI_WEBHOOK_SECRET || dbSecret || process.env.GHL_WEBHOOK_SECRET || "";
+  // PRE-16.15 (auditoría overnight): antes aceptaba también GHL_WEBHOOK_SECRET
+  // como credencial válida — quien tuviera el secreto (no relacionado) del
+  // GHL Inbox podía autenticarse también como VAPI. Cada integración usa
+  // ÚNICAMENTE su propio secreto; sin VAPI_WEBHOOK_SECRET configurado (ni en
+  // env ni en BD), se rechaza honestamente como no configurado, nunca cae a
+  // un secreto de otra integración.
+  const secret = process.env.VAPI_WEBHOOK_SECRET || dbSecret || "";
   if (!secret) {
-    console.warn("[VAPI Webhook] Petición rechazada — ningún secreto configurado (VAPI_WEBHOOK_SECRET/BD/GHL_WEBHOOK_SECRET)");
+    console.warn("[VAPI Webhook] Petición rechazada — ningún secreto configurado (VAPI_WEBHOOK_SECRET/BD)");
     return res.status(503).json({ ok: false, error: "Vapi webhook not configured" });
   }
   const provided =
