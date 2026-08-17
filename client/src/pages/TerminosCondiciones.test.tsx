@@ -15,8 +15,15 @@ import { render, screen } from "@testing-library/react";
  * contenido legal propio de la página, no el chrome heredado (nav/footer/
  * WhatsApp) que arrastra PublicLayout.
  */
-vi.mock("@/components/PublicLayout", () => ({
-  default: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+// PRE-16.16: migrada de PublicLayout (nav Náyade) a PublicHomeNav/
+// PublicHomeFooter (shell público real, mismo que /privacidad y /cookies)
+// — se mockean superficialmente igual que antes; lo que se prueba aquí es
+// el contenido legal propio de la página, no el chrome del shell.
+vi.mock("@/components/publicHome/PublicHomeNav", () => ({
+  PublicHomeNav: () => <div />,
+}));
+vi.mock("@/components/publicHome/PublicHomeFooter", () => ({
+  PublicHomeFooter: () => <div />,
 }));
 
 import TerminosCondiciones from "./TerminosCondiciones";

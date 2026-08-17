@@ -1,10 +1,18 @@
 import { Link } from "wouter";
 import { ChevronRight, FileText } from "lucide-react";
-import PublicLayout from "@/components/PublicLayout";
+import { PublicHomeNav } from "@/components/publicHome/PublicHomeNav";
+import { PublicHomeFooter } from "@/components/publicHome/PublicHomeFooter";
 
+// PRE-16.16 (§62, P0): esta página está enlazada directamente desde el
+// checkbox de consentimiento obligatorio de Register.tsx — todo Student
+// real que se registra puede llegar aquí. Seguía usando PublicLayout (nav
+// Náyade con logo/cart/WhatsApp), pese a que su identidad legal ya se
+// corrigió en PRE-16.15. Mismo patrón ya aplicado a /privacidad y /cookies
+// (ver PoliticaPrivacidad.tsx) — nunca un tercer sistema de diseño nuevo.
 export default function TerminosCondiciones() {
   return (
-    <PublicLayout>
+    <div className="segolife-theme flex min-h-screen flex-col bg-background">
+      <PublicHomeNav variant="solid" />
       {/* Hero */}
       <section className="bg-[oklch(0.14_0.03_240)] py-16">
         <div className="container">
@@ -179,7 +187,8 @@ export default function TerminosCondiciones() {
           </div>
         </div>
       </section>
-    </PublicLayout>
+      <PublicHomeFooter />
+    </div>
   );
 }
 

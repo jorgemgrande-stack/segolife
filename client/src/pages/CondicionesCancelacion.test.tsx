@@ -7,8 +7,11 @@ import { render, screen } from "@testing-library/react";
  * otra entidad heredada) vuelva a aparecer como la parte contratante en las
  * condiciones de cancelación públicas.
  */
-vi.mock("@/components/PublicLayout", () => ({
-  default: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+vi.mock("@/components/publicHome/PublicHomeNav", () => ({
+  PublicHomeNav: () => <div />,
+}));
+vi.mock("@/components/publicHome/PublicHomeFooter", () => ({
+  PublicHomeFooter: () => <div />,
 }));
 
 import CondicionesCancelacion from "./CondicionesCancelacion";

@@ -1,10 +1,15 @@
 import { Link } from "wouter";
 import { ChevronRight, AlertTriangle } from "lucide-react";
-import PublicLayout from "@/components/PublicLayout";
+import { PublicHomeNav } from "@/components/publicHome/PublicHomeNav";
+import { PublicHomeFooter } from "@/components/publicHome/PublicHomeFooter";
 
+// PRE-16.16 (§62): mismo criterio que TerminosCondiciones.tsx — enlazada
+// desde ese mismo documento y desde Términos, migrada al mismo shell
+// público real ya usado por /privacidad y /cookies.
 export default function CondicionesCancelacion() {
   return (
-    <PublicLayout>
+    <div className="segolife-theme flex min-h-screen flex-col bg-background">
+      <PublicHomeNav variant="solid" />
       {/* Hero */}
       <section className="bg-[oklch(0.14_0.03_240)] py-16">
         <div className="container">
@@ -240,7 +245,8 @@ export default function CondicionesCancelacion() {
           </div>
         </div>
       </section>
-    </PublicLayout>
+      <PublicHomeFooter />
+    </div>
   );
 }
 
