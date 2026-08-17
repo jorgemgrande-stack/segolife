@@ -170,10 +170,16 @@ export async function getEventPerformance(ctx: DashboardFilterContext, db: AnyDb
     `);
     for (const r of rowsOf<{ event_id: number; n: number | string }>(attendanceResult)) attendanceByEvent.set(Number(r.event_id), Number(r.n));
 
+    // PRE-16.15 BUG-12 (auditoría overnight): mismo fix que
+    // commandCenterOverview.ts::getAttendanceKpi — LEFT JOIN +
+    // COALESCE(purchased_at, issued_at) para que los tickets "paymentless"
+    // de Fourvenues (order_id IS NULL por diseño) cuenten como elegibles,
+    // igual que su asistencia ya cuenta en attendanceByEvent — misma
+    // población en numerador y denominador, nunca un clamp al 100%.
     const eligibleResult = await db.execute(sql`
       SELECT et.event_id AS event_id, COUNT(*) AS n FROM event_tickets et
-      JOIN ticket_orders o ON o.id = et.order_id
-      WHERE et.status IN ('issued','used') AND o.purchased_at >= ${ctx.from} AND o.purchased_at < ${ctx.to} AND et.event_id IN (${sql.join(eventIds, sql`, `)})
+      LEFT JOIN ticket_orders o ON o.id = et.order_id
+      WHERE et.status IN ('issued','used') AND COALESCE(o.purchased_at, et.issued_at) >= ${ctx.from} AND COALESCE(o.purchased_at, et.issued_at) < ${ctx.to} AND et.event_id IN (${sql.join(eventIds, sql`, `)})
       GROUP BY et.event_id
     `);
     for (const r of rowsOf<{ event_id: number; n: number | string }>(eligibleResult)) eligibleByEvent.set(Number(r.event_id), Number(r.n));

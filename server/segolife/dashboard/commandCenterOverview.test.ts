@@ -122,6 +122,43 @@ describe("getOverviewSnapshot", () => {
     expect(snapshot.attendance.eligibleTickets).toBe(0);
   });
 
+  // ─── PRE-16.15 BUG-12 — tickets "paymentless" de Fourvenues deben contar
+  // como elegibles (mismo criterio que su asistencia, que ya cuenta en el
+  // numerador) — nunca un INNER JOIN que los excluya del denominador. Este
+  // fake db no ejecuta SQL real, así que no puede demostrar el JOIN por sí
+  // solo — se combina una comprobación estructural del texto de la consulta
+  // (regresión: nunca debe volver a ser un INNER JOIN puro) con la
+  // aritmética real del ratio.
+  it("BUG-12: la consulta de tickets elegibles usa LEFT JOIN + COALESCE(purchased_at, issued_at) — nunca un INNER JOIN que excluya tickets paymentless (order_id NULL)", async () => {
+    mockCountActiveStudents.mockResolvedValue(0);
+    const db = fakeDb({ executeQueue: [[{ n: 10 }], [{ n: 0 }]] });
+    await getOverviewSnapshot(CTX, db as never);
+    const eligibleQueryCall = db.execute.mock.calls.find(call => {
+      const text = JSON.stringify(call[0]);
+      return text.includes("event_tickets") && text.includes("ticket_orders");
+    });
+    expect(eligibleQueryCall).toBeDefined();
+    const queryText = JSON.stringify(eligibleQueryCall![0]);
+    expect(queryText).toContain("LEFT JOIN ticket_orders");
+    expect(queryText).toContain("COALESCE");
+    expect(queryText).not.toContain("INNER JOIN ticket_orders");
+  });
+
+  it("BUG-12: con asistencia igual al número de tickets elegibles (incluyendo paymentless ya contados), la tasa nunca supera el 100% real", async () => {
+    mockCountActiveStudents.mockResolvedValue(0);
+    // confirmed=12 (numerador, incluye asistencia de tickets paymentless),
+    // eligibleTickets=12 (denominador, YA incluye esos mismos tickets
+    // paymentless gracias al LEFT JOIN) — con el bug antiguo, eligibleTickets
+    // habría sido menor (p.ej. 8, excluyendo 4 paymentless) y la tasa
+    // habría dado 150%, un valor imposible para un hecho de negocio real.
+    const db = fakeDb({ eventAttendanceRows: [{ n: 12 }], executeQueue: [[{ n: 12 }], [{ n: 0 }]] });
+    const snapshot = await getOverviewSnapshot(CTX, db as never);
+    expect(snapshot.attendance.confirmed).toBe(12);
+    expect(snapshot.attendance.eligibleTickets).toBe(12);
+    expect(snapshot.attendance.attendanceRatePct).toBe(100);
+    expect(snapshot.attendance.attendanceRatePct).toBeLessThanOrEqual(100);
+  });
+
   it("Benefits: expiración perezosa — expired cuenta status='expired' OR (active AND validUntil vencido)", async () => {
     mockCountActiveStudents.mockResolvedValue(0);
     const db = fakeDb({

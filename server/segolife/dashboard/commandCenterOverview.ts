@@ -146,11 +146,21 @@ async function getAttendanceKpi(ctx: DashboardFilterContext, db: AnyDbHandle): P
   const [confirmedResult, ticketsResult] = await Promise.all([
     db.select({ n: count() }).from(eventAttendance)
       .where(and(gte(eventAttendance.occurredAt, ctx.from), lt(eventAttendance.occurredAt, ctx.to), communityCond ? communityCond : sql`1=1`)),
-    // Denominador: tickets "issued/used" (elegibles) del periodo — excluye cancelled/refunded (spec §7.4).
+    // Denominador: tickets "issued/used" (elegibles) del periodo — excluye
+    // cancelled/refunded (spec §7.4). PRE-16.15 BUG-12 (auditoría overnight):
+    // el INNER JOIN contra ticket_orders excluía SIEMPRE los tickets
+    // "paymentless" de Fourvenues (order_id IS NULL por diseño — venta/
+    // validación en puerta sin payment_id, ver ticketPurchasePipeline.ts::
+    // ingestPaymentlessTicket) del denominador, mientras que su asistencia SÍ
+    // se ingiere y cuenta en el numerador (confirmed, arriba) — la tasa podía
+    // superar el 100% real. LEFT JOIN + COALESCE(purchased_at, issued_at)
+    // para que un ticket paymentless siga contando como elegible, usando su
+    // propia fecha de emisión cuando no tiene pedido — misma población en
+    // numerador y denominador, nunca un clamp que esconda la aritmética.
     db.execute(sql`
       SELECT COUNT(*) AS n FROM event_tickets et
-      JOIN ticket_orders o ON o.id = et.order_id
-      WHERE et.status IN ('issued','used') AND o.purchased_at >= ${ctx.from} AND o.purchased_at < ${ctx.to}
+      LEFT JOIN ticket_orders o ON o.id = et.order_id
+      WHERE et.status IN ('issued','used') AND COALESCE(o.purchased_at, et.issued_at) >= ${ctx.from} AND COALESCE(o.purchased_at, et.issued_at) < ${ctx.to}
       ${ctx.communityId != null ? sql`AND et.user_id IN (SELECT user_id FROM user_communities WHERE community_id = ${ctx.communityId})` : sql``}
     `),
   ]);
