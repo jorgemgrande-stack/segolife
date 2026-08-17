@@ -19,7 +19,7 @@ const [venue] = allVenueAccounts();
 const EVENT_SLUG = "pre-opening-x-fcking-wednesdays";
 
 test.describe("BLOCK T — superficies públicas", () => {
-  for (const path of ["/", "/ie", "/uva", "/login", "/register", "/terminos", "/privacidad"]) {
+  for (const path of ["/", "/ie", "/uva", "/login", "/register", "/terminos", "/privacidad", "/empleado/activar?token=qa-verificacion-no-existe"]) {
     test(`sin overflow en ${path}`, async ({ page }) => {
       await page.goto(path);
       await noHorizontalOverflow(page, path);
@@ -40,6 +40,16 @@ test.describe("BLOCK T — Student autenticado", () => {
       await noHorizontalOverflow(page, path);
     });
   }
+
+  // QR de identidad (Mi ID de SEGOLIFE) — sub-vista de /profile, no una ruta
+  // propia. block-h-i-wallet-qr.spec.ts (I06/I07) ya la cubre en
+  // desktop/mobile con su propio bucle de viewports; este test corre en
+  // los 3 projects de este archivo (incluye tablet, el que faltaba).
+  test("sin overflow en el QR de identidad", async ({ page }) => {
+    await page.goto("/ie/profile");
+    await page.getByText(/my segolife id|mi id de segolife/i).click();
+    await noHorizontalOverflow(page, "/ie/profile (QR)");
+  });
 });
 
 test.describe("BLOCK T — Venue App", () => {
@@ -51,7 +61,7 @@ test.describe("BLOCK T — Venue App", () => {
     const acceptCookies = page.getByRole("button", { name: /accept all|aceptar todas/i });
     if (await acceptCookies.isVisible({ timeout: 3000 }).catch(() => false)) await acceptCookies.click();
     await noHorizontalOverflow(page, "/admin/mi-local (Hoy)");
-    for (const tab of ["TPV", "Entradas", "Caja"]) {
+    for (const tab of ["TPV", "Entradas", "Caja", "Eventos", "Actividad", "Escanear"]) {
       await page.getByRole("navigation").getByRole("button", { name: tab }).click();
       await noHorizontalOverflow(page, `/admin/mi-local (${tab})`);
     }
