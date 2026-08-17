@@ -164,7 +164,14 @@ export async function redeemBenefit(input: RedeemBenefitInput, db?: DbHandle): P
   // o el producto no llevara stockTracked, la fila de userBenefits queda
   // igualmente "used" (mismo comportamiento ya probado desde Fase 4).
   if (definition.benefitType === "free_product" && definition.productId != null) {
-    await recordBenefitRedemptionStock(definition.productId, input.venueId, benefit.id, input.staffUserId, conn).catch(() => {});
+    // PRE-16.15 (auditoría overnight, H): el catch vacío no dejaba ningún
+    // rastro de un fallo real de stock — nunca visible para un admin ni en
+    // logs. La política de negocio (best-effort, nunca bloquea el canje ya
+    // confirmado) no cambia; solo deja de ser 100% silencioso. Nunca se
+    // expone el error interno de stock al Student — este log es
+    // server-side, el canje ya devolvió éxito.
+    await recordBenefitRedemptionStock(definition.productId, input.venueId, benefit.id, input.staffUserId, conn)
+      .catch(err => console.error(`[benefitRedemptionService] No se pudo registrar el consumo de stock del Benefit (userBenefitId=${benefit.id}, productId=${definition.productId}):`, err));
   }
 
   const [updated] = await conn.select().from(userBenefits).where(eq(userBenefits.id, benefit.id)).limit(1);

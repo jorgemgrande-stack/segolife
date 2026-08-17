@@ -4,7 +4,11 @@
  * (Fase 3): un solo beneficio relevante por mock, UPDATE condicional
  * simulado fielmente para probar single-use y concurrencia honestamente.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+const { mockRecordBenefitRedemptionStock } = vi.hoisted(() => ({ mockRecordBenefitRedemptionStock: vi.fn() }));
+vi.mock("../stock/stockService", () => ({ recordBenefitRedemptionStock: mockRecordBenefitRedemptionStock }));
+
 import { redeemBenefit } from "./benefitRedemptionService";
 import { userBenefits, benefitDefinitions, benefitRedemptionAttempts, users } from "../../../drizzle/schema";
 
@@ -180,5 +184,42 @@ describe("benefitRedemptionService — atomicidad y concurrencia (dos validacion
     expect(rejected).toHaveLength(1);
     expect(getAttempts().filter(a => a.result === "valid")).toHaveLength(1);
     expect(getAttempts().filter(a => a.result === "already_used")).toHaveLength(1);
+  });
+});
+
+// PRE-16.15 (auditoría overnight, H): un canje "free_product" que falla al
+// registrar el consumo de stock (p.ej. error de BD) no debe revertir el
+// canje ya confirmado (política de negocio, sin cambios) — pero antes el
+// fallo era 100% silencioso (catch vacío), sin ningún rastro server-side.
+describe("benefitRedemptionService — fallo de stock en free_product (H)", () => {
+  it("un fallo al registrar el consumo de stock no revierte el canje, pero SÍ queda registrado en logs (nunca 100% silencioso)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockRecordBenefitRedemptionStock.mockRejectedValueOnce(new Error("STOCK_DB_ERROR"));
+    const { db } = makeRedeemMockDb({
+      benefit: blankBenefit(),
+      definition: blankDefinition({ benefitType: "free_product", productId: 55 }),
+    });
+
+    const result = await redeemBenefit({ token: "x", staffUserId: 7, venueId: 20, staffAuthorizedVenueIds: "all" }, db);
+
+    expect(result.userBenefit.status).toBe("used"); // best-effort: la política de negocio no cambia
+    expect(mockRecordBenefitRedemptionStock).toHaveBeenCalledWith(55, 20, 1, 7, db);
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(String(errorSpy.mock.calls[0][0])).toContain("benefitRedemptionService");
+    errorSpy.mockRestore();
+  });
+
+  it("el error interno de stock nunca se expone en la respuesta al Student/staff", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockRecordBenefitRedemptionStock.mockRejectedValueOnce(new Error("STOCK_DB_ERROR — internal detail"));
+    const { db } = makeRedeemMockDb({
+      benefit: blankBenefit(),
+      definition: blankDefinition({ benefitType: "free_product", productId: 55 }),
+    });
+
+    const result = await redeemBenefit({ token: "x", staffUserId: 7, venueId: 20, staffAuthorizedVenueIds: "all" }, db);
+
+    expect(JSON.stringify(result)).not.toContain("STOCK_DB_ERROR");
+    errorSpy.mockRestore();
   });
 });
