@@ -32,6 +32,7 @@ import { storagePut } from "../storage";
 import { getUserByInviteToken, setUserPassword } from "../db";
 import { sendEmail } from "../mailer";
 import { getSystemSetting } from "../config";
+import { canonicalBaseUrl } from "../_core/canonicalHost";
 import { runTaxReminderJob } from "../taxReminderJob";
 import { computeExecutiveSummary } from "../executiveSummary";
 import {
@@ -636,7 +637,12 @@ export const gestoriaRouter = router({
           } as any);
         }
 
-        const origin = process.env.APP_URL ?? "https://www.skicenter.es";
+        // PRE-16.16B: mismo fix que hr.ts (invitación al Portal del Empleado)
+        // — Gestoría está confirmada como capacidad activa (alimenta el
+        // motor fiscal real vía hr_irpf_ledger/executiveSummary.ts), no
+        // legacy latente, así que este mismo literal roto ("skicenter.es")
+        // entra en alcance. Usa el helper canónico ya sancionado.
+        const origin = canonicalBaseUrl();
         const inviteUrl = `${origin}/gestoria/activar?token=${token}`;
         try {
           // PRE-16.16 (§12, P0): acción real (invitar a la gestoría externa

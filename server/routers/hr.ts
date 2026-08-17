@@ -39,6 +39,7 @@ import {
 import { sendEmail } from "../mailer";
 import { getSystemSetting } from "../config";
 import { getUserByInviteToken, setUserPassword } from "../db";
+import { canonicalBaseUrl } from "../_core/canonicalHost";
 import { getDefaultCashAccountId, createCashMovementIfNotExists } from "./cashRegisterHelper";
 
 // Permisos: lecturas RRHH accesibles para admin (con fallback a rol legacy).
@@ -349,6 +350,17 @@ const employeesRouter = router({
 
       let userId: number;
       if (existing) {
+        // PRE-16.16B: createPortalAccess sobrescribía el rol de CUALQUIER
+        // usuario existente con ese email a "employee" sin comprobar qué rol
+        // tenía antes — una colisión de email con una cuenta admin/agente/etc.
+        // la degradaba en silencio. Solo se reutiliza la cuenta si ya era
+        // "user" (sin acceso previo) o ya "employee"/"monitor" (reinvitación).
+        if (!["user", "employee", "monitor"].includes(existing.role as string)) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: `Ya existe una cuenta con ese email y rol "${existing.role}". Resuelve la colisión manualmente antes de crear acceso al portal.`,
+          });
+        }
         // Reutilizar el user existente: re-emitir token y ascender a rol employee
         await db.update(users)
           .set({
@@ -387,7 +399,15 @@ const employeesRouter = router({
         .where(eq(employees.id, employee.id));
 
       // URL de activación
-      const origin = process.env.APP_URL ?? "https://www.skicenter.es";
+      // PRE-16.16B: verificado directamente contra el contenedor real de
+      // producción (`railway ssh -- printenv`) — APP_URL NO está definida
+      // (a diferencia de lo asumido en auditorías previas de esta sesión).
+      // Este fallback no era "código muerto en un módulo dormido": el
+      // enlace de activación de un empleado invitado HOY mismo apuntaría a
+      // www.skicenter.es, el dominio real de otro negocio. Se usa el
+      // helper canónico ya sancionado (Fase 15, server/_core/canonicalHost.ts)
+      // en vez de repetir un literal de dominio en este archivo.
+      const origin = canonicalBaseUrl();
       const inviteUrl = `${origin}/empleado/activar?token=${token}`;
 
       let emailSent = false;
@@ -481,6 +501,16 @@ async function resolveCurrentEmployee(userId: number) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "Tu usuario no está vinculado a ningún empleado",
+    });
+  }
+  // PRE-16.16B: marcar un empleado como inactivo desde la ficha (admin) solo
+  // lo ocultaba de los desplegables — el portal seguía siendo accesible
+  // indefinidamente. Se corta aquí, en el único punto por el que pasan todos
+  // los endpoints del Portal del Empleado.
+  if (!emp.isActive) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Tu acceso al portal ha sido desactivado. Contacta con el administrador.",
     });
   }
   return emp;

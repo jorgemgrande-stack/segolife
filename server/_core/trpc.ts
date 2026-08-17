@@ -253,6 +253,14 @@ export const employeeProcedure = t.procedure.use(
     if (!allowed) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Acceso restringido al portal del empleado" });
     }
+    // PRE-16.16B: ctx.user se recarga desde BD en cada request (getUserFromRequest),
+    // pero ninguna capa comprobaba isActive fuera del login — una cuenta desactivada
+    // (admin.toggleUserActive) conservaba sesión y acceso al portal. Se comprueba
+    // aquí porque employeeProcedure es exclusivo del Portal del Empleado/hr.ts —
+    // no afecta a Student/Admin/Venue.
+    if (!ctx.user.isActive) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Cuenta desactivada. Contacta con el administrador." });
+    }
     return next({ ctx: { ...ctx, user: ctx.user } });
   }),
 );
@@ -270,6 +278,10 @@ export const gestoriaProcedure = t.procedure.use(
     }
     if (ctx.user.role !== "gestoria") {
       throw new TRPCError({ code: "FORBIDDEN", message: "Acceso restringido al portal de gestoría" });
+    }
+    // PRE-16.16B: mismo fix que employeeProcedure — ver comentario allí.
+    if (!ctx.user.isActive) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Cuenta desactivada. Contacta con el administrador." });
     }
     return next({ ctx: { ...ctx, user: ctx.user } });
   }),

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { router, protectedProcedure, adminProcedure, permissionProcedure } from "../_core/trpc";
+import { router, adminProcedure, permissionProcedure } from "../_core/trpc";
 
 const operationsViewProc = permissionProcedure("operations.view", ["admin", "agente", "monitor"]);
 import mysql from "mysql2/promise";
@@ -282,7 +282,11 @@ const calendarRouter = router({
 
 // --- DAILY ORDERS -------------------------------------------------------------
 const dailyOrdersRouter = router({
-  getForDate: protectedProcedure
+  // PRE-16.16B: estaba en protectedProcedure (cualquier usuario autenticado,
+  // sin comprobación de rol) devolviendo nombre/email/teléfono real de
+  // clientes — se alinea con el resto de procedures de este mismo router
+  // (updateOperational/getDashboardStats), que ya usan operationsViewProc.
+  getForDate: operationsViewProc
     .input(z.object({ date: z.string() }))
     .query(async ({ input }) => {
       // booking_date is a DATE column — use input string directly (no Date conversion)
@@ -453,7 +457,9 @@ const dailyOrdersRouter = router({
 
 // --- ACTIVITIES (Actividades del día) -----------------------------------------
 const activitiesRouter = router({
-  getForDate: protectedProcedure
+  // PRE-16.16B: mismo fix que dailyOrdersRouter.getForDate — misma fuga de
+  // PII de clientes vía protectedProcedure sin rol.
+  getForDate: operationsViewProc
     .input(z.object({ date: z.string() }))
     .query(async ({ input }) => {
       // booking_date is a DATE column — use input string directly (no Date conversion)

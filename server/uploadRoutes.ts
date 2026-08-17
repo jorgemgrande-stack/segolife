@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
+import { randomBytes } from "crypto";
 import { storagePut } from "./storage";
 import { sdk } from "./_core/sdk";
 import { createMediaFile } from "./db";
@@ -200,7 +201,13 @@ router.post(
       const { buffer, mimetype, originalname } = req.file;
       const ext = originalname.split(".").pop() || "jpg";
       const timestamp = Date.now();
-      const random = Math.random().toString(36).substring(2, 10);
+      // PRE-16.16B: Math.random() no es una fuente de aleatoriedad segura y
+      // esta key es la única "protección" de un dato personal (foto de un
+      // empleado) en un bucket S3/MinIO de lectura pública sin URL firmada
+      // — se sustituye por randomBytes criptográfico para dificultar la
+      // adivinación/enumeración de la key. No cambia el resto de subidas
+      // (imágenes de CMS, etc.), que sí están pensadas para ser públicas.
+      const random = randomBytes(16).toString("hex");
       const key = `segolife/monitors/photos/${timestamp}-${random}.${ext}`;
       const { url } = await storagePut(key, buffer, mimetype);
       res.json({ url, key });
@@ -243,7 +250,9 @@ router.post(
       const { buffer, mimetype, originalname } = req.file;
       const ext = originalname.split(".").pop() || "bin";
       const timestamp = Date.now();
-      const random = Math.random().toString(36).substring(2, 10);
+      // PRE-16.16B: mismo fix que monitor-photo — este endpoint sube DNI,
+      // contratos, bajas médicas, finiquitos, etc. Ver comentario allí.
+      const random = randomBytes(16).toString("hex");
       const key = `segolife/monitors/docs/${timestamp}-${random}.${ext}`;
       const { url } = await storagePut(key, buffer, mimetype);
       res.json({ url, key, filename: originalname });
