@@ -12,10 +12,16 @@ const SEGOLIFE_LOGO_FALLBACK = "/icons/segolife-icon.svg";
  * NUNCA reutiliza PublicNav.tsx (branding Náyade hardcodeado, no leído de
  * publicSettings — ver auditoría de la fase). Minimal: wordmark + CTAs.
  */
-export function PublicHomeNav({ variant = "overlay" }: { variant?: "overlay" | "solid" }) {
+export function PublicHomeNav({ variant = "overlay", communitySlug }: { variant?: "overlay" | "solid"; communitySlug?: string }) {
   const { t, i18n } = useTranslation();
   const loginUrl = getLoginUrl();
-  const registerUrl = getRegisterUrl();
+  // PRE-16.17 (QA manual, Block B): esta nav es compartida (Home, IE, UVA,
+  // páginas legales) — cuando se renderiza dentro de una landing de
+  // comunidad hay que pasarle `communitySlug` para que "Join SEGOLIFE"
+  // preserve la comunidad (?community=ie/uva), igual que ya hacía el
+  // FinalCta de CommunityPublicLanding.tsx. Sin el prop (Home, legales),
+  // se comporta exactamente igual que antes.
+  const registerUrl = getRegisterUrl("/", communitySlug);
   const { data: publicSettings } = trpc.config.getPublicSettings.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,

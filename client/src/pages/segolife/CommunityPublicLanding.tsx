@@ -104,7 +104,7 @@ function Hero({ community, slug }: { community: Community; slug: string }) {
       )}
       <div className="absolute inset-0 bg-gradient-to-t from-[#0d0817] via-[#150a28]/70 to-[#150a28]/30" />
 
-      <PublicHomeNav variant="overlay" />
+      <PublicHomeNav variant="overlay" communitySlug={slug} />
 
       <div className="relative z-10 mx-auto flex w-full max-w-7xl flex-1 flex-col justify-end px-4 pb-20 pt-32 sm:px-6 lg:px-8 lg:pb-28">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-white/60">{t("publicHome.hero.eyebrow")}</p>
