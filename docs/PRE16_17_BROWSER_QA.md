@@ -62,4 +62,15 @@ producción real. Commit verificado en el momento de cada tanda de tests vía
 
 **Bug real encontrado y corregido esta fase:** ver commit `86cb572` (VenueApp.tsx, nombre de venue).
 
-**Bloques NO automatizados** (requieren credenciales de Admin que no están disponibles, o acción física real): Q (Admin), R (Command Center), partes positivas de O/P que requieren sesión Admin, K03-K08 (captura real de ST).
+### Fase 3 — Q/R negativo completo + extensión de T
+
+| Test ID | Rol | Superficie | Resultado | Hallazgo |
+|---|---|---|---|---|
+| P01,P03,P07 | Student/Anónimo | /empleado completo + responsive | PASS | — |
+| Q (12 tests) | Anónimo/Student/Venue | 8 sub-rutas individuales de Admin (no solo genérico) | PASS | **Real:** `venue_admin` en cualquier sub-ruta de Admin nunca ve "denegado" — `AdminLayout.tsx` (guard ya existente, spec §19) lo redirige directo a su propio `/admin/mi-local`. Más seguro que un mensaje de error; test corregido a la aserción real, producto sin cambios |
+| R (2 tests) | Student/Venue | /admin (Command Center) negativo | PASS | Mismo hallazgo — venue_admin nunca renderiza el Command Center |
+| T (extensión) | Anónimo/Student/Venue | +/empleado/activar, QR en tablet, 8 pestañas de Venue App (antes 3) | PASS (48/48 en los 3 viewports) | — |
+
+Q/R positivo (dashboard real de Admin) sigue **CREDENTIAL REQUIRED** — sin credenciales de Admin, nunca fabricadas. La cobertura negativa (qué NO debe ver cada rol) está completa; el read-model del Command Center en sí (funnels/retención/heatmap/asistencia) está cubierto server-side en `server/segolife/dashboard/*.test.ts` (suite de vitest existente, verificada sin regresión esta fase).
+
+**Nota de sesión paralela:** durante esta fase se detectó otra sesión trabajando en la misma carpeta (commit `1e20ea4` + revert `d180567`, y los archivos de esta Fase 3 aparecieron ya escritos). El usuario confirmó que el commit revertido fue un error suyo ya corregido, y autorizó continuar esta sesión con normalidad. El trabajo de Fase 3 se verificó de cero (no se asumió que estuviera correcto) antes de commitear.
