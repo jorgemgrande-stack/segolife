@@ -185,11 +185,21 @@ function VenuesTab({ slug, communityId, search }: { slug: string; communityId?: 
 export default function Explore() {
   const { t } = useTranslation();
   const { community, slug } = useCommunity();
+  // PRE-16.15 (auditoría overnight): Explore es navegable sin sesión (mismo
+  // criterio documentado arriba), pero montaba SIEMPRE el nav completo de
+  // SegolifeAppShell (Tickets/Comunity/Scan/Rewards/Perfil) — un visitante
+  // anónimo veía la navegación de un Student ya autenticado, aunque
+  // cualquier destino real le redirigiera limpiamente a /login. Reutiliza
+  // `hideNav`, el prop YA existente de SegolifeAppShell para exactamente
+  // esto — nunca un shell nuevo. Solo se oculta para el visitante SIN
+  // sesión; un Student autenticado sigue viendo su nav completo, ya que
+  // Explore es uno de sus destinos principales de navegación.
+  const { isAuthenticated } = useAuth();
   const [tab, setTab] = useState<"events" | "venues">("events");
   const [search, setSearch] = useState("");
 
   return (
-    <SegolifeAppShell title={t("explore.title")}>
+    <SegolifeAppShell title={t("explore.title")} hideNav={!isAuthenticated}>
       <SegolifePageContainer wide className="space-y-4 md:space-y-6">
         <h1 className="text-xl font-semibold text-foreground md:text-3xl">{t("explore.title")}</h1>
 
