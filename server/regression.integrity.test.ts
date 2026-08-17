@@ -307,7 +307,9 @@ describe("Regresión emailTemplates — Consistencia visual", () => {
       }),
     ];
     templates.forEach((html) => {
-      expect(html.toLowerCase()).toMatch(/náyade|nayade/i);
+      // PRE-16.16: brand_name/brand_short_name ya resuelven (y su fallback
+      // de código ya es) "Segolife", no la marca heredada.
+      expect(html.toLowerCase()).toMatch(/segolife/i);
     });
   });
 

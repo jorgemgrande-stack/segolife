@@ -20,18 +20,18 @@
 import { getSystemSettingSync } from "./config";
 
 // ─── Dynamic brand helpers (read from config cache at call time) ──────────────
-const getContactEmail = () => getSystemSettingSync("email_reservations", "reservas@nayadeexperiences.es");
+const getContactEmail = () => getSystemSettingSync("email_reservations", "");
 
 // ─── Constantes de marca ──────────────────────────────────────────────────────
 // URLs kept as fallback literals; actual values read from system_settings cache
 // (populated by warmConfigCache() at startup). getSystemSettingSync() returns
 // the fallback on first call and the DB value on all subsequent calls.
-const LOGO_URL_FALLBACK = "https://d2xsxph8kpxj0f.cloudfront.net/310519663410228097/AV298FS8t5SaTurBBRqhgQ/nayade_blue_e9563f49.png";
-const HERO_IMG_FALLBACK = "https://d2xsxph8kpxj0f.cloudfront.net/310519663410228097/AV298FS8t5SaTurBBRqhgQ/nayade_lago_aereo_178815fc.jpg";
+const LOGO_URL_FALLBACK = "https://www.segolife.es/local-storage/segolife/uploads/1786874257171-c8vhw5.png";
+const HERO_IMG_FALLBACK = "https://www.segolife.es/local-storage/segolife/uploads/1786874257171-c8vhw5.png";
 const getBrandLogo  = () => getSystemSettingSync("brand_logo_url",     LOGO_URL_FALLBACK);
 const getBrandHero  = () => getSystemSettingSync("brand_hero_image_url", HERO_IMG_FALLBACK);
-const getBrandName  = () => getSystemSettingSync("brand_name",         "Skicenter");
-const getBrandShort = () => getSystemSettingSync("brand_short_name",   "Náyade");
+const getBrandName  = () => getSystemSettingSync("brand_name",         "Segolife");
+const getBrandShort = () => getSystemSettingSync("brand_short_name",   "Segolife");
 const BRAND_BLUE     = "#0a1628";
 const BRAND_MID_BLUE = "#1e3a6e";
 const BRAND_ORANGE   = "#f97316";
@@ -81,11 +81,11 @@ function emailHeader(subtitle?: string, tagline?: string): string {
             <td align="center" style="padding:36px 40px 28px;background-color:#0d1f3c;">
               <table cellpadding="0" cellspacing="0" border="0"><tr>
                 <td align="center" style="border:3px solid #ffffff;padding:4px;background-color:#1e3a6e;">
-                  <img src="${getBrandLogo()}" alt="Nayade" width="72" height="72" style="display:block;border:0;" />
+                  <img src="${getBrandLogo()}" alt="Segolife" width="72" height="72" style="display:block;border:0;" />
                 </td>
               </tr></table>
               <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                <tr><td align="center" style="color:#ffffff;font-size:28px;font-weight:900;letter-spacing:5px;font-family:Georgia,serif;padding-top:12px;">N&Aacute;YADE</td></tr>
+                <tr><td align="center" style="color:#ffffff;font-size:28px;font-weight:900;letter-spacing:5px;font-family:Georgia,serif;padding-top:12px;">SEGOLIFE</td></tr>
                 <tr><td align="center" style="color:#c8d8f0;font-size:10px;letter-spacing:6px;text-transform:uppercase;font-family:Arial,sans-serif;padding-top:2px;">EXPERIENCES</td></tr>
               </table>
               ${subtitle ? `<table cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;">
@@ -111,12 +111,12 @@ function emailHeader(subtitle?: string, tagline?: string): string {
           <td align="center" style="padding:36px 40px 28px;background:linear-gradient(180deg,rgba(10,22,40,0.72) 0%,rgba(10,22,40,0.88) 100%);">
             <table cellpadding="0" cellspacing="0" border="0"><tr>
               <td align="center" style="display:inline-block;border-radius:50%;border:3px solid rgba(255,255,255,0.85);padding:4px;background:rgba(255,255,255,0.12);">
-                <img src="${getBrandLogo()}" alt="Náyade" width="72" height="72"
+                <img src="${getBrandLogo()}" alt="Segolife" width="72" height="72"
                      style="display:block;border-radius:50%;border:0;" />
               </td>
             </tr></table>
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;">
-              <tr><td align="center" style="color:#ffffff;font-size:30px;font-weight:900;letter-spacing:5px;font-family:Georgia,'Times New Roman',serif;text-shadow:0 2px 12px rgba(0,0,0,0.5);">N&Aacute;YADE</td></tr>
+              <tr><td align="center" style="color:#ffffff;font-size:30px;font-weight:900;letter-spacing:5px;font-family:Georgia,'Times New Roman',serif;text-shadow:0 2px 12px rgba(0,0,0,0.5);">SEGOLIFE</td></tr>
               <tr><td align="center" style="color:rgba(255,255,255,0.65);font-size:10px;letter-spacing:7px;text-transform:uppercase;margin-top:2px;font-family:Arial,sans-serif;padding-top:2px;">EXPERIENCES</td></tr>
             </table>
             ${subtitle ? `<table cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;">
@@ -163,8 +163,8 @@ function emailFooter(): string {
           </tr></table>
           <!-- Datos de contacto -->
           <p style="color:#6b5c3e;font-size:13px;margin:0 0 6px;font-family:Arial,sans-serif;line-height:1.8;">
-            ${SVG.phone}&nbsp;<a href="tel:${getSystemSettingSync('brand_support_phone', '+34 639 57 66 27').replace(/\s/g,'')}" style="color:#8b6914;text-decoration:none;font-weight:600;">${getSystemSettingSync('brand_support_phone', '+34 639 57 66 27')}</a>
-            &nbsp;&nbsp;&nbsp;${SVG.mail}&nbsp;<a href="mailto:${getSystemSettingSync('email_reservations', 'reservas@nayadeexperiences.es')}" style="color:#8b6914;text-decoration:none;font-weight:600;">${getSystemSettingSync('email_reservations', 'reservas@nayadeexperiences.es')}</a>
+            ${SVG.phone}&nbsp;<a href="tel:${getSystemSettingSync('brand_support_phone', '').replace(/\s/g,'')}" style="color:#8b6914;text-decoration:none;font-weight:600;">${getSystemSettingSync('brand_support_phone', '')}</a>
+            &nbsp;&nbsp;&nbsp;${SVG.mail}&nbsp;<a href="mailto:${getSystemSettingSync('email_reservations', '')}" style="color:#8b6914;text-decoration:none;font-weight:600;">${getSystemSettingSync('email_reservations', '')}</a>
           </p>
           <p style="color:#8b7355;font-size:12px;margin:0 0 12px;font-family:Arial,sans-serif;">
             ${SVG.map}&nbsp;${getSystemSettingSync('brand_location', '')}
@@ -173,12 +173,8 @@ function emailFooter(): string {
           <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;"><tr>
             <td style="border-top:1px solid ${BRAND_SAND_MID};font-size:0;line-height:0;">&nbsp;</td>
           </tr></table>
-          <!-- Claim de marca -->
-          <p style="color:#a08060;font-size:12px;margin:0 0 4px;font-family:Georgia,'Times New Roman',serif;font-style:italic;letter-spacing:0.5px;">
-            N&aacute;yade Experiences &mdash; Vive el verano todo el a&ntilde;o
-          </p>
           <p style="color:#c4a882;font-size:10px;margin:0;font-family:Arial,sans-serif;letter-spacing:1px;">
-            &copy; ${new Date().getFullYear()} N&Aacute;YADE EXPERIENCES &middot; TODOS LOS DERECHOS RESERVADOS
+            &copy; ${new Date().getFullYear()} SEGOLIFE &middot; TODOS LOS DERECHOS RESERVADOS
           </p>
         </td>
       </tr></table>
@@ -635,11 +631,11 @@ const ROLE_LABELS: Record<string, string> = {
 export function buildInviteHtml(d: InviteEmailData): string {
   const roleLabel = ROLE_LABELS[d.role] ?? d.role;
   const body = `
-    ${emailHeader("Bienvenido al Equipo", "Plataforma de Gesti&oacute;n N&aacute;yade")}
+    ${emailHeader("Bienvenido al Equipo", "Plataforma de Gesti&oacute;n")}
     <tr><td style="padding:28px 32px 0;">
       <h2 style="color:${BRAND_BLUE};font-size:22px;margin:0 0 12px;font-weight:700;font-family:Georgia,serif;">&#161;Hola ${d.name}!</h2>
       <p style="color:#6b7280;font-size:15px;line-height:1.7;margin:0 0 16px;font-family:Arial,sans-serif;">
-        Se ha creado una cuenta para ti en la plataforma de gesti&oacute;n de <strong>N&aacute;yade Experiences</strong>
+        Se ha creado una cuenta para ti en la plataforma de gesti&oacute;n
         con el rol de:
       </p>
       <table cellpadding="0" cellspacing="0" style="margin-bottom:20px;"><tr>
@@ -768,7 +764,7 @@ export function buildBudgetRequestUserHtml(d: BudgetRequestEmailData): string {
       <h2 style="color:${BRAND_BLUE};font-size:22px;margin:0 0 12px;font-weight:700;font-family:Georgia,serif;">&#161;Hola ${d.name}!</h2>
       <p style="color:#6b7280;font-size:15px;line-height:1.7;margin:0 0 16px;font-family:Arial,sans-serif;">
         Hemos recibido tu solicitud de presupuesto y ya estamos preparando una propuesta personalizada
-        para que vivas una jornada inolvidable en N&aacute;yade Experiences.
+        para que vivas una jornada inolvidable.
       </p>
       ${statusBlock("success", "Solicitud recibida correctamente",
         "Te contactaremos en menos de 24 horas.")}
@@ -1090,8 +1086,8 @@ export function buildConfirmationHtml(d: ConfirmationEmailData): string {
   const quoteRefRow = d.quoteNumber
     ? `<br/><span style="color:#9ca3af;font-size:12px;">Presupuesto original: <strong>${d.quoteNumber}</strong></span>`
     : "";
-  const contactPhone = d.contactPhone ?? getSystemSettingSync('brand_support_phone', '+34 639 57 66 27');
-  const contactEmail = d.contactEmail ?? getSystemSettingSync('email_reservations', 'reservas@nayadeexperiences.es');
+  const contactPhone = d.contactPhone ?? getSystemSettingSync('brand_support_phone', '');
+  const contactEmail = d.contactEmail ?? getSystemSettingSync('email_reservations', '');
 
   const installmentBlock = d.installmentPlan?.installments?.length
     ? (() => {
@@ -1305,7 +1301,7 @@ export function buildQuotePdfHtml(d: QuotePdfData): string {
     <!-- Footer -->
     <div style="padding:16px 40px;border-top:2px solid #1a3a6b;text-align:center;color:#9ca3af;font-size:11px;line-height:1.8;">
       <p style="margin:0;">Gracias por confiar en ${getSystemSettingSync('brand_name', '')}${getSystemSettingSync('brand_domain', '') ? ` &middot; www.${getSystemSettingSync('brand_domain', '')}` : ''}</p>
-      <p style="margin:0;">${getSystemSettingSync('brand_support_phone', '+34 639 57 66 27') ? `${getSystemSettingSync('brand_support_phone', '+34 639 57 66 27')} &nbsp;&middot;&nbsp; ` : ''}${getContactEmail()}${getSystemSettingSync('brand_location', '') ? ` &nbsp;&middot;&nbsp; ${getSystemSettingSync('brand_location', '')}` : ''}</p>
+      <p style="margin:0;">${getSystemSettingSync('brand_support_phone', '') ? `${getSystemSettingSync('brand_support_phone', '')} &nbsp;&middot;&nbsp; ` : ''}${getContactEmail()}${getSystemSettingSync('brand_location', '') ? ` &nbsp;&middot;&nbsp; ${getSystemSettingSync('brand_location', '')}` : ''}</p>
     </div>
   </div>
 </body>
@@ -1373,7 +1369,7 @@ export function buildTransferConfirmationHtml(d: TransferConfirmationEmailData):
       <p style="color:#1e293b;font-size:17px;margin:0 0 8px;font-family:Arial,sans-serif;">Hola <strong>${d.clientName}</strong>,</p>
       <p style="color:#6b7280;font-size:15px;margin:0 0 16px;line-height:1.7;font-family:Arial,sans-serif;">
         Hemos recibido y <strong style="color:#166534;">validado correctamente</strong> tu pago por transferencia bancaria.
-        Tu reserva queda confirmada y ya puedes disfrutar de tu experiencia en N&aacute;yade.
+        Tu reserva queda confirmada y ya puedes disfrutar de tu experiencia.
       </p>
       ${statusBlock("success", "Transferencia bancaria validada",
         `Pago confirmado el <strong>${confirmedDate}</strong>. Tu factura est&aacute; disponible para descargar.`)}

@@ -18,12 +18,12 @@ const SYSTEM_PDF_TEMPLATES = [
     category: "facturacion",
     headerColor: "#0a1628",
     accentColor: "#f97316",
-    companyName: "Náyade Experiences S.L.",
+    companyName: "HAYQUE CAPITAL, S.L.",
     companyNif: "B-XXXXXXXX",
-    companyAddress: "Embalse de Los Ángeles, Ávila",
+    companyAddress: "Finca Lindaraja, s/n, 40420 Segovia",
     companyPhone: "+34 639 57 66 27",
-    companyEmail: "reservas@nayadeexperiences.es",
-    footerText: "Gracias por confiar en Náyade Experiences · www.skicenter.es",
+    companyEmail: "",
+    footerText: "Gracias por confiar en Segolife",
     legalText: "Documento emitido conforme a la normativa fiscal española.",
     showLogo: true,
     showWatermark: false,
@@ -61,8 +61,8 @@ const SYSTEM_PDF_TEMPLATES = [
 <div class="page">
   <div class="header">
     <div class="logo-area">
-      <h1>NÁYADE</h1>
-      <p>EXPERIENCES</p>
+      <h1>SEGOLIFE</h1>
+      
     </div>
     <div class="invoice-meta">
       <div class="invoice-number">{{invoiceNumber}}</div>
@@ -96,7 +96,7 @@ const SYSTEM_PDF_TEMPLATES = [
     </table>
   </div>
   <div class="footer">
-    <p>Gracias por confiar en Náyade Experiences · www.skicenter.es</p>
+    <p>Gracias por confiar en Segolife</p>
     <p>Documento emitido por <strong>{{issuerName}}</strong> — CIF: {{issuerCif}} — {{issuerAddress}}</p>
   </div>
 </div>
@@ -110,12 +110,12 @@ const SYSTEM_PDF_TEMPLATES = [
     category: "presupuestos",
     headerColor: "#0a1628",
     accentColor: "#f97316",
-    companyName: "Náyade Experiences S.L.",
+    companyName: "HAYQUE CAPITAL, S.L.",
     companyNif: "B-XXXXXXXX",
-    companyAddress: "Embalse de Los Ángeles, Ávila",
+    companyAddress: "Finca Lindaraja, s/n, 40420 Segovia",
     companyPhone: "+34 639 57 66 27",
-    companyEmail: "reservas@nayadeexperiences.es",
-    footerText: "Náyade Experiences · www.skicenter.es",
+    companyEmail: "",
+    footerText: "Segolife · www.segolife.es",
     legalText: "Presupuesto válido según condiciones indicadas. Sujeto a disponibilidad.",
     showLogo: true,
     showWatermark: false,
@@ -128,7 +128,7 @@ const SYSTEM_PDF_TEMPLATES = [
       clientPhone: "+34 600 000 000",
       items: [
         { description: "Pack Cable Ski Experience (5 pax)", quantity: 5, unitPrice: 35, total: 175 },
-        { description: "Menú Náyade (8 pax)", quantity: 8, unitPrice: 28, total: 224 },
+        { description: "Menú evento (8 pax)", quantity: 8, unitPrice: 28, total: 224 },
       ],
       subtotal: "399",
       discount: "0",
@@ -137,11 +137,11 @@ const SYSTEM_PDF_TEMPLATES = [
       validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       notes: "Precio especial por grupo. Incluye alquiler de neopreno.",
       conditions: "Reserva sujeta a disponibilidad. Cancelación gratuita hasta 48h antes.",
-      paymentLinkUrl: "https://skicenter.es/pago/PRE-2026-001",
+      paymentLinkUrl: "https://www.segolife.es/pago/PRE-2026-001",
       createdAt: new Date(),
-      issuerName: "Náyade Experiences S.L.",
+      issuerName: "HAYQUE CAPITAL, S.L.",
       issuerCif: "B-XXXXXXXX",
-      issuerAddress: "Embalse de Los Ángeles, Ávila",
+      issuerAddress: "Finca Lindaraja, s/n, 40420 Segovia",
     }),
   },
   {
@@ -151,12 +151,12 @@ const SYSTEM_PDF_TEMPLATES = [
     category: "tpv",
     headerColor: "#0a1628",
     accentColor: "#f97316",
-    companyName: "Náyade Experiences S.L.",
+    companyName: "HAYQUE CAPITAL, S.L.",
     companyNif: "B-XXXXXXXX",
-    companyAddress: "Embalse de Los Ángeles, Ávila",
+    companyAddress: "Finca Lindaraja, s/n, 40420 Segovia",
     companyPhone: "+34 639 57 66 27",
-    companyEmail: "reservas@nayadeexperiences.es",
-    footerText: "Gracias por su visita · Náyade Experiences",
+    companyEmail: "",
+    footerText: "Gracias por su visita",
     legalText: "Conserve este ticket como justificante de compra.",
     showLogo: true,
     showWatermark: false,
@@ -189,8 +189,8 @@ const SYSTEM_PDF_TEMPLATES = [
 <body>
 <div class="ticket">
   <div class="ticket-header">
-    <h1>NÁYADE</h1>
-    <p>EXPERIENCES</p>
+    <h1>SEGOLIFE</h1>
+    
     <div class="ticket-badge">Ticket de Compra</div>
   </div>
   <div class="ticket-body">
@@ -208,7 +208,7 @@ const SYSTEM_PDF_TEMPLATES = [
     <div class="ticket-row" style="margin-top:8px;"><span class="label">Atendido por</span><span class="value">{{operatorName}}</span></div>
   </div>
   <div class="ticket-footer">
-    <p>Gracias por su visita · Náyade Experiences</p>
+    <p>Gracias por su visita</p>
     <p>Conserve este ticket como justificante de compra</p>
   </div>
 </div>
@@ -222,12 +222,12 @@ const SYSTEM_PDF_TEMPLATES = [
     category: "proveedores",
     headerColor: "#0a1628",
     accentColor: "#f97316",
-    companyName: "Náyade Experiences S.L.",
+    companyName: "HAYQUE CAPITAL, S.L.",
     companyNif: "B-XXXXXXXX",
-    companyAddress: "Embalse de Los Ángeles, Ávila",
+    companyAddress: "Finca Lindaraja, s/n, 40420 Segovia",
     companyPhone: "+34 639 57 66 27",
-    companyEmail: "reservas@nayadeexperiences.es",
-    footerText: "Náyade Experiences · www.skicenter.es",
+    companyEmail: "",
+    footerText: "Segolife · www.segolife.es",
     legalText: "Liquidación emitida conforme al contrato de colaboración vigente.",
     showLogo: true,
     showWatermark: false,
@@ -266,8 +266,8 @@ const SYSTEM_PDF_TEMPLATES = [
 <div class="page">
   <div class="header">
     <div class="logo-area">
-      <h1>NÁYADE</h1>
-      <p>EXPERIENCES</p>
+      <h1>SEGOLIFE</h1>
+      
     </div>
     <div class="doc-meta">
       <div class="doc-number">{{settlementNumber}}</div>
@@ -296,11 +296,11 @@ const SYSTEM_PDF_TEMPLATES = [
   </table>
   <div class="summary-box">
     <div class="summary-row"><span>Total ventas brutas</span><span>{{grossAmount}} €</span></div>
-    <div class="summary-row"><span>Comisión Náyade</span><span>- {{commissionAmount}} €</span></div>
+    <div class="summary-row"><span>Comisión</span><span>- {{commissionAmount}} €</span></div>
     <div class="summary-row total"><span>NETO A PAGAR AL PROVEEDOR</span><span>{{netAmountProvider}} €</span></div>
   </div>
   <div class="footer">
-    <p>Náyade Experiences · www.skicenter.es</p>
+    <p>Segolife · www.segolife.es</p>
     <p>Liquidación emitida conforme al contrato de colaboración vigente.</p>
   </div>
 </div>

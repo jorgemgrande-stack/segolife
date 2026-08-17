@@ -173,7 +173,7 @@ function GHLSection({ plain = false }: { plain?: boolean }) {
 // ─── Email Preview Section ─────────────────────────────────────────────────────
 function EmailPreviewSection({ plain = false }: { plain?: boolean }) {
   const [templateId, setTemplateId] = useState("budget-user");
-  const [toEmail, setToEmail] = useState("reservas@nayadeexperiences.es");
+  const [toEmail, setToEmail] = useState("");
   const sendPreview = trpc.admin.sendEmailPreview.useMutation({
     onSuccess: (data) => toast.success(`Email enviado a ${data.to}`),
     onError: (err) => toast.error(`Error: ${err.message}`),
@@ -201,7 +201,7 @@ function EmailPreviewSection({ plain = false }: { plain?: boolean }) {
             type="email"
             value={toEmail}
             onChange={e => setToEmail(e.target.value)}
-            placeholder="reservas@nayadeexperiences.es"
+            placeholder="tu@email.com"
             className="font-display"
           />
         </div>
@@ -270,13 +270,17 @@ export default function Settings() {
 
   const [activeTab, setActiveTab] = useState<Tab>("business");
 
+  // PRE-16.16 (§62): mismos defaults heredados que legalCompany más abajo
+  // (ya corregidos en PRE-16.15) — vacío es el default seguro; si el admin
+  // abre esta pestaña antes de que site_settings tenga datos reales, nunca
+  // debe ver ni arriesgarse a auto-guardar la identidad de otro negocio.
   const [business, setBusiness] = useState({
-    businessName: "Náyade Experiences",
-    businessPhone: "+34 639 57 66 27",
-    businessEmail: "reservas@nayadeexperiences.es",
-    businessAddress: "Los Ángeles de San Rafael, Segovia",
-    businessDescription: "El destino de aventuras del lago. Actividades náuticas, hotel y spa en el embalse de Los Ángeles de San Rafael, a 45 min de Madrid.",
-    businessWebsite: "https://skicenter.es",
+    businessName: "",
+    businessPhone: "",
+    businessEmail: "",
+    businessAddress: "",
+    businessDescription: "",
+    businessWebsite: "",
   });
 
   const [schedule, setSchedule] = useState({
@@ -295,8 +299,8 @@ export default function Settings() {
   });
 
   const [notifications, setNotifications] = useState({
-    notifEmailBooking: "reservas@nayadeexperiences.es",
-    notifEmailRestaurant: "restaurantes@skicenter.es",
+    notifEmailBooking: "",
+    notifEmailRestaurant: "",
     notifSmsEnabled: "false",
   });
 
@@ -454,7 +458,7 @@ export default function Settings() {
                     <Input value={business.businessAddress} onChange={e => setBusiness(p => ({ ...p, businessAddress: e.target.value }))} />
                   </Field>
                   <Field label="Web corporativa" col2>
-                    <Input value={business.businessWebsite} onChange={e => setBusiness(p => ({ ...p, businessWebsite: e.target.value }))} placeholder="https://skicenter.es" />
+                    <Input value={business.businessWebsite} onChange={e => setBusiness(p => ({ ...p, businessWebsite: e.target.value }))} placeholder="https://www.segolife.es" />
                   </Field>
                   <Field label="Descripción breve (SEO / emails)" col2>
                     <Textarea value={business.businessDescription} onChange={e => setBusiness(p => ({ ...p, businessDescription: e.target.value }))} rows={3} className="resize-none" />

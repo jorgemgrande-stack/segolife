@@ -31,6 +31,7 @@ import { buildDossierZip } from "../gestoriaDossier";
 import { storagePut } from "../storage";
 import { getUserByInviteToken, setUserPassword } from "../db";
 import { sendEmail } from "../mailer";
+import { getSystemSetting } from "../config";
 import { runTaxReminderJob } from "../taxReminderJob";
 import { computeExecutiveSummary } from "../executiveSummary";
 import {
@@ -638,14 +639,20 @@ export const gestoriaRouter = router({
         const origin = process.env.APP_URL ?? "https://www.skicenter.es";
         const inviteUrl = `${origin}/gestoria/activar?token=${token}`;
         try {
+          // PRE-16.16 (§12, P0): acción real (invitar a la gestoría externa
+          // real de la empresa) — "Náyade Experiences" hardcodeado. El
+          // contexto es fiscal, así que se usa la razón social legal real
+          // (site_legal_name, ya poblado con HAYQUE CAPITAL, S.L. — misma
+          // fuente canónica que invoiceHtml.ts), no el nombre comercial.
+          const legalName = await getSystemSetting("site_legal_name", "Segolife");
           await sendEmail({
             to: input.email,
-            subject: "Acceso al Portal de Gestoría — Náyade Experiences",
+            subject: `Acceso al Portal de Gestoría — ${legalName}`,
             html: `
               <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:32px;">
                 <h2 style="color:#ea580c">Portal de Gestoría</h2>
                 <p>Hola <strong>${input.name}</strong>,</p>
-                <p>Náyade Experiences le da acceso a su Portal de Gestoría, donde podrá consultar
+                <p><strong>${legalName}</strong> le da acceso a su Portal de Gestoría, donde podrá consultar
                 las obligaciones fiscales, descargar los expedientes del ejercicio y marcar los
                 modelos como presentados.</p>
                 <p style="margin:24px 0">

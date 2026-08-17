@@ -52,13 +52,16 @@ describe("buildQuoteHtml — botón CTA de aceptación", () => {
   it("muestra el bloque de contacto cuando NO se pasa paymentLinkUrl (sin botón CTA)", () => {
     const html = buildQuoteHtml({ ...BASE_DATA });
     expect(html).not.toContain("Confirmar y Pagar Ahora");
-    expect(html).toContain("reservas@nayadeexperiences.es");
+    // PRE-16.16: el email de contacto ya no es un literal fijo (viene de
+    // system_settings, vacío por defecto en test) — se comprueba la
+    // estructura del bloque, no un contacto de otro negocio.
+    expect(html).toContain("Para confirmar tu reserva, contacta con nosotros");
   });
 
   it("muestra el bloque de contacto cuando paymentLinkUrl es undefined", () => {
     const html = buildQuoteHtml({ ...BASE_DATA, paymentLinkUrl: undefined });
     expect(html).not.toContain("Confirmar y Pagar Ahora");
-    expect(html).toContain("reservas@nayadeexperiences.es");
+    expect(html).toContain("Para confirmar tu reserva, contacta con nosotros");
   });
 
   it("incluye los conceptos del presupuesto en el email", () => {

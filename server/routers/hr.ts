@@ -37,6 +37,7 @@ import {
   costCenters,
 } from "../../drizzle/schema";
 import { sendEmail } from "../mailer";
+import { getSystemSetting } from "../config";
 import { getUserByInviteToken, setUserPassword } from "../db";
 import { getDefaultCashAccountId, createCashMovementIfNotExists } from "./cashRegisterHelper";
 
@@ -392,14 +393,20 @@ const employeesRouter = router({
       let emailSent = false;
       if (input.sendEmailNow) {
         try {
+          // PRE-16.16 (§12, P0): esta acción es real (invitar a un empleado
+          // real de Segolife) — el asunto/cuerpo tenían "Náyade Experiences"
+          // hardcodeado. Se resuelve desde system_settings.brand_name (fuente
+          // canónica ya usada en el resto de la plataforma), nunca un
+          // segundo literal de marca en este archivo.
+          const brandName = await getSystemSetting("brand_name", "Segolife");
           await sendEmail({
             to: employee.email,
-            subject: "Acceso al Portal del Empleado — Náyade Experiences",
+            subject: `Acceso al Portal del Empleado — ${brandName}`,
             html: `
               <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:32px;">
                 <h2 style="color:#ea580c">Bienvenido al Portal del Empleado</h2>
                 <p>Hola <strong>${employee.fullName}</strong>,</p>
-                <p>Te damos acceso al portal interno de <strong>Náyade Experiences</strong> donde podrás consultar
+                <p>Te damos acceso al portal interno de <strong>${brandName}</strong> donde podrás consultar
                 tu información personal, documentos y futuras funcionalidades (fichaje, nóminas, vacaciones).</p>
                 <p style="margin:24px 0">
                   <a href="${inviteUrl}" style="background:#ea580c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">

@@ -242,7 +242,7 @@ export default function TpvTicket({ open, sale, onClose }: Props) {
   // Ticket de prueba para validar ancho, fuente y corte sin generar venta
   const handleTestPrint = () => {
     const testHtml = `
-      <div class="center bold text-sm">NÁYADE EXPERIENCES</div>
+      <div class="center bold text-sm">SEGOLIFE</div>
       <div class="center text-xs">TEST DE IMPRESIÓN 80mm</div>
       <div class="line"></div>
       <div class="row"><span>${new Date().toLocaleString("es-ES")}</span><span class="bold">TEST</span></div>
@@ -293,12 +293,12 @@ export default function TpvTicket({ open, sale, onClose }: Props) {
           <div ref={ticketRef}>
             <div className="center" style={{ marginBottom: "6px" }}>
               <img
-                src="https://d2xsxph8kpxj0f.cloudfront.net/310519663410228097/AV298FS8t5SaTurBBRqhgQ/nayade_logo_ticket_30350573.png"
-                alt="Náyade"
+                src="https://www.segolife.es/local-storage/segolife/uploads/1786874257171-c8vhw5.png"
+                alt="Segolife"
                 style={{ width: "60px", height: "60px", objectFit: "contain", display: "inline-block" }}
               />
             </div>
-            <div className="center bold text-sm" style={{ fontSize: "14px" }}>NÁYADE EXPERIENCES</div>
+            <div className="center bold text-sm" style={{ fontSize: "14px" }}>SEGOLIFE</div>
             <div className="center text-xs" style={{ fontSize: "12px" }}>Los Ángeles de San Rafael · Segovia</div>
             <div className="line" style={{ borderTop: "1px dashed #000", margin: "4px 0" }} />
             <div className="center small" style={{ fontSize: "11px" }}>HAYQUE CAPITAL, S.L. · CIF: B13989264</div>
@@ -383,7 +383,7 @@ export default function TpvTicket({ open, sale, onClose }: Props) {
             ))}
             <div className="line" style={{ borderTop: "1px dashed #000", margin: "4px 0" }} />
             <div className="center" style={{ marginTop: "4px" }}>¡Gracias por su visita!</div>
-            <div className="center">www.nayadeexperiences.com</div>
+            <div className="center">www.segolife.es</div>
           </div>
         </div>
 

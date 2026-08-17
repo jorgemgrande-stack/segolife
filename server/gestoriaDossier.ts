@@ -34,7 +34,9 @@ export async function buildDossierZip(year: number): Promise<{ buffer: Buffer; f
 
   const [settings] = await db.select().from(taxSettings).where(eq(taxSettings.id, 1));
   const rate = Number(settings?.corporateTaxRate ?? 25);
-  const company = settings?.companyName ?? "Náyade Experiences";
+  // PRE-16.16 (§12): mismo patrón que invoiceHtml.ts — solo se usa si
+  // tax_settings.companyName está vacío en BD.
+  const company = settings?.companyName ?? "HAYQUE CAPITAL, S.L.";
 
   // ── IVA (303) ──────────────────────────────────────────────────────────────
   const q303 = await Promise.all([1, 2, 3, 4].map((q) => compute303(`${year}-T${q}`)));

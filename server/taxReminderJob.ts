@@ -2,7 +2,11 @@
  * taxReminderJob.ts — Cron de avisos de vencimiento fiscal (Gestoría e Impuestos).
  *
  * Frecuencia: diario a las 08:00 ("0 8 * * *").
- * Feature flag: tax_reminder_job_enabled (activo por defecto).
+ * Feature flag: tax_reminder_job_enabled — PRE-16.16: este comentario decía
+ * "activo por defecto", pero no lo está — server/_core/index.ts pasa
+ * defaultEnabled=false explícitamente y ninguna migración siembra esta
+ * clave (confirmado: desactivado en producción, ver log de arranque
+ * "'Tax Reminder' desactivado").
  *
  * Flujo:
  * 1. Buscar obligaciones abiertas con vencimiento futuro.
@@ -58,7 +62,7 @@ function reminderHtml(o: { model: string; periodLabel: string; dueDate: string; 
         <tr><td style="padding:6px 0;color:#666">Vencimiento</td><td style="padding:6px 0;font-weight:bold;color:#dc2626">${o.dueDate} (${days === 0 ? "hoy" : `en ${days} día(s)`})</td></tr>
         <tr><td style="padding:6px 0;color:#666">Importe estimado</td><td style="padding:6px 0">${amount} €</td></tr>
       </table>
-      <p style="color:#666;font-size:13px">Aviso automático del módulo Gestoría e Impuestos · Náyade Experiences.
+      <p style="color:#666;font-size:13px">Aviso automático del módulo Gestoría e Impuestos.
       El importe es una estimación; la presentación oficial corresponde a la gestoría.</p>
     </div>`;
 }

@@ -132,10 +132,10 @@ export async function buildInvoiceHtml(invoice: InvoiceHtmlParams): Promise<stri
 <body>
   <div class="doc-header">
     <div class="logo-block">
-      <img src="${getSystemSettingSync("brand_logo_url", "https://d2xsxph8kpxj0f.cloudfront.net/310519663410228097/AV298FS8t5SaTurBBRqhgQ/logo-nayade_20a42bc4.jpg")}" alt="${getSystemSettingSync("brand_short_name", "Náyade")}" />
+      <img src="${getSystemSettingSync("brand_logo_url", "/icons/segolife-icon.svg")}" alt="${getSystemSettingSync("brand_short_name", "Segolife")}" />
       <div class="brand-text">
-        <div class="brand-name">${getSystemSettingSync("brand_short_name", "Náyade")}</div>
-        <div class="brand-sub">${getSystemSettingSync("brand_name", "Skicenter").replace(getSystemSettingSync("brand_short_name", ""), "").trim() || "Experiences"}</div>
+        <div class="brand-name">${getSystemSettingSync("brand_short_name", "Segolife")}</div>
+        <div class="brand-sub">${getSystemSettingSync("brand_name", "Segolife").replace(getSystemSettingSync("brand_short_name", ""), "").trim()}</div>
       </div>
     </div>
     <div class="company-info">
@@ -198,7 +198,7 @@ export async function buildInvoiceHtml(invoice: InvoiceHtmlParams): Promise<stri
   </table></div>
   </div>
   <div class="footer">
-    <p>Gracias por confiar en ${getSystemSettingSync("brand_name", "Skicenter")}${getSystemSettingSync("brand_website_url", "") ? " &middot; " + getSystemSettingSync("brand_website_url", "") : ""}</p>
+    <p>Gracias por confiar en ${getSystemSettingSync("brand_name", "Segolife")}${getSystemSettingSync("brand_website_url", "") ? " &middot; " + getSystemSettingSync("brand_website_url", "") : ""}</p>
     <p>Documento emitido por <strong>${legal.name}</strong> &mdash; CIF: ${legal.cif} &mdash; ${legalAddressFull}</p>
   </div>
 </body>

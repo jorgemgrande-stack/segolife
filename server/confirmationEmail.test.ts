@@ -73,11 +73,11 @@ describe("buildConfirmationHtml", () => {
     expect(html).toContain("+34 639 57 66 27");
   });
 
-  it("usa los valores por defecto de contacto cuando no se proporcionan", () => {
+  it("PRE-16.16: sin contactEmail/contactPhone explícitos, cae a system_settings (vacío por defecto en test, nunca a un contacto de otro negocio)", () => {
     const { contactEmail: _e, contactPhone: _p, ...dataWithoutContact } = mockData;
     const html = buildConfirmationHtml(dataWithoutContact);
-    expect(html).toContain("reservas@nayadeexperiences.es");
-    expect(html).toContain("+34 639 57 66 27");
+    expect(html).not.toContain("reservas@nayadeexperiences.es");
+    expect(html).not.toContain("+34 639 57 66 27");
   });
 
   it("genera HTML válido con estructura de email", () => {

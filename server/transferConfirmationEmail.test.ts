@@ -85,13 +85,18 @@ describe("buildTransferConfirmationHtml", () => {
     const html = buildTransferConfirmationHtml(mockData);
     expect(html).toContain("<!DOCTYPE html");
     expect(html).toContain("</html>");
-    expect(html).toContain("N&Aacute;YADE");
+    // PRE-16.16: el wordmark del header ya dice SEGOLIFE, no la marca heredada.
+    expect(html).toContain("SEGOLIFE");
   });
 
-  it("incluye los datos de contacto de Náyade Experiences", () => {
+  it("PRE-16.16: el email de contacto ya no es un literal fijo de otro negocio (viene de system_settings)", () => {
     const html = buildTransferConfirmationHtml(mockData);
-    expect(html).toContain("reservas@nayadeexperiences.es");
-    expect(html).toContain("+34 639 57 66 27");
+    expect(html).not.toContain("reservas@nayadeexperiences.es");
+    // El teléfono de WhatsApp de esta plantilla concreta sigue hardcodeado
+    // (server/emailTemplates.ts, ~9 apariciones idénticas en plantillas
+    // legacy que ninguna acción real de Segolife dispara) — fuera de
+    // alcance de PRE-16.16 (§13: no rebrandear cosméticamente plantillas
+    // que nunca se ejecutan), documentado en el informe final.
   });
 
   it("funciona sin campos opcionales (invoiceUrl, confirmedBy, confirmedAt, quoteNumber)", () => {
