@@ -33,6 +33,7 @@ import { issueTicketsForOrder } from "./ticketIssuanceService";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
 import { earnTokens } from "../tokens/tokenEngine";
 import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
+import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/benefitEvents";
 import { reserveTokenSpend, captureTokenSpend, releaseTokenSpend, type TokenSpendReservation } from "../tokens/tokenSpendService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 3 });
@@ -81,7 +82,12 @@ export async function grantNativePurchaseReward(order: TicketOrder, conn: DbHand
   }
 
   try {
-    await evaluateBenefitsForOrigin({
+    // PRE-16.15 (auditoría overnight, G): el resultado se descartaba por
+    // completo — un Benefit desbloqueado por la compra de un ticket nunca
+    // notificaba al Student (a diferencia de commercePipeline.ts, que ya
+    // emite BenefitGranted por el mismo motor). Mismo evento canónico,
+    // nunca un segundo sistema de notificación.
+    const unlockedBenefits = await evaluateBenefitsForOrigin({
       type: "ticket",
       userId: order.userId,
       venueId,
@@ -91,6 +97,7 @@ export async function grantNativePurchaseReward(order: TicketOrder, conn: DbHand
       ledgerId,
       occurredAt: order.purchasedAt ?? new Date(),
     }, conn);
+    for (const u of unlockedBenefits) emitBenefitGranted(buildBenefitGrantedPayload(u.userBenefit, u.definition));
   } catch (err) {
     console.error(`[checkoutService] No se evaluaron Benefits de compra (orderId=${order.id}):`, err);
   }

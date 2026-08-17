@@ -12,7 +12,7 @@ const {
   mockResolveIdentity, mockPersistIdentityMapping, mockRecordUnresolvedOperation,
   mockEarnTokens, mockEvaluateBenefitsForOrigin, mockEmitEngagementEvent,
   mockResolveLoyaltyCutoff, mockReverseTransaction, mockIsLedgerEntryReversed,
-  MockTokenEngineError, mockObserveShadow,
+  MockTokenEngineError, mockObserveShadow, mockEmitBenefitGranted,
 } = vi.hoisted(() => {
   class MockTokenEngineError extends Error {
     code: string;
@@ -30,6 +30,7 @@ const {
     mockIsLedgerEntryReversed: vi.fn(),
     MockTokenEngineError,
     mockObserveShadow: vi.fn(),
+    mockEmitBenefitGranted: vi.fn(),
   };
 });
 
@@ -43,6 +44,10 @@ vi.mock("../integrations/unresolvedOperationsService", () => ({
 }));
 vi.mock("../tokens/tokenEngine", () => ({ earnTokens: mockEarnTokens }));
 vi.mock("../benefits/benefitRuleEngine", () => ({ evaluateBenefitsForOrigin: mockEvaluateBenefitsForOrigin }));
+vi.mock("../benefits/benefitEvents", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../benefits/benefitEvents")>();
+  return { ...actual, emitBenefitGranted: mockEmitBenefitGranted };
+});
 vi.mock("../engagement/engagementEvents", () => ({ emitEngagementEvent: mockEmitEngagementEvent }));
 vi.mock("../tokens/loyaltyCutoffService", () => ({
   resolveLoyaltyCutoff: mockResolveLoyaltyCutoff,
@@ -159,6 +164,35 @@ describe("ingestTicketPurchase — pedido nuevo", () => {
     // Loyalty Shadow Mode (spec §5) — se observa exactamente en el mismo punto que el reward real, trigger=EVENT_PURCHASE.
     expect(mockObserveShadow).toHaveBeenCalledOnce();
     expect(mockObserveShadow.mock.calls[0][0]).toMatchObject({ trigger: "EVENT_PURCHASE", userId: 10, eventId: 77, origin: "ticket" });
+  });
+
+  it("PRE-16.15 (G): un Benefit desbloqueado por un ticket Fourvenues SÍ emite BenefitGranted (antes se descartaba en silencio)", async () => {
+    mockResolveIdentity
+      .mockResolvedValueOnce({ userId: 10, method: "buyer_email" })
+      .mockResolvedValueOnce({ userId: 20, method: "participant_email" });
+    mockEvaluateBenefitsForOrigin.mockResolvedValue([{
+      userBenefit: { id: 502, userId: 10, benefitDefinitionId: 11, communityId: 3, sourceType: "ticket", sourceId: 501, sourceVenueId: 10, grantedAt: new Date("2026-09-01"), validFrom: new Date("2026-09-01"), validUntil: null },
+      definition: { destinationVenueId: 10, destinationEventId: 77 },
+      rule: {},
+      qrToken: "tok",
+    }]);
+
+    const { db } = fakeDb([
+      [],
+      [{ id: 701, externalTicketId: "fvi_tkt_001" }],
+      [{ id: 501, status: "paid", userId: 10, totalCents: 835, purchasedAt: new Date("2026-09-01T10:00:00.000Z"), metadata: {} }],
+      [{ id: 501, status: "paid", userId: 10, metadata: { purchaseLoyaltyLedgerId: 9001 } }],
+    ], [501, 601, 701]);
+
+    await ingestTicketPurchase({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      eventId: 77, venueId: 10, communityId: 3,
+      order: normalizedOrder(), tickets: [normalizedTicket()],
+      resolveTicketTypeId: () => 55,
+    }, db);
+
+    expect(mockEmitBenefitGranted).toHaveBeenCalledOnce();
+    expect(mockEmitBenefitGranted.mock.calls[0][0]).toMatchObject({ userId: 10, userBenefitId: 502, benefitDefinitionId: 11 });
   });
 
   it("participante sin identidad resuelta → crea el ticket con userId=null y registra unresolved_operations con operationType='order'", async () => {

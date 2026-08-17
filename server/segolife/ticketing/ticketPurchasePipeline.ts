@@ -53,6 +53,7 @@ import {
 } from "../../../drizzle/schema";
 import { earnTokens } from "../tokens/tokenEngine";
 import { evaluateBenefitsForOrigin } from "../benefits/benefitRuleEngine";
+import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/benefitEvents";
 import { resolveIdentity, persistIdentityMapping, isConfirmedResolutionMethod } from "../integrations/identityResolver";
 import { recordUnresolvedOperation } from "../integrations/unresolvedOperationsService";
 import { transitionOrderStatus, OrderStateError, type TicketOrderStatus } from "./orderStateMachine";
@@ -202,7 +203,11 @@ async function grantPurchaseLoyalty(
     outcome = { ledgerId: null, reason: err instanceof TokenEngineError ? toDenialReason(err.code) : null };
   }
 
-  await evaluateBenefitsForOrigin({
+  // PRE-16.15 (auditoría overnight, G): el resultado se descartaba por
+  // completo — un Benefit desbloqueado por un ticket Fourvenues nunca
+  // notificaba al Student. Mismo evento canónico que commercePipeline.ts,
+  // nunca un segundo sistema de notificación.
+  const unlockedBenefits = await evaluateBenefitsForOrigin({
     type: "ticket",
     userId: buyerUserId,
     venueId: input.venueId ?? null,
@@ -213,6 +218,7 @@ async function grantPurchaseLoyalty(
     ledgerId,
     occurredAt: at,
   }, conn).catch(() => []); // un fallo en Benefits nunca revierte el pedido ya registrado. Idempotente por sí solo — seguro en cada reintento.
+  for (const u of unlockedBenefits) emitBenefitGranted(buildBenefitGrantedPayload(u.userBenefit, u.definition));
 
   const attempt = buildNextAttempt(outcome, previousAttempt, at);
   return { attempt, historical: false };

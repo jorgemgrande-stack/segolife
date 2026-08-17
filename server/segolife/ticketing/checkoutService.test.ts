@@ -9,13 +9,14 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockTransitionOrderStatus, mockGetPaymentProvider, mockIssueTicketsForOrder, mockEmitEngagementEvent, mockEarnTokens, mockEvaluateBenefitsForOrigin } = vi.hoisted(() => ({
+const { mockTransitionOrderStatus, mockGetPaymentProvider, mockIssueTicketsForOrder, mockEmitEngagementEvent, mockEarnTokens, mockEvaluateBenefitsForOrigin, mockEmitBenefitGranted } = vi.hoisted(() => ({
   mockTransitionOrderStatus: vi.fn(),
   mockGetPaymentProvider: vi.fn(),
   mockIssueTicketsForOrder: vi.fn(),
   mockEmitEngagementEvent: vi.fn(),
   mockEarnTokens: vi.fn(),
   mockEvaluateBenefitsForOrigin: vi.fn(),
+  mockEmitBenefitGranted: vi.fn(),
 }));
 
 vi.mock("./orderStateMachine", () => ({
@@ -27,6 +28,10 @@ vi.mock("./ticketIssuanceService", () => ({ issueTicketsForOrder: mockIssueTicke
 vi.mock("../engagement/engagementEvents", () => ({ emitEngagementEvent: mockEmitEngagementEvent }));
 vi.mock("../tokens/tokenEngine", () => ({ earnTokens: mockEarnTokens }));
 vi.mock("../benefits/benefitRuleEngine", () => ({ evaluateBenefitsForOrigin: mockEvaluateBenefitsForOrigin }));
+vi.mock("../benefits/benefitEvents", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../benefits/benefitEvents")>();
+  return { ...actual, emitBenefitGranted: mockEmitBenefitGranted };
+});
 
 // Pre-16.2 — "Online Event Checkout — SegoTokens + Money".
 const { mockReserveTokenSpend, mockCaptureTokenSpend, mockReleaseTokenSpend } = vi.hoisted(() => ({
@@ -152,6 +157,25 @@ describe("checkoutService — initiatePayment", () => {
     });
     expect(mockEvaluateBenefitsForOrigin).toHaveBeenCalledOnce();
     expect(mockEvaluateBenefitsForOrigin.mock.calls[0][0]).toMatchObject({ type: "ticket", userId: 42, ledgerId: 999 });
+  });
+
+  it("PRE-16.15 (G): un Benefit desbloqueado por la compra de un ticket SÍ emite BenefitGranted (antes se descartaba en silencio)", async () => {
+    mockGetPaymentProvider.mockReturnValue({ providerKey: "mock", createPayment: vi.fn().mockResolvedValue({ status: "succeeded", externalPaymentId: "mock_123" }) });
+    mockTransitionOrderStatus
+      .mockResolvedValueOnce(orderFixture({ status: "awaiting_payment" }))
+      .mockResolvedValueOnce(orderFixture({ status: "paid" }));
+    mockEvaluateBenefitsForOrigin.mockResolvedValue([{
+      userBenefit: { id: 501, userId: 42, benefitDefinitionId: 9, communityId: 1, sourceType: "ticket", sourceId: 1, sourceVenueId: 10, grantedAt: new Date("2026-06-01"), validFrom: new Date("2026-06-01"), validUntil: null },
+      definition: { destinationVenueId: 10, destinationEventId: 5 },
+      rule: {},
+      qrToken: "tok",
+    }]);
+
+    const { db } = makeMockDb({ order: orderFixture({ totalCents: 2000 }) });
+    await initiatePayment(1, undefined, db);
+
+    expect(mockEmitBenefitGranted).toHaveBeenCalledOnce();
+    expect(mockEmitBenefitGranted.mock.calls[0][0]).toMatchObject({ userId: 42, userBenefitId: 501, benefitDefinitionId: 9 });
   });
 
   it("earnTokens falla (p.ej. regla desactivada) → el pedido queda igualmente pagado y con tickets emitidos", async () => {
