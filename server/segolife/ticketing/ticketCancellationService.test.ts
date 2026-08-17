@@ -28,17 +28,22 @@ vi.mock("../tokens/tokenLedgerService", () => ({ reverseTransaction: mockReverse
 const { mockReverseTokenSpend } = vi.hoisted(() => ({ mockReverseTokenSpend: vi.fn() }));
 vi.mock("../tokens/tokenSpendService", () => ({ reverseTokenSpend: mockReverseTokenSpend }));
 
-import { cancelOrder, refundOrder } from "./ticketCancellationService";
-import { eventTickets, ticketPayments, tokenLedger } from "../../../drizzle/schema";
+// PRE-16.15 BUG-11 — el reembolso de una entrada online ahora debe entrar en
+// el feed unificado de reembolsos (mismo primitivo que POS/puerta).
+const { mockRecordCommerceRefund } = vi.hoisted(() => ({ mockRecordCommerceRefund: vi.fn() }));
+vi.mock("../commerce/refundOrchestrator", () => ({ recordCommerceRefund: mockRecordCommerceRefund }));
 
-function makeMockDb(config: { order: Record<string, unknown>; tickets: Array<Record<string, unknown>>; payment?: Record<string, unknown> | null; purchaseLedgerEntry?: Record<string, unknown> | null }) {
+import { cancelOrder, refundOrder } from "./ticketCancellationService";
+import { eventTickets, ticketPayments, tokenLedger, events } from "../../../drizzle/schema";
+
+function makeMockDb(config: { order: Record<string, unknown>; tickets: Array<Record<string, unknown>>; payment?: Record<string, unknown> | null; purchaseLedgerEntry?: Record<string, unknown> | null; eventRow?: Record<string, unknown> | null }) {
   const b: any = {};
-  let currentTable: "orders" | "tickets" | "payments" | "ledger" = "orders";
+  let currentTable: "orders" | "tickets" | "payments" | "ledger" | "events" = "orders";
   let mode: "select" | "update" = "select";
   b.select = () => { mode = "select"; return b; };
   b.update = () => { mode = "update"; return b; };
   b.set = () => b;
-  b.from = (t: unknown) => { currentTable = t === eventTickets ? "tickets" : t === ticketPayments ? "payments" : t === tokenLedger ? "ledger" : "orders"; return b; };
+  b.from = (t: unknown) => { currentTable = t === eventTickets ? "tickets" : t === ticketPayments ? "payments" : t === tokenLedger ? "ledger" : t === events ? "events" : "orders"; return b; };
   b.where = () => {
     if (mode === "update") return Promise.resolve([{ affectedRows: 1 }]);
     if (currentTable === "tickets") return Promise.resolve(config.tickets);
@@ -48,6 +53,7 @@ function makeMockDb(config: { order: Record<string, unknown>; tickets: Array<Rec
     if (currentTable === "orders") return Promise.resolve([config.order]);
     if (currentTable === "payments") return Promise.resolve(config.payment ? [config.payment] : []);
     if (currentTable === "ledger") return Promise.resolve(config.purchaseLedgerEntry ? [config.purchaseLedgerEntry] : []);
+    if (currentTable === "events") return Promise.resolve([config.eventRow !== undefined ? config.eventRow : { venueId: 20 }].filter(Boolean));
     return Promise.resolve([]);
   };
   return b as any;
@@ -235,5 +241,81 @@ describe("ticketCancellationService — refundOrder", () => {
 
     const result = await refundOrder(1, 9, "Cliente lo solicita", db);
     expect(result.reconciliationRequired).toBe(false);
+  });
+
+  // ─── PRE-16.15 BUG-11 — reembolso online entra en el feed unificado ────────
+
+  it("un reembolso de dinero-solo online registra el hecho en el feed unificado (commerce_refunds) con el BRUTO del pedido, venueId resuelto del evento", async () => {
+    mockGetPaymentProvider.mockReturnValue({ refundPayment: vi.fn().mockResolvedValue({ status: "refunded" }) });
+    mockTransitionOrderStatus.mockResolvedValue({ id: 1, status: "refunded", userId: 42, eventId: 5 });
+    const db = makeMockDb({
+      order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {} },
+      tickets: [{ id: 10, status: "issued" }],
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc", amountCents: 2000 },
+      eventRow: { venueId: 20 },
+    });
+
+    await refundOrder(1, 9, "Cliente lo solicita", db);
+
+    expect(mockRecordCommerceRefund).toHaveBeenCalledOnce();
+    expect(mockRecordCommerceRefund.mock.calls[0][0]).toMatchObject({
+      sourceType: "ticket_order", sourceId: 1, venueId: 20, eventId: 5, userId: 42,
+      amountCents: 2000, moneyRefundStatus: "completed", partial: false,
+    });
+  });
+
+  it("un reembolso 100% SegoTokens también registra el hecho en el feed unificado, con el BRUTO (nunca 0)", async () => {
+    mockGetPaymentProvider.mockReturnValue({ refundPayment: vi.fn() });
+    mockReverseTokenSpend.mockResolvedValue({ tokensReserved: 200 });
+    mockTransitionOrderStatus.mockResolvedValue({ id: 1, status: "refunded", userId: 42, eventId: 5, tokenReservationId: 900 });
+    const db = makeMockDb({
+      order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {}, tokenReservationId: 900 },
+      tickets: [{ id: 10, status: "issued" }],
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: null, amountCents: 0 },
+    });
+
+    await refundOrder(1, 9, "Cliente lo solicita", db);
+
+    expect(mockRecordCommerceRefund).toHaveBeenCalledOnce();
+    expect(mockRecordCommerceRefund.mock.calls[0][0]).toMatchObject({ amountCents: 2000 }); // bruto, no el tramo de dinero (0)
+  });
+
+  it("un reintento de idempotencyKey (mismo orderId) usa la MISMA clave estable — nunca duplica la fila en el feed", async () => {
+    mockGetPaymentProvider.mockReturnValue({ refundPayment: vi.fn().mockResolvedValue({ status: "refunded" }) });
+    mockTransitionOrderStatus.mockResolvedValue({ id: 1, status: "refunded", userId: 42, eventId: 5 });
+    const db = makeMockDb({
+      order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {} },
+      tickets: [{ id: 10, status: "issued" }],
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc", amountCents: 2000 },
+    });
+
+    await refundOrder(1, 9, "Cliente lo solicita", db);
+    expect(mockRecordCommerceRefund.mock.calls[0][0]).toMatchObject({ idempotencyKey: "online_refund:1" });
+  });
+
+  it("si registrar en el feed unificado falla, el reembolso de dinero/SegoTokens ya real NUNCA se deshace (best-effort)", async () => {
+    mockGetPaymentProvider.mockReturnValue({ refundPayment: vi.fn().mockResolvedValue({ status: "refunded" }) });
+    mockTransitionOrderStatus.mockResolvedValue({ id: 1, status: "refunded", userId: 42, eventId: 5 });
+    mockRecordCommerceRefund.mockRejectedValue(new Error("boom"));
+    const db = makeMockDb({
+      order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {} },
+      tickets: [{ id: 10, status: "issued" }],
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc", amountCents: 2000 },
+    });
+
+    const result = await refundOrder(1, 9, "Cliente lo solicita", db);
+    expect(result.reconciliationRequired).toBe(false); // el refund real ya ocurrió, no se revierte por un fallo aquí
+  });
+
+  it("order con reconciliation_required (ticket ya usado) NUNCA registra un reembolso en el feed — el dinero no se tocó", async () => {
+    mockGetPaymentProvider.mockReturnValue({ refundPayment: vi.fn() });
+    mockTransitionOrderStatus.mockResolvedValue({ id: 1, status: "reconciliation_required" });
+    const db = makeMockDb({
+      order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {} },
+      tickets: [{ id: 10, status: "used" }],
+    });
+
+    await refundOrder(1, 9, "Cliente lo solicita", db);
+    expect(mockRecordCommerceRefund).not.toHaveBeenCalled();
   });
 });

@@ -19,13 +19,14 @@
 import { eq, and, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { ticketOrders, eventTickets, ticketPayments, tokenLedger, type TicketOrder } from "../../../drizzle/schema";
+import { ticketOrders, eventTickets, ticketPayments, tokenLedger, events, type TicketOrder } from "../../../drizzle/schema";
 import { transitionOrderStatus, OrderStateError } from "./orderStateMachine";
 import { getPaymentProvider } from "./payments/paymentProviderRegistry";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
 import { CheckoutError } from "./inventoryHoldService";
 import { reverseTransaction, isLedgerEntryReversed } from "../tokens/tokenLedgerService";
 import { reverseTokenSpend } from "../tokens/tokenSpendService";
+import { recordCommerceRefund } from "../commerce/refundOrchestrator";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -111,6 +112,35 @@ export async function refundOrder(orderId: number, refundedByUserId: number, rea
     } catch (err) {
       console.error(`[ticketCancellationService] No se pudieron revertir los SegoTokens (orderId=${orderId}):`, err);
     }
+  }
+
+  // PRE-16.15 BUG-11 (auditoría overnight): antes, un reembolso de entrada
+  // online (a diferencia del reembolso de POS/puerta, que sí lo hacían)
+  // nunca se registraba en el feed unificado de reembolsos
+  // (commerce_refunds) — el dinero era real, pero quedaba invisible para
+  // el panel de "Devoluciones" y para settlementService.ts, que lee
+  // exclusivamente de esa tabla. amountCents es el BRUTO del pedido (nunca
+  // solo el tramo de dinero), mismo criterio que doorSaleService.refundDoorSale
+  // y consistente con lo que settlementService.ts espera de refundsCents.
+  // Best-effort: nunca deshace un reembolso de dinero/SegoTokens ya real.
+  try {
+    const [event] = await conn.select({ venueId: events.venueId }).from(events).where(eq(events.id, order.eventId)).limit(1);
+    await recordCommerceRefund({
+      sourceType: "ticket_order",
+      sourceId: order.id,
+      venueId: event?.venueId ?? null,
+      eventId: order.eventId,
+      userId: order.userId,
+      amountCents: order.totalCents,
+      tokensRestored: 0, // el importe exacto vive en token_spend_reservations — mismo criterio que refundOrchestrator.ts
+      moneyRefundStatus: "completed",
+      reason,
+      partial: false,
+      refundedByUserId,
+      idempotencyKey: `online_refund:${order.id}`,
+    }, conn);
+  } catch (err) {
+    console.error(`[ticketCancellationService] No se pudo registrar el reembolso en el feed unificado (orderId=${orderId}):`, err);
   }
 
   if (refunded.userId) {
