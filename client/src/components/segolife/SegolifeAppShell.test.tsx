@@ -39,6 +39,7 @@ vi.mock("@/lib/trpc", () => ({
     },
     home: { getSummary: { useQuery: noopQuery } },
     studentNotifications: { unreadCount: { useQuery: noopQuery } },
+    students: { me: { useQuery: noopQuery } },
     communities: { list: { useQuery: noopQuery }, myMemberships: { useQuery: mockMyMemberships } },
     config: { getPublicSettings: { useQuery: noopQuery } },
     ticketPurchase: { myIdentityToken: { useQuery: noopQuery }, rotateMyIdentityToken: { useMutation: () => ({ mutate: vi.fn() }) } },

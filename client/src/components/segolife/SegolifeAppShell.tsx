@@ -36,7 +36,7 @@ export function SegolifeAppShell({
   hideNav?: boolean;
   title?: string;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { community, slug, loading, availableLocales } = useCommunity();
   const [currentPath, navigate] = useLocation();
   // El redirect-a-login de useAuth es un efecto independiente del render (navega
@@ -60,6 +60,21 @@ export function SegolifeAppShell({
   useEffect(() => {
     document.title = title ? `${title} · Segolife` : "Segolife";
   }, [title]);
+
+  // PRE-16.15 (auditoría overnight): CommunityContext ya aplica
+  // community.defaultLocale al resolver la comunidad, pero la preferencia
+  // EXPLÍCITA del Student (guardada en student_profiles.preferredLocale
+  // desde el selector de Profile.tsx) nunca se releía al cargar la app —
+  // cada sesión nueva arrancaba en el default de la comunidad hasta que el
+  // Student volvía a tocar el selector. Precedencia exigida: preferencia
+  // explícita > default de comunidad > fallback de plataforma — como
+  // CommunityContext ya aplicó el default ANTES de que esta query resuelva,
+  // basta con sobrescribir SOLO cuando el Student sí tiene una preferencia
+  // guardada; si no la tiene, el default ya aplicado queda intacto.
+  const { data: me } = trpc.students.me.useQuery(undefined, { enabled: !!user, staleTime: 60_000 });
+  useEffect(() => {
+    if (me?.profile.preferredLocale) i18n.changeLanguage(me.profile.preferredLocale);
+  }, [me?.profile.preferredLocale, i18n]);
 
   // Fase 15 — misma comunidad que ya resuelve la URL (`community?.id`), en
   // vez de dejar que el backend adivine "la primera membresía" (spec §11/§13).
@@ -158,7 +173,7 @@ export function SegolifeAppShell({
           captura en Event Detail — las 8 páginas hideNav lo heredaban). */}
       <div className={`flex min-w-0 flex-1 flex-col ${hideNav ? "" : "xl:pl-64"}`}>
         <div className="xl:hidden">
-          <SegolifeHeader slug={slug} availableLocales={availableLocales} unreadCount={unreadCount ?? 0} />
+          <SegolifeHeader slug={slug} availableLocales={availableLocales} unreadCount={unreadCount ?? 0} isAuthenticated={!!user} />
         </div>
         {!hideNav && <SegolifeDesktopTopBar slug={slug} unreadCount={unreadCount ?? 0} />}
         {/* pb-32: pb-24 dejaba el último elemento de páginas largas (ej. "Log

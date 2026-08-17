@@ -23,6 +23,7 @@ vi.mock("@/lib/trpc", () => ({
     communities: { list: { useQuery: noopQuery }, myMemberships: { useQuery: noopQuery } },
     home: { getSummary: { useQuery: noopQuery } },
     studentNotifications: { unreadCount: { useQuery: noopQuery } },
+    students: { me: { useQuery: noopQuery } },
     config: { getPublicSettings: { useQuery: noopQuery } },
     auth: {
       me: { useQuery: () => ({ data: null, isLoading: false }) },
