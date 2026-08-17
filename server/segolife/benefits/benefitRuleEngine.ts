@@ -36,7 +36,7 @@ import {
 import { type AnyDbHandle, countRecentEarnEvents } from "../tokens/tokenLedgerService";
 import { isWithinTimeRange, resolveMadridMoment } from "../tokens/tokenScheduleService";
 import { computeValidityWindow } from "./benefitValidityEngine";
-import { evaluateAggregateMetric } from "./benefitAggregateMetrics";
+import { evaluateAggregateMetric, aggregateWindowStart } from "./benefitAggregateMetrics";
 import {
   grantBenefit,
   countGrantsByRuleForUser,
@@ -207,6 +207,22 @@ async function passesLimits(rule: BenefitRule, origin: BenefitOrigin, conn: AnyD
 function buildIdempotencyKey(rule: BenefitRule, origin: BenefitOrigin, index: number): string | null {
   if (rule.oncePerRule) {
     const base = `benefit_rule:${rule.id}:once:user:${origin.userId}`;
+    return rule.quantity > 1 ? `${base}:${index}` : base;
+  }
+  // PRE-16.15 (auditoría overnight, bug real): passesRecurrenceCondition
+  // evalúa "¿el conteo DENTRO de esta ventana ya alcanzó el umbral?" — una
+  // vez cruzado, el conteo solo puede crecer, así que la condición sigue
+  // siendo true para CUALQUIER hecho posterior dentro de la MISMA ventana.
+  // Sin esto, cada hecho adicional generaba una clave distinta (por
+  // sourceId) y volvía a conceder sin límite mientras el umbral siguiera
+  // superado — nunca se "re-otorgaba conscientemente", solo no paraba.
+  // Clave fija por (regla, usuario, inicio de ventana): concede una única
+  // vez por ventana y SÍ vuelve a conceder en la ventana siguiente — la
+  // recurrencia entre ventanas es intencional (spec §7), no se rompe aquí.
+  if (rule.aggregateMetric != null && rule.aggregateThreshold != null) {
+    const window = rule.recurrenceWindow ?? "day";
+    const since = aggregateWindowStart(window, origin.occurredAt);
+    const base = `benefit_rule:${rule.id}:aggregate:${since.getTime()}:user:${origin.userId}`;
     return rule.quantity > 1 ? `${base}:${index}` : base;
   }
   if (origin.sourceId == null) return null;

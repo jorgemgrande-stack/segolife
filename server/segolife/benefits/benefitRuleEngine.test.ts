@@ -570,6 +570,59 @@ describe("evaluateBenefitsForOrigin — aggregate_metric (umbral sobre hechos re
   });
 });
 
+// PRE-16.15 (auditoría overnight, bug real): una regla aggregate_metric SIN
+// once_per_rule=true (el caso por defecto — assertValidRuleInput nunca lo
+// exige) seguía re-concediendo el mismo Benefit en CADA hecho adicional
+// mientras el umbral permaneciera superado dentro de la misma ventana (el
+// conteo solo crece, así que passesRecurrenceCondition da true siempre) —
+// no era una recurrencia intencional entre ventanas, era simplemente que
+// nunca paraba. Fix: buildIdempotencyKey usa una clave fija por (regla,
+// usuario, inicio de ventana) para reglas de agregado, colisionando en el
+// mismo unique constraint que ya protege once_per_rule.
+describe("evaluateBenefitsForOrigin — aggregate_metric sin once_per_rule no re-concede dentro de la misma ventana (bug real)", () => {
+  it("dos hechos distintos que ambos superan el umbral en la MISMA ventana producen un solo beneficio", async () => {
+    mockEvaluateAggregateMetric.mockResolvedValue(true);
+    const { db, getUserBenefitRows } = makeRuleEngineMockDb({
+      rules: [blankRule({ aggregateMetric: "commerce_count", aggregateThreshold: 5, recurrenceWindow: "week", oncePerRule: false })],
+      definition: blankDefinition(),
+    });
+    const firstFact = new Date("2026-06-12T21:00:00Z"); // viernes
+    const secondFact = new Date("2026-06-13T10:00:00Z"); // sábado, misma semana ISO
+    const first = await evaluateBenefitsForOrigin(blankOrigin({ sourceId: 5005, occurredAt: firstFact }), db);
+    const second = await evaluateBenefitsForOrigin(blankOrigin({ sourceId: 5006, occurredAt: secondFact }), db);
+    expect(first).toHaveLength(1);
+    expect(second).toEqual([]); // misma ventana → misma clave de idempotencia → bloqueado
+    expect(getUserBenefitRows()).toHaveLength(1);
+  });
+
+  it("un hecho en la SIGUIENTE ventana sí vuelve a conceder (recurrencia intencional entre ventanas, no romperla)", async () => {
+    mockEvaluateAggregateMetric.mockResolvedValue(true);
+    const { db, getUserBenefitRows } = makeRuleEngineMockDb({
+      rules: [blankRule({ aggregateMetric: "commerce_count", aggregateThreshold: 5, recurrenceWindow: "week", oncePerRule: false })],
+      definition: blankDefinition(),
+    });
+    const thisWeek = new Date("2026-06-12T21:00:00Z");
+    const nextWeek = new Date("2026-06-20T21:00:00Z");
+    const first = await evaluateBenefitsForOrigin(blankOrigin({ sourceId: 5005, occurredAt: thisWeek }), db);
+    const second = await evaluateBenefitsForOrigin(blankOrigin({ sourceId: 6006, occurredAt: nextWeek }), db);
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    expect(getUserBenefitRows()).toHaveLength(2);
+  });
+
+  it("la clave de idempotencia de una regla de agregado nunca depende del sourceId del hecho que dispara", async () => {
+    mockEvaluateAggregateMetric.mockResolvedValue(true);
+    const { db, getUserBenefitRows } = makeRuleEngineMockDb({
+      rules: [blankRule({ id: 9, aggregateMetric: "commerce_count", aggregateThreshold: 5, recurrenceWindow: "day" })],
+      definition: blankDefinition(),
+    });
+    await evaluateBenefitsForOrigin(blankOrigin({ sourceId: 77777 }), db);
+    const key = getUserBenefitRows()[0].idempotencyKey as string;
+    expect(key).toContain("benefit_rule:9:aggregate:");
+    expect(key).not.toContain("77777");
+  });
+});
+
 // SEGOLIFE — THRESHOLD CROSSING / IDEMPOTENCIA CONCURRENTE (Fase 6, spec
 // §13/§14 — CRITICAL, "concurrent 5th does not duplicate"). Con
 // once_per_rule=true la clave de idempotencia YA NO depende de sourceId
