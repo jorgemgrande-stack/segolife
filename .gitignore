@@ -28,6 +28,12 @@ artifacts/pre16-17-browser/
 playwright-report/
 test-results/
 
+# Fase 17 — PDFs de entrega generados a partir de docs/handbook/*.md
+# (artifacts locales, no versionados; regenerar con
+# scripts/generate-handbook-pdfs.mjs). El .zip de entrega tampoco se versiona.
+docs/handbook/pdf/
+SEGOLIFE_CLIENT_HANDBOOK_PDF.zip
+
 # IDE and editor files
 .vscode/
 .idea/
