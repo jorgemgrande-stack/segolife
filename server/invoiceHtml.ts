@@ -3,15 +3,8 @@
  * Usado por generateInvoicePdf (crm.ts) y por el endpoint de vista previa.
  */
 
-import { drizzle } from "drizzle-orm/mysql2";
-import mysql from "mysql2/promise";
-import { sql } from "drizzle-orm";
-import { siteSettings } from "../drizzle/schema";
-import { getSystemSettingSync } from "./config";
+import { getSystemSetting, getSystemSettingSync } from "./config";
 import { groupTaxBreakdown, totalTaxAmount, type TaxBreakdownLine } from "./taxUtils";
-
-const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
-const db = drizzle(_pool);
 
 export interface InvoiceHtmlParams {
   invoiceNumber: string;
@@ -34,24 +27,36 @@ export interface InvoiceHtmlParams {
   taxBreakdown?: TaxBreakdownLine[];
 }
 
+// PRE-16.16 (§17-19/§61): site_settings.legalCompany* y system_settings
+// (site_legal_name/brand_nif/brand_address/site_legal_zip|city|province)
+// eran DOS fuentes de identidad legal desconectadas — PRE-16.15 solo pudo
+// poblar ambas a la vez con los mismos datos como parche. system_settings
+// es la fuente canónica real: es la que edita el panel admin (Settings.tsx
+// "Empresa legal", ConfigPanel.tsx, OnboardingWizard.tsx, vía el mapeo de
+// claves en routers.ts) y la única con metadatos (isPublic/isSensitive/
+// categoría). Este es el único lector que quedaba en site_settings — se
+// migra a leer system_settings directamente, con getSystemSetting (async,
+// lectura real de BD con caché de 60s) en vez de getSystemSettingSync
+// (solo caché, podría no estar caliente todavía) dado que esto respalda
+// facturas reales. site_settings.legalCompany* queda sin lectores activos
+// tras este cambio — no se borra la tabla/filas (fuera de alcance), solo
+// deja de ser una segunda verdad editable.
 export async function getLegalCompanySettings(): Promise<{
   name: string; cif: string; address: string; city: string;
   zip: string; province: string; email: string; phone: string; iban: string;
 }> {
-  const rows = await db.select().from(siteSettings)
-    .where(sql`\`key\` IN ('legalCompanyName','legalCompanyCif','legalCompanyAddress','legalCompanyCity','legalCompanyZip','legalCompanyProvince','legalCompanyEmail','legalCompanyPhone','legalCompanyIban')`);
-  const s: Record<string, string> = Object.fromEntries(rows.map(r => [r.key, r.value ?? ""]));
-  return {
-    name:     s.legalCompanyName     || "HAYQUE CAPITAL, S.L.",
-    cif:      s.legalCompanyCif      || "B13989264",
-    address:  s.legalCompanyAddress  || "Finca Lindaraja, s/n",
-    city:     s.legalCompanyCity     || "Segovia",
-    zip:      s.legalCompanyZip      || "40420",
-    province: s.legalCompanyProvince || "Segovia",
-    email:    s.legalCompanyEmail    || "",
-    phone:    s.legalCompanyPhone    || "",
-    iban:     s.legalCompanyIban     || "",
-  };
+  const [name, cif, address, city, zip, province, email, phone, iban] = await Promise.all([
+    getSystemSetting("site_legal_name",     "HAYQUE CAPITAL, S.L."),
+    getSystemSetting("brand_nif",           "B13989264"),
+    getSystemSetting("brand_address",       "Finca Lindaraja, s/n"),
+    getSystemSetting("site_legal_city",     "Segovia"),
+    getSystemSetting("site_legal_zip",      "40420"),
+    getSystemSetting("site_legal_province", "Segovia"),
+    getSystemSetting("site_legal_email",    ""),
+    getSystemSetting("site_legal_phone",    ""),
+    getSystemSetting("site_legal_iban",     ""),
+  ]);
+  return { name, cif, address, city, zip, province, email, phone, iban };
 }
 
 export async function buildInvoiceHtml(invoice: InvoiceHtmlParams): Promise<string> {

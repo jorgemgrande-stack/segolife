@@ -14,6 +14,7 @@ import {
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, staffProcedure, router, permissionProcedure } from "./_core/trpc";
+import { assertModuleEnabled } from "./_core/flagGuard";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
@@ -339,7 +340,13 @@ export const appRouter = router({
         return getAllMenuItems(input.zone);
       }),
 
+    // PRE-16.16 (§62): mismo motivo que submitBudget más abajo — feeds la
+    // misma tabla `leads` heredada.
     submitLead: publicProcedure
+      .use(async ({ ctx, next }) => {
+        await assertModuleEnabled("crm_module_enabled");
+        return next({ ctx });
+      })
       .input(z.object({
         name: z.string().min(2),
         email: z.string().email(),
@@ -363,7 +370,16 @@ export const appRouter = router({
         });
       }),
 
+    // PRE-16.16 (§62): mismo embudo leads/CRM heredado que crm.ts/proposals.ts
+    // (createLead escribe en la MISMA tabla `leads` que ese router gestiona)
+    // — es el CTA público más prominente ("Solicitar Presupuesto" en nav/
+    // footer/fichas de producto), pero seguía sin comprobar
+    // crm_module_enabled en absoluto.
     submitBudget: publicProcedure
+      .use(async ({ ctx, next }) => {
+        await assertModuleEnabled("crm_module_enabled");
+        return next({ ctx });
+      })
       .input(z.object({
         name: z.string().min(2),
         email: z.string().email(),

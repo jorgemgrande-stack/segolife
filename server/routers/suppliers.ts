@@ -26,7 +26,6 @@ import {
   roomTypes,
   spaTreatments,
   quotes,
-  siteSettings,
   users,
 } from "../../drizzle/schema";
 import { eq, and, gte, lte, desc, sql, inArray } from "drizzle-orm";
@@ -35,6 +34,7 @@ import { storagePut } from "../storage";
 import { generateDocumentNumber } from "../documentNumbers";
 import { htmlToPdf } from "../pdfGenerator";
 import { assertModuleEnabled } from "../_core/flagGuard";
+import { getSystemSetting } from "../config";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
 const db = drizzle(_pool);
@@ -1679,16 +1679,21 @@ export const settlementsRouter = router({
         .from(settlementLines)
         .where(eq(settlementLines.settlementId, input.id));
 
-      // Leer datos de empresa desde siteSettings
-      const settingsRows = await db.select().from(siteSettings)
-        .where(sql`\`key\` IN ('legalCompanyName','legalCompanyCif','legalCompanyAddress','legalCompanyEmail','legalCompanyPhone')`);
-      const s: Record<string, string> = Object.fromEntries(settingsRows.map(r => [r.key, r.value ?? ""]));
+      // PRE-16.16 (§17-19/§61): migrado de siteSettings a system_settings —
+      // ver comentario equivalente en partners.ts/invoiceHtml.ts.
+      const [companyName, companyCif, companyAddress, companyEmail, companyPhone] = await Promise.all([
+        getSystemSetting("site_legal_name", "HAYQUE CAPITAL, S.L."),
+        getSystemSetting("brand_nif", ""),
+        getSystemSetting("brand_address", "Finca Lindaraja, s/n · 40420 Segovia"),
+        getSystemSetting("site_legal_email", ""),
+        getSystemSetting("site_legal_phone", ""),
+      ]);
       const companyData = {
-        name: s.legalCompanyName || "HAYQUE CAPITAL, S.L.",
-        cif: s.legalCompanyCif || "",
-        address: s.legalCompanyAddress || "Finca Lindaraja, s/n · 40420 Segovia",
-        email: s.legalCompanyEmail || "",
-        phone: s.legalCompanyPhone || "",
+        name: companyName,
+        cif: companyCif,
+        address: companyAddress,
+        email: companyEmail,
+        phone: companyPhone,
       };
 
       const { url, key } = await generateSettlementPdfAndUpload({

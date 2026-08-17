@@ -7,10 +7,11 @@
 import { z } from "zod";
 import { adminProcedure, partnerProcedure, publicProcedure, router } from "../_core/trpc";
 import { assertModuleEnabled } from "../_core/flagGuard";
+import { getSystemSetting } from "../config";
 import { TRPCError } from "@trpc/server";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { partners, users, leads, partnerBillingBatches, partnerBillingBatchItems, experiences, transactions, siteSettings } from "../../drizzle/schema";
+import { partners, users, leads, partnerBillingBatches, partnerBillingBatchItems, experiences, transactions } from "../../drizzle/schema";
 import { eq, desc, and, gte, lte, notInArray, inArray, sql } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import { sendEmail } from "../mailer";
@@ -1140,16 +1141,22 @@ export const partnersRouter = router({
         .leftJoin(reservations, eq(partnerBillingBatchItems.reservationId, reservations.id))
         .where(eq(partnerBillingBatchItems.batchId, input.id));
 
-      // Datos fiscales de la empresa desde siteSettings (mismos que las liquidaciones de proveedor)
-      const settingsRows = await db.select().from(siteSettings)
-        .where(sql`\`key\` IN ('legalCompanyName','legalCompanyCif','legalCompanyAddress','legalCompanyEmail','legalCompanyPhone')`);
-      const s: Record<string, string> = Object.fromEntries(settingsRows.map(r => [r.key, r.value ?? ""]));
+      // PRE-16.16 (§17-19/§61): migrado de siteSettings (segunda fuente
+      // desconectada del panel admin real) a system_settings — misma
+      // fuente canónica que invoiceHtml.ts ya usa tras el mismo cambio.
+      const [companyName, companyCif, companyAddress, companyEmail, companyPhone] = await Promise.all([
+        getSystemSetting("site_legal_name", "HAYQUE CAPITAL, S.L."),
+        getSystemSetting("brand_nif", ""),
+        getSystemSetting("brand_address", "Finca Lindaraja, s/n · 40420 Segovia"),
+        getSystemSetting("site_legal_email", ""),
+        getSystemSetting("site_legal_phone", ""),
+      ]);
       const companyData = {
-        name: s.legalCompanyName || "HAYQUE CAPITAL, S.L.",
-        cif: s.legalCompanyCif || "",
-        address: s.legalCompanyAddress || "Finca Lindaraja, s/n · 40420 Segovia",
-        email: s.legalCompanyEmail || "",
-        phone: s.legalCompanyPhone || "",
+        name: companyName,
+        cif: companyCif,
+        address: companyAddress,
+        email: companyEmail,
+        phone: companyPhone,
       };
 
       const { url, key } = await generatePartnerBillingPdfAndUpload({
