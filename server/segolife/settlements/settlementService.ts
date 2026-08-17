@@ -48,15 +48,21 @@ export interface CalculateSettlementInput {
   createdByUserId: number;
 }
 
-async function tokenSubsidyForModel(sales: Array<{ tokenReservationId: number | null }>, model: string, conn: DbHandle): Promise<number> {
-  if (model === "no_settlement_value" || model === "venue_funded") return 0;
+/** Suma cruda de promotionalValueCents de una lista de reservas — SIN aplicar todavía ningún reparto por tokenFundingModel (spec Pre-16.15 §5-8: separar "cuánto valor ST hay" de "quién lo financia" para poder nettear reembolsos antes de repartir). */
+async function sumPromotionalValueCents(reservationIds: number[], conn: DbHandle): Promise<number> {
   let total = 0;
-  for (const s of sales) {
-    if (!s.tokenReservationId) continue;
-    const [r] = await conn.select({ promotionalValueCents: tokenSpendReservations.promotionalValueCents }).from(tokenSpendReservations).where(eq(tokenSpendReservations.id, s.tokenReservationId)).limit(1);
+  for (const id of reservationIds) {
+    const [r] = await conn.select({ promotionalValueCents: tokenSpendReservations.promotionalValueCents }).from(tokenSpendReservations).where(eq(tokenSpendReservations.id, id)).limit(1);
     total += r?.promotionalValueCents ?? 0;
   }
-  return model === "shared" ? Math.round(total / 2) : total; // platform_funded = 100%, shared = 50/50 (spec §60, split simple documentado)
+  return total;
+}
+
+/** Aplica el reparto de tokenFundingModel sobre un valor de ST ya neto (ventas del periodo menos lo revertido por reembolsos totales del periodo — ver calculateSettlement). */
+function applyTokenFundingModel(netTokenValueCents: number, model: string): number {
+  if (model === "no_settlement_value" || model === "venue_funded") return 0;
+  if (model === "shared") return Math.round(netTokenValueCents / 2); // spec §60, split simple documentado
+  return netTokenValueCents; // platform_funded = 100%
 }
 
 /**
@@ -135,10 +141,51 @@ export async function calculateSettlement(input: CalculateSettlementInput, db?: 
   const lineCommissionCents = lines.reduce((sum, l) => sum + (l.commissionCents ?? 0), 0);
   const commissionCents = commissionModel === "fixed_fee" ? fixedFeeCents : lineCommissionCents;
 
-  const tokenSubsidyCents = await tokenSubsidyForModel(
-    [...posSales.map(t => ({ tokenReservationId: t.tokenReservationId })), ...doorSales.map(d => ({ tokenReservationId: d.order.tokenReservationId }))],
-    tokenFundingModel, conn,
-  );
+  // PRE-16.15 BUG-10 (auditoría overnight — corrección de doble contabilización
+  // de SegoTokens): `grossSalesCents`/`netSalesCents` son SIEMPRE brutos —
+  // `totalCents` nunca se reduce por ST aplicado (mismo invariante que
+  // commerce_transactions/ticket_orders en todo el resto del dominio). El
+  // valor promocional de ST ya vive DENTRO de ese bruto — nunca es dinero
+  // real adicional que la plataforma cobró. El bug original sumaba
+  // `tokenSubsidyCents` ENCIMA de una base ya bruta cuando la plataforma
+  // cobraba (`collectorIsVenue=false`), pagando al venue el bruto completo
+  // Y ADEMÁS el reembolso ST — doble. La base correcta para "la plataforma
+  // paga al venue" es el DINERO REAL cobrado (bruto menos el valor ST), y
+  // el subsidio se SUMA aparte para reconstruir cuánto le corresponde
+  // realmente al venue según quién financia el ST (spec §60): así
+  // "plataforma cobra 31€ reales + financia 15€ de ST = paga 46€ al venue"
+  // en vez de "paga 46€ + 15€ = 61€".
+  //
+  // Reembolsos totales (`!refund.partial`, spec §21: SegoTokens/recompensa
+  // solo se revierten cuando el reembolso acumulado llega al 100%) revierten
+  // el valor ST de la venta ORIGINAL en el periodo en que ocurre el
+  // REEMBOLSO — no en el periodo de la venta original (que puede ya estar
+  // aprobado/pagado). Esto puede dejar netTokenValueCents/el subsidio en
+  // negativo en el periodo del reembolso — correcto: es un clawback real de
+  // lo que se sobrepagó al venue en un periodo anterior por una venta que ya
+  // no se sostiene.
+  const salesReservationIds = [...posSales.map(t => t.tokenReservationId), ...doorSales.map(d => d.order.tokenReservationId)]
+    .filter((id): id is number => id != null);
+  const grossTokenValueCents = await sumPromotionalValueCents(salesReservationIds, conn);
+
+  let reversedTokenValueCents = 0;
+  for (const refund of refunds) {
+    if (refund.partial) continue; // reembolso parcial -> spec §21, ST NUNCA se revierte todavía
+    const [original] = refund.sourceType === "commerce_transaction"
+      ? await conn.select({ tokenReservationId: commerceTransactions.tokenReservationId }).from(commerceTransactions).where(eq(commerceTransactions.id, refund.sourceId)).limit(1)
+      : await conn.select({ tokenReservationId: ticketOrders.tokenReservationId }).from(ticketOrders).where(eq(ticketOrders.id, refund.sourceId)).limit(1);
+    if (!original?.tokenReservationId) continue;
+    reversedTokenValueCents += await sumPromotionalValueCents([original.tokenReservationId], conn);
+  }
+
+  const netTokenValueCents = grossTokenValueCents - reversedTokenValueCents;
+  const tokenSubsidyCents = applyTokenFundingModel(netTokenValueCents, tokenFundingModel);
+  // Dinero real neto del periodo (bruto neto de reembolsos, menos el valor
+  // ST neto de reembolsos) — SOLO relevante cuando la plataforma cobra: es
+  // lo que la plataforma tiene efectivamente en mano para empezar a pagarle
+  // al venue, antes de sumar el subsidio de ST que le corresponda.
+  const netMoneyCollectedCents = netSalesCents - netTokenValueCents;
+
   // Benefits (spec §61/§62): arquitectura lista (benefitFundingModel
   // configurable), pero SIEMPRE 0 hoy — un Benefit no lleva un valor
   // monetario propio almacenado en Fase 4-6, y la spec prohíbe explícitamente
@@ -147,7 +194,7 @@ export async function calculateSettlement(input: CalculateSettlementInput, db?: 
   void benefitFundingModel;
 
   const collectorIsVenue = !seller.collectorEntity || seller.collectorEntity.id === seller.sellerEntity?.id;
-  const base = collectorIsVenue ? -commissionCents : netSalesCents - commissionCents;
+  const base = collectorIsVenue ? -commissionCents : netMoneyCollectedCents - commissionCents;
   const netPayableToVenueCents = base + tokenSubsidyCents + benefitSubsidyCents;
 
   // Recálculo del mismo periodo (antes de aprobar) sustituye sus líneas.
