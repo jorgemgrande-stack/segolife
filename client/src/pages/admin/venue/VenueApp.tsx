@@ -54,7 +54,15 @@ export default function VenueApp() {
   const [selectedVenueId, setSelectedVenueId] = useState<number | null>(null);
 
   const authQ = trpc.venueApp.myAuthorizedVenues.useQuery();
-  const allVenuesQ = trpc.venues.publicActive.useQuery({}, { enabled: !!authQ.data?.all });
+  // PRE-16.17A (QA de navegador, Block J): esta query alimenta venueOptions
+  // en AMBAS ramas (global y scoped, ver más abajo) — antes solo se activaba
+  // para admins globales (authQ.data.all), así que un venue_admin scoped a
+  // un único local (el caso normal) nunca la disparaba: venueOptions
+  // quedaba siempre vacío y el header mostraba literalmente "Venue" en vez
+  // del nombre real, para el 100% de esas cuentas. venues.publicActive es
+  // un procedure público y ligero — segura de pedir siempre que ya sepamos
+  // el resultado de authQ, no solo para el caso admin.
+  const allVenuesQ = trpc.venues.publicActive.useQuery({}, { enabled: !!authQ.data });
 
   const venueOptions = useMemo(() => {
     if (!authQ.data) return [];
