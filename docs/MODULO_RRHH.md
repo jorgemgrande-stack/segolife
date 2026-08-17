@@ -1,4 +1,11 @@
-# Módulo Personal / RRHH — Náyade Experiences
+# Módulo Personal / RRHH — Segolife
+
+> Nota (PRE-16.16B): módulo confirmado como funcionalidad ACTIVA de
+> Segolife (decisión de negocio explícita) — no es legado a retirar. La
+> tabla física sigue llamándose `monitors` por la razón documentada en la
+> sección 1 (preservar FK de `reservation_operational`); eso es un detalle
+> de implementación heredado, no una señal de que el módulo en sí sea de
+> Náyade.
 
 Documentación técnica del módulo de Recursos Humanos. Construido en 9 fases
 (migraciones `0100`–`0110`).

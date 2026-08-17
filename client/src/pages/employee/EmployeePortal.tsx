@@ -32,7 +32,7 @@ export default function EmployeePortal() {
             Hola, <span className="text-orange-400">{firstName}</span>
           </h1>
           <p className="text-sm text-white/50 mt-1">
-            Bienvenido a tu Portal del Empleado de Náyade Experiences.
+            Bienvenido a tu Portal del Empleado de Segolife.
           </p>
         </div>
 
@@ -149,7 +149,7 @@ export default function EmployeePortal() {
         {/* Estado */}
         {!isLoading && me && (
           <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.05] p-3 text-xs text-white/70">
-            ✓ Tu cuenta está activa. Empleado de <strong>{me.department ?? "Náyade Experiences"}</strong>
+            ✓ Tu cuenta está activa. Empleado de <strong>{me.department ?? "Segolife"}</strong>
             {me.position ? <> · {me.position}</> : null}.
           </div>
         )}

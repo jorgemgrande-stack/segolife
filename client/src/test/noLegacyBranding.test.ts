@@ -19,6 +19,14 @@ const SEGOLIFE_DIRS = [
   // (esa carpeta es el design system de la app autenticada), así que necesita
   // su propia entrada explícita para quedar cubierta por este guard.
   join(__dirname, "..", "components", "publicHome"),
+  // PRE-16.16B: el Portal del Empleado, la administración de Personal/RRHH y
+  // el Portal de Gestoría son ahora funcionalidad activa de Segolife — ningún
+  // guard de branding los cubría antes (confirmado: tenían Náyade real en
+  // producción, ver EmployeeLayout.tsx/EmployeePortal.tsx/EmployeesList.tsx/
+  // GestoriaPortal.tsx, ya corregidos en esta fase).
+  join(__dirname, "..", "pages", "employee"),
+  join(__dirname, "..", "pages", "admin", "hr"),
+  join(__dirname, "..", "pages", "gestoria"),
 ];
 
 // PublicHome.tsx vive en pages/ raíz (junto a Home.tsx, la home heredada de
@@ -73,7 +81,10 @@ const FORBIDDEN_PATTERNS = [
 // en server/segolife/*/noLegacyBranding.test.ts (Fase 7/8): se descartan los
 // comentarios antes de comprobar, solo importa el contenido que se renderiza.
 function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  // PRE-16.16B: negative lookbehind — no trata el "//" de una URL
+  // ("https://...") como inicio de comentario (antes ocultaba literales de
+  // dominio prohibidos, ej. "https://www.skicenter.es", al check de abajo).
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/.*$/gm, "");
 }
 
 function listSourceFiles(dir: string): string[] {

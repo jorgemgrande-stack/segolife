@@ -31,7 +31,9 @@ const FORBIDDEN_PATTERNS = [
 ];
 
 function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  // PRE-16.16B: negative lookbehind — no trata el "//" de una URL como
+  // inicio de comentario (antes ocultaba literales de dominio prohibidos).
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/.*$/gm, "");
 }
 
 function listSourceFilesRecursive(dir: string): string[] {

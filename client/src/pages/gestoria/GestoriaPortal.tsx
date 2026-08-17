@@ -62,7 +62,7 @@ export default function GestoriaPortal() {
         <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2 text-orange-400 font-bold">
             <Landmark className="w-5 h-5" />
-            <span className="text-sm uppercase tracking-wider">Portal de Gestoría · Náyade</span>
+            <span className="text-sm uppercase tracking-wider">Portal de Gestoría · Segolife</span>
           </div>
           <button
             onClick={() => logout().then(() => navigate("/login"))}

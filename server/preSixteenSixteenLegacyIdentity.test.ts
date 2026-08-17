@@ -17,7 +17,10 @@ const ROOT = join(__dirname, "..");
 const FORBIDDEN_PATTERNS = [/n[áa]yade/i, /skicenter/i];
 
 function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  // PRE-16.16B: el negative lookbehind evita tratar el "//" de una URL
+  // ("https://...") como inicio de comentario — antes lo troceaba y ocultaba
+  // literales de dominio como "https://www.skicenter.es" al check de abajo.
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/.*$/gm, "");
 }
 
 const FILES = [

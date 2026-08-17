@@ -15,8 +15,10 @@ import {
   LayoutDashboard, User, FileText, LogOut, Loader2, Phone, Clock, Banknote, CalendarOff,
 } from "lucide-react";
 
-const LOGO_FALLBACK = "https://d2xsxph8kpxj0f.cloudfront.net/310519663410228097/AV298FS8t5SaTurBBRqhgQ/nayade_blue_e9563f49.png";
-const NAYADE_PHONE = "+34 639 57 66 27";
+// PRE-16.16B: fallback local (nunca un asset de Náyade), mismo patrón ya
+// sancionado en Login.tsx — "Nunca brand_logo_url/brand_name heredado de
+// Náyade" como literal de código, aunque la fila en BD ya esté corregida.
+const LOGO_FALLBACK = "/icons/segolife-icon.svg";
 
 export default function EmployeeLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, logout } = useAuth();
@@ -51,6 +53,10 @@ function EmployeeLayoutInner({ user, location, navigate, logout, children }: {
 
   const brandLogo = (publicSettings as any)?.brand_logo_url || LOGO_FALLBACK;
   const employeeName = me?.fullName ?? (user as any).name ?? (user as any).email ?? "Empleado";
+  // PRE-16.16B: era un literal hardcodeado con el número de Náyade, mostrado
+  // sin condición a cualquier empleado real de Segolife. Se lee de la
+  // identidad canónica; sin fallback a otro número inventado.
+  const supportPhone = (publicSettings as any)?.brand_support_phone || "";
 
   return (
     <div className="min-h-screen text-white" style={{ backgroundColor: "#080e1c" }}>
@@ -60,7 +66,7 @@ function EmployeeLayoutInner({ user, location, navigate, logout, children }: {
           {/* Fila superior: logo + empleado + acciones */}
           <div className="flex items-center justify-between h-14">
             <Link href="/empleado" className="flex items-center gap-2.5">
-              <img src={brandLogo} alt="Náyade Experiences" className="h-7 w-auto object-contain" />
+              <img src={brandLogo} alt="Segolife" className="h-7 w-auto object-contain" />
             </Link>
 
             <div className="hidden sm:flex flex-col items-center">
@@ -69,14 +75,16 @@ function EmployeeLayoutInner({ user, location, navigate, logout, children }: {
             </div>
 
             <div className="flex items-center gap-2">
-              <a
-                href={`tel:${NAYADE_PHONE}`}
-                className="hidden sm:flex items-center gap-1.5 text-xs text-white/50 hover:text-orange-400 transition-colors border border-white/10 hover:border-orange-500/30 rounded-lg px-2.5 py-1.5"
-                title="Llamar a Náyade"
-              >
-                <Phone className="w-3.5 h-3.5" />
-                {NAYADE_PHONE}
-              </a>
+              {supportPhone && (
+                <a
+                  href={`tel:${supportPhone}`}
+                  className="hidden sm:flex items-center gap-1.5 text-xs text-white/50 hover:text-orange-400 transition-colors border border-white/10 hover:border-orange-500/30 rounded-lg px-2.5 py-1.5"
+                  title="Llamar a soporte"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  {supportPhone}
+                </a>
+              )}
               <button
                 onClick={() => logout().then(() => navigate("/login"))}
                 className="text-white/30 hover:text-white/70 transition-colors p-1.5"
@@ -115,10 +123,12 @@ function EmployeeLayoutInner({ user, location, navigate, logout, children }: {
 
       <footer className="border-t border-white/[0.06] py-4 mt-8">
         <div className="max-w-5xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-white/25">
-          <span>Portal del Empleado · Náyade Experiences</span>
-          <a href={`tel:${NAYADE_PHONE}`} className="hover:text-white/50 transition-colors flex items-center gap-1">
-            <Phone className="w-3 h-3" /> {NAYADE_PHONE}
-          </a>
+          <span>Portal del Empleado · Segolife</span>
+          {supportPhone && (
+            <a href={`tel:${supportPhone}`} className="hover:text-white/50 transition-colors flex items-center gap-1">
+              <Phone className="w-3 h-3" /> {supportPhone}
+            </a>
+          )}
         </div>
       </footer>
     </div>
