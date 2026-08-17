@@ -43,5 +43,23 @@ producción real. Commit verificado en el momento de cada tanda de tests vía
 | S (14 tests) | Anónimo/Student/Venue | RBAC/IDOR negativo, cliente + API | PASS (14/14) | — | — | — |
 | J-VENUE-01..14 (×7 cuentas) | Venue×7 | Smoke completo Venue App | **PASS AFTER FIX** (21/21) | Header mostraba el fallback literal "Venue" en vez del nombre real — `venues.publicActive` solo se activaba para admins globales | `86cb572` | Confirmado en navegador real, las 7 cuentas, incluida captura visual |
 
-**Bloques NO automatizados todavía** (G, H, I, K, L, M, N, O, P, Q, R, T) —
-ver informe final PRE-16.17A para el detalle de qué falta y por qué.
+### Fase 2 — Blocks G, H, I, K, L, M, N, O, P, T + recheck final (Block U)
+
+| Test ID | Rol | Superficie | Resultado | Hallazgo | Notas |
+|---|---|---|---|---|---|
+| G01-G03,G13,G15-16 | Anónimo/Student | Explore, detalle de evento, responsive | PASS | — | — |
+| G04-G07 | Student | Botón de compra (redirect externo Fourvenues) | PASS | **DATA STATE**: 0 eventos activos con venta nativa hoy — no hay dato real contra el que probar el hold de checkout nativo (G08-G12) sin fabricar datos de negocio | No es bug — `computePurchaseAction()` decide correctamente por evento real |
+| H01,H03,H06-07 | Student | Wallet: balance, consistencia | PASS | — | — |
+| I01-I04,I06-07,I09-10 | Anónimo/Student | QR de identidad ("Mi ID de SEGOLIFE" en Perfil) | PASS | — | — |
+| K-UI,K02 | Venue/Student | TPV — solo UI, sin solicitud real | PASS | — | K03-K08 (solicitud real + rechazo) queda **MANUAL REQUIRED** — toca ST reservado, aunque reversible |
+| L01-L05 | Venue | Puerta — solo UI, sin emitir entradas | PASS | — | — |
+| M01-M03,M09-10 | Student | Beneficios: lista, pestañas, responsive | PASS | Hallazgo menor: `?tab=benefits` no selecciona la pestaña (solo `invite` funciona por query param) — código inalcanzable en Rewards.tsx, no bug de seguridad | No corregido — prioridad muy baja |
+| N01-N03,N05,N09 | Student | Invitación: URL real, dominio canónico | PASS | — | — |
+| O01,O04-06 | Anónimo/Student | Notificaciones | PASS | — | Communication Center de Admin = CREDENTIAL REQUIRED |
+| P02,P05,P06 | Venue/Anónimo | Employee/HR negativo + branding | PASS | — | Admin-positivo = CREDENTIAL REQUIRED |
+| T (42 tests) | Anónimo/Student/Venue | Matriz responsive completa (desktop/tablet/móvil) | **PASS AFTER FIX** (test) | Banner de cookies interceptaba clics en el nav móvil del Venue App — fix en el TEST (dismissal), no en producto | — |
+| Block U (recheck, 104 tests) | — | Suite completa de una vez | 84 directo + 7 flaky-recuperado + 5 fallidos-en-el-run-completo | Los 5 verificados en aislamiento inmediatamente después: **los 5 pasan limpio** — confirma que son artefacto de carga (mi propia suite generando ~104 logins seguidos), no regresiones reales | 3 tests no llegaron a ejecutarse en esa tanda (cap de tiempo del run completo) — cada uno ya verificado por separado en su propio archivo, todos en verde |
+
+**Bug real encontrado y corregido esta fase:** ver commit `86cb572` (VenueApp.tsx, nombre de venue).
+
+**Bloques NO automatizados** (requieren credenciales de Admin que no están disponibles, o acción física real): Q (Admin), R (Command Center), partes positivas de O/P que requieren sesión Admin, K03-K08 (captura real de ST).
