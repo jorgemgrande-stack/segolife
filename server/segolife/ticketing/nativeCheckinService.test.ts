@@ -138,6 +138,43 @@ describe("nativeCheckinService — checkInTicketById (spec §27: búsqueda manua
     const db = makeMockDb(ticketFixture(), { id: 5, venueId: 99 });
     await expect(checkInTicketById({ ticketId: 1, staffUserId: 9, staffAuthorizedVenueIds: [1, 2, 3] }, db)).rejects.toMatchObject({ code: "UNAUTHORIZED_STAFF" });
   });
+
+  // ─── PRE-16.15 — privacidad cross-venue (auditoría overnight): un staff SIN
+  // autorización para el venue de un ticket NUNCA debe distinguir su estado
+  // real (cancelled/refunded/used/válido) — siempre UNAUTHORIZED_STAFF,
+  // nunca CANCELLED/REFUNDED/ALREADY_USED, para que la sola respuesta de
+  // error no filtre información de otro venue vía búsqueda manual/id.
+  describe("privacidad cross-venue — venue AJENO nunca revela el estado real del ticket (spec: siempre UNAUTHORIZED_STAFF)", () => {
+    const FOREIGN_EVENT = { id: 5, venueId: 99 }; // staff solo autorizado para [1,2,3]
+    const AUTHORIZED_IDS = [1, 2, 3];
+
+    it("venue ajeno + ticket VÁLIDO (issued) → UNAUTHORIZED_STAFF", async () => {
+      const db = makeMockDb(ticketFixture({ status: "issued" }), FOREIGN_EVENT);
+      await expect(checkInTicketById({ ticketId: 1, staffUserId: 9, staffAuthorizedVenueIds: AUTHORIZED_IDS }, db)).rejects.toMatchObject({ code: "UNAUTHORIZED_STAFF" });
+    });
+
+    it("venue ajeno + ticket CANCELADO → sigue siendo UNAUTHORIZED_STAFF, nunca CANCELLED (no revela que estaba cancelado)", async () => {
+      const db = makeMockDb(ticketFixture({ status: "cancelled" }), FOREIGN_EVENT);
+      await expect(checkInTicketById({ ticketId: 1, staffUserId: 9, staffAuthorizedVenueIds: AUTHORIZED_IDS }, db)).rejects.toMatchObject({ code: "UNAUTHORIZED_STAFF" });
+    });
+
+    it("venue ajeno + ticket REEMBOLSADO → sigue siendo UNAUTHORIZED_STAFF, nunca REFUNDED", async () => {
+      const db = makeMockDb(ticketFixture({ status: "refunded" }), FOREIGN_EVENT);
+      await expect(checkInTicketById({ ticketId: 1, staffUserId: 9, staffAuthorizedVenueIds: AUTHORIZED_IDS }, db)).rejects.toMatchObject({ code: "UNAUTHORIZED_STAFF" });
+    });
+
+    it("venue ajeno + ticket YA USADO → sigue siendo UNAUTHORIZED_STAFF, nunca ALREADY_USED", async () => {
+      const db = makeMockDb(ticketFixture({ status: "used" }), FOREIGN_EVENT);
+      await expect(checkInTicketById({ ticketId: 1, staffUserId: 9, staffAuthorizedVenueIds: AUTHORIZED_IDS }, db)).rejects.toMatchObject({ code: "UNAUTHORIZED_STAFF" });
+    });
+
+    it("venue AUTORIZADO sigue revelando el estado real (cancelled/refunded/used) — la privacidad es solo cross-venue, no una ofuscación general", async () => {
+      const OWN_EVENT = { id: 5, venueId: 1 };
+      await expect(checkInTicketById({ ticketId: 1, staffUserId: 9, staffAuthorizedVenueIds: AUTHORIZED_IDS }, makeMockDb(ticketFixture({ status: "cancelled" }), OWN_EVENT))).rejects.toMatchObject({ code: "CANCELLED" });
+      await expect(checkInTicketById({ ticketId: 1, staffUserId: 9, staffAuthorizedVenueIds: AUTHORIZED_IDS }, makeMockDb(ticketFixture({ status: "refunded" }), OWN_EVENT))).rejects.toMatchObject({ code: "REFUNDED" });
+      await expect(checkInTicketById({ ticketId: 1, staffUserId: 9, staffAuthorizedVenueIds: AUTHORIZED_IDS }, makeMockDb(ticketFixture({ status: "used" }), OWN_EVENT))).rejects.toMatchObject({ code: "ALREADY_USED" });
+    });
+  });
 });
 
 describe("nativeCheckinService — searchTickets (spec §27: solo localiza, nunca valida)", () => {

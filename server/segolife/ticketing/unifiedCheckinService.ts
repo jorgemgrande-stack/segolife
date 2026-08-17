@@ -257,17 +257,20 @@ export async function linkTicketToIdentityAndCheckIn(input: LinkTicketToIdentity
 
   const [ticket] = await conn.select().from(eventTickets).where(eq(eventTickets.id, input.ticketId)).limit(1);
   if (!ticket) throw new CheckinError("NOT_FOUND", "Entrada no encontrada");
-  if (ticket.userId != null) throw new CheckinError("ALREADY_LINKED", "Esta entrada ya tiene un Student identificado");
 
-  // Autorización de venue ANTES de mutar nada (mismo orden que
-  // performCheckIn) — sin esto, un staff no autorizado podría vincular una
-  // identidad a un ticket de otro venue aunque el check-in posterior lo
-  // rechace; la escritura en sí ya sería un IDOR.
+  // Autorización de venue ANTES de revelar/mutar nada (mismo orden que
+  // performCheckIn, PRE-16.15 auditoría overnight) — sin esto, un staff no
+  // autorizado podría (a) vincular una identidad a un ticket de otro venue
+  // (la escritura en sí ya sería un IDOR), y (b) aprender que un ticket de
+  // otro venue YA tiene un Student vinculado (ALREADY_LINKED) antes de que
+  // el rechazo por autorización llegara siquiera a comprobarse.
   const [event] = await conn.select({ venueId: events.venueId }).from(events).where(eq(events.id, ticket.eventId)).limit(1);
   if (!event) throw new CheckinError("NOT_FOUND", "Evento no encontrado");
   const staffAuthorized = input.staffAuthorizedVenueIds === "all"
     || (event.venueId != null && input.staffAuthorizedVenueIds.includes(event.venueId));
   if (!staffAuthorized) throw new CheckinError("UNAUTHORIZED_STAFF", "No tienes autorización para validar entradas de este evento");
+
+  if (ticket.userId != null) throw new CheckinError("ALREADY_LINKED", "Esta entrada ya tiene un Student identificado");
 
   const student = await lookupStudentByIdentityToken(input.identityToken, conn);
   if (!student) throw new UnifiedCheckinError("NOT_FOUND", "Código de identidad no válido");

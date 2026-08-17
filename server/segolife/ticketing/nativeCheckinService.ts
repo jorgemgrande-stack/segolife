@@ -93,16 +93,21 @@ async function performCheckIn(ticket: EventTicket, _staffUserId: number, staffAu
   const [event] = await conn.select().from(events).where(eq(events.id, ticket.eventId)).limit(1);
   if (!event) throw new CheckinError("NOT_FOUND", "Evento no encontrado");
 
-  if (ticket.status === "cancelled") throw new CheckinError("CANCELLED", "Esta entrada ha sido cancelada");
-  if (ticket.status === "refunded") throw new CheckinError("REFUNDED", "Esta entrada ha sido reembolsada");
-  if (ticket.status === "used") throw new CheckinError("ALREADY_USED", "Esta entrada ya ha sido validada");
-
-  // Alcance del staff — ANTES de tocar la fila (mismo criterio que
-  // benefitRedemptionService.ts: rechazar por falta de permiso general
-  // antes de revelar/mutar nada del ticket concreto).
+  // PRE-16.15 (auditoría overnight): el alcance del staff se comprueba
+  // ANTES de revelar NADA del estado del ticket (cancelled/refunded/used) —
+  // antes, un miembro del staff autorizado solo para el Venue A podía
+  // probar `ticketId`s de OTROS venues por búsqueda manual/checkInTicketById
+  // y aprender su estado (cancelado/reembolsado/ya usado) antes de que el
+  // rechazo por autorización llegara — un cruce real de la frontera de
+  // aislamiento por venue, aunque sin PII. Mismo criterio que
+  // benefitRedemptionService.ts, ahora aplicado ANTES de mirar el status.
   const staffAuthorized = staffAuthorizedVenueIds === "all"
     || (event.venueId != null && staffAuthorizedVenueIds.includes(event.venueId));
   if (!staffAuthorized) throw new CheckinError("UNAUTHORIZED_STAFF", "No tienes autorización para validar entradas de este evento");
+
+  if (ticket.status === "cancelled") throw new CheckinError("CANCELLED", "Esta entrada ha sido cancelada");
+  if (ticket.status === "refunded") throw new CheckinError("REFUNDED", "Esta entrada ha sido reembolsada");
+  if (ticket.status === "used") throw new CheckinError("ALREADY_USED", "Esta entrada ya ha sido validada");
 
   if (!ticket.userId) throw new CheckinError("NO_OWNER", "Esta entrada no tiene un comprador identificado", { ticketId: ticket.id });
 

@@ -1,5 +1,21 @@
-import { describe, it, expect } from "vitest";
-import { isEventCurrentlyOpen, pickCurrentEvent } from "./unifiedCheckinService";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// PRE-16.15 — privacidad cross-venue en linkTicketToIdentityAndCheckIn.
+const { mockLookupStudentByIdentityToken, mockCheckInTicketById } = vi.hoisted(() => ({
+  mockLookupStudentByIdentityToken: vi.fn(),
+  mockCheckInTicketById: vi.fn(),
+}));
+vi.mock("../commerce/studentIdentityService", () => ({ lookupStudentByIdentityToken: mockLookupStudentByIdentityToken }));
+vi.mock("./nativeCheckinService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./nativeCheckinService")>();
+  return { ...actual, checkInTicketById: mockCheckInTicketById };
+});
+vi.mock("./attendancePipeline", () => ({ ingestAttendance: vi.fn() }));
+vi.mock("../venues/venueVisitService", () => ({ recordVenueVisit: vi.fn() }));
+
+import { isEventCurrentlyOpen, pickCurrentEvent, linkTicketToIdentityAndCheckIn } from "./unifiedCheckinService";
+import { eventTickets, events } from "../../../drizzle/schema";
+import { CheckinError } from "./nativeCheckinService";
 
 type TestEvent = { id: number; startsAt: Date; endsAt: Date | null };
 
@@ -62,5 +78,52 @@ describe("pickCurrentEvent — spec §10 (nunca adivinar si es ambiguo)", () => 
     const result = pickCurrentEvent([eventA, eventB], new Date("2026-08-15T23:45:00+02:00"));
     expect(result.status).toBe("ambiguous");
     if (result.status === "ambiguous") expect(result.candidates.map(e => e.id).sort()).toEqual([1, 2]);
+  });
+});
+
+describe("linkTicketToIdentityAndCheckIn — privacidad cross-venue (PRE-16.15, auditoría overnight)", () => {
+  function makeLinkMockDb(ticket: Record<string, unknown> | null, event: Record<string, unknown> | null) {
+    let mode: "select" | "update" = "select";
+    let table: unknown = null;
+    const b: any = {};
+    b.select = (_proj?: unknown) => { mode = "select"; return b; };
+    b.update = (t: unknown) => { mode = "update"; table = t; return b; };
+    b.set = () => b;
+    b.from = (t: unknown) => { table = t; return b; };
+    b.where = () => {
+      if (mode === "update") return Promise.resolve([{ affectedRows: 1 }]);
+      return b;
+    };
+    b.limit = () => {
+      if (mode === "update") return b;
+      if (table === eventTickets) return Promise.resolve(ticket ? [ticket] : []);
+      if (table === events) return Promise.resolve(event ? [event] : []);
+      return Promise.resolve([]);
+    };
+    return b as any;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLookupStudentByIdentityToken.mockResolvedValue({ userId: 42, name: "Ana" });
+  });
+
+  it("venue AJENO al staff → UNAUTHORIZED_STAFF, NUNCA revela si el ticket ya tenía Student vinculado (ALREADY_LINKED)", async () => {
+    const db = makeLinkMockDb({ id: 1, eventId: 5, userId: 999 }, { id: 5, venueId: 99 });
+    await expect(linkTicketToIdentityAndCheckIn({ ticketId: 1, identityToken: "tok", staffUserId: 9, staffAuthorizedVenueIds: [1, 2, 3] }, db))
+      .rejects.toMatchObject({ code: "UNAUTHORIZED_STAFF" });
+    expect(mockCheckInTicketById).not.toHaveBeenCalled();
+  });
+
+  it("venue AJENO al staff + ticket SIN vincular (userId=null) → sigue siendo UNAUTHORIZED_STAFF, no NOT_FOUND ni otra distinción de estado", async () => {
+    const db = makeLinkMockDb({ id: 1, eventId: 5, userId: null }, { id: 5, venueId: 99 });
+    await expect(linkTicketToIdentityAndCheckIn({ ticketId: 1, identityToken: "tok", staffUserId: 9, staffAuthorizedVenueIds: [1, 2, 3] }, db))
+      .rejects.toMatchObject({ code: "UNAUTHORIZED_STAFF" });
+  });
+
+  it("venue AUTORIZADO + ticket ya vinculado → ALREADY_LINKED (la privacidad es solo cross-venue, dentro del propio venue el estado real sigue siendo visible)", async () => {
+    const db = makeLinkMockDb({ id: 1, eventId: 5, userId: 999 }, { id: 5, venueId: 1 });
+    await expect(linkTicketToIdentityAndCheckIn({ ticketId: 1, identityToken: "tok", staffUserId: 9, staffAuthorizedVenueIds: [1, 2, 3] }, db))
+      .rejects.toMatchObject({ code: "ALREADY_LINKED" });
   });
 });
