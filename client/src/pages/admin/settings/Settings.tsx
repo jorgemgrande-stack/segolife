@@ -518,10 +518,10 @@ export default function Settings() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <Field label="Razón Social" col2>
-                    <Input value={legalCompany.legalCompanyName} onChange={e => setLegalCompany(p => ({ ...p, legalCompanyName: e.target.value }))} placeholder="NEXTAIR, S.L." />
+                    <Input value={legalCompany.legalCompanyName} onChange={e => setLegalCompany(p => ({ ...p, legalCompanyName: e.target.value }))} placeholder="Mi Empresa, S.L." />
                   </Field>
                   <Field label="CIF / NIF">
-                    <Input value={legalCompany.legalCompanyCif} onChange={e => setLegalCompany(p => ({ ...p, legalCompanyCif: e.target.value }))} placeholder="B16408031" />
+                    <Input value={legalCompany.legalCompanyCif} onChange={e => setLegalCompany(p => ({ ...p, legalCompanyCif: e.target.value }))} placeholder="B12345678" />
                   </Field>
                   <Field label="Teléfono fiscal">
                     <Input value={legalCompany.legalCompanyPhone} onChange={e => setLegalCompany(p => ({ ...p, legalCompanyPhone: e.target.value }))} placeholder="+34 958 000 000" />

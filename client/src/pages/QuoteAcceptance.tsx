@@ -11,7 +11,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
-import { usePublicPhone } from "@/hooks/usePublicPhone";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -23,8 +22,6 @@ import {
   Clock,
   CreditCard,
   FileText,
-  Phone,
-  Mail,
   ShieldCheck,
   Download,
   Loader2,
@@ -82,7 +79,6 @@ export default function QuoteAcceptance() {
   const { token } = useParams<{ token: string }>();
   const [, navigate] = useLocation();
 
-  const { phone, phoneTel } = usePublicPhone();
   const [showRejectForm, setShowRejectForm] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [rejected, setRejected] = useState(false);
@@ -159,14 +155,6 @@ export default function QuoteAcceptance() {
             Este enlace de presupuesto no existe o ha sido desactivado. Si crees que es un error,
             contacta con nosotros.
           </p>
-          <div className="mt-6 flex flex-col gap-2 text-sm text-gray-500">
-            <a href="tel:+34639576627" className="flex items-center justify-center gap-2 hover:text-orange-500">
-              <Phone className="w-4 h-4" /> Llamar a Náyade Experiences
-            </a>
-            <a href="mailto:reservas@nayadeexperiences.es" className="flex items-center justify-center gap-2 hover:text-orange-500">
-              <Mail className="w-4 h-4" /> reservas@nayadeexperiences.es
-            </a>
-          </div>
         </div>
       </div>
     );
@@ -197,8 +185,8 @@ export default function QuoteAcceptance() {
                 <span className="text-orange-400 font-bold text-sm">N</span>
               </div>
               <div>
-                <p className="text-white font-semibold text-sm">Náyade Experiences</p>
-                <p className="text-white/50 text-xs">Nayade Experiences — Reserva confirmada</p>
+                <p className="text-white font-semibold text-sm">HAYQUE CAPITAL, S.L.</p>
+                <p className="text-white/50 text-xs">Reserva confirmada</p>
               </div>
             </div>
             <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 border text-xs font-medium">
@@ -358,18 +346,6 @@ export default function QuoteAcceptance() {
             </div>
           )}
 
-          {/* Footer */}
-          <div className="text-center text-white/40 text-xs pb-8 space-y-1">
-            <p>¿Tienes dudas? Contacta con nosotros</p>
-            <div className="flex justify-center gap-4">
-              <a href={phoneTel} className="hover:text-orange-400 flex items-center gap-1">
-                <Phone className="w-3 h-3" /> {phone}
-              </a>
-              <a href="mailto:reservas@nayadeexperiences.es" className="hover:text-orange-400 flex items-center gap-1">
-                <Mail className="w-3 h-3" /> reservas@nayadeexperiences.es
-              </a>
-            </div>
-          </div>
         </main>
       </div>
     );
@@ -386,11 +362,6 @@ export default function QuoteAcceptance() {
             Has rechazado este presupuesto. Si cambias de opinión o quieres hablar con nosotros,
             no dudes en contactarnos.
           </p>
-          <div className="mt-6 flex flex-col gap-2 text-sm text-gray-500">
-            <a href="tel:+34639576627" className="flex items-center justify-center gap-2 hover:text-orange-500">
-              <Phone className="w-4 h-4" /> Llamar a Náyade Experiences
-            </a>
-          </div>
         </div>
       </div>
     );
@@ -407,11 +378,6 @@ export default function QuoteAcceptance() {
             Este presupuesto expiró el {formatDate(quote.validUntil)}. Contacta con nosotros para
             solicitar uno nuevo.
           </p>
-          <div className="mt-6 flex flex-col gap-2 text-sm text-gray-500">
-            <a href="tel:+34639576627" className="flex items-center justify-center gap-2 hover:text-orange-500">
-              <Phone className="w-4 h-4" /> Llamar a Náyade Experiences
-            </a>
-          </div>
         </div>
       </div>
     );
@@ -430,8 +396,8 @@ export default function QuoteAcceptance() {
               <span className="text-orange-400 font-bold text-sm">N</span>
             </div>
             <div>
-              <p className="text-white font-semibold text-sm">Náyade Experiences</p>
-              <p className="text-white/50 text-xs">Nayade Experiences — Presupuesto personalizado</p>
+              <p className="text-white font-semibold text-sm">HAYQUE CAPITAL, S.L.</p>
+              <p className="text-white/50 text-xs">Presupuesto personalizado</p>
             </div>
           </div>
           <StatusBadge status={quote.status} isExpired={quote.isExpired} />
@@ -678,18 +644,6 @@ export default function QuoteAcceptance() {
           </div>
         )}
 
-        {/* Footer */}
-        <div className="text-center text-white/40 text-xs pb-8 space-y-1">
-          <p>¿Tienes dudas? Contacta con nosotros</p>
-          <div className="flex justify-center gap-4">
-            <a href="tel:+34639576627" className="hover:text-orange-400 flex items-center gap-1">
-              <Phone className="w-3 h-3" /> Teléfono
-            </a>
-            <a href="mailto:reservas@nayadeexperiences.es" className="hover:text-orange-400 flex items-center gap-1">
-              <Mail className="w-3 h-3" /> Email
-            </a>
-          </div>
-        </div>
       </main>
     </div>
   );

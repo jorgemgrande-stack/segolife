@@ -1768,7 +1768,7 @@ export function buildTpvTicketHtml(d: {
     ${emotionalBlock("¡Gracias por tu visita! Esperamos verte pronto de nuevo en el lago.")}
     <tr><td style="padding:0 32px 28px;">
       <p style="color:#9ca3af;font-size:11px;margin:0;line-height:1.6;font-family:Arial,sans-serif;text-align:center;">
-        NEXTAIR, S.L. &middot; CIF: B16408031 &middot; C/JOSE LUIS PEREZ PUJADAS, Nº 14, PLTA.1, PUERTA D EDIFICIO FORUM &middot; 18006 GRANADA
+        HAYQUE CAPITAL, S.L. &middot; CIF: B13989264 &middot; Finca Lindaraja, s/n &middot; 40420 Segovia
       </p>
     </td></tr>
     ${emailFooter()}`;
