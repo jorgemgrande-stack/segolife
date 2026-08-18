@@ -7,11 +7,15 @@ const {
   mockVenueQuery,
   mockEventsQuery,
   mockGalleryQuery,
+  mockAuthMe,
+  mockRewardBatch,
   noopQuery,
 } = vi.hoisted(() => ({
   mockVenueQuery: vi.fn(),
   mockEventsQuery: vi.fn(),
   mockGalleryQuery: vi.fn(),
+  mockAuthMe: vi.fn(),
+  mockRewardBatch: vi.fn(),
   noopQuery: () => ({ data: undefined, isLoading: false }),
 }));
 
@@ -20,13 +24,14 @@ vi.mock("@/lib/trpc", () => ({
     venues: { publicGetBySlug: { useQuery: mockVenueQuery } },
     events: { publicByVenue: { useQuery: mockEventsQuery } },
     gallery: { getItems: { useQuery: mockGalleryQuery } },
+    tokens: { previewMyEventRewardBatch: { useQuery: mockRewardBatch } },
     communities: { list: { useQuery: noopQuery }, myMemberships: { useQuery: noopQuery } },
     home: { getSummary: { useQuery: noopQuery } },
     studentNotifications: { unreadCount: { useQuery: noopQuery } },
     students: { me: { useQuery: noopQuery } },
     config: { getPublicSettings: { useQuery: noopQuery } },
     auth: {
-      me: { useQuery: () => ({ data: null, isLoading: false }) },
+      me: { useQuery: mockAuthMe },
       logout: { useMutation: () => ({ mutate: vi.fn() }) },
     },
     useUtils: () => ({ auth: { me: { setData: vi.fn() } } }),
@@ -104,10 +109,20 @@ function renderAt(path: string) {
   );
 }
 
+function mockAnonymous() {
+  mockAuthMe.mockReturnValue({ data: null, isLoading: false });
+}
+
+function mockAuthenticated() {
+  mockAuthMe.mockReturnValue({ data: { id: 42, name: "Ana", email: "ana@ie.edu" }, isLoading: false });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockAnonymous();
   mockEvents([]);
   mockGallery([]);
+  mockRewardBatch.mockReturnValue({ data: undefined, isLoading: false });
 });
 
 afterEach(cleanup);
@@ -250,6 +265,41 @@ describe("VenueDetail — community routing (misma ficha, sin bifurcar IE/UVA)",
     // botón de volver del hero es el único dentro de un <button> real.
     const backButtons = screen.getAllByText(/^(explore|explorar)$/i).map(el => el.closest("button")).filter(Boolean);
     expect(backButtons).toHaveLength(1);
+  });
+});
+
+describe("VenueDetail — badge de SegoTokens en Upcoming Events (MG-02, hallazgo real: la misma card de Home/Explore no lo mostraba aquí)", () => {
+  it("sin sesión: nunca pide el lote de recompensa (autoservicio del propio Student, mismo criterio que Explore)", () => {
+    mockAnonymous();
+    mockDetail();
+    mockEvents([
+      { id: 1, slug: "qa-casanova-upcoming", name: "QA Casanova Upcoming", imageUrl: null, startsAt: new Date(Date.now() + 86400000), isFeatured: false, venue: { name: "Casanova" } },
+    ]);
+    renderAt("/ie/venues/casanova");
+    expect(mockRewardBatch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ enabled: false }));
+  });
+
+  it("con sesión y recompensa real en el lote: la card de Upcoming muestra el badge formateado", () => {
+    mockAuthenticated();
+    mockDetail();
+    mockEvents([
+      { id: 1, slug: "qa-casanova-upcoming", name: "QA Casanova Upcoming", imageUrl: null, startsAt: new Date(Date.now() + 86400000), isFeatured: false, venue: { name: "Casanova" } },
+    ]);
+    mockRewardBatch.mockReturnValue({ data: { "1": { conditionalRewards: [{ eligible: true, totalTokens: 100 }], totalGuaranteedTokens: 0, effectiveRate: null } }, isLoading: false });
+    renderAt("/ie/venues/casanova");
+    expect(screen.getByText(/up to \+100 st|hasta \+100 st/i)).toBeInTheDocument();
+    expect(mockRewardBatch).toHaveBeenCalledWith({ items: [{ key: "1", eventId: 1, venueId: 1 }] }, expect.objectContaining({ enabled: true }));
+  });
+
+  it("Past Events nunca muestra el badge, aunque el lote tuviera datos para ese id (un evento ya pasado no se puede comprar/asistir)", () => {
+    mockAuthenticated();
+    mockDetail();
+    mockEvents([
+      { id: 2, slug: "past-1", name: "Past One", imageUrl: null, startsAt: new Date(Date.now() - 10 * 86400000), isFeatured: false, venue: null },
+    ]);
+    mockRewardBatch.mockReturnValue({ data: { "2": { conditionalRewards: [{ eligible: true, totalTokens: 100 }], totalGuaranteedTokens: 0, effectiveRate: null } }, isLoading: false });
+    renderAt("/ie/venues/casanova");
+    expect(screen.queryByText(/\+100 st/i)).not.toBeInTheDocument();
   });
 });
 

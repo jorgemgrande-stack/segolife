@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { ChevronLeft, ChevronRight, MapPin, MapPinOff, CalendarDays, Instagram, Share2, X } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { formatCardRewardBadge, type StudentRewardPreview } from "@/lib/rewardPreview";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
 import { SegolifeEventCard, type SegolifeEventCardData } from "@/components/segolife/SegolifeEventCard";
 import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
@@ -66,6 +68,23 @@ export default function VenueDetail() {
   const hasEventsData = !eventsLoading;
   const hasAnyEvents = hasEventsData && (upcomingEvents.length > 0 || pastEvents.length > 0);
 
+  // SEGOTOKENS REWARD PREVIEW (MG-02 — hallazgo real: esta ficha reutiliza
+  // el mismo SegolifeEventCard que Home/Explore, pero nunca le pasaba
+  // rewardBadge, así que el Student veía el badge en unos sitios y en otros
+  // no para el mismo evento real). Un solo lote, igual que Explore — solo
+  // con sesión (autoservicio del propio Student) y solo para Upcoming: un
+  // evento pasado ya no se puede comprar/asistir, mostrarle un badge sería
+  // una promesa vacía.
+  const { isAuthenticated } = useAuth();
+  const rewardBatchItems = useMemo(
+    () => upcomingEvents.slice(0, 24).map(e => ({ key: String(e.id), eventId: e.id, venueId: venue?.id })),
+    [upcomingEvents, venue?.id]
+  );
+  const rewardBatchQ = trpc.tokens.previewMyEventRewardBatch.useQuery(
+    { items: rewardBatchItems },
+    { enabled: isAuthenticated && rewardBatchItems.length > 0 }
+  );
+
   const subtitle = venue?.tagline || [category?.name, venue?.city].filter(Boolean).join(" · ");
   const hasIdentityMedia = !!(venue?.coverImageUrl || venue?.imageUrl);
 
@@ -118,7 +137,7 @@ export default function VenueDetail() {
                 {!hasEventsData ? (
                   <SegolifeCardRowSkeleton count={3} />
                 ) : upcomingEvents.length > 0 ? (
-                  <EventGrid events={upcomingEvents} slug={communitySlug!} size="lg" />
+                  <EventGrid events={upcomingEvents} slug={communitySlug!} size="lg" rewardBatch={rewardBatchQ.data} />
                 ) : (
                   <UpcomingEmptyState />
                 )}
@@ -358,12 +377,16 @@ function EventGrid({
   slug,
   size,
   muted,
+  rewardBatch,
 }: {
   events: SegolifeEventCardData[];
   slug: string;
   size: "lg" | "sm";
   muted?: boolean;
+  /** MG-02 — solo se pasa para Upcoming; Past nunca recibe esta prop (sin badge en eventos ya pasados). */
+  rewardBatch?: Record<string, StudentRewardPreview>;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className={cn(
@@ -377,6 +400,7 @@ function EventGrid({
           event={e}
           slug={slug}
           className={cn(size === "lg" ? "w-64 shrink-0 sm:w-auto" : "w-36 shrink-0 sm:w-auto", muted && "opacity-60 grayscale-[35%]")}
+          rewardBadge={rewardBatch ? formatCardRewardBadge(rewardBatch[String(e.id)], t) : undefined}
         />
       ))}
     </div>
