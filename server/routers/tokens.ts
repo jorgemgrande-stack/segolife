@@ -11,8 +11,10 @@ import {
   reverseTransaction,
   getGlobalTokenStats,
   listRecentLedgerGlobal,
+  findActiveGrantBySource,
   TokenEngineError,
 } from "../segolife/tokens/tokenLedgerService";
+import { getMyOrderById } from "../segolife/ticketing/ticketingDb";
 import {
   listTokenRules,
   getTokenRuleById,
@@ -607,4 +609,21 @@ export const tokensRouter = router({
     .query(({ input, ctx }) => previewMyEventRewardBatch(ctx.user.id, input.items)),
 
   myWalletPromotionalValue: protectedProcedure.query(({ ctx }) => previewMyWalletValue(ctx.user.id)),
+
+  /**
+   * MG-02 — Confirmación de compra (spec §11): a diferencia de previewMy*
+   * (siempre una SIMULACIÓN), esto responde con el HECHO real: ¿ya se
+   * concedió de verdad la recompensa de compra de ESTE pedido? Nunca debe
+   * usarse para decidir si mostrar el preview — solo para la pantalla de
+   * "ya tienes tu entrada", donde fingir un earning no confirmado sería
+   * deshonesto (spec §11: "NO fingir que ya se ha concedido").
+   */
+  myRewardForOrder: protectedProcedure
+    .input(z.object({ orderId: z.number().int().positive() }))
+    .query(async ({ input, ctx }) => {
+      const owned = await getMyOrderById(input.orderId, ctx.user.id);
+      if (!owned) throw new TRPCError({ code: "NOT_FOUND", message: "Pedido no encontrado" });
+      const grant = await findActiveGrantBySource(ctx.user.id, "ticket", input.orderId);
+      return { granted: !!grant, amount: grant?.amount ?? null };
+    }),
 });

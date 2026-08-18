@@ -12,6 +12,7 @@ import {
   adjustManualTokens,
   reverseTransaction,
   isLedgerEntryReversed,
+  findActiveGrantBySource,
   TokenEngineError,
 } from "./tokenLedgerService";
 import { tokenWallets, tokenLedger } from "../../../drizzle/schema";
@@ -406,5 +407,30 @@ describe("tokenLedgerService — isLedgerEntryReversed", () => {
     const { db, queuePreInsertSelect } = makeLedgerMockDb(blankWallet());
     queuePreInsertSelect([]);
     expect(await isLedgerEntryReversed(1, db)).toBe(false);
+  });
+});
+
+describe("tokenLedgerService — findActiveGrantBySource (MG-02, confirmación de compra §11)", () => {
+  it("existe un grant real y no revertido → devuelve ledgerId + amount", async () => {
+    const { db, queuePreInsertSelect } = makeLedgerMockDb(blankWallet());
+    queuePreInsertSelect([{ id: 501, amount: 100, direction: "credit" }]); // el grant
+    queuePreInsertSelect([]); // isLedgerEntryReversed → nadie lo referencia
+    const result = await findActiveGrantBySource(42, "ticket", 900, db);
+    expect(result).toEqual({ ledgerId: 501, amount: 100 });
+  });
+
+  it("el grant existe pero YA fue revertido (reembolso) → nunca se reporta como ganado", async () => {
+    const { db, queuePreInsertSelect } = makeLedgerMockDb(blankWallet());
+    queuePreInsertSelect([{ id: 501, amount: 100, direction: "credit" }]);
+    queuePreInsertSelect([{ id: 777 }]); // isLedgerEntryReversed → SÍ hay una reversión
+    const result = await findActiveGrantBySource(42, "ticket", 900, db);
+    expect(result).toBeNull();
+  });
+
+  it("no existe ningún grant para ese origen/sourceId → null (nunca fabrica una recompensa)", async () => {
+    const { db, queuePreInsertSelect } = makeLedgerMockDb(blankWallet());
+    queuePreInsertSelect([]); // sin fila de ledger
+    const result = await findActiveGrantBySource(42, "ticket", 900, db);
+    expect(result).toBeNull();
   });
 });

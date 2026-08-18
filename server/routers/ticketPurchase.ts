@@ -33,6 +33,10 @@ function toTicketDto(row: MyTicketWithEvent) {
     id: ticket.id,
     status: ticket.status,
     issuedAt: ticket.issuedAt,
+    // MG-02 — permite a TicketDetail.tsx preguntar tokens.myRewardForOrder
+    // (el pedido, no el ticket individual, es la unidad de recompensa de
+    // compra) sin exponer ningún otro dato del pedido aquí.
+    orderId: ticket.orderId,
     // Nunca se expone qr_token_hash — solo el token en claro, y solo si el ticket sigue "issued".
     qrToken: ticket.status === "issued" ? ticket.qrToken : null,
     event: event ? { id: event.id, name: event.name, slug: event.slug, startsAt: event.startsAt, imageUrl: event.imageUrl } : null,

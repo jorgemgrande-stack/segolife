@@ -1,7 +1,7 @@
 import { useParams, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { QRCodeSVG } from "qrcode.react";
-import { ChevronLeft, CalendarDays, Loader2 } from "lucide-react";
+import { ChevronLeft, CalendarDays, Loader2, Coins } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
@@ -32,6 +32,20 @@ export default function TicketDetail() {
   const ticketId = Number(params.id);
 
   const { data: ticket, isLoading } = trpc.ticketPurchase.myTicketById.useQuery({ ticketId }, { enabled: !!ticketId });
+
+  // MG-02 — Confirmación de compra (spec §11): HECHO real (¿ya se concedió
+  // de verdad la recompensa de esta compra?), nunca un preview — distinto
+  // de rewardQ de abajo, que sigue siendo una simulación honesta de lo que
+  // ganaría con el check-in, todavía pendiente.
+  const orderRewardQ = trpc.tokens.myRewardForOrder.useQuery(
+    { orderId: ticket?.orderId ?? 0 },
+    { enabled: !!ticket?.orderId }
+  );
+  const rewardQ = trpc.tokens.previewMyEventReward.useQuery(
+    { eventId: ticket?.event?.id ?? 0 },
+    { enabled: !!ticket?.event?.id && ticket?.status === "issued" }
+  );
+  const attendanceReward = rewardQ.data?.conditionalRewards.find(r => r.eligible && r.totalTokens > 0);
 
   if (isLoading) {
     return (
@@ -67,6 +81,19 @@ export default function TicketDetail() {
             <span className="text-foreground">
               {new Date(ticket.event.startsAt).toLocaleString(i18n.language, { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}
             </span>
+          </div>
+        )}
+
+        {orderRewardQ.data?.granted && !!orderRewardQ.data.amount && (
+          <div className="segolife-card-shadow mb-4 flex items-center gap-2 rounded-2xl border border-primary/20 bg-primary/5 p-3.5 text-sm">
+            <Coins className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            <p className="font-medium text-foreground">{t("rewardPreview.earnedConfirmed", { amount: orderRewardQ.data.amount })}</p>
+          </div>
+        )}
+        {!orderRewardQ.data?.granted && attendanceReward && (
+          <div className="segolife-card-shadow mb-4 flex items-center gap-2 rounded-2xl border border-primary/20 bg-primary/5 p-3.5 text-sm">
+            <Coins className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            <p className="font-medium text-foreground">{t("rewardPreview.pendingCheckin", { amount: attendanceReward.totalTokens })}</p>
           </div>
         )}
 

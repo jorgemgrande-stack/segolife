@@ -284,6 +284,29 @@ export async function isLedgerEntryReversed(ledgerId: number, db?: AnyDbHandle):
   return !!row;
 }
 
+/**
+ * MG-02 — Confirmación de compra (spec §11): "¿este Student ya ganó ST de
+ * verdad por este origen/sourceId concreto?" — de solo lectura, nunca
+ * duplica el ledger en una tabla/columna aparte (spec §40: "es muy probable
+ * que estés duplicando información que el motor ya conoce"). Un grant
+ * revertido (p.ej. por un reembolso, ver ticketCancellationService.ts)
+ * nunca se reporta como "ganado" — el Student ya no lo tiene de verdad.
+ */
+export async function findActiveGrantBySource(
+  userId: number,
+  sourceType: string,
+  sourceId: number,
+  db?: AnyDbHandle
+): Promise<{ ledgerId: number; amount: number } | null> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select().from(tokenLedger)
+    .where(and(eq(tokenLedger.userId, userId), eq(tokenLedger.sourceType, sourceType), eq(tokenLedger.sourceId, sourceId), eq(tokenLedger.direction, "credit")))
+    .limit(1);
+  if (!row) return null;
+  if (await isLedgerEntryReversed(row.id, conn)) return null;
+  return { ledgerId: row.id, amount: row.amount };
+}
+
 export interface AdjustManualTokensInput {
   userId: number;
   direction: "credit" | "debit";

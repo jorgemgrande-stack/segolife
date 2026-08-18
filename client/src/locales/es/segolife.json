@@ -582,7 +582,9 @@
     "guaranteedRateOnly": "Gana ST en esta compra · {{rate}}",
     "conditionalAttendance": "+{{amount}} ST más si asistes al evento",
     "approxValue": "≈ {{value}}",
-    "checkoutEarn": "Vas a ganar {{amount}} ST con este pedido"
+    "checkoutEarn": "Vas a ganar {{amount}} ST con este pedido",
+    "earnedConfirmed": "Has ganado +{{amount}} SegoTokens con esta entrada",
+    "pendingCheckin": "Ganarás +{{amount}} SegoTokens al hacer check-in"
   },
   "ticketing": {
     "selectTickets": "Selecciona tus entradas",

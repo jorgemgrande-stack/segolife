@@ -205,19 +205,20 @@ function AuthenticatedHome() {
     ? venues?.find(v => v.id === summary.marketplaceRecommendation!.destinationVenueId)?.name
     : undefined;
 
-  // SEGOTOKENS REWARD PREVIEW (Fase 10.6, spec §31/§33) — un solo lote para
-  // Tonight+Featured (Home ya requiere sesión, nunca necesita el guard
-  // isAuthenticated que sí usa Explore, que es pública).
+  // SEGOTOKENS REWARD PREVIEW (Fase 10.6, spec §31/§33; MG-02 §7: Upcoming
+  // se suma al MISMO lote, nunca una query aparte por evento) — un solo
+  // lote para Tonight+Featured+Upcoming (Home ya requiere sesión, nunca
+  // necesita el guard isAuthenticated que sí usa Explore, que es pública).
   const homeEventBatchItems = useMemo(() => {
     const seen = new Set<number>();
     const items: { key: string; eventId: number; venueId?: number }[] = [];
-    for (const e of [...tonightEvents, ...(summary?.featuredEvents ?? [])]) {
+    for (const e of [...tonightEvents, ...(summary?.featuredEvents ?? []), ...(upcomingQ.data ?? [])]) {
       if (seen.has(e.id)) continue;
       seen.add(e.id);
       items.push({ key: String(e.id), eventId: e.id, venueId: e.venue?.id ?? undefined });
     }
     return items.slice(0, 24);
-  }, [tonightEvents, summary?.featuredEvents]);
+  }, [tonightEvents, summary?.featuredEvents, upcomingQ.data]);
   const homeRewardBatchQ = trpc.tokens.previewMyEventRewardBatch.useQuery(
     { items: homeEventBatchItems },
     { enabled: homeEventBatchItems.length > 0 }
@@ -420,7 +421,7 @@ function AuthenticatedHome() {
               <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
                 {upcomingQ.data.map(e => (
                   <div key={e.id} className="contents" onClick={() => trackCard("event")}>
-                    <SegolifeEventCard event={e} slug={slug!} className="w-36 shrink-0" />
+                    <SegolifeEventCard event={e} slug={slug!} className="w-36 shrink-0" rewardBadge={formatCardRewardBadge(homeRewardBatchQ.data?.[String(e.id)], t)} />
                   </div>
                 ))}
               </div>

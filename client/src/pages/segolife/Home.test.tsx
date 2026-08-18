@@ -387,3 +387,42 @@ describe("Home — selector Tonight/Upcoming (MG-01)", () => {
     expect(document.querySelector('a[href="/uva/explore"]')).toBeInTheDocument();
   });
 });
+
+describe("Home — badge de SegoTokens en las cards de Upcoming, mismo lote que Tonight/Featured (MG-02 §7)", () => {
+  it("una card de Upcoming con recompensa real en el lote muestra el badge formateado (nunca un cálculo propio en frontend)", async () => {
+    mockAuthenticated();
+    mockEventsPublicUpcoming.mockReturnValue({
+      data: [{ id: 2, slug: "next-week-party", name: "Next Week Party", imageUrl: null, startsAt: new Date(Date.now() + 5 * 86400000), isFeatured: false, venue: { name: "Limoncello" } }],
+      isLoading: false,
+    });
+    mockRewardBatch.mockReturnValue({ data: { "2": { conditionalRewards: [], totalGuaranteedTokens: 12, effectiveRate: null } } });
+    renderAt("/ie");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /upcoming|próximos/i }));
+    expect(screen.getByText("+12 ST")).toBeInTheDocument();
+  });
+
+  it("Tonight y Upcoming comparten UNA sola query de lote (nunca una petición de recompensa por pestaña)", async () => {
+    mockAuthenticated();
+    mockHomeSummary.mockReturnValue({
+      data: {
+        ranking: { forYou: [], hero: null }, featuredEvents: [], recentActivity: [], walletBalance: 0,
+        tonightEvents: [{ id: 1, slug: "tonight-party", name: "Tonight Party", imageUrl: null, startsAt: new Date(), isFeatured: false, venue: { name: "Casanova" } }],
+      },
+      isLoading: false,
+    });
+    mockEventsPublicUpcoming.mockReturnValue({
+      data: [{ id: 2, slug: "next-week-party", name: "Next Week Party", imageUrl: null, startsAt: new Date(Date.now() + 5 * 86400000), isFeatured: false, venue: { name: "Limoncello" } }],
+      isLoading: false,
+    });
+    renderAt("/ie");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /upcoming|próximos/i }));
+    // Un único lote combinado (nunca una query de recompensa distinta por
+    // pestaña): la ÚLTIMA llamada al hook, tras montar Upcoming, ya incluye
+    // los eventos de ambas pestañas en un solo `items`.
+    const lastCall = mockRewardBatch.mock.calls.at(-1)!;
+    const items = lastCall[0].items as { eventId: number }[];
+    expect(items.map(i => i.eventId).sort()).toEqual([1, 2]);
+  });
+});

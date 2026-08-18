@@ -10,7 +10,26 @@
  * forma exhaustiva en server/_core/communityAccess.test.ts — no se duplica
  * aquí, mismo criterio que students.test.ts/venues.test.ts.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// MG-02 — myRewardForOrder es el único procedure de este router que toca
+// datos reales de otro módulo (ticketingDb, para comprobar propiedad del
+// pedido) — se mockea solo para ese describe block; el resto de este
+// fichero sigue sin mockear nada porque nunca llega a tocar la BD (rechaza
+// por falta de sesión antes).
+const { mockGetMyOrderById, mockFindActiveGrantBySource } = vi.hoisted(() => ({
+  mockGetMyOrderById: vi.fn(),
+  mockFindActiveGrantBySource: vi.fn(),
+}));
+vi.mock("../segolife/ticketing/ticketingDb", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/ticketing/ticketingDb")>();
+  return { ...actual, getMyOrderById: mockGetMyOrderById };
+});
+vi.mock("../segolife/tokens/tokenLedgerService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/tokens/tokenLedgerService")>();
+  return { ...actual, findActiveGrantBySource: mockFindActiveGrantBySource };
+});
+
 import { tokensRouter } from "./tokens";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -194,5 +213,37 @@ describe("tokens router — SEGOTOKENS REWARD PREVIEW & ECONOMY TRANSPARENCY (Fa
     await expect(callerAs("user").previewMyReward({ origin: "attendance" })).rejects.not.toMatchObject({ code: "FORBIDDEN" });
     await expect(callerAs("user").previewMyRewardBatch({ items: [] })).resolves.toEqual({});
     await expect(callerAs("user").previewMyEventRewardBatch({ items: [] })).resolves.toEqual({});
+  });
+});
+
+describe("tokens.myRewardForOrder — MG-02 (confirmación de compra, hecho real vs preview)", () => {
+  beforeEach(() => {
+    mockGetMyOrderById.mockReset();
+    mockFindActiveGrantBySource.mockReset();
+  });
+
+  it("rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().myRewardForOrder({ orderId: 1 })).rejects.toThrow(/please login/i);
+  });
+
+  it("pedido no encontrado / no es del Student que pregunta -> NOT_FOUND, nunca revela nada de otro pedido (IDOR)", async () => {
+    mockGetMyOrderById.mockResolvedValue(null);
+    await expect(callerAs("user", 7).myRewardForOrder({ orderId: 999 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mockFindActiveGrantBySource).not.toHaveBeenCalled();
+  });
+
+  it("pedido propio con recompensa YA concedida -> granted:true con el importe real del ledger", async () => {
+    mockGetMyOrderById.mockResolvedValue({ order: { id: 1, userId: 7 }, items: [], venueId: 1 });
+    mockFindActiveGrantBySource.mockResolvedValue({ ledgerId: 501, amount: 100 });
+    const result = await callerAs("user", 7).myRewardForOrder({ orderId: 1 });
+    expect(result).toEqual({ granted: true, amount: 100 });
+    expect(mockFindActiveGrantBySource).toHaveBeenCalledWith(7, "ticket", 1);
+  });
+
+  it("pedido propio sin recompensa concedida (aún no liquidada / nunca elegible) -> granted:false, amount:null (nunca fabrica un importe)", async () => {
+    mockGetMyOrderById.mockResolvedValue({ order: { id: 2, userId: 7 }, items: [], venueId: 1 });
+    mockFindActiveGrantBySource.mockResolvedValue(null);
+    const result = await callerAs("user", 7).myRewardForOrder({ orderId: 2 });
+    expect(result).toEqual({ granted: false, amount: null });
   });
 });
