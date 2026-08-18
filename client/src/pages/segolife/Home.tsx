@@ -1,7 +1,7 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
-import { Coins, Gift, ChevronRight, Flame, Sparkles, PartyPopper, Vote, Ticket, Compass, UserRound, Clock3, CheckCircle2, Loader2 } from "lucide-react";
+import { Coins, Gift, ChevronRight, Flame, Sparkles, PartyPopper, Vote, Ticket, Compass, UserRound, Clock3, CheckCircle2, Loader2, CalendarDays } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { formatCardRewardBadge } from "@/lib/rewardPreview";
 import { useCommunity } from "@/contexts/CommunityContext";
@@ -13,6 +13,7 @@ import { SegolifeVenueCard } from "@/components/segolife/SegolifeVenueCard";
 import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
 import { SegolifeWalletSkeleton, SegolifeCardRowSkeleton, SegolifeRowSkeleton } from "@/components/segolife/SegolifeSkeletons";
 import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import CommunityPublicLanding from "./CommunityPublicLanding";
 
 /**
@@ -156,6 +157,18 @@ function AuthenticatedHome() {
   const { data: me } = trpc.students.me.useQuery();
   const { data: venues } = trpc.venues.publicActive.useQuery({ communityId: community?.id });
   const track = trpc.studentAnalytics.track.useMutation();
+
+  // MG-01 — Tonight/Upcoming es el mismo módulo con selector, nunca dos
+  // secciones distintas. "Upcoming" es deliberadamente una query aparte
+  // (mismo criterio que venues/eventos ya siguen en esta página, ver el
+  // comentario de homeSummaryService.ts: "upcoming events" nunca entra en el
+  // mega-agregado getSummary) y perezosa: solo se pide al pulsar la pestaña,
+  // nunca en el render inicial de Home (spec §13, performance).
+  const [eventsTab, setEventsTab] = useState<"tonight" | "upcoming">("tonight");
+  const upcomingQ = trpc.events.publicUpcoming.useQuery(
+    { communityId: community?.id },
+    { enabled: eventsTab === "upcoming" }
+  );
 
   const firstName = me?.profile.firstName ?? me?.user.name?.split(" ")[0] ?? "";
   const hour = new Date().getHours();
@@ -365,29 +378,55 @@ function AuthenticatedHome() {
       )}
 
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="flex items-center gap-1.5 text-lg font-semibold text-foreground">
-            <Flame className="size-4 text-accent" aria-hidden="true" /> {t("home.tonightTitle")}
-          </h2>
-          <Link href={`/${slug}/explore`} className="text-xs font-medium text-primary">{t("home.exploreAll")}</Link>
-        </div>
-        {isLoading ? (
-          <SegolifeCardRowSkeleton />
-        ) : !tonightEvents.length ? (
-          <SegolifeEmptyState
-            icon={<Flame className="size-5" aria-hidden="true" />}
-            title={t("home.noEventsTonight")}
-            description={t("home.noEventsTonightDescription")}
-          />
-        ) : (
-          <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
-            {tonightEvents.map(e => (
-              <div key={e.id} className="contents" onClick={() => trackCard("event")}>
-                <SegolifeEventCard event={e} slug={slug!} className="w-36 shrink-0" rewardBadge={formatCardRewardBadge(homeRewardBatchQ.data?.[String(e.id)], t)} />
-              </div>
-            ))}
+        <Tabs value={eventsTab} onValueChange={v => setEventsTab(v as "tonight" | "upcoming")}>
+          <div className="flex items-center justify-between gap-2">
+            <TabsList>
+              <TabsTrigger value="tonight">{t("home.tabTonight")}</TabsTrigger>
+              <TabsTrigger value="upcoming">{t("home.tabUpcoming")}</TabsTrigger>
+            </TabsList>
+            <Link href={`/${slug}/explore`} className="shrink-0 text-xs font-medium text-primary">{t("home.exploreAll")}</Link>
           </div>
-        )}
+
+          <TabsContent value="tonight" className="mt-3">
+            {isLoading ? (
+              <SegolifeCardRowSkeleton />
+            ) : !tonightEvents.length ? (
+              <SegolifeEmptyState
+                icon={<Flame className="size-5" aria-hidden="true" />}
+                title={t("home.noEventsTonight")}
+                description={t("home.noEventsTonightDescription")}
+              />
+            ) : (
+              <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
+                {tonightEvents.map(e => (
+                  <div key={e.id} className="contents" onClick={() => trackCard("event")}>
+                    <SegolifeEventCard event={e} slug={slug!} className="w-36 shrink-0" rewardBadge={formatCardRewardBadge(homeRewardBatchQ.data?.[String(e.id)], t)} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="upcoming" className="mt-3">
+            {upcomingQ.isLoading ? (
+              <SegolifeCardRowSkeleton />
+            ) : !upcomingQ.data?.length ? (
+              <SegolifeEmptyState
+                icon={<CalendarDays className="size-5" aria-hidden="true" />}
+                title={t("home.noUpcomingEvents")}
+                description={t("home.noUpcomingEventsDescription")}
+              />
+            ) : (
+              <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
+                {upcomingQ.data.map(e => (
+                  <div key={e.id} className="contents" onClick={() => trackCard("event")}>
+                    <SegolifeEventCard event={e} slug={slug!} className="w-36 shrink-0" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
       </section>
 
       {!!summary?.featuredEvents.length && (

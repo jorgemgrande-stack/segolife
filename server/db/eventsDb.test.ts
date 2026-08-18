@@ -13,6 +13,9 @@ import {
   setEventFeatured,
   listActiveEvents,
   listFeaturedEvents,
+  selectUpcomingWindow,
+  UPCOMING_WINDOW_DAYS,
+  UPCOMING_EVENTS_LIMIT,
 } from "./eventsDb";
 import { events, venues, communityEvents } from "../../drizzle/schema";
 
@@ -287,5 +290,79 @@ describe("eventsDb — público (listActiveEvents / listFeaturedEvents)", () => 
     const items = await listFeaturedEvents(undefined, db as unknown as Parameters<typeof listFeaturedEvents>[1]);
     expect(items).toHaveLength(1);
     expect(items[0].isFeatured).toBe(true);
+  });
+});
+
+// ─── MG-01 — "Upcoming" (Home, pestaña Próximos) ───────────────────────────
+// Cubre exclusivamente selectUpcomingWindow, la lógica PURA de ventana de 20
+// días + fallback (spec MG-01 §4/§14). listUpcomingEvents en sí (la query
+// real) no se testea aparte: reutiliza exactamente el mismo listEvents ya
+// cubierto arriba (comunidad, público, orden) — no introduce ninguna lógica
+// de comunidad nueva.
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Extiende blankEvent() con los campos de EventListItem que selectUpcomingWindow necesita. */
+function upcomingEvent(id: number, startsAt: Date) {
+  return { ...blankEvent(id, { startsAt }), venue: null, communities: [], primarySalesChannel: null };
+}
+
+describe("selectUpcomingWindow — ventana de 20 días + fallback (spec MG-01 §4)", () => {
+  const now = new Date("2026-08-18T10:00:00Z");
+
+  it("con eventos dentro de los 20 días: los devuelve, ordenados cronológicamente (el orden ya viene de la query, esta función no reordena)", () => {
+    const events = [
+      upcomingEvent(1, new Date(now.getTime() + 2 * DAY_MS)),
+      upcomingEvent(2, new Date(now.getTime() + 5 * DAY_MS)),
+      upcomingEvent(3, new Date(now.getTime() + 19 * DAY_MS)),
+    ];
+    const result = selectUpcomingWindow(events, now);
+    expect(result.map(e => e.id)).toEqual([1, 2, 3]);
+  });
+
+  it("boundary — exactamente +20 días cuenta como DENTRO de la ventana (inclusive)", () => {
+    const events = [upcomingEvent(1, new Date(now.getTime() + UPCOMING_WINDOW_DAYS * DAY_MS))];
+    const result = selectUpcomingWindow(events, now);
+    expect(result.map(e => e.id)).toEqual([1]);
+  });
+
+  it("boundary — +19 días queda dentro; con al menos un evento real en ventana, nunca hace fallback a los de más lejos", () => {
+    const events = [upcomingEvent(1, new Date(now.getTime() + 19 * DAY_MS)), upcomingEvent(2, new Date(now.getTime() + 21 * DAY_MS))];
+    const result = selectUpcomingWindow(events, now);
+    expect(result.map(e => e.id)).toEqual([1]);
+  });
+
+  it("sin ningún evento dentro de los 20 días: fallback a los siguientes eventos futuros disponibles, aunque estén más lejos", () => {
+    const events = [
+      upcomingEvent(1, new Date(now.getTime() + 25 * DAY_MS)),
+      upcomingEvent(2, new Date(now.getTime() + 40 * DAY_MS)),
+    ];
+    const result = selectUpcomingWindow(events, now);
+    expect(result.map(e => e.id)).toEqual([1, 2]);
+  });
+
+  it("no interpreta el fallback como 'solo el día 21' — muestra el bloque completo recibido, no un único evento aislado", () => {
+    const events = [
+      upcomingEvent(1, new Date(now.getTime() + 25 * DAY_MS)),
+      upcomingEvent(2, new Date(now.getTime() + 26 * DAY_MS)),
+      upcomingEvent(3, new Date(now.getTime() + 60 * DAY_MS)),
+    ];
+    const result = selectUpcomingWindow(events, now);
+    expect(result).toHaveLength(3);
+  });
+
+  it("sin ningún evento futuro en absoluto: devuelve vacío (estado vacío real, nunca fabricado)", () => {
+    expect(selectUpcomingWindow([], now)).toEqual([]);
+  });
+
+  it("la exclusión de eventos pasados NO es responsabilidad de selectUpcomingWindow — la hace fromDate en listEvents, antes de que esta función reciba nada; documentado aquí para que quede explícito y no se intente 'arreglar' añadiendo un filtro de pasado duplicado", () => {
+    const past = upcomingEvent(1, new Date(now.getTime() - DAY_MS));
+    const future = upcomingEvent(2, new Date(now.getTime() + 3 * DAY_MS));
+    const result = selectUpcomingWindow([past, future], now);
+    expect(result.map(e => e.id)).toEqual([1, 2]);
+  });
+
+  it("respeta un límite razonable de resultados (UPCOMING_EVENTS_LIMIT) — documentado, mismo criterio que Tonight/Featured de no cargar cientos de eventos", () => {
+    expect(UPCOMING_EVENTS_LIMIT).toBeGreaterThan(0);
+    expect(UPCOMING_EVENTS_LIMIT).toBeLessThanOrEqual(20);
   });
 });

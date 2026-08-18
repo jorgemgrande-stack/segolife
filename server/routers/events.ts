@@ -14,6 +14,7 @@ import {
   listActiveEvents,
   listFeaturedEvents,
   listEventsByVenue,
+  listUpcomingEvents,
   reorderFeaturedEvents,
 } from "../db/eventsDb";
 import { computePurchaseAction } from "../segolife/ticketing/purchaseAction";
@@ -185,6 +186,11 @@ export const eventsRouter = router({
   publicFeatured: publicProcedure
     .input(z.object({ communityId: z.number().int().positive().optional() }))
     .query(async ({ input }) => listFeaturedEvents(input.communityId)),
+
+  /** MG-01 — pestaña "Upcoming" de la Home (Fase-6 comment en homeSummaryService.ts: "upcoming events" siempre fue deliberadamente una query aparte, nunca parte del mega-agregado getSummary). Mismo criterio público que publicActive/publicFeatured: sin autenticación, comunidad opcional. */
+  publicUpcoming: publicProcedure
+    .input(z.object({ communityId: z.number().int().positive().optional() }))
+    .query(async ({ input }) => listUpcomingEvents(input.communityId ? [input.communityId] : "all", new Date())),
 
   publicByVenue: publicProcedure
     .input(z.object({ venueId: z.number().int().positive() }))

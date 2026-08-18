@@ -22,7 +22,7 @@ import { tokenRules, tokenLedger, type TokenRule } from "../../../drizzle/schema
 import { getWalletByUserId, type AnyDbHandle } from "../tokens/tokenLedgerService";
 import { countRecentEarnEvents, countDistinctVenuesVisited } from "../tokens/tokenLedgerService";
 import { calculateBaseTokens, findApplicableCampaign } from "../tokens/tokenRuleEngine";
-import { resolveMadridMoment } from "../tokens/tokenScheduleService";
+import { resolveMadridMoment, resolveOperationalDate } from "../tokens/tokenScheduleService";
 import { listUserBenefits, listMarketplaceBenefits, type UserBenefitListItemWithDefinition, type MarketplaceBenefitItem } from "../../db/benefitsDb";
 import { listActiveEvents, listFeaturedEvents, type EventListItem } from "../../db/eventsDb";
 import { listMyTickets, type MyTicketWithEvent } from "../ticketing/ticketingDb";
@@ -135,10 +135,21 @@ export interface HomeSummary {
   ranking: HomeFeedRanking;
 }
 
-/** Eventos cuyo starts_at cae en el día calendario de HOY en Europe/Madrid. */
-function filterTonight(events: EventListItem[], at: Date): EventListItem[] {
-  const today = resolveMadridMoment(at).date;
-  return events.filter(e => resolveMadridMoment(new Date(e.startsAt)).date === today);
+/**
+ * Eventos de "esta noche" — usa el día OPERATIVO de nightlife (límite a las
+ * 06:00 Europe/Madrid, nunca medianoche de calendario), igual que
+ * resolveOperationalDate ya usa venueVisitService/benefits (spec VENUE &
+ * PARTNER APP §11). MG-01 (bug real encontrado durante la investigación):
+ * antes se usaba resolveMadridMoment (medianoche de calendario) — un evento
+ * que empieza, p.ej., a las 00:30 caía en el día de calendario SIGUIENTE, así
+ * que un Student mirando la Home a las 22:00 dejaba de ver esa fiesta bajo
+ * "Tonight" aunque fuera, en términos de nightlife, la misma noche. Con el
+ * límite a las 06:00, tanto "ahora" (22:00) como el evento (00:30) resuelven
+ * al mismo día operativo. Test de regresión: homeSummaryService.test.ts.
+ */
+export function filterTonight(events: EventListItem[], at: Date): EventListItem[] {
+  const today = resolveOperationalDate(at);
+  return events.filter(e => resolveOperationalDate(new Date(e.startsAt)) === today);
 }
 
 /**

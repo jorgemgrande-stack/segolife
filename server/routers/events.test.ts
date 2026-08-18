@@ -33,6 +33,13 @@ vi.mock("../segolife/venues/venueAppService", async (importOriginal) => {
   return { ...actual, getVenueEventsView: mockGetVenueEventsView, getEventLiveStats: mockGetEventLiveStats };
 });
 
+// MG-01 — publicUpcoming (pestaña "Upcoming" de la Home).
+const { mockListUpcomingEvents } = vi.hoisted(() => ({ mockListUpcomingEvents: vi.fn() }));
+vi.mock("../db/eventsDb", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../db/eventsDb")>();
+  return { ...actual, listUpcomingEvents: mockListUpcomingEvents };
+});
+
 import { eventsRouter } from "./events";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -122,5 +129,31 @@ describe("events.myVenueEvents/myVenueEventLiveStats — IDOR: Venue Admin de Ca
   it("myVenueEventLiveStats de un evento inexistente: NOT_FOUND", async () => {
     mockGetEventLiveStats.mockResolvedValue(null);
     await expect(callerAs(10).myVenueEventLiveStats({ eventId: 9999 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("events.publicUpcoming — MG-01 (pestaña Upcoming de la Home)", () => {
+  beforeEach(() => {
+    mockListUpcomingEvents.mockReset();
+    mockListUpcomingEvents.mockResolvedValue([]);
+  });
+
+  it("sin sesión (público) responde sin lanzar, igual que publicActive/publicFeatured", async () => {
+    await expect(callerWithoutSession().publicUpcoming({ communityId: 1 })).resolves.toEqual([]);
+  });
+
+  it("con communityId real de la URL -> resuelve la comunidad como [communityId], nunca 'all'", async () => {
+    await callerWithoutSession().publicUpcoming({ communityId: 2 });
+    expect(mockListUpcomingEvents).toHaveBeenCalledWith([2], expect.any(Date));
+  });
+
+  it("sin communityId (llamador sin contexto de comunidad) -> 'all', mismo criterio que publicActive/publicFeatured", async () => {
+    await callerWithoutSession().publicUpcoming({});
+    expect(mockListUpcomingEvents).toHaveBeenCalledWith("all", expect.any(Date));
+  });
+
+  it("una comunidad distinta (UVA en vez de IE) también resuelve como comunidad real, nunca hardcodeada", async () => {
+    await callerWithoutSession().publicUpcoming({ communityId: 7 });
+    expect(mockListUpcomingEvents).toHaveBeenCalledWith([7], expect.any(Date));
   });
 });

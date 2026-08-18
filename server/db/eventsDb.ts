@@ -355,3 +355,40 @@ export async function listEventsByVenue(venueId: number, db?: DbHandle): Promise
   const { items } = await listEvents({ communityIds: "all", venueId, status: "active", limit: 200, offset: 0 }, conn);
   return items;
 }
+
+// ─── MG-01 — "Upcoming" (Home, pestaña Próximos) ───────────────────────────
+// Ventana primaria: próximos UPCOMING_WINDOW_DAYS días. Si no hay ningún
+// evento en esa ventana, se muestran los siguientes eventos futuros
+// disponibles aunque caigan más allá — nunca un vacío artificial solo por
+// estar a más de 20 días (spec MG-01 §4). UPCOMING_EVENTS_LIMIT es el mismo
+// tipo de límite razonable que ya usa listFeaturedEvents/publicActive para
+// no cargar "cientos de eventos" — una fila horizontal de cards, igual que
+// Tonight/Featured.
+export const UPCOMING_WINDOW_DAYS = 20;
+export const UPCOMING_EVENTS_LIMIT = 10;
+
+/**
+ * Pura — decide, sobre una lista YA ordenada cronológicamente de eventos
+ * futuros (startsAt >= at), si se queda con los que caen dentro de la
+ * ventana de UPCOMING_WINDOW_DAYS o si hace fallback a la lista completa
+ * recibida (los siguientes eventos futuros disponibles, sin importar lo
+ * lejos que estén). El límite de cuántos eventos se piden ya se aplicó
+ * antes, en la query — esta función nunca amplía la lista, solo decide
+ * cuál de los dos subconjuntos devolver.
+ */
+export function selectUpcomingWindow(events: EventListItem[], at: Date, windowDays: number = UPCOMING_WINDOW_DAYS): EventListItem[] {
+  if (events.length === 0) return events;
+  const windowEnd = new Date(at.getTime() + windowDays * 24 * 60 * 60 * 1000);
+  const withinWindow = events.filter(e => new Date(e.startsAt).getTime() <= windowEnd.getTime());
+  return withinWindow.length > 0 ? withinWindow : events;
+}
+
+/** Eventos futuros más próximos para la pestaña "Upcoming" de la Home — ver selectUpcomingWindow para el algoritmo de ventana + fallback. */
+export async function listUpcomingEvents(communityIds: number[] | "all", at: Date, db?: DbHandle): Promise<EventListItem[]> {
+  const conn = db ?? (await getDb());
+  const { items } = await listEvents(
+    { communityIds, status: "active", fromDate: at, orderBy: "startsAt", limit: UPCOMING_EVENTS_LIMIT, offset: 0 },
+    conn
+  );
+  return selectUpcomingWindow(items, at);
+}

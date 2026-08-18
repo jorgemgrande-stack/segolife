@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Route } from "wouter";
 import "@/lib/i18n";
 
@@ -21,6 +22,7 @@ const {
   mockWalletValue,
   mockStudentsMe,
   mockEventsPublicActive,
+  mockEventsPublicUpcoming,
   mockVenuesPublicActive,
   mockRewardBatch,
   mockTrack,
@@ -33,6 +35,7 @@ const {
   mockWalletValue: vi.fn(),
   mockStudentsMe: vi.fn(),
   mockEventsPublicActive: vi.fn(),
+  mockEventsPublicUpcoming: vi.fn(),
   mockVenuesPublicActive: vi.fn(),
   mockRewardBatch: vi.fn(),
   mockTrack: vi.fn(),
@@ -53,7 +56,7 @@ vi.mock("@/lib/trpc", () => ({
       previewMyEventRewardBatch: { useQuery: mockRewardBatch },
     },
     students: { me: { useQuery: mockStudentsMe } },
-    events: { publicActive: { useQuery: mockEventsPublicActive } },
+    events: { publicActive: { useQuery: mockEventsPublicActive }, publicUpcoming: { useQuery: mockEventsPublicUpcoming } },
     venues: { publicActive: { useQuery: mockVenuesPublicActive } },
     tokenPaymentRequests: { myPending: { useQuery: mockPendingPaymentRequests } },
     studentAnalytics: { track: { useMutation: () => ({ mutate: mockTrack }) } },
@@ -117,6 +120,7 @@ beforeEach(() => {
   mockWalletValue.mockReturnValue({ data: undefined });
   mockStudentsMe.mockReturnValue({ data: undefined });
   mockEventsPublicActive.mockReturnValue({ data: [], isLoading: false });
+  mockEventsPublicUpcoming.mockReturnValue({ data: [], isLoading: false });
   mockVenuesPublicActive.mockReturnValue({ data: [], isLoading: false });
   mockRewardBatch.mockReturnValue({ data: undefined });
   mockPendingPaymentRequests.mockReturnValue({ data: [], isLoading: false });
@@ -300,5 +304,86 @@ describe("Home (/:community) — estudiante autenticado ve su dashboard personal
     const link = document.querySelector('a[href="/ie/payment-requests/501"]');
     expect(link).toBeInTheDocument();
     expect(link).toHaveTextContent("40");
+  });
+});
+
+describe("Home — selector Tonight/Upcoming (MG-01)", () => {
+  it("Tonight es la pestaña seleccionada al entrar (estado por defecto sin cambios, spec §7)", () => {
+    mockAuthenticated();
+    mockHomeSummary.mockReturnValue({
+      data: {
+        ranking: { forYou: [], hero: null }, featuredEvents: [], recentActivity: [], walletBalance: 0,
+        tonightEvents: [{ id: 1, slug: "tonight-party", name: "Tonight Party", imageUrl: null, startsAt: new Date(), isFeatured: false, venue: { name: "Casanova" } }],
+      },
+      isLoading: false,
+    });
+    renderAt("/ie");
+    expect(screen.getByText("Tonight Party")).toBeInTheDocument();
+    // La pestaña "Upcoming" NUNCA dispara su query antes de pulsarla (spec §13, lazy).
+    expect(mockEventsPublicUpcoming).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ enabled: false }));
+  });
+
+  it("pulsar Upcoming cambia la vista y activa (enabled) su query, que antes estaba en lazy", async () => {
+    mockAuthenticated();
+    renderAt("/ie");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /upcoming|próximos/i }));
+    expect(mockEventsPublicUpcoming).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ enabled: true }));
+  });
+
+  it("Upcoming con eventos reales: se pintan como cards con enlace al detalle canónico del evento", async () => {
+    mockAuthenticated();
+    mockEventsPublicUpcoming.mockReturnValue({
+      data: [{ id: 2, slug: "next-week-party", name: "Next Week Party", imageUrl: null, startsAt: new Date(Date.now() + 5 * 86400000), isFeatured: false, venue: { name: "Limoncello" } }],
+      isLoading: false,
+    });
+    renderAt("/ie");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /upcoming|próximos/i }));
+    const link = screen.getByText("Next Week Party").closest("a");
+    expect(link).toHaveAttribute("href", "/ie/events/next-week-party");
+  });
+
+  it("Upcoming sin ningún evento: estado vacío editorial con el texto de i18n correcto (EN)", async () => {
+    mockAuthenticated();
+    renderAt("/ie");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /upcoming|próximos/i }));
+    expect(screen.getByText(/no upcoming events|no hay próximos eventos/i)).toBeInTheDocument();
+  });
+
+  it("Upcoming sin ningún evento en ES: mismo texto editorial en español (comunidad UVA)", async () => {
+    mockAuthenticated();
+    mockCommunity({ id: 2, slug: "uva", name: "Segolife UVA", defaultLocale: "es" });
+    renderAt("/uva");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /upcoming|próximos/i }));
+    expect(screen.getByText(/no upcoming events|no hay próximos eventos/i)).toBeInTheDocument();
+  });
+
+  it("volver a pulsar Tonight restaura la vista de esta noche, sin perder su contenido", async () => {
+    mockAuthenticated();
+    mockHomeSummary.mockReturnValue({
+      data: {
+        ranking: { forYou: [], hero: null }, featuredEvents: [], recentActivity: [], walletBalance: 0,
+        tonightEvents: [{ id: 1, slug: "tonight-party", name: "Tonight Party", imageUrl: null, startsAt: new Date(), isFeatured: false, venue: { name: "Casanova" } }],
+      },
+      isLoading: false,
+    });
+    renderAt("/ie");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /upcoming|próximos/i }));
+    await user.click(screen.getByRole("tab", { name: /^tonight$|^esta noche$/i }));
+    expect(screen.getByText("Tonight Party")).toBeInTheDocument();
+  });
+
+  it("Upcoming pide la comunidad real de la URL (nunca hardcodeada) — igual que Explore all sigue apuntando al Explore real", async () => {
+    mockAuthenticated();
+    mockCommunity({ id: 2, slug: "uva", name: "Segolife UVA", defaultLocale: "es" });
+    renderAt("/uva");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /upcoming|próximos/i }));
+    expect(mockEventsPublicUpcoming).toHaveBeenCalledWith({ communityId: 2 }, expect.objectContaining({ enabled: true }));
+    expect(document.querySelector('a[href="/uva/explore"]')).toBeInTheDocument();
   });
 });
