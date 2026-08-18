@@ -28,6 +28,8 @@
  * deliberadamente separados, ver ticketPurchasePipeline.ts/attendancePipeline.ts,
  * que llaman a ambos motores por separado, nunca uno a través del otro).
  */
+import { drizzle } from "drizzle-orm/mysql2";
+import mysql from "mysql2/promise";
 import { eq, and } from "drizzle-orm";
 import {
   findApplicableRule,
@@ -41,6 +43,16 @@ import { sumAmountByRuleInWindow, type AnyDbHandle } from "./tokenLedgerService"
 import { isWithinSchedule } from "./tokenScheduleService";
 import { resolveLoyaltyCutoff, isBeforeCutoff as isBeforePersistedCutoff } from "./loyaltyCutoffService";
 import { tokenLedger, type TokenRule } from "../../../drizzle/schema";
+
+// Mismo patrón que el resto de tokens/*.ts (pool propio y pequeño por
+// fichero) — hasta ahora este fichero nunca necesitaba abrir conexión
+// propia (siempre delegaba `db` en funciones hermanas con su propio pool).
+const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
+const _db = drizzle(_pool);
+
+async function getDb(): Promise<typeof _db> {
+  return _db;
+}
 
 export type RewardMode = "SIMULATION" | "LIVE";
 
@@ -165,7 +177,8 @@ export function lifetimeStart(): Date {
 
 async function isBeforeCutoff(ctx: RewardContext, at: Date, db?: AnyDbHandle): Promise<boolean> {
   if (ctx.loyaltyCutoffAt && at < ctx.loyaltyCutoffAt) return true;
-  const persistedCutoff = await resolveLoyaltyCutoff(ctx.integrationId ?? null, db as never);
+  const conn = db ?? (await getDb());
+  const persistedCutoff = await resolveLoyaltyCutoff(ctx.integrationId ?? null, conn);
   return isBeforePersistedCutoff(at, persistedCutoff);
 }
 

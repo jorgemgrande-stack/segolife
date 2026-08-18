@@ -52,7 +52,24 @@ async function firstCardWithRewardBadge(cards: ReturnType<Page["locator"]>): Pro
 }
 
 test.describe("MG-02 — Event SegoTokens reward visibility & earning consistency", () => {
-  test("Explore: ninguna card muestra nunca un badge fabricado de +0 ST", async ({ page }) => {
+  test("Explore: ninguna card muestra nunca un badge fabricado de +0 ST, y previewMyEventRewardBatch responde sin error", async ({ page }) => {
+    // La ausencia de badge es un DATA STATE válido (elegibilidad real que
+    // puede no darse hoy) — un 500/network error del propio endpoint de
+    // recompensa NO lo es: produce el MISMO síntoma visual (ningún badge,
+    // sin que React Query lo muestre) pero es un bug real, no un estado de
+    // datos. Un hallazgo real de esta fase (ver informe): rewardEngine.ts
+    // tenía un `db as never` que rompía CADA llamada a previewMy*Batch con
+    // "Cannot read properties of undefined (reading 'select')" — invisible
+    // en la UI (el badge simplemente no aparecía) pero perfectamente visible
+    // aquí si se comprueban errores de red/consola, que antes esta prueba
+    // no comprobaba. Corregido — este test ahora vigila que no vuelva.
+    const consoleErrors: string[] = [];
+    const requestFailures: string[] = [];
+    let rewardBatchStatus: number | null = null;
+    page.on("console", msg => { if (msg.type() === "error") consoleErrors.push(msg.text()); });
+    page.on("requestfailed", req => requestFailures.push(`${req.method()} ${req.url()}`));
+    page.on("response", res => { if (res.url().includes("previewMyEventRewardBatch")) rewardBatchStatus = res.status(); });
+
     await loginViaUI(page, student.email, student.password);
     await page.goto(`/${student.community}/explore`);
     await page.waitForLoadState("networkidle");
@@ -60,6 +77,12 @@ test.describe("MG-02 — Event SegoTokens reward visibility & earning consistenc
 
     const cards = page.locator('a[href*="/events/"]');
     await expect(cards.first()).toBeVisible({ timeout: 10000 });
+
+    expect(rewardBatchStatus, "previewMyEventRewardBatch no respondió en absoluto durante la carga de Explore").not.toBeNull();
+    expect(rewardBatchStatus, `previewMyEventRewardBatch respondió ${rewardBatchStatus} en vez de 200`).toBe(200);
+    const relevantErrors = consoleErrors.filter(e => !/google|gtag|analytics|extension:\/\//i.test(e));
+    expect(relevantErrors, `errores de consola inesperados: ${relevantErrors.join(" | ")}`).toEqual([]);
+    expect(requestFailures, `peticiones fallidas: ${requestFailures.join(" | ")}`).toEqual([]);
 
     const count = await cards.count();
     let sawRealBadge = false;
@@ -69,15 +92,15 @@ test.describe("MG-02 — Event SegoTokens reward visibility & earning consistenc
       if (REWARD_BADGE_RE.test(text)) sawRealBadge = true;
     }
 
-    // DATA STATE-tolerante (mismo criterio que MG-01): no se fabrica
-    // elegibilidad — que ningún evento real muestre badge hoy es un
-    // resultado válido (p.ej. el Student QA ya asistió a todos los eventos
-    // activos), se documenta como tal en vez de forzarlo.
+    // DATA STATE-tolerante (mismo criterio que MG-01): con el endpoint
+    // respondiendo 200 sin error, que ningún evento real muestre badge hoy
+    // ya sí es un resultado de elegibilidad válido (p.ej. el Student QA ya
+    // asistió a todos los eventos activos), se documenta como tal.
     test.info().annotations.push({
       type: "data-state",
       description: sawRealBadge
         ? "al menos un evento real de Explore muestra un badge de recompensa real hoy"
-        : "ningún evento activo muestra badge hoy (posible ya-asistido) — DATA STATE, ver informe MG-02",
+        : "ningún evento activo muestra badge hoy (endpoint 200 OK, posible ya-asistido) — DATA STATE, ver informe MG-02",
     });
   });
 
