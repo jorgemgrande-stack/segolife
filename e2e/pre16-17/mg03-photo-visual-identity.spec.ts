@@ -1,7 +1,10 @@
 import { test, expect } from "@playwright/test";
 import path from "path";
+import { fileURLToPath } from "url";
 import { student, allVenueAccounts, venuePassword } from "./fixtures/credentials";
 import { loginViaUI } from "./fixtures/auth";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * MG-03 — identidad visual en el Venue App: el Student QA sube una foto,

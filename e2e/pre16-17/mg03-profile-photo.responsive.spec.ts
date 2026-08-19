@@ -1,7 +1,10 @@
 import { test, expect } from "@playwright/test";
 import path from "path";
+import { fileURLToPath } from "url";
 import { student } from "./fixtures/credentials";
 import { loginViaUI } from "./fixtures/auth";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * MG-03 — ciclo de vida completo de la foto de perfil del Student, contra
@@ -57,7 +60,11 @@ test.describe("MG-03 — Student Profile Photo", () => {
     // estado inicial esperado es iniciales — si un run anterior dejó una
     // foto huérfana (no debería, ver afterEach), este mismo test la
     // sustituye igualmente sin fallar.
-    const changeOrAddBtn = page.getByRole("button", { name: /^(add photo|change photo|añadir foto|cambiar foto)$/i }).first();
+    // getByText (no getByRole) a propósito: el pequeño botón-icono superpuesto
+    // en la esquina del avatar comparte el MISMO aria-label accesible que
+    // este botón de texto ("Add/Change photo") — con getByRole ambos
+    // resolverían y Playwright fallaría en modo estricto por ambigüedad.
+    const changeOrAddBtn = page.getByText(/^(add photo|change photo|añadir foto|cambiar foto)$/i).first();
     await expect(changeOrAddBtn).toBeVisible({ timeout: 10000 });
 
     // D/E — sube la imagen QA sintética.
@@ -68,7 +75,7 @@ test.describe("MG-03 — Student Profile Photo", () => {
     // señal real de que el upload+normalizado+persistencia server-side
     // tuvieron éxito (nunca solo un toast, que en móvil puede desaparecer
     // rápido y no es una señal robusta contra la que esperar en E2E).
-    await expect(page.getByRole("button", { name: /^(change photo|cambiar foto)$/i })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/^(change photo|cambiar foto)$/i)).toBeVisible({ timeout: 15000 });
     await expect(page.getByText(/remove photo|eliminar foto/i)).toBeVisible();
 
     // El avatar ahora es una <img> real (AvatarImage), no solo el fallback de iniciales.
@@ -77,7 +84,7 @@ test.describe("MG-03 — Student Profile Photo", () => {
     // F — refresh → la foto persiste (no era solo estado local de React).
     await page.reload();
     await page.waitForLoadState("networkidle");
-    await expect(page.getByRole("button", { name: /^(change photo|cambiar foto)$/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/^(change photo|cambiar foto)$/i)).toBeVisible({ timeout: 10000 });
     await expect(page.locator('img[src*="/api/students/"]').first()).toBeVisible();
 
     // G — navegación → Home → vuelta a Profile → persiste (no era un
@@ -86,7 +93,7 @@ test.describe("MG-03 — Student Profile Photo", () => {
     await page.waitForLoadState("networkidle");
     await page.goto(`/${student.community}/profile`);
     await page.waitForLoadState("networkidle");
-    await expect(page.getByRole("button", { name: /^(change photo|cambiar foto)$/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/^(change photo|cambiar foto)$/i)).toBeVisible({ timeout: 10000 });
 
     // H — responsive: sin overflow horizontal con la foto real cargada.
     const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 2);
@@ -100,13 +107,13 @@ test.describe("MG-03 — Student Profile Photo", () => {
 
     // J — vuelve a iniciales sin recargar (misma exigencia que "aparece sin
     // requerir logout/login", spec §6, aplicada también al camino inverso).
-    await expect(page.getByRole("button", { name: /^(add photo|añadir foto)$/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/^(add photo|añadir foto)$/i)).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/remove photo|eliminar foto/i)).not.toBeVisible();
 
     // K — refresh → la eliminación también persiste (no era solo estado local).
     await page.reload();
     await page.waitForLoadState("networkidle");
-    await expect(page.getByRole("button", { name: /^(add photo|añadir foto)$/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/^(add photo|añadir foto)$/i)).toBeVisible({ timeout: 10000 });
     await expect(page.locator('img[src*="/api/students/"]')).toHaveCount(0);
   });
 });
