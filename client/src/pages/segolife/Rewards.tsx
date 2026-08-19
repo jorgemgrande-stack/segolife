@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useLocation, Link } from "wouter";
+import { useLocation, useSearchParams, Link } from "wouter";
 import { Gift, Coins, ChevronRight, Clock, Copy, Check, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
@@ -322,18 +322,43 @@ function InviteTab() {
   );
 }
 
+/**
+ * FIX-03 — bug real: `?tab=benefits` (deep-link por query, distinto del
+ * alias por PATH `/:community/benefits` de arriba) nunca se comprobaba —
+ * solo `tab=invite` tenía su rama. Además `<Tabs defaultValue=...>` es
+ * NO controlado: solo lee la URL una vez, al montar, así que un cambio de
+ * query SIN remount (navegación interna a la MISMA ruta `/rewards` con
+ * distinto `?tab=`, o atrás/adelante del navegador entre esas dos URLs) no
+ * actualizaba la pestaña visible. Se hace <Tabs> controlado, derivado de
+ * forma reactiva de `useSearchParams()` (wouter) + `location`, y cada click
+ * de pestaña normaliza la URL a `/rewards[?tab=...]` — así una visita vía
+ * el alias `/benefits` deja de "atascar" al Student en esa pestaña si
+ * decide cambiar manualmente a otra.
+ */
+export function resolveActiveTab(tabParam: string | null, location: string): "spend" | "benefits" | "invite" {
+  if (tabParam === "invite") return "invite";
+  if (tabParam === "benefits" || location.endsWith("/benefits")) return "benefits";
+  return "spend";
+}
+
 export default function Rewards() {
   const { t } = useTranslation();
   const { slug } = useCommunity();
-  const [location] = useLocation();
-  const tabParam = new URLSearchParams(window.location.search).get("tab");
-  const defaultTab = tabParam === "invite" ? "invite" : location.endsWith("/benefits") ? "benefits" : "spend";
+  const [location, navigate] = useLocation();
+  const [searchParams] = useSearchParams();
+  const activeTab = resolveActiveTab(searchParams.get("tab"), location);
+
+  function handleTabChange(value: string) {
+    if (!slug) return;
+    const query = value === "spend" ? "" : `?tab=${value}`;
+    navigate(`/${slug}/rewards${query}`, { replace: true });
+  }
 
   return (
     <SegolifeAppShell requireAuth title={t("rewards.title")}>
       <SegolifePageContainer className="space-y-4">
         <h1 className="text-xl font-semibold text-foreground">{t("rewards.title")}</h1>
-        <Tabs defaultValue={defaultTab}>
+        <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsList className="w-full">
             <TabsTrigger value="spend" className="flex-1">{t("rewards.tabSpend")}</TabsTrigger>
             <TabsTrigger value="benefits" className="flex-1">{t("rewards.tabBenefits")}</TabsTrigger>
