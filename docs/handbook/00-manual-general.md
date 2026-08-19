@@ -73,6 +73,34 @@ plataforma externa de venta de entradas (Fourvenues), y en el futuro otros
 podrán venderse de forma nativa dentro de Segolife. El Student siempre ve
 claramente si va a comprar dentro de la app o si va a ser redirigido.
 
+### Comunidad — sondeos y propuestas de Student
+
+La pestaña **Comunidad** de la app de Student tiene dos caras. En **Activas/
+Respondidas/Resultados** el Student vota sondeos publicados por el equipo de
+Segolife (encuestas de sí/no, opción múltiple, ranking...). En **Proponer**,
+cualquier Student puede lanzar su propia idea de plan (por ejemplo, "torneo
+de pádel entre comunidades"):
+
+- **Título** (obligatorio) y una breve descripción.
+- **Imagen de portada** (opcional): se sube al momento desde el propio
+  formulario — nunca hace falta pegar una URL a mano. Solo se aceptan
+  fotografías reales (JPEG/PNG/WebP); cualquier otro tipo de archivo se
+  rechaza con un aviso inmediato, antes de intentar subirlo.
+- **Local relacionado** (opcional): un desplegable con los locales reales
+  adheridos a la comunidad del Student.
+- **Urgencia** (opcional): "Sin prisa" / "Pronto" / "Urgente" — es solo la
+  preferencia personal del Student sobre cuándo le gustaría que ocurriera,
+  nunca una prioridad interna del equipo de Segolife.
+- **Cuándo te gustaría que fuera** (opcional): atajos rápidos ("Este finde",
+  "La semana que viene") o una fecha concreta del calendario.
+
+Al enviar, la idea queda **pendiente de revisión** — nunca se publica
+directamente. El Student ve la confirmación al instante y el equipo de
+Segolife recibe una alerta para moderarla desde el panel de administración.
+Una idea siempre pertenece a la comunidad real del Student que la propuso
+(IE o UVA, según su cuenta) — el formulario nunca pregunta ni permite elegir
+otra comunidad.
+
 ### QR de identidad (SEGOLIFE ID)
 
 Cada Student tiene un QR personal permanente, visible en su perfil

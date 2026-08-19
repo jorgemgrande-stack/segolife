@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Vote, Coins, Heart, Loader2, Send, Flame } from "lucide-react";
+import { Vote, Coins, Heart, Loader2, Send, Flame, ImagePlus, X } from "lucide-react";
 import { type ComunityQuestionType } from "@/lib/comunity";
 
 /**
@@ -189,13 +189,14 @@ function ProposalLinkList({ slug, items }: { slug: string; items: { id: number; 
  * `venueId`/`suggestedDate` ya existían en el backend (submitProposal,
  * communityStudentProposalDb.ts) sin usarse nunca desde el cliente.
  *
- * Imagen de portada: NO se añade esta noche — el propio wizard Admin no
- * tiene subida real (solo un campo de URL con la instrucción "sube en
- * CMS→Multimedia y pega la URL aquí"), así que no hay ningún patrón de
- * subida pública ya construido y accesible para un Student que reutilizar
- * seguro; construir uno nuevo (endpoint público de subida de imágenes)
- * es superficie de abuso/moderación real que merece una decisión propia,
- * no una mejora de una noche. Documentado como BUSINESS DECISION REQUIRED.
+ * MG-04 — Community Proposals 2.0 (autorización de producto explícita):
+ * imagen de portada PÚBLICA (sube vía POST /api/community/proposal-image
+ * ANTES de enviar el formulario — mismo criterio REST-multipart que la
+ * foto de perfil de MG-03, communityProposalImageService.ts reutiliza el
+ * MISMO nivel de validación real con sharp() pero con storagePut PÚBLICO,
+ * nunca el storage privado del avatar) y urgencia/preferencia temporal del
+ * Student (3 niveles simples, nunca la prioridad administrativa interna de
+ * community_proposals.urgencyType — tabla y concepto distintos).
  */
 function toDateOnly(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -213,6 +214,15 @@ function nextWeekDate(): string {
   return toDateOnly(d);
 }
 
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
+type ProposalUrgency = "no_rush" | "soon" | "urgent";
+const URGENCY_OPTIONS: { value: ProposalUrgency; key: string }[] = [
+  { value: "no_rush", key: "comunity.urgencyNoRush" },
+  { value: "soon", key: "comunity.urgencySoon" },
+  { value: "urgent", key: "comunity.urgencyUrgent" },
+];
+
 function ProponerTab() {
   const { t } = useTranslation();
   const { community } = useCommunity();
@@ -225,9 +235,38 @@ function ProponerTab() {
   const [description, setDescription] = useState("");
   const [venueId, setVenueId] = useState("");
   const [suggestedDate, setSuggestedDate] = useState("");
+  const [urgency, setUrgency] = useState<ProposalUrgency | "">("");
+  const [coverImageUrl, setCoverImageUrl] = useState("");
+  const [imageUploading, setImageUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function resetForm() {
-    setTitle(""); setDescription(""); setVenueId(""); setSuggestedDate("");
+    setTitle(""); setDescription(""); setVenueId(""); setSuggestedDate(""); setUrgency(""); setCoverImageUrl("");
+  }
+
+  async function handleImageSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // permite re-seleccionar el mismo archivo dos veces seguidas
+    if (!file) return;
+    if (!ALLOWED_IMAGE_TYPES.has(file.type)) { toast.error(t("comunity.imageInvalidType")); return; }
+    if (file.size > MAX_IMAGE_BYTES) { toast.error(t("comunity.imageTooLarge")); return; }
+
+    setImageUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      const res = await fetch("/api/community/proposal-image", { method: "POST", credentials: "include", body: formData });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? "upload_failed");
+      }
+      const body = await res.json();
+      setCoverImageUrl(body.url);
+    } catch {
+      toast.error(t("comunity.imageUploadError"));
+    } finally {
+      setImageUploading(false);
+    }
   }
 
   const submitMut = trpc.community.submitProposal.useMutation({
@@ -253,6 +292,46 @@ function ProponerTab() {
         <p className="text-sm font-semibold text-foreground">{t("comunity.proposeAPlan")}</p>
         <div><Label>{t("comunity.whatDoYouPropose")}</Label><Input value={title} onChange={e => setTitle(e.target.value)} placeholder={t("comunity.proposePlaceholder")} maxLength={256} /></div>
         <div><Label>{t("comunity.tellUsMore")}</Label><Textarea rows={3} value={description} onChange={e => setDescription(e.target.value)} maxLength={2000} /></div>
+
+        <div>
+          <Label className="mb-1.5 block">{t("comunity.coverImage")}</Label>
+          <input ref={fileInputRef} type="file" accept="image/jpeg,image/jpg,image/png,image/webp" className="hidden" onChange={handleImageSelected} />
+          {coverImageUrl ? (
+            <div className="relative inline-block">
+              <img src={coverImageUrl} alt="" className="h-28 w-full max-w-xs rounded-xl object-cover" />
+              <button
+                type="button"
+                onClick={() => setCoverImageUrl("")}
+                aria-label={t("comunity.removeImage")}
+                className="absolute -right-2 -top-2 flex size-6 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          ) : (
+            <Button type="button" variant="outline" size="sm" disabled={imageUploading} onClick={() => fileInputRef.current?.click()}>
+              {imageUploading ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <ImagePlus className="size-3.5 mr-1.5" />}
+              {t("comunity.addImage")}
+            </Button>
+          )}
+        </div>
+
+        <div>
+          <Label className="mb-1.5 block">{t("comunity.urgencyLabel")}</Label>
+          <div className="flex flex-wrap gap-2">
+            {URGENCY_OPTIONS.map(opt => (
+              <Button
+                key={opt.value}
+                type="button"
+                variant={urgency === opt.value ? "default" : "outline"}
+                size="sm"
+                onClick={() => setUrgency(u => u === opt.value ? "" : opt.value)}
+              >
+                {t(opt.key)}
+              </Button>
+            ))}
+          </div>
+        </div>
 
         <div>
           <Label className="mb-1.5 block">{t("comunity.relatedVenue")}</Label>
@@ -297,13 +376,15 @@ function ProponerTab() {
         )}
         <Button
           className="w-full"
-          disabled={!title.trim() || !community?.id || submitMut.isPending}
+          disabled={!title.trim() || !community?.id || submitMut.isPending || imageUploading}
           onClick={() => community?.id && submitMut.mutate({
             communityId: community.id,
             title: title.trim(),
             description: description.trim() || null,
             venueId: venueId ? Number(venueId) : null,
             suggestedDate: suggestedDate || null,
+            coverImageUrl: coverImageUrl || null,
+            urgency: urgency || null,
           })}
         >
           {submitMut.isPending ? <Loader2 className="size-4 animate-spin mr-1.5" /> : <Send className="size-4 mr-1.5" />} {t("comunity.submitIdea")}

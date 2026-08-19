@@ -508,6 +508,16 @@ export const communityRouter = router({
       venueId: z.number().int().positive().nullish(),
       suggestedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
       category: z.string().max(64).nullish(),
+      // MG-04 — coverImageUrl es SIEMPRE la URL ya devuelta por
+      // POST /api/community/proposal-image (subida+validación real ya
+      // ocurrió ahí) — aquí solo se exige forma de URL válida y acotada.
+      // urgency es la preferencia del Student — z.object() por defecto
+      // DESCARTA cualquier clave no declarada aquí (status/approved/
+      // featured/moderationNotes/etc. nunca llegan a submitStudentProposal
+      // aunque el cliente los incluya en el body — perímetro cerrado por
+      // el propio esquema, no por una lista de bloqueo aparte).
+      coverImageUrl: z.string().url().max(512).nullish(),
+      urgency: z.enum(["no_rush", "soon", "urgent"]).nullish(),
     }))
     .mutation(async ({ input, ctx }) => {
       // Community Proposals backlog — bug real (IDOR) encontrado en la

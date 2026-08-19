@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route } from "wouter";
 import i18n from "@/lib/i18n";
@@ -83,11 +83,13 @@ beforeEach(() => {
   mockMyActive.mockReturnValue({ data: [], isLoading: false });
   mockVenuesPublicActive.mockReturnValue({ data: [{ id: 5, name: "Casanova" }, { id: 6, name: "Tía Felisa" }], isLoading: false });
   mockSubmitProposal.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  vi.stubGlobal("fetch", vi.fn());
 });
 
 afterEach(() => {
   cleanup();
   i18n.changeLanguage("es");
+  vi.unstubAllGlobals();
 });
 
 describe("ComunityHub — i18n (Fase 16, DELIVERY BLOCKER corregido)", () => {
@@ -173,5 +175,177 @@ describe("ComunityHub — ProponerTab: extensión Community Proposals (venue + f
     await user.click(screen.getByRole("button", { name: /submit idea/i }));
 
     expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ suggestedDate: null }));
+  });
+});
+
+describe("ComunityHub — ProponerTab MG-04: imagen de portada (spec §11)", () => {
+  async function openProposeTab() {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /^propose$|^proponer$/i }));
+    return user;
+  }
+
+  it("sube una imagen válida vía POST /api/community/proposal-image y la incluye en el envío", async () => {
+    await i18n.changeLanguage("en");
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, url: "https://cdn.example.com/community-proposals/42/abc.jpg" }),
+    });
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+
+    const file = new File(["fake-image-bytes"], "cover.jpg", { type: "image/jpeg" });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input).toBeTruthy();
+    await user.upload(input, file);
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/community/proposal-image",
+      expect.objectContaining({ method: "POST", credentials: "include" })
+    ));
+    const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(options.body).toBeInstanceOf(FormData);
+
+    // La preview reemplaza el botón "Add image" por uno de quitar.
+    await screen.findByRole("button", { name: /remove image/i });
+
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Sunset picnic");
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({
+      coverImageUrl: "https://cdn.example.com/community-proposals/42/abc.jpg",
+    }));
+  });
+
+  it("tipo de archivo no permitido: rechazado en el cliente antes de llamar a fetch", async () => {
+    await i18n.changeLanguage("en");
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+    const file = new File(["<svg></svg>"], "cover.svg", { type: "image/svg+xml" });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, file);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /remove image/i })).not.toBeInTheDocument();
+  });
+
+  it("quitar la imagen tras subirla vuelve a mostrar 'Add image' y el envío ya no incluye coverImageUrl", async () => {
+    await i18n.changeLanguage("en");
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, url: "https://cdn.example.com/community-proposals/42/abc.jpg" }),
+    });
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+
+    const file = new File(["fake-image-bytes"], "cover.jpg", { type: "image/jpeg" });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, file);
+    const removeBtn = await screen.findByRole("button", { name: /remove image/i });
+    await user.click(removeBtn);
+
+    expect(screen.getByRole("button", { name: /add image/i })).toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Sin imagen");
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ coverImageUrl: null }));
+  });
+
+  it("sin imagen ni al servidor responder distinto, el error de subida (500) nunca bloquea seguir usando el formulario", async () => {
+    await i18n.changeLanguage("en");
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, json: async () => ({ error: "upload_failed" }) });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+    const file = new File(["fake-image-bytes"], "cover.jpg", { type: "image/jpeg" });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, file);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: /add image/i })).toBeInTheDocument();
+  });
+});
+
+describe("ComunityHub — ProponerTab MG-04: urgencia del Student (spec §16)", () => {
+  async function openProposeTab() {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /^propose$|^proponer$/i }));
+    return user;
+  }
+
+  it("seleccionar un nivel de urgencia lo incluye en el envío", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Ping pong league");
+    await user.click(screen.getByRole("button", { name: /^urgent$/i }));
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ urgency: "urgent" }));
+  });
+
+  it("pulsar la misma urgencia dos veces la deselecciona — se envía null", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Ping pong league");
+    const soonBtn = screen.getByRole("button", { name: /^soon$/i });
+    await user.click(soonBtn);
+    await user.click(soonBtn);
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ urgency: null }));
+  });
+
+  it("sin seleccionar urgencia, se envía null — nunca un valor por defecto inventado", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "No urgency chosen");
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ urgency: null }));
+  });
+
+  it("los 3 niveles de urgencia se renderizan traducidos en español", async () => {
+    await i18n.changeLanguage("es");
+    renderAt("/ie/comunity");
+    await openProposeTab();
+    expect(screen.getByRole("button", { name: /sin prisa/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^pronto$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^urgente$/i })).toBeInTheDocument();
+  });
+
+  it("el payload de envío nunca incluye campos reservados de admin (comunidad/estado/prioridad interna) aunque haya imagen y urgencia", async () => {
+    await i18n.changeLanguage("en");
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true, json: async () => ({ success: true, url: "https://cdn.example.com/x.jpg" }),
+    });
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+
+    const file = new File(["fake-image-bytes"], "cover.jpg", { type: "image/jpeg" });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, file);
+    await screen.findByRole("button", { name: /remove image/i });
+    await user.click(screen.getByRole("button", { name: /^urgent$/i }));
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Con imagen y urgencia");
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+
+    const payload = mockMutate.mock.calls[0][0];
+    expect(payload).not.toHaveProperty("status");
+    expect(payload).not.toHaveProperty("approved");
+    expect(payload).not.toHaveProperty("moderationNotes");
+    expect(payload).not.toHaveProperty("priority");
+    expect(payload).not.toHaveProperty("segoTokens");
+    expect(payload.communityId).toBe(1);
   });
 });

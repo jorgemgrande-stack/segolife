@@ -68,7 +68,9 @@ Baseline confirmado — se procede con el roadmap en el orden de prioridad indic
 
 Búsqueda exhaustiva de una definición canónica previa: `git log --all --oneline` (solo 2 commits MG-03 existen: `533b362` feat Student Profile Photo & Visual Identity, `601743e` su fix E2E — ninguno menciona un "MG-03B" ni deja residuales documentados), `grep -rn "MG-03B"` en todo el repo (0 resultados fuera de este propio log), `docs/SEGOLIFE_ROADMAP.md` (roadmap original Fase 1A-6, anterior por completo al esquema de nomenclatura "MG-XX", sin ninguna referencia), `docs/PRE16_OVERNIGHT_WORKLOG.md` (0 resultados). Ambos commits de MG-03 están completos y autocontenidos (feature + su propio fix de E2E), sin ningún TODO/pendiente documentado.
 
-**Clasificación: MG-03B = NO ACTION / NO CANONICAL RESIDUAL FOUND.**
+**Clasificación (histórica, en el momento de esta búsqueda): MG-03B = NO ACTION / NO CANONICAL RESIDUAL FOUND.**
+
+**⚠️ SUPERSEDIDO — ver sección 8 (MG-03B + MG-04 Final Closure).** El "FINAL REMAINDER COMPLETION PROMPT" posterior autorizó explícitamente MG-03B como especificación canónica de producto (Profile Photo Activity), anulando esta clasificación de "no encontrado". Se conserva íntegra por trazabilidad — la búsqueda en sí fue real y exhaustiva, solo la conclusión de "no actuar" quedó sin efecto por una decisión de producto posterior fuera del propio repositorio.
 
 ---
 
@@ -76,7 +78,9 @@ Búsqueda exhaustiva de una definición canónica previa: `git log --all --oneli
 
 Misma búsqueda exhaustiva: `git log --all` (0 commits con "MG-04"/"MG04"), `grep -rn "MG-04"` en todo el repo (0 resultados), `docs/SEGOLIFE_ROADMAP.md` y `docs/PRE16_OVERNIGHT_WORKLOG.md` (0 resultados), memoria de sesiones previas (0 referencias). No existe ninguna especificación de negocio para "MG-04" en ningún lugar del repositorio ni de las conversaciones previas indexadas.
 
-**Clasificación: MG-04 = BUSINESS SPEC NOT FOUND.**
+**Clasificación (histórica, en el momento de esta búsqueda): MG-04 = BUSINESS SPEC NOT FOUND.**
+
+**⚠️ SUPERSEDIDO — ver sección 8 (MG-03B + MG-04 Final Closure).** Mismo motivo que MG-03B arriba: MG-04 (Community Proposals 2.0 — imagen de portada, urgencia) quedó explícitamente autorizado como especificación canónica en un prompt posterior, incluyendo la anulación literal de la entrada de `OVERNIGHT_BACKLOG.md` que marcaba la imagen de portada como BUSINESS DECISION REQUIRED.
 
 ---
 
@@ -153,3 +157,19 @@ Query READ-ONLY real en producción (`benefit_definitions`, todas las filas): **
 **Deploy:** los 3 commits verificados Online tras cada push (deployments `1ab414ab...`, y el último `547eb9c4-2bc5-44f8-9ff8-de10570c51d2`), health/ready 200, logs limpios en cada verificación.
 
 **Resultado: DONE** (imagen de portada y notificación de aprobación quedan explícitamente BUSINESS DECISION REQUIRED, documentadas — no silenciosamente omitidas).
+
+---
+
+## 8. MG-03B + MG-04 — Final Closure (autorización explícita posterior)
+
+Ver `docs/MG03B_MG04_FINAL_CLOSURE.md` para el informe completo. Resumen:
+
+**MG-03B — Profile Photo Activity:** nueva tabla `student_photo_events` (id/userId/occurredAt/action), mirroring exacto de `student_login_events`. `studentPhotoService.ts::replaceMyPhoto`/`removeMyPhoto` registran `added`/`updated`/`removed` best-effort (nunca deshacen una foto ya guardada si el registro de actividad falla), idempotente de verdad en `removed` (nunca se registra si no había foto previa). `/activity` (Activity.tsx) los funde con el resto del historial vía `students.myPhotoActivity`, sin tocar `token_ledger` — nunca "+0 ST". i18n EN/ES. Commit `6870431`.
+
+**MG-04 — Community Proposals 2.0 (imagen + urgencia):** `community_student_proposals` gana `cover_image_url`/`urgency` (migración `0158`, aplicada en producción vía `railway ssh` — mismo patrón que `0157`). Imagen: `communityProposalImageService.ts` (mismo rigor de validación real con sharp() que MG-03 — SVG siempre rechazado, MIME/tamaño/dimensiones — pero storage PÚBLICO vía `storagePut`, nunca el privado del avatar), `POST /api/community/proposal-image` (REST multipart, mismo patrón que la foto de perfil). Urgencia: enum propio `no_rush|soon|urgent`, deliberadamente NO reutiliza `community_proposals.urgencyType` (tabla y semántica distintas — preferencia del Student vs. ventana de cierre de una encuesta admin). Comunidad sigue derivándose exclusivamente de la membresía real (`b8850c4` retested con el payload nuevo — sigue vigente). Gap real corregido: `venueId` ya se guardaba pero nunca se exponía resuelto a Admin — añadido `venueName` vía leftJoin.
+
+**Tests nuevos:** 11 (`communityProposalImageService.test.ts`) + 6 (`communityStudentProposalDb.test.ts`) + 6 (`community.test.ts`, imagen/urgencia/IDOR retest/campos reservados) + 9 (`ComunityHub.test.tsx`, upload/preview/remove/urgencia/payload) + 5 (`ComunityModeration.test.tsx`, primer test de este fichero — visibilidad admin) = 37 nuevos. Regresión global: 3309 passed / 18 failed (idénticos a baseline, mismos 4 ficheros, mismos nombres de test — cero regresión real). TypeScript: 118 (baseline, cero nuevos). Build: limpio.
+
+**Deploy:** rama `feat/mg04-community-proposals-2` → merge ff-only a `main` → push → verificado Online con `RAILWAY_GIT_COMMIT_SHA` desde dentro del contenedor, health/ready 200, logs limpios.
+
+**Resultado: MG-03B COMPLETE = YES. MG-04 COMPLETE = YES** (notificación de aprobación/rechazo queda FOLLOW-UP PRODUCT ENHANCEMENT, no bloquea cierre — requiere definir un lifecycle de notificación que no existía antes de esta noche).

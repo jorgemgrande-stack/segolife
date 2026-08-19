@@ -13,6 +13,7 @@ import { createPasswordResetRouter } from "../passwordReset";
 import { createAuthGuardMiddleware } from "../authGuard";
 import uploadRouter from "../uploadRoutes";
 import studentPhotoRouter from "../segolife/students/studentPhotoRoutes";
+import communityProposalImageRouter from "../segolife/community/communityProposalImageRoutes";
 import redsysRouter from "../redsysRoutes";
 import ticketPaymentWebhookRouter from "../ticketPaymentWebhookRoutes";
 import brevoWebhookRouter from "../brevoWebhookRoutes";
@@ -362,6 +363,8 @@ async function startServer() {
   app.use(uploadRouter);
   // SEGOLIFE MG-03 — Student Profile Photo (subida propia + servido autenticado)
   app.use(studentPhotoRouter);
+  // SEGOLIFE MG-04 — Community Proposals 2.0: imagen de portada pública de una idea de Student
+  app.use(communityProposalImageRouter);
 
   // Redsys IPN notification endpoint
   app.use(redsysRouter);

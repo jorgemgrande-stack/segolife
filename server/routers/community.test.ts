@@ -173,3 +173,78 @@ describe("community router — submitProposal: la comunidad SIEMPRE se deriva de
     expect(result.success).toBe(true);
   });
 });
+
+describe("community router — submitProposal MG-04: imagen de portada + urgencia (spec §11/§16)", () => {
+  beforeEach(() => {
+    mockGetUserCommunities.mockReset();
+    mockSubmitStudentProposal.mockReset();
+    mockNotifyStudentProposalSubmitted.mockClear().mockResolvedValue(undefined);
+  });
+
+  it("coverImageUrl y urgency llegan intactos a submitStudentProposal cuando el Student los rellena", async () => {
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    mockSubmitStudentProposal.mockResolvedValue({ id: 910, communityId: 1, title: "x", status: "pending_moderation" });
+    await callerAs(7).submitProposal({
+      communityId: 1, title: "Torneo de pádel",
+      coverImageUrl: "https://cdn.example.com/community-proposals/7/abc.jpg",
+      urgency: "urgent",
+    });
+    expect(mockSubmitStudentProposal).toHaveBeenCalledWith(expect.objectContaining({
+      coverImageUrl: "https://cdn.example.com/community-proposals/7/abc.jpg",
+      urgency: "urgent",
+    }));
+  });
+
+  it("sin imagen ni urgencia, se envían como ausentes — nunca un valor inventado", async () => {
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    mockSubmitStudentProposal.mockResolvedValue({ id: 911, communityId: 1, title: "x", status: "pending_moderation" });
+    await callerAs(7).submitProposal({ communityId: 1, title: "Torneo de pádel" });
+    const callArg = mockSubmitStudentProposal.mock.calls[0][0];
+    expect(callArg.coverImageUrl).toBeUndefined();
+    expect(callArg.urgency).toBeUndefined();
+  });
+
+  it("rechaza una urgencia fuera del enum permitido (payload manipulado)", async () => {
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    await expect(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      callerAs(7).submitProposal({ communityId: 1, title: "x", urgency: "asap" as any })
+    ).rejects.toThrow();
+    expect(mockSubmitStudentProposal).not.toHaveBeenCalled();
+  });
+
+  it("rechaza coverImageUrl que no es una URL válida (nunca un path de filesystem ni un string arbitrario)", async () => {
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    await expect(
+      callerAs(7).submitProposal({ communityId: 1, title: "x", coverImageUrl: "/etc/passwd" })
+    ).rejects.toThrow();
+    expect(mockSubmitStudentProposal).not.toHaveBeenCalled();
+  });
+
+  it("REGRESIÓN IDOR — coverImageUrl/urgency en el payload nunca reabren la vía de manipular communityId (b8850c4 sigue vigente)", async () => {
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    await expect(
+      callerAs(7).submitProposal({
+        communityId: 2, title: "Intento con imagen/urgencia de por medio",
+        coverImageUrl: "https://cdn.example.com/community-proposals/7/x.jpg",
+        urgency: "urgent",
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockSubmitStudentProposal).not.toHaveBeenCalled();
+  });
+
+  it("campos reservados de admin (status/approved/featured/etc.) en el body nunca llegan a submitStudentProposal — zod los descarta por no estar declarados", async () => {
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    mockSubmitStudentProposal.mockResolvedValue({ id: 912, communityId: 1, title: "x", status: "pending_moderation" });
+    await callerAs(7).submitProposal({
+      communityId: 1, title: "x",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...({ status: "approved", moderatedByUserId: 999, featured: true, segoTokens: 1000 } as any),
+    });
+    const callArg = mockSubmitStudentProposal.mock.calls[0][0];
+    expect(callArg).not.toHaveProperty("status");
+    expect(callArg).not.toHaveProperty("moderatedByUserId");
+    expect(callArg).not.toHaveProperty("featured");
+    expect(callArg).not.toHaveProperty("segoTokens");
+  });
+});

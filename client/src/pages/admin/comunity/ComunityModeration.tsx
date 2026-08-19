@@ -18,6 +18,13 @@ import { QUESTION_TYPE_LABEL, fmtDateTime, type ComunityQuestionType } from "@/l
 const ALL = "__all__";
 type IdeaStatus = "pending_moderation" | "approved" | "rejected" | "scheduled" | "active" | "closed" | "converted";
 
+// MG-04 — preferencia/urgencia del Student (nunca prioridad admin interna, ver comentario de schema).
+const URGENCY_LABEL: Record<"no_rush" | "soon" | "urgent", { label: string; className: string }> = {
+  no_rush: { label: "Sin prisa", className: "bg-secondary text-muted-foreground" },
+  soon: { label: "Pronto", className: "bg-accent/10 text-accent" },
+  urgent: { label: "Urgente", className: "bg-destructive/10 text-destructive" },
+};
+
 const TYPES_WITH_OPTIONS: ComunityQuestionType[] = ["single_choice", "multiselect", "ranking", "percentage_scale"];
 
 /**
@@ -97,14 +104,23 @@ export default function ComunityModeration() {
             {items.map(idea => (
               <div key={idea.id} className="bg-card border border-border rounded-lg p-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  {idea.coverImageUrl && (
+                    <img src={idea.coverImageUrl} alt="" className="size-16 shrink-0 rounded-md object-cover" />
+                  )}
+                  <div className="flex-1">
                     <p className="font-medium text-foreground">{idea.title}</p>
                     {idea.description && <p className="mt-1 text-sm text-muted-foreground max-w-xl">{idea.description}</p>}
                     <p className="mt-2 text-xs text-muted-foreground">
                       {idea.studentName ?? "Estudiante"} · {fmtDateTime(idea.createdAt)}
                       {idea.category && <> · {idea.category}</>}
+                      {idea.venueName && <> · {idea.venueName}</>}
                       {idea.suggestedDate && <> · Fecha sugerida: {idea.suggestedDate}</>}
                     </p>
+                    {idea.urgency && (
+                      <Badge className={`mt-1.5 ${URGENCY_LABEL[idea.urgency].className}`} variant="secondary">
+                        {URGENCY_LABEL[idea.urgency].label}
+                      </Badge>
+                    )}
                   </div>
                   <Badge variant="secondary" className="flex items-center gap-1 shrink-0"><Heart className="size-3" /> {idea.supportCount}</Badge>
                 </div>

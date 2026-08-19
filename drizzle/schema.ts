@@ -6087,6 +6087,16 @@ export const communityStudentProposals = mysqlTable("community_student_proposals
   venueId:                  int("venue_id"),
   suggestedDate:            date("suggested_date", { mode: "string" }),
   category:                 varchar("category", { length: 64 }),
+  // MG-04 — Community Proposals 2.0. Imagen de portada PÚBLICA (a diferencia
+  // de la foto de perfil privada de MG-03B) — nunca la imagen en sí, solo la
+  // URL ya subida vía server/storage.ts::storagePut (el mismo primitivo
+  // público que usa CMS, con el volumen persistente real de Railway).
+  coverImageUrl:            varchar("cover_image_url", { length: 512 }),
+  // Preferencia/urgencia expresada por el Student — NUNCA la prioridad
+  // administrativa interna (esa sigue siendo un concepto propio de
+  // community_proposals/urgencyType, tabla distinta, sin relación). Solo 3
+  // niveles simples, nunca inventa una escala mayor (spec MG-04 §13).
+  urgency:                  mysqlEnum("urgency", ["no_rush", "soon", "urgent"]),
   status:                   mysqlEnum("status", [
     "pending_moderation", "approved", "rejected", "scheduled", "active", "closed", "converted",
   ]).notNull().default("pending_moderation"),

@@ -7,7 +7,7 @@ import { eq, and, desc, sql, inArray, type SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import {
-  communityStudentProposals, communitySupports, users,
+  communityStudentProposals, communitySupports, users, venues,
   type CommunityStudentProposal, type InsertCommunityStudentProposal, type CommunitySupport,
 } from "../../../drizzle/schema";
 
@@ -36,6 +36,12 @@ export interface SubmitStudentProposalInput {
   venueId?: number | null;
   suggestedDate?: string | null; // YYYY-MM-DD
   category?: string | null;
+  // MG-04 — Community Proposals 2.0. `coverImageUrl` es SIEMPRE una URL ya
+  // subida vía communityProposalImageService.ts (nunca un valor arbitrario
+  // del cliente que apunte a otro sitio — el router la recibe ya validada).
+  // `urgency` es la preferencia del Student, NUNCA prioridad admin.
+  coverImageUrl?: string | null;
+  urgency?: "no_rush" | "soon" | "urgent" | null;
 }
 
 export async function submitStudentProposal(input: SubmitStudentProposalInput, db?: AnyDbHandle): Promise<CommunityStudentProposal> {
@@ -50,6 +56,8 @@ export async function submitStudentProposal(input: SubmitStudentProposalInput, d
     venueId: input.venueId ?? null,
     suggestedDate: input.suggestedDate ?? null,
     category: input.category ?? null,
+    coverImageUrl: input.coverImageUrl ?? null,
+    urgency: input.urgency ?? null,
     status: "pending_moderation",
   };
   const insertResult = await (conn as DbHandle).insert(communityStudentProposals).values(values);
@@ -67,6 +75,9 @@ export async function getStudentProposalById(id: number, db?: AnyDbHandle): Prom
 export interface StudentProposalListItem extends CommunityStudentProposal {
   studentName: string | null;
   supportCount: number;
+  // MG-04 — venue ya se guardaba (venueId) pero nunca se exponía resuelto a
+  // un nombre real para Admin (gap encontrado en la auditoría, spec §20).
+  venueName: string | null;
 }
 
 export interface StudentProposalListFilters {
@@ -86,9 +97,10 @@ export async function listStudentProposals(filters: StudentProposalListFilters, 
   if (filters.communityIds !== "all") conditions.push(inArray(communityStudentProposals.communityId, filters.communityIds));
   const whereClause = conditions.length ? and(...conditions) : undefined;
 
-  const baseQuery = conn.select({ proposal: communityStudentProposals, studentName: users.name })
+  const baseQuery = conn.select({ proposal: communityStudentProposals, studentName: users.name, venueName: venues.name })
     .from(communityStudentProposals)
-    .leftJoin(users, eq(communityStudentProposals.studentUserId, users.id));
+    .leftJoin(users, eq(communityStudentProposals.studentUserId, users.id))
+    .leftJoin(venues, eq(communityStudentProposals.venueId, venues.id));
   const rows = await (whereClause ? baseQuery.where(whereClause) : baseQuery)
     .orderBy(desc(communityStudentProposals.createdAt))
     .limit(filters.limit ?? 50)
@@ -107,6 +119,7 @@ export async function listStudentProposals(filters: StudentProposalListFilters, 
   const items: StudentProposalListItem[] = rows.map(r => ({
     ...r.proposal,
     studentName: r.studentName,
+    venueName: r.venueName,
     supportCount: supportCountById.get(r.proposal.id) ?? 0,
   }));
 

@@ -120,6 +120,13 @@ Informe de Cierre para el estado actual de esa dependencia externa.
 estudiantil (Panel + Moderación de ideas). Es un módulo propio, distinto de
 cualquier funcionalidad comercial.
 
+En **Moderación** (`/admin/comunity/moderacion`), cada idea de Student
+muestra ahora también, cuando el Student los rellenó: la imagen de portada
+en miniatura, el local relacionado (ya resuelto por nombre, no solo su ID
+interno) y un badge con la urgencia indicada por el Student ("Sin prisa" /
+"Pronto" / "Urgente" — es su preferencia personal, nunca la prioridad
+interna con la que el equipo decide qué moderar antes).
+
 ## 15. Personal (RRHH / Employee)
 
 `/admin/personal` — gestión completa de RRHH del equipo interno de
