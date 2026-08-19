@@ -8,6 +8,7 @@ import {
   listEvents,
   getEventById,
   createEvent,
+  updateEvent,
   setEventCommunities,
   setEventActive,
   setEventFeatured,
@@ -21,6 +22,7 @@ import {
   UPCOMING_EVENTS_LIMIT,
 } from "./eventsDb";
 import { events, venues, communityEvents } from "../../drizzle/schema";
+import { engagementEvents } from "../segolife/engagement/engagementEvents";
 
 function blankEvent(id: number, overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -254,6 +256,92 @@ describe("eventsDb — activar/desactivar y destacar/quitar destacado", () => {
     };
     const updated = await setEventFeatured(1, false, db as unknown as Parameters<typeof setEventFeatured>[2]);
     expect(updated?.isFeatured).toBe(false);
+  });
+});
+
+// Fourvenues date-change audit (backlog, spec §16) — updateEvent() es el
+// ÚNICO punto que sincroniza startsAt/endsAt de un evento ya mapeado
+// (eventCatalogSync.ts) y decide si eso amerita `event_updated` para el
+// Communication Center (eventLifecycleListener.ts). Sin cobertura previa.
+function makeUpdateEventMockDb(initial: ReturnType<typeof blankEvent>) {
+  let event = { ...initial };
+  const db: Record<string, unknown> = {
+    select: () => db, from: () => db, where: () => db, limit: () => db,
+    update: () => db,
+    set: (fields: Record<string, unknown>) => { event = { ...event, ...fields }; return db; },
+    then: (resolve: (v: unknown) => void) => resolve([event]),
+  };
+  return { db: db as unknown as Parameters<typeof updateEvent>[2], getEvent: () => event };
+}
+
+describe("eventsDb — updateEvent: emite event_updated SOLO ante un cambio material (Fourvenues date-change, spec §16)", () => {
+  it("startsAt REALMENTE cambia en un evento activo → emite event_updated con changedFields=['startsAt']", async () => {
+    const { db } = makeUpdateEventMockDb(blankEvent(1, { startsAt: new Date("2026-09-15T20:00:00Z"), status: "active" }));
+    const captured: unknown[] = [];
+    engagementEvents.once("event_updated", payload => captured.push(payload));
+    await updateEvent(1, { startsAt: new Date("2026-09-16T20:00:00Z") }, db);
+    expect(captured).toEqual([{ eventId: 1, changedFields: ["startsAt"] }]);
+  });
+
+  it("re-sincronizar el MISMO startsAt (sin cambio real) → NUNCA emite — evita ruido en cada tick del scheduler", async () => {
+    const sameDate = new Date("2026-09-15T20:00:00Z");
+    const { db } = makeUpdateEventMockDb(blankEvent(1, { startsAt: sameDate, status: "active" }));
+    let emitted = false;
+    engagementEvents.once("event_updated", () => { emitted = true; });
+    await updateEvent(1, { startsAt: new Date(sameDate.getTime()) }, db); // mismo instante, objeto Date distinto
+    engagementEvents.removeAllListeners("event_updated");
+    expect(emitted).toBe(false);
+  });
+
+  it("endsAt cambia de null a una fecha real → emite con changedFields=['endsAt']", async () => {
+    const { db } = makeUpdateEventMockDb(blankEvent(1, { endsAt: null, status: "active" }));
+    const captured: unknown[] = [];
+    engagementEvents.once("event_updated", payload => captured.push(payload));
+    await updateEvent(1, { endsAt: new Date("2026-09-16T02:00:00Z") }, db);
+    expect(captured).toEqual([{ eventId: 1, changedFields: ["endsAt"] }]);
+  });
+
+  it("startsAt Y endsAt cambian a la vez → un único evento con AMBOS campos, nunca dos emisiones", async () => {
+    const { db } = makeUpdateEventMockDb(blankEvent(1, { startsAt: new Date("2026-09-15T20:00:00Z"), endsAt: null, status: "active" }));
+    const captured: unknown[] = [];
+    engagementEvents.on("event_updated", payload => captured.push(payload));
+    await updateEvent(1, { startsAt: new Date("2026-09-16T20:00:00Z"), endsAt: new Date("2026-09-17T02:00:00Z") }, db);
+    engagementEvents.removeAllListeners("event_updated");
+    expect(captured).toEqual([{ eventId: 1, changedFields: ["startsAt", "endsAt"] }]);
+  });
+
+  it("un evento INACTIVO (draft Fourvenues) que cambia de fecha NUNCA notifica — solo eventos activos amerita alertar a compradores", async () => {
+    const { db } = makeUpdateEventMockDb(blankEvent(1, { startsAt: new Date("2026-09-15T20:00:00Z"), status: "inactive" }));
+    let emitted = false;
+    engagementEvents.once("event_updated", () => { emitted = true; });
+    await updateEvent(1, { startsAt: new Date("2026-09-16T20:00:00Z") }, db);
+    engagementEvents.removeAllListeners("event_updated");
+    expect(emitted).toBe(false);
+  });
+
+  it("sourcePublicationStatus a secas (sin tocar fecha) NUNCA dispara event_updated — no es un cambio material para el Communication Center (ver FIX-04/FIX-05)", async () => {
+    const { db } = makeUpdateEventMockDb(blankEvent(1, { startsAt: new Date("2026-09-15T20:00:00Z"), status: "active" }));
+    let emitted = false;
+    engagementEvents.once("event_updated", () => { emitted = true; });
+    await updateEvent(1, { sourcePublicationStatus: "published" } as never, db);
+    engagementEvents.removeAllListeners("event_updated");
+    expect(emitted).toBe(false);
+  });
+
+  it("venueId cambia → emite con changedFields=['venueId'] (el evento se movió de local)", async () => {
+    const { db } = makeUpdateEventMockDb(blankEvent(1, { venueId: 20, status: "active" }));
+    const captured: unknown[] = [];
+    engagementEvents.once("event_updated", payload => captured.push(payload));
+    await updateEvent(1, { venueId: 21 }, db);
+    expect(captured).toEqual([{ eventId: 1, changedFields: ["venueId"] }]);
+  });
+
+  it("devuelve el evento YA actualizado (before ≠ after en el valor devuelto)", async () => {
+    const { db } = makeUpdateEventMockDb(blankEvent(1, { startsAt: new Date("2026-09-15T20:00:00Z"), status: "active" }));
+    engagementEvents.removeAllListeners("event_updated"); // no interesa la emisión en este test, solo el valor devuelto
+    const newDate = new Date("2026-09-16T20:00:00Z");
+    const updated = await updateEvent(1, { startsAt: newDate }, db);
+    expect(updated?.startsAt).toEqual(newDate);
   });
 });
 
