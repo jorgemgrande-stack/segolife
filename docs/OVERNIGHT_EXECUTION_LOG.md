@@ -80,6 +80,26 @@ Misma búsqueda exhaustiva: `git log --all` (0 commits con "MG-04"/"MG04"), `gre
 
 ---
 
+## 6. Fourvenues — cambio de fecha de eventos (backlog §16/§17)
+
+**Auditoría:** el flujo YA convergía correctamente, sin código nuevo necesario. `eventCatalogSync.ts::syncEventCatalog` — un evento ya mapeado (vía `external_entity_mappings`, matching determinista, nunca por nombre/fecha una vez vinculado) SOLO actualiza `startsAt`/`endsAt`/`sourcePublicationStatus` en la fila existente — jamás crea un duplicado, jamás toca slug/comunidades/descripción editorial (field ownership documentado en cabecera del propio fichero desde FIX-04/FIX-05). `eventsDb.ts::updateEvent` compara before/after y emite `event_updated` (bus interno `engagementEvents`) SOLO cuando `startsAt`/`endsAt`/`venueId` cambian de verdad — nunca en un re-sync con el mismo valor, nunca para un evento inactivo. `eventLifecycleListener.ts` (registrado siempre en bootstrap, `_core/index.ts:793`) reacciona con fan-out SOLO a compradores reales con `ticket_orders.status="paid"` del evento concreto — nunca un broadcast general —, community resuelta por membresía real de cada destinatario, idempotente por `eventId:orderId:changedFields` (dos ediciones materiales distintas SÍ notifican cada una; la misma edición reprocesada nunca duplica).
+
+**Gaps encontrados:** cero cobertura de test para `updateEvent`'s guard de "solo material" y cero cobertura para `eventLifecycleListener.ts` en absoluto (primer test de ese fichero). Añadidos 16 tests nuevos (8+8), cero cambios de producto — el comportamiento ya era correcto.
+
+**Duplicación de eventos:** imposible por diseño — el matching por `external_entity_mappings` es la única vía para un evento ya vinculado, nunca vuelve a evaluarse por nombre/fecha.
+
+**Slug/comunidad:** intactos — `updateEvent` nunca los toca.
+
+**Notificación duplicada:** imposible — idempotencyKey real por `eventId:orderId:changedFields`, respaldado por el UNIQUE de `notifications.idempotencyKey`.
+
+**Commit:** `aecebd5` (rama `test/fourvenues-date-change-coverage`, solo tests, sin cambios de producción).
+
+**Deploy:** Railway Online, deployment `d7629337-1043-49c5-99a1-4a673e98e9a3`, health/ready 200, logs limpios.
+
+**Resultado: DONE — ALREADY CORRECT, cobertura añadida.**
+
+---
+
 ## 5. Community Proposals — auditoría inicial y hallazgo CRITICAL/HIGH (IDOR)
 
 **Arquitectura encontrada:** dos sistemas SEPARADOS bajo el nombre "COMUNITY", confirmados por el propio comentario de `drizzle/schema.ts` (línea ~6060): `community_student_proposals` (ideas simples de Student — título/descripción/venue/suggestedDate/category, apoyo tipo "me gusta" vía `community_supports`, lifecycle de moderación `pending_moderation→approved/rejected`) y `community_proposals` (encuestas estructuradas de Admin — tipo de pregunta, audiencia segmentada, timing/urgencia, visibilidad de resultados). Un admin puede "convertir" una idea aprobada en una encuesta formal (`sourceStudentProposalId`), pero nunca se reescribe la fila original. El wizard Admin (`ComunityWizard.tsx`) es de la SEGUNDA familia — sus campos de audiencia/tipo de pregunta/visibilidad de resultados son estructuralmente admin-only y quedan fuera de alcance para el formulario Student, tal y como exige el spec (§12: "NO permitir al Student elegir... moderación... estados internos").
