@@ -27,6 +27,7 @@ import {
 } from "../segolife/community/communityStudentProposalDb";
 import { communityResponseValues, communityResponses, communityOptions as communityOptionsTable } from "../../drizzle/schema";
 import { eq, sql } from "drizzle-orm";
+import { getUserCommunities } from "../db/communitiesDb";
 
 const communityViewProcedure = permissionProcedure("community.view", ["admin"]);
 const communityManageProcedure = permissionProcedure("community.manage", ["admin"]);
@@ -508,6 +509,17 @@ export const communityRouter = router({
       category: z.string().max(64).nullish(),
     }))
     .mutation(async ({ input, ctx }) => {
+      // Community Proposals backlog — bug real (IDOR) encontrado en la
+      // auditoría: nunca se comprobaba que `communityId` fuera una comunidad
+      // REAL del Student que llama. El cliente siempre envía la suya (vía
+      // useCommunity()), pero nada impedía manipular el body de la petición
+      // para proponer en la comunidad de otro. La comunidad SIEMPRE debe
+      // derivarse de la membresía real, nunca de un valor que el cliente
+      // pueda elegir sin verificación server-side.
+      const memberships = await getUserCommunities(ctx.user.id);
+      if (!memberships.some(m => m.communityId === input.communityId)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No perteneces a esa comunidad" });
+      }
       const idea = await submitStudentProposal({ ...input, studentUserId: ctx.user.id });
       return { success: true, idea };
     }),

@@ -5,12 +5,35 @@
  * Cubre spec punto 89 (RBAC) en su forma más barata y determinista: ningún
  * endpoint de COMUNITY es accesible sin sesión, ni de lectura ni de escritura.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Community Proposals backlog — IDOR real encontrado en la auditoría:
+// submitProposal nunca comprobaba que `communityId` fuera una comunidad
+// REAL del Student que llama. Se mockean sus dos únicas dependencias para
+// probar la comprobación de membresía sin tocar BD — mismo criterio que
+// el resto de este repo (aislar la unidad bajo test).
+const { mockGetUserCommunities, mockSubmitStudentProposal } = vi.hoisted(() => ({
+  mockGetUserCommunities: vi.fn(),
+  mockSubmitStudentProposal: vi.fn(),
+}));
+vi.mock("../db/communitiesDb", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../db/communitiesDb")>();
+  return { ...actual, getUserCommunities: mockGetUserCommunities };
+});
+vi.mock("../segolife/community/communityStudentProposalDb", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/community/communityStudentProposalDb")>();
+  return { ...actual, submitStudentProposal: mockSubmitStudentProposal };
+});
+
 import { communityRouter } from "./community";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function callerWithoutSession() {
   return communityRouter.createCaller({ user: null } as any);
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function callerAs(id: number) {
+  return communityRouter.createCaller({ user: { id, role: "user" } } as any);
 }
 
 describe("community router — ningún endpoint admin es accesible sin sesión", () => {
@@ -83,5 +106,45 @@ describe("community router — autoservicio del estudiante tampoco es público (
     await expect(callerWithoutSession().support({ studentProposalId: 1 })).rejects.toThrow(/please login/i);
     await expect(callerWithoutSession().unsupport({ studentProposalId: 1 })).rejects.toThrow(/please login/i);
     await expect(callerWithoutSession().hasSupported({ studentProposalId: 1 })).rejects.toThrow(/please login/i);
+  });
+});
+
+describe("community router — submitProposal: la comunidad SIEMPRE se deriva de la membresía real (IDOR, backlog Community Proposals)", () => {
+  beforeEach(() => {
+    mockGetUserCommunities.mockReset();
+    mockSubmitStudentProposal.mockReset();
+  });
+
+  it("REGRESIÓN IDOR — un Student de la comunidad 1 NUNCA puede proponer en la comunidad 2 aunque manipule communityId en el body", async () => {
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    await expect(
+      callerAs(7).submitProposal({ communityId: 2, title: "Intento de propuesta ajena" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockSubmitStudentProposal).not.toHaveBeenCalled();
+  });
+
+  it("un Student SÍ puede proponer en una comunidad de la que es miembro real", async () => {
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    mockSubmitStudentProposal.mockResolvedValue({ id: 900, communityId: 1, title: "Padel el sábado", status: "pending_moderation" });
+    const result = await callerAs(7).submitProposal({ communityId: 1, title: "Padel el sábado" });
+    expect(result.success).toBe(true);
+    expect(mockSubmitStudentProposal).toHaveBeenCalledWith(expect.objectContaining({ communityId: 1, studentUserId: 7 }));
+  });
+
+  it("un Student sin NINGUNA comunidad real (edge case) es rechazado, nunca se cuela por una lista vacía", async () => {
+    mockGetUserCommunities.mockResolvedValue([]);
+    await expect(
+      callerAs(7).submitProposal({ communityId: 1, title: "idea" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("un Student con membresía IE+UVA puede proponer en CUALQUIERA de sus dos comunidades reales", async () => {
+    mockGetUserCommunities.mockResolvedValue([
+      { id: 1, userId: 7, communityId: 1, createdAt: new Date() },
+      { id: 2, userId: 7, communityId: 2, createdAt: new Date() },
+    ]);
+    mockSubmitStudentProposal.mockResolvedValue({ id: 901, communityId: 2, title: "x", status: "pending_moderation" });
+    const result = await callerAs(7).submitProposal({ communityId: 2, title: "x" });
+    expect(result.success).toBe(true);
   });
 });
