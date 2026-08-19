@@ -25,8 +25,14 @@ vi.mock("../ticketing/ticketIssuanceService", () => ({ issueTicketsForOrder: moc
 const { mockGrantNativePurchaseReward } = vi.hoisted(() => ({ mockGrantNativePurchaseReward: vi.fn() }));
 vi.mock("../ticketing/checkoutService", () => ({ grantNativePurchaseReward: mockGrantNativePurchaseReward }));
 
-const { mockReverseNativePurchaseReward } = vi.hoisted(() => ({ mockReverseNativePurchaseReward: vi.fn() }));
-vi.mock("../ticketing/ticketCancellationService", () => ({ reverseNativePurchaseReward: mockReverseNativePurchaseReward }));
+const { mockReverseNativePurchaseReward, mockMarkLoyaltyReconciliationRequired } = vi.hoisted(() => ({
+  mockReverseNativePurchaseReward: vi.fn(),
+  mockMarkLoyaltyReconciliationRequired: vi.fn(),
+}));
+vi.mock("../ticketing/ticketCancellationService", () => ({
+  reverseNativePurchaseReward: mockReverseNativePurchaseReward,
+  markLoyaltyReconciliationRequired: mockMarkLoyaltyReconciliationRequired,
+}));
 
 const { mockIngestAttendance } = vi.hoisted(() => ({ mockIngestAttendance: vi.fn() }));
 vi.mock("../ticketing/attendancePipeline", () => ({ ingestAttendance: mockIngestAttendance }));
@@ -266,5 +272,21 @@ describe("doorSaleService — refundDoorSale (spec §20/§56)", () => {
     mockTransitionOrderStatus.mockResolvedValueOnce({ ...paidOrder, status: "refunded" });
     await refundDoorSale({ orderId: 100, refundedByUserId: 9, reason: "motivo" }, db);
     expect(mockReverseTokenSpend).toHaveBeenCalledWith(expect.objectContaining({ reservationId: 55 }), db);
+  });
+
+  // FIX-01 — antes de este fix, un fallo de reverseTokenSpend aquí se
+  // propagaba SIN CAPTURAR fuera de refundDoorSale: el dinero (y la
+  // admisión) ya estaban confirmados, pero el admin recibía un error
+  // genérico y la deuda de SegoTokens se perdía sin ningún rastro durable.
+  it("#16 reverseTokenSpend falla → el reembolso NUNCA se deshace (no propaga sin capturar), la deuda queda marcada de forma durable", async () => {
+    const paidOrder = orderRow({ status: "paid", channel: "door", tokenReservationId: 55 });
+    const { db } = makeMockDb({ order: paidOrder, tickets: [ticketRow({ status: "used" })] });
+    mockTransitionOrderStatus.mockResolvedValueOnce({ ...paidOrder, status: "refunded" });
+    mockReverseTokenSpend.mockRejectedValueOnce(new Error("boom"));
+
+    const refunded = await refundDoorSale({ orderId: 100, refundedByUserId: 9, reason: "motivo" }, db);
+
+    expect(refunded.status).toBe("refunded"); // nunca lanza — el refund real se mantiene
+    expect(mockMarkLoyaltyReconciliationRequired).toHaveBeenCalledWith(100, expect.stringContaining("boom"), db);
   });
 });

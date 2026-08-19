@@ -10,11 +10,26 @@
  *    se revierte automáticamente vía `reverseTransaction()` (Fase 2), el
  *    mismo mecanismo probado que ya usa `ticketPurchasePipeline.ts` para
  *    refunds Fourvenues, idempotente por `isLedgerEntryReversed`. Si YA hay
- *    algún ticket `used`, el estudiante ya asistió y puede haber SegoTokens/
- *    Benefits concedidos por esa asistencia además de por la compra — ni
- *    esa reversión ni la política de Benefits están definidas hoy para
- *    "entrada ya disfrutada", así que NUNCA se improvisa — el order queda
- *    en `reconciliation_required` para resolución manual (sin tocar nada).
+ *    algún ticket `used`, el order queda en `reconciliation_required`
+ *    ANTES de tocar dinero (política de negocio sin cambios — FIX-01 no
+ *    decide si debe permitirse reembolsar una entrada ya disfrutada, solo
+ *    garantiza que SI el dinero llega a reembolsarse, el clawback nunca se
+ *    pierde: ver `refundDoorSale` en doorSaleService.ts, donde "used" SÍ
+ *    convive con un refund real y el clawback se aplica siempre).
+ *
+ *  FIX-01 (regla económica canónica — dinero reembolsado ⇒ SegoTokens de
+ *  compra SIEMPRE revertidos): las dos reversiones de este archivo
+ *  (`reverseNativePurchaseReward` y la reversión del gasto en SegoTokens
+ *  más abajo en `refundOrder`) son best-effort DESPUÉS de que el dinero ya
+ *  esté confirmado reembolsado — nunca deshacen ese reembolso si fallan —
+ *  pero antes de FIX-01 un fallo aquí solo se registraba con
+ *  `console.error`, sin dejar ningún rastro durable ni reintentable: la
+ *  deuda de SegoTokens podía perderse en silencio para siempre. Ahora,
+ *  además de loguear, `markLoyaltyReconciliationRequired()` deja la deuda
+ *  escrita en `order.metadata` (reutilizando exactamente las mismas claves
+ *  que ya usa `ticketPurchasePipeline.ts` para el mismo caso en refunds
+ *  Fourvenues: `loyaltyReconciliationRequired`/`loyaltyReversalError`) para
+ *  que `tokenClawbackReconciliationService.ts` la encuentre y reintente.
  */
 import { eq, and, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
@@ -35,6 +50,33 @@ type DbHandle = typeof _db;
 
 async function getDb(): Promise<DbHandle> {
   return _db;
+}
+
+/**
+ * FIX-01 — deja una deuda de clawback de SegoTokens escrita de forma
+ * durable en `order.metadata`, en vez de perderla en un `console.error`.
+ * Nunca toca `status` (el order ya está `refunded`/`partially_refunded`,
+ * un estado terminal para dinero — correcto, no se re-abre) — solo añade
+ * las MISMAS claves que `ticketPurchasePipeline.ts` ya usa para el caso
+ * Fourvenues, para que un único reconciliador (`tokenClawbackReconciliationService.ts`)
+ * cubra ambos orígenes. Best-effort ella misma: si ni siquiera este UPDATE
+ * puede escribirse (DB caída en el peor momento posible), no hay nada más
+ * que hacer aquí — el `console.error` ya emitido es el único rastro posible.
+ */
+export async function markLoyaltyReconciliationRequired(orderId: number, detail: string, conn: DbHandle): Promise<void> {
+  try {
+    const [order] = await conn.select({ metadata: ticketOrders.metadata }).from(ticketOrders).where(eq(ticketOrders.id, orderId)).limit(1);
+    await conn.update(ticketOrders).set({
+      metadata: {
+        ...(order?.metadata ?? {}),
+        loyaltyReconciliationRequired: true,
+        loyaltyReversalError: detail,
+        loyaltyReversalErrorAt: new Date().toISOString(),
+      },
+    }).where(eq(ticketOrders.id, orderId));
+  } catch (err) {
+    console.error(`[ticketCancellationService] No se pudo dejar constancia durable del clawback pendiente (orderId=${orderId}):`, err);
+  }
 }
 
 export async function cancelOrder(orderId: number, _cancelledByUserId: number, db?: DbHandle): Promise<TicketOrder> {
@@ -111,6 +153,7 @@ export async function refundOrder(orderId: number, refundedByUserId: number, rea
       await reverseTokenSpend({ reservationId: refunded.tokenReservationId, reason, adminUserId: refundedByUserId }, conn);
     } catch (err) {
       console.error(`[ticketCancellationService] No se pudieron revertir los SegoTokens (orderId=${orderId}):`, err);
+      await markLoyaltyReconciliationRequired(orderId, err instanceof Error ? err.message : String(err), conn);
     }
   }
 
@@ -166,5 +209,6 @@ export async function reverseNativePurchaseReward(order: TicketOrder, refundedBy
     }, conn);
   } catch (err) {
     console.error(`[ticketCancellationService] No se pudo revertir la recompensa de compra (orderId=${order.id}):`, err);
+    await markLoyaltyReconciliationRequired(order.id, err instanceof Error ? err.message : String(err), conn);
   }
 }

@@ -10,7 +10,7 @@ import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
 import { SegolifeRowSkeleton } from "@/components/segolife/SegolifeSkeletons";
 import { Button } from "@/components/ui/button";
 
-type ActivityEntryType = "earned" | "spent" | "benefitUnlocked" | "benefitUsed";
+type ActivityEntryType = "earned" | "spent" | "clawback" | "benefitUnlocked" | "benefitUsed";
 
 interface ActivityEntry {
   id: string;
@@ -24,6 +24,7 @@ interface ActivityEntry {
 const KICKER_KEY: Record<ActivityEntryType, string> = {
   earned: "activity.typeEarned",
   spent: "activity.typeSpent",
+  clawback: "activity.typeClawback",
   benefitUnlocked: "activity.typeBenefitUnlocked",
   benefitUsed: "activity.typeBenefitUsed",
 };
@@ -31,6 +32,13 @@ const KICKER_KEY: Record<ActivityEntryType, string> = {
 const ICON_STYLES: Record<ActivityEntryType, string> = {
   earned: "bg-primary/10 text-primary",
   spent: "bg-secondary text-muted-foreground",
+  // FIX-01 — un clawback (reversión de recompensa tras un reembolso) resta
+  // igual que un "spent", pero el Student no lo decidió: se distingue con
+  // el mismo tono semántico que ya usa el resto de la app para "atención",
+  // nunca el acento de marca (bg-secondary/text-muted-foreground es el
+  // mismo tono neutro de "spent" — aquí se usa destructive/10 a propósito,
+  // deliberadamente distinto, para que no se confunda con un gasto propio).
+  clawback: "bg-destructive/10 text-destructive",
   benefitUnlocked: "bg-accent/10 text-accent",
   benefitUsed: "bg-primary/10 text-primary",
 };
@@ -66,9 +74,13 @@ export default function Activity() {
     const items: ActivityEntry[] = [];
 
     for (const entry of ledger ?? []) {
+      // FIX-01 — sourceType="reversal" es exactamente lo que reverseTransaction()
+      // escribe (tokenLedgerService.ts) para CUALQUIER clawback (refund de
+      // compra, ajuste admin revertido, etc.) — un débito de este tipo nunca
+      // debe leerse como un "spent" normal, el Student no lo decidió.
       items.push({
         id: `ledger-${entry.id}`,
-        type: entry.direction === "credit" ? "earned" : "spent",
+        type: entry.sourceType === "reversal" ? "clawback" : (entry.direction === "credit" ? "earned" : "spent"),
         label: entry.reason,
         amount: entry.amount,
         at: new Date(entry.createdAt),
@@ -129,8 +141,8 @@ export default function Activity() {
                     {entry.at.toLocaleString(i18n.language, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
                   </p>
                 </div>
-                {entry.amount != null && (entry.type === "earned" || entry.type === "spent") && (
-                  <span className={`shrink-0 text-sm font-semibold tabular-nums ${entry.type === "earned" ? "text-primary" : "text-muted-foreground"}`}>
+                {entry.amount != null && (entry.type === "earned" || entry.type === "spent" || entry.type === "clawback") && (
+                  <span className={`shrink-0 text-sm font-semibold tabular-nums ${entry.type === "earned" ? "text-primary" : entry.type === "clawback" ? "text-destructive" : "text-muted-foreground"}`}>
                     {entry.type === "earned" ? "+" : "-"}{entry.amount}
                   </span>
                 )}

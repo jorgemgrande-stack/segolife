@@ -15,6 +15,7 @@ import {
   TokenEngineError,
 } from "../segolife/tokens/tokenLedgerService";
 import { getMyOrderById } from "../segolife/ticketing/ticketingDb";
+import { retryPendingTokenClawbacks } from "../segolife/tokens/tokenClawbackReconciliationService";
 import {
   listTokenRules,
   getTokenRuleById,
@@ -251,6 +252,17 @@ export const tokensRouter = router({
         mapEngineError(err);
       }
     }),
+
+  /**
+   * FIX-01 — resolución manual inmediata: reintenta AHORA MISMO cualquier
+   * clawback de SegoTokens que quedara pendiente por un fallo transitorio
+   * (ver ticketCancellationService.ts/doorSaleService.ts/ticketPurchasePipeline.ts).
+   * Reutiliza el MISMO reconciliador que el job programado — nunca una
+   * segunda lógica de reversión. Sin filtro por comunidad: la deuda
+   * económica es transversal, igual que reverseLedger no lo tiene tampoco
+   * para un movimiento suelto.
+   */
+  retryPendingClawbacks: tokensAdjustProcedure.mutation(async () => retryPendingTokenClawbacks()),
 
   // ─── ADMIN — reglas ─────────────────────────────────────────────────────────
 

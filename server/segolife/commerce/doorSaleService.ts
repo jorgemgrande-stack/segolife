@@ -49,7 +49,7 @@ import { createHold, CheckoutError } from "../ticketing/inventoryHoldService";
 import { transitionOrderStatus, OrderStateError } from "../ticketing/orderStateMachine";
 import { issueTicketsForOrder } from "../ticketing/ticketIssuanceService";
 import { grantNativePurchaseReward } from "../ticketing/checkoutService";
-import { reverseNativePurchaseReward } from "../ticketing/ticketCancellationService";
+import { reverseNativePurchaseReward, markLoyaltyReconciliationRequired } from "../ticketing/ticketCancellationService";
 import { ingestAttendance } from "../ticketing/attendancePipeline";
 import { isEventCurrentlyOpen } from "../ticketing/unifiedCheckinService";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
@@ -340,10 +340,20 @@ export async function refundDoorSale(input: RefundDoorSaleInput, db?: DbHandle):
 
   await reverseNativePurchaseReward(refunded, input.refundedByUserId, conn);
 
+  // FIX-01: antes, un fallo aquí se propagaba SIN CAPTURAR fuera de
+  // refundDoorSale — el dinero (y la admisión) ya estaban confirmados, pero
+  // el admin recibía un error genérico del router sin ningún rastro durable
+  // de la deuda de SegoTokens pendiente. Mismo criterio best-effort que ya
+  // usa refundOrder (ticketCancellationService.ts) para este mismo caso.
   let tokensRestored = 0;
   if (order.tokenReservationId != null) {
-    const reversed = await reverseTokenSpend({ reservationId: order.tokenReservationId, reason: input.reason, adminUserId: input.refundedByUserId }, conn);
-    tokensRestored = reversed.tokensReserved;
+    try {
+      const reversed = await reverseTokenSpend({ reservationId: order.tokenReservationId, reason: input.reason, adminUserId: input.refundedByUserId }, conn);
+      tokensRestored = reversed.tokensReserved;
+    } catch (err) {
+      console.error(`[doorSaleService] No se pudieron revertir los SegoTokens (orderId=${order.id}):`, err);
+      await markLoyaltyReconciliationRequired(order.id, err instanceof Error ? err.message : String(err), conn);
+    }
   }
 
   await recordCommerceRefund({

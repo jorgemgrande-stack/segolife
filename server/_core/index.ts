@@ -26,6 +26,7 @@ import vapiWebhookRouter from "../vapiWebhookRouter";
 import { sitemapRouter } from "../sitemapRouter";
 import { healthRouter } from "./healthRouter";
 import { startCancellationStaleJob } from "../cancellationStaleJob";
+import { startTokenClawbackReconciliationJob } from "../segolife/tokens/tokenClawbackReconciliationJob";
 import { startEmailAutomationJob } from "../emailAutomationJob";
 import { startTaxReminderJob } from "../taxReminderJob";
 import { startFourvenuesScheduler } from "../segolife/integrations/integrationScheduler";
@@ -768,6 +769,12 @@ verifyDatabaseConnectivity()
   // solo controla si el proceso cron llega a registrarse. Default false: en
   // una BD nueva, o mientras no se decida activar el piloto, nunca arranca.
   .then(() => conditionallyStartJob("fourvenues_scheduler_enabled",   startFourvenuesScheduler, "Fourvenues Scheduler", false))
+  // FIX-01 — red de seguridad para clawback de SegoTokens pendiente tras un
+  // refund confirmado (fallo transitorio en el intento eager). El intento
+  // eager en el momento del refund sigue siendo el camino principal; este
+  // job solo reintenta lo que quedó marcado `loyaltyReconciliationRequired`
+  // — default false, igual que el resto de jobs.
+  .then(() => conditionallyStartJob("token_clawback_reconciliation_enabled", startTokenClawbackReconciliationJob, "Token Clawback Reconciliation", false))
   // Fase 7 — Engagement Core. El listener de BenefitGranted es puramente
   // in-process (nunca sale del sistema, nunca llama a un provider externo
   // directamente) — se registra siempre. El scheduler de deliveries SÍ

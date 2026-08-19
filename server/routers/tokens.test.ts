@@ -17,9 +17,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // pedido) — se mockea solo para ese describe block; el resto de este
 // fichero sigue sin mockear nada porque nunca llega a tocar la BD (rechaza
 // por falta de sesión antes).
-const { mockGetMyOrderById, mockFindActiveGrantBySource } = vi.hoisted(() => ({
+const { mockGetMyOrderById, mockFindActiveGrantBySource, mockRetryPendingTokenClawbacks } = vi.hoisted(() => ({
   mockGetMyOrderById: vi.fn(),
   mockFindActiveGrantBySource: vi.fn(),
+  mockRetryPendingTokenClawbacks: vi.fn(),
 }));
 vi.mock("../segolife/ticketing/ticketingDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/ticketing/ticketingDb")>();
@@ -29,6 +30,13 @@ vi.mock("../segolife/tokens/tokenLedgerService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/tokens/tokenLedgerService")>();
   return { ...actual, findActiveGrantBySource: mockFindActiveGrantBySource };
 });
+// FIX-01 — retryPendingClawbacks delega en el reconciliador; se mockea igual
+// que findActiveGrantBySource arriba, para probar solo la delegación del
+// router (el reconciliador en sí ya está probado por su cuenta en
+// tokenClawbackReconciliationService.test.ts).
+vi.mock("../segolife/tokens/tokenClawbackReconciliationService", () => ({
+  retryPendingTokenClawbacks: mockRetryPendingTokenClawbacks,
+}));
 
 import { tokensRouter } from "./tokens";
 
@@ -55,6 +63,22 @@ describe("tokens router — wallet/ledger de un usuario (admin) rechazan sin ses
   });
   it("tokens.reverseLedger rechaza sin sesión", async () => {
     await expect(callerWithoutSession().reverseLedger({ ledgerId: 1, reason: "x" })).rejects.toThrow(/please login/i);
+  });
+  it("tokens.retryPendingClawbacks rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().retryPendingClawbacks()).rejects.toThrow(/please login/i);
+  });
+});
+
+describe("tokens.retryPendingClawbacks — FIX-01 (resolución manual del reconciliador)", () => {
+  beforeEach(() => {
+    mockRetryPendingTokenClawbacks.mockReset();
+  });
+
+  it("un admin delega en el MISMO reconciliador que el job programado, sin lógica propia de reversión", async () => {
+    mockRetryPendingTokenClawbacks.mockResolvedValue({ processed: 2, resolved: 1, stillPending: 1, candidateOrderIds: [10, 11] });
+    const result = await callerAs("admin").retryPendingClawbacks();
+    expect(result).toEqual({ processed: 2, resolved: 1, stillPending: 1, candidateOrderIds: [10, 11] });
+    expect(mockRetryPendingTokenClawbacks).toHaveBeenCalledTimes(1);
   });
 });
 

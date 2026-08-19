@@ -584,6 +584,7 @@
     "emptyDescription": "Your SegoTokens and benefits history will show up here.",
     "typeEarned": "SegoTokens earned",
     "typeSpent": "SegoTokens spent",
+    "typeClawback": "SegoTokens reversed (refund)",
     "typeBenefitUnlocked": "Benefit unlocked",
     "typeBenefitUsed": "Benefit used"
   },

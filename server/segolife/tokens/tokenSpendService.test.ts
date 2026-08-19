@@ -288,6 +288,18 @@ describe("reserveTokenSpend — spec §41 tests #16-18", () => {
     if (result.status === "reserved") expect(result.reservation.tokensReserved).toBe(0);
   });
 
+  // FIX-01 (spec §30 caso 17) — un wallet con balance CONTABLE negativo (p.ej.
+  // tras un clawback de refund, ver tokenLedgerService.test.ts) nunca puede
+  // reservar/gastar ST reales. availableBalance ya usa Math.max(0, balance -
+  // reservedTotal) — con balance negativo esto da 0 igual que con balance=0,
+  // pero antes de este fix ningún test lo probaba con un negativo REAL.
+  it("balance CONTABLE negativo (deuda real de un refund clawback) → 0 tokens reservados, igual que balance=0 — nunca genera un saldo negativo por partida doble", async () => {
+    const { db } = makeMockDb({ walletBalance: -80 });
+    const result = await reserveTokenSpend({ ...BASE_INPUT, referenceType: "test", idempotencyKey: "k1" }, db);
+    expect(result.status).toBe("reserved");
+    if (result.status === "reserved") expect(result.reservation.tokensReserved).toBe(0);
+  });
+
   it("sin política activa → status no_policy, nunca crea una reserva", async () => {
     const { db, getReservationRows } = makeMockDb({ policies: [] });
     const result = await reserveTokenSpend({ ...BASE_INPUT, referenceType: "test", idempotencyKey: "k1" }, db);

@@ -141,9 +141,17 @@ export async function postLedgerMovementInTx(
   }
 
   // 3. Calcular nuevo saldo — nunca negativo, salvo reversión legítima explícita.
+  //    FIX-01 (spec §7/§22/§30 caso 16, "debt naturally amortized"): el
+  //    guard SOLO se aplica a un `debit` — un `credit` (earn) siempre debe
+  //    aplicarse íntegro, sea cual sea el balance actual. Antes de este fix
+  //    la condición no distinguía dirección (`newBalance < 0` a secas), así
+  //    que un Student con balance negativo por un clawback real (spec §41)
+  //    veía RECHAZADO cualquier earn posterior que no cubriera la deuda
+  //    entera de una sola vez — attendance, compras, consumo, todo — un
+  //    earn ordinario nunca debe poder lanzar INSUFFICIENT_BALANCE.
   const delta = input.direction === "credit" ? input.amount : -input.amount;
   const newBalance = wallet.balance + delta;
-  if (newBalance < 0 && !input.allowNegativeBalance) {
+  if (input.direction === "debit" && newBalance < 0 && !input.allowNegativeBalance) {
     throw new TokenEngineError(
       "INSUFFICIENT_BALANCE",
       `Saldo insuficiente: ${wallet.balance} disponible(s), se intentó descontar ${input.amount}`
@@ -234,12 +242,21 @@ export interface ReverseTransactionInput {
 
 /**
  * Reversión (administrativa o automática por refund) — nunca borra/edita el
- * movimiento original. Impide doble reversal comprobando (dentro de la
- * MISMA transacción que la inserción) que ninguna otra fila ya referencia
- * `reversedLedgerId = ledgerId`. `allowNegativeBalance:true` SIEMPRE — una
- * reversión legítima de un earn ya gastado no debe bloquearse por saldo
- * insuficiente (spec §7); el saldo negativo resultante se compensa con la
- * siguiente recompensa real de ese Student.
+ * movimiento original. Impide doble reversal en dos capas: (1) comprobación
+ * previa barata `reversedLedgerId = ledgerId` (camino feliz, sin carrera);
+ * (2) FIX-01 — `idempotencyKey: reversal:${ledgerId}` en el insert real, que
+ * reutiliza el MISMO mecanismo de idempotencia ya probado de
+ * `postLedgerMovementInTx` (UNIQUE de MySQL + captura de ER_DUP_ENTRY) en vez
+ * de duplicar protección — antes esta función era la ÚNICA vía del ledger
+ * que nunca pasaba `idempotencyKey`, así que dos `reverseTransaction()`
+ * concurrentes sobre el mismo `ledgerId` podían pasar (1) a la vez (ninguna
+ * ve el insert de la otra en su misma transacción) y ambas intentar
+ * insertar — con (2) la segunda inserción colisiona por la clave única y
+ * `postLedgerMovementInTx` devuelve la fila ya insertada por la primera en
+ * vez de duplicar el clawback económico. `allowNegativeBalance:true`
+ * SIEMPRE — una reversión legítima de un earn ya gastado no debe bloquearse
+ * por saldo insuficiente (spec §7); el saldo negativo resultante se
+ * compensa con la siguiente recompensa real de ese Student.
  */
 export async function reverseTransaction(
   input: ReverseTransactionInput,
@@ -269,6 +286,7 @@ export async function reverseTransaction(
       eventId: original.eventId,
       ruleId: original.ruleId,
       campaignId: original.campaignId,
+      idempotencyKey: `reversal:${original.id}`,
       createdByUserId: input.adminUserId,
       reversedLedgerId: original.id,
       allowNegativeBalance: true,

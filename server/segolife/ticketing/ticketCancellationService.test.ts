@@ -38,11 +38,17 @@ import { eventTickets, ticketPayments, tokenLedger, events } from "../../../driz
 
 function makeMockDb(config: { order: Record<string, unknown>; tickets: Array<Record<string, unknown>>; payment?: Record<string, unknown> | null; purchaseLedgerEntry?: Record<string, unknown> | null; eventRow?: Record<string, unknown> | null }) {
   const b: any = {};
+  // FIX-01 — cada UPDATE sobre "orders" (p.ej. markLoyaltyReconciliationRequired)
+  // queda registrado aquí para que los tests puedan comprobar exactamente qué
+  // metadata se escribió, sin cambiar la forma de retorno de makeMockDb (que
+  // ya usan 15+ tests existentes como `const db = makeMockDb(...)`).
+  const orderSetCalls: Array<Record<string, unknown>> = [];
+  b._orderSetCalls = orderSetCalls;
   let currentTable: "orders" | "tickets" | "payments" | "ledger" | "events" = "orders";
   let mode: "select" | "update" = "select";
   b.select = () => { mode = "select"; return b; };
   b.update = () => { mode = "update"; return b; };
-  b.set = () => b;
+  b.set = (fields: Record<string, unknown>) => { if (mode === "update" && currentTable === "orders") orderSetCalls.push(fields); return b; };
   b.from = (t: unknown) => { currentTable = t === eventTickets ? "tickets" : t === ticketPayments ? "payments" : t === tokenLedger ? "ledger" : t === events ? "events" : "orders"; return b; };
   b.where = () => {
     if (mode === "update") return Promise.resolve([{ affectedRows: 1 }]);
@@ -101,6 +107,41 @@ describe("ticketCancellationService — refundOrder", () => {
     expect(result.reconciliationRequired).toBe(true);
     expect(mockGetPaymentProvider().refundPayment).not.toHaveBeenCalled();
     expect(mockTransitionOrderStatus).toHaveBeenCalledWith(1, ["paid"], "reconciliation_required", expect.anything(), db);
+    // FIX-01 (spec §30 caso 8, vía nativa): la regla "dinero reembolsado ⇒
+    // clawback SIEMPRE" se cumple aquí de forma VACÍA — ni el dinero ni los
+    // SegoTokens se tocan en absoluto (nunca se llega a reembolsar), así que
+    // no hay nada que revertir. reverseNativePurchaseReward/reverseTokenSpend
+    // nunca deben invocarse en esta rama; el caso donde "used" SÍ convive con
+    // un refund real y un clawback obligatorio es doorSaleService.refundDoorSale
+    // (venta de puerta), probado en doorSaleService.test.ts.
+    expect(mockReverseTransaction).not.toHaveBeenCalled();
+    expect(mockReverseTokenSpend).not.toHaveBeenCalled();
+  });
+
+  // FIX-01 (spec §30 caso 13) — un refund de COMPRA nunca debe poder tocar
+  // una recompensa de ASISTENCIA del mismo Student/evento: la búsqueda del
+  // ledger a revertir filtra explícitamente por sourceType="ticket" — este
+  // test documenta esa garantía a nivel de integración (no solo de unidad
+  // en tokenLedgerService.test.ts), pasando por refundOrder de verdad.
+  it("el clawback de la recompensa de COMPRA nunca toca una recompensa de ASISTENCIA del mismo order/evento (aislamiento purchase vs attendance)", async () => {
+    mockGetPaymentProvider.mockReturnValue({ refundPayment: vi.fn().mockResolvedValue({ status: "refunded" }) });
+    mockTransitionOrderStatus.mockResolvedValue({ id: 1, status: "refunded", userId: 42, eventId: 5 });
+    mockReverseTransaction.mockResolvedValue({ wallet: {}, ledger: {} });
+    const db = makeMockDb({
+      order: { id: 1, status: "paid", userId: 42, eventId: 5, totalCents: 2000, metadata: {} },
+      tickets: [{ id: 10, status: "issued" }],
+      payment: { id: 1, orderId: 1, status: "succeeded", externalPaymentId: "mock_abc", amountCents: 2000 },
+      // Solo existe la fila de la recompensa de COMPRA (sourceType="ticket")
+      // — la consulta real filtra por eq(sourceType,"ticket") además de
+      // sourceId=order.id, así que una fila de attendance para el MISMO
+      // evento (sourceType="attendance") nunca podría aparecer aquí.
+      purchaseLedgerEntry: { id: 555, sourceType: "ticket", sourceId: 1, direction: "credit" },
+    });
+
+    await refundOrder(1, 9, "Cliente lo solicita", db);
+
+    expect(mockReverseTransaction).toHaveBeenCalledTimes(1);
+    expect(mockReverseTransaction).toHaveBeenCalledWith(expect.objectContaining({ ledgerId: 555 }), db);
   });
 
   it("si el provider de pago falla el reembolso real, también queda reconciliation_required (nunca se finge un reembolso)", async () => {
@@ -176,6 +217,12 @@ describe("ticketCancellationService — refundOrder", () => {
 
     const result = await refundOrder(1, 9, "Cliente lo solicita", db);
     expect(result.reconciliationRequired).toBe(false); // el refund real ya ocurrió, no se revierte por un fallo aquí
+    // FIX-01 — antes de este fix, el fallo se perdía en un console.error sin
+    // dejar ningún rastro durable: la deuda de SegoTokens desaparecía para
+    // siempre. Ahora debe quedar marcada de forma reintentable.
+    const marker = db._orderSetCalls.find((c: any) => c.metadata?.loyaltyReconciliationRequired === true);
+    expect(marker).toBeDefined();
+    expect(marker.metadata.loyaltyReversalError).toContain("boom");
   });
 
   // ─── SegoTokens en el reembolso (Pre-16.2, "Online Event Checkout — SegoTokens + Money") ──
@@ -241,6 +288,9 @@ describe("ticketCancellationService — refundOrder", () => {
 
     const result = await refundOrder(1, 9, "Cliente lo solicita", db);
     expect(result.reconciliationRequired).toBe(false);
+    const marker = db._orderSetCalls.find((c: any) => c.metadata?.loyaltyReconciliationRequired === true);
+    expect(marker).toBeDefined();
+    expect(marker.metadata.loyaltyReversalError).toContain("boom");
   });
 
   // ─── PRE-16.15 BUG-11 — reembolso online entra en el feed unificado ────────

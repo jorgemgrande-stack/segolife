@@ -348,6 +348,21 @@ describe("tokenLedgerService — política de saldo negativo (Loyalty Production
     ).rejects.toMatchObject({ code: "INSUFFICIENT_BALANCE" });
   });
 
+  // FIX-01 — bug real encontrado escribiendo la saga del spec §41: el guard
+  // de saldo negativo comprobaba `newBalance < 0` sin mirar `direction`, así
+  // que un CREDIT (earn) que no cubriera de una vez toda la deuda de un
+  // wallet ya negativo también lanzaba INSUFFICIENT_BALANCE — rompiendo por
+  // completo la "amortización natural de la deuda" (spec §30 caso 16) que
+  // el propio comentario de cabecera de este archivo ya prometía.
+  it("un CRÉDITO (earn) SIEMPRE se aplica íntegro aunque el wallet esté en negativo — nunca lanza INSUFFICIENT_BALANCE, solo amortiza la deuda", async () => {
+    const { db, getWallet } = makeLedgerMockDb(blankWallet({ balance: -100, lifetimeEarned: 0, lifetimeSpent: 100 }));
+    const { wallet } = await postLedgerMovement(
+      { userId: 42, direction: "credit", amount: 40, reason: "Asistencia", sourceType: "attendance" }, db
+    );
+    expect(wallet.balance).toBe(-60); // amortiza, nunca se rechaza
+    expect(getWallet()?.balance).toBe(-60);
+  });
+
   it("reverseTransaction acepta adminUserId=null (reversión automática por refund, sin admin humano)", async () => {
     const { db, queuePreInsertSelect } = makeLedgerMockDb(blankWallet({ balance: 50 }));
     const original = { id: 1, walletId: 1, userId: 42, direction: "credit", amount: 50, balanceAfter: 50, reason: "x", sourceType: "manual", createdAt: new Date() };
@@ -355,6 +370,42 @@ describe("tokenLedgerService — política de saldo negativo (Loyalty Production
     queuePreInsertSelect([]);
     const { ledger } = await reverseTransaction({ ledgerId: 1, reason: "Refund automático Fourvenues", adminUserId: null }, db);
     expect(ledger.createdByUserId).toBeNull();
+  });
+});
+
+describe("tokenLedgerService — FIX-01: reverseTransaction es idempotente frente a reversión concurrente/duplicada", () => {
+  it("la idempotencyKey que reverseTransaction pasa al insert es determinista: 'reversal:<ledgerId>' (no aleatoria, no basada en reason)", async () => {
+    const { db, queuePreInsertSelect, getLedgerRows } = makeLedgerMockDb(blankWallet({ balance: 50 }));
+    const original = { id: 7, walletId: 1, userId: 42, direction: "credit", amount: 50, balanceAfter: 50, reason: "x", sourceType: "manual", createdAt: new Date() };
+    queuePreInsertSelect([original]); // lookup por id
+    queuePreInsertSelect([]);         // ¿ya revertido? — no
+    queuePreInsertSelect([]);         // pre-check de idempotencia dentro de postLedgerMovementInTx — no existe todavía
+    await reverseTransaction({ ledgerId: 7, reason: "Reembolso de entrada — pedido #900", adminUserId: 1 }, db);
+    expect(getLedgerRows()[0].idempotencyKey).toBe("reversal:7");
+  });
+
+  it("dos reversiones 'concurrentes' del MISMO ledgerId (simulado como ER_DUP_ENTRY en el insert, mismo mecanismo ya probado para postLedgerMovement) convergen en UNA sola fila — la segunda nunca duplica el clawback económico", async () => {
+    // Antes de este fix, reverseTransaction() nunca pasaba idempotencyKey, así
+    // que esta colisión no podía ni producirse: cada llamada insertaba su
+    // propia fila de reversión sin que el UNIQUE de MySQL la protegiera —
+    // doble clawback real. Este test prueba que, tras el fix, el mismo
+    // mecanismo de "ER_DUP_ENTRY → reconsultar por idempotencyKey" que ya
+    // protege postLedgerMovement ahora también cubre reverseTransaction.
+    const { db, queuePreInsertSelect, forceDuplicateOnce, getLedgerRows } = makeLedgerMockDb(blankWallet({ balance: 50 }));
+    const original = { id: 1, walletId: 1, userId: 42, direction: "credit", amount: 50, balanceAfter: 50, reason: "x", sourceType: "manual", createdAt: new Date() };
+    const winningReversal = {
+      id: 2, walletId: 1, userId: 42, direction: "debit", amount: 50, balanceAfter: 0,
+      reason: "Reembolso — proceso A", sourceType: "reversal", reversedLedgerId: 1,
+      idempotencyKey: "reversal:1", createdAt: new Date(),
+    };
+    queuePreInsertSelect([original]);        // lookup por id (ninguno de los "dos procesos" ha comprometido nada aún)
+    queuePreInsertSelect([]);                // ¿ya revertido? — no, todavía no (misma condición de carrera que motiva el fix)
+    queuePreInsertSelect([]);                // pre-check de idempotencia — no lo ve todavía
+    queuePreInsertSelect([winningReversal]); // reconsulta tras el ER_DUP_ENTRY forzado — el otro proceso ya ganó la carrera
+    forceDuplicateOnce();
+    const { ledger } = await reverseTransaction({ ledgerId: 1, reason: "Reembolso — proceso B", adminUserId: null }, db);
+    expect(ledger.id).toBe(2); // devuelve la reversión que YA existía, no una nueva
+    expect(getLedgerRows()).toHaveLength(0); // este proceso nunca insertó nada — cero duplicación
   });
 });
 
@@ -393,6 +444,83 @@ describe("tokenLedgerService — lifetime_earned/lifetime_spent correctos en rev
     await postLedgerMovement({ userId: 42, direction: "credit", amount: 20, reason: "x", sourceType: "attendance" }, db);
     expect(getWallet()?.lifetimeEarned).toBe(30);
     expect(getWallet()?.lifetimeSpent).toBe(5);
+  });
+});
+
+describe("tokenLedgerService — FIX-01: saga económica canónica del refund clawback (spec §41)", () => {
+  it("compra +100 → gasta -100 → reembolso -100 clawback → balance -100 → no puede gastar → gana +40 → -60 → sigue sin poder gastar → gana +100 → +40 → solo puede gastar 40, nunca 100", async () => {
+    const { db, getWallet, queuePreInsertSelect } = makeLedgerMockDb(blankWallet({ balance: 0 }));
+
+    // 1) Compra: +100 ST (recompensa de compra real)
+    const { ledger: purchaseGrant } = await postLedgerMovement(
+      { userId: 42, direction: "credit", amount: 100, reason: "Compra de entrada", sourceType: "ticket", sourceId: 900 }, db
+    );
+    expect(getWallet()?.balance).toBe(100);
+
+    // 2) El Student gasta esos 100 ST enteros
+    await postLedgerMovement(
+      { userId: 42, direction: "debit", amount: 100, reason: "Canje universal", sourceType: "universal_spend" }, db
+    );
+    expect(getWallet()?.balance).toBe(0);
+
+    // 3) Reembolso total de la compra → clawback del importe HISTÓRICO real (100), no de "lo que quede"
+    queuePreInsertSelect([purchaseGrant]); // lookup por id
+    queuePreInsertSelect([]);              // ¿ya revertido? — no
+    queuePreInsertSelect([]);              // pre-check de idempotencia — no existe todavía
+    const { wallet: afterRefund } = await reverseTransaction(
+      { ledgerId: purchaseGrant.id, reason: "Reembolso de entrada — pedido #900", adminUserId: null }, db
+    );
+    expect(afterRefund.balance).toBe(-100); // NUNCA 0, NUNCA "clawback omitido por falta de saldo"
+
+    // 4) Con saldo negativo, un gasto ordinario de 1 ST se rechaza SIEMPRE
+    await expect(
+      postLedgerMovement({ userId: 42, direction: "debit", amount: 1, reason: "intento de gasto", sourceType: "universal_spend" }, db)
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_BALANCE" });
+
+    // 5) Gana 40 ST reales — la deuda se amortiza parcialmente, sigue en negativo
+    await postLedgerMovement({ userId: 42, direction: "credit", amount: 40, reason: "Asistencia", sourceType: "attendance" }, db);
+    expect(getWallet()?.balance).toBe(-60);
+
+    // 6) Sigue sin poder gastar nada mientras el saldo sea negativo
+    await expect(
+      postLedgerMovement({ userId: 42, direction: "debit", amount: 1, reason: "intento de gasto", sourceType: "universal_spend" }, db)
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_BALANCE" });
+
+    // 7) Gana 100 ST más — la deuda queda saldada y sobran 40 ST reales gastables
+    await postLedgerMovement({ userId: 42, direction: "credit", amount: 100, reason: "Compra de entrada", sourceType: "ticket", sourceId: 950 }, db);
+    expect(getWallet()?.balance).toBe(40);
+
+    // 8) Puede gastar exactamente 40 — nunca 41, y desde luego nunca 100
+    await expect(
+      postLedgerMovement({ userId: 42, direction: "debit", amount: 41, reason: "intento de gasto excesivo", sourceType: "universal_spend" }, db)
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_BALANCE" });
+    await postLedgerMovement({ userId: 42, direction: "debit", amount: 40, reason: "canje real", sourceType: "universal_spend" }, db);
+    expect(getWallet()?.balance).toBe(0);
+  });
+
+  it("reembolso total tras un gasto PARCIAL (spec §2 ejemplo): +100, gasta 80, reembolso → balance -80, no 0 y no 20", async () => {
+    const { db, getWallet, queuePreInsertSelect } = makeLedgerMockDb(blankWallet({ balance: 0 }));
+    const { ledger: purchaseGrant } = await postLedgerMovement(
+      { userId: 42, direction: "credit", amount: 100, reason: "Compra de entrada", sourceType: "ticket", sourceId: 901 }, db
+    );
+    await postLedgerMovement({ userId: 42, direction: "debit", amount: 80, reason: "Canje universal", sourceType: "universal_spend" }, db);
+    expect(getWallet()?.balance).toBe(20);
+
+    queuePreInsertSelect([purchaseGrant]);
+    queuePreInsertSelect([]);
+    queuePreInsertSelect([]);
+    const { wallet } = await reverseTransaction({ ledgerId: purchaseGrant.id, reason: "Reembolso de entrada — pedido #901", adminUserId: null }, db);
+    expect(wallet.balance).toBe(-80); // el importe HISTÓRICO completo (100), no "lo que le quedaba" (20)
+  });
+
+  it("una compra que NO generó SegoTokens (0 ST) no tiene nada que revertir — no-op limpio, nunca un movimiento de importe 0", async () => {
+    // postLedgerMovement ya rechaza amount<=0 con INVALID_AMOUNT (ver arriba)
+    // — este test documenta que ese guard es, en sí mismo, la garantía de
+    // que un clawback nunca puede intentar crear una fila "-0 ST" real.
+    const { db } = makeLedgerMockDb(blankWallet({ balance: 0 }));
+    await expect(
+      postLedgerMovement({ userId: 42, direction: "debit", amount: 0, reason: "clawback de una compra sin recompensa", sourceType: "reversal" }, db)
+    ).rejects.toMatchObject({ code: "INVALID_AMOUNT" });
   });
 });
 
