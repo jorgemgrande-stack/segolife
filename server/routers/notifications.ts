@@ -1,7 +1,7 @@
 /**
  * Router: Notifications feed (campana del AdminLayout).
  *
- * Un solo endpoint `feed` agrega 6 fuentes de alertas para el admin/agente,
+ * Un solo endpoint `feed` agrega 7 fuentes de alertas para el admin/agente,
  * excluyendo los items que el usuario ha silenciado con `dismiss`. Cada
  * sección viene con su severidad, CTA y un máximo de 5 items de muestra.
  *
@@ -13,8 +13,23 @@
  *   - pending_payment       → pendingPayments status='pending' con dueDate vencida
  *   - tpv_alert             → 4 sub-tipos críticos de cardTerminalBatches/operations
  *   - upcoming_reservation  → reservas confirmadas (paid) con bookingDate=mañana
+ *   - fourvenues_publication → FIX-05: transiciones de publicación Fourvenues
+ *                              ya persistidas en `notifications` (Engagement
+ *                              Core, System B) — este source NUNCA
+ *                              recalcula nada de negocio, solo lee las filas
+ *                              type IN (fourvenues_event_published,
+ *                              fourvenues_event_unpublished) de ESTE admin
+ *                              sin leer todavía. Puente deliberado entre los
+ *                              dos sistemas de notificación del repo (ver
+ *                              fourvenuesPublicationNotifier.ts) — nunca un
+ *                              sistema paralelo: la fila canónica sigue
+ *                              viviendo solo en `notifications`.
  *
  * Dismiss es por-usuario: silenciar un item afecta solo a quien lo silencia.
+ * Para fourvenues_publication, "dismiss" = marcar como leída la notificación
+ * real (markRead/markAllRead de notificationsDb.ts) — reutiliza el propio
+ * campo `readAt` que ya existe para esto, en vez de una segunda fila de
+ * `admin_notification_dismissals` redundante con lo que ya se puede saber.
  */
 
 import { z } from "zod";
@@ -33,7 +48,9 @@ import {
   cardTerminalOperations,
   bankMovements,
   adminNotificationDismissals,
+  notifications as engagementNotifications,
 } from "../../drizzle/schema";
+import { markRead as markEngagementNotificationRead } from "../segolife/engagement/notificationsDb";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
 const db = drizzle(_pool);
@@ -48,7 +65,8 @@ type FeedKind =
   | "cancellation"
   | "pending_payment"
   | "tpv_alert"
-  | "upcoming_reservation";
+  | "upcoming_reservation"
+  | "fourvenues_publication";
 
 interface FeedItem {
   kind: FeedKind;
@@ -394,6 +412,58 @@ async function sourceUpcomingReservations(userId: number): Promise<FeedSection> 
   };
 }
 
+const FOURVENUES_PUBLICATION_TYPES = ["fourvenues_event_published", "fourvenues_event_unpublished"] as const;
+
+/**
+ * FIX-05 — puente hacia Engagement Core (System B): lee las notificaciones
+ * YA creadas por fourvenuesPublicationNotifier.ts para ESTE admin, sin
+ * releer nunca `events`/Fourvenues — el dato canónico (transición real,
+ * idempotencyKey) ya vive en `notifications`, este source solo lo proyecta
+ * al shape del feed. "No leída" = `readAt IS NULL` (el propio campo de
+ * Engagement Core), nunca una fila nueva en admin_notification_dismissals.
+ */
+/** Exportado solo para tests (notifications.test.ts) — el resto de sources de este archivo son privados por precedente, pero este es nuevo (FIX-05) y sin ese precedente de test todavía. */
+export async function sourceFourvenuesPublicationChanges(userId: number): Promise<FeedSection> {
+  const rows = await db
+    .select({
+      id: engagementNotifications.id,
+      type: engagementNotifications.type,
+      titleEs: engagementNotifications.titleEs,
+      bodyEs: engagementNotifications.bodyEs,
+      deepLink: engagementNotifications.deepLink,
+      createdAt: engagementNotifications.createdAt,
+    })
+    .from(engagementNotifications)
+    .where(and(
+      eq(engagementNotifications.userId, userId),
+      inArray(engagementNotifications.type, FOURVENUES_PUBLICATION_TYPES as unknown as string[]),
+      isNull(engagementNotifications.readAt),
+    ))
+    .orderBy(desc(engagementNotifications.createdAt))
+    .limit(50); // suficiente para un feed operacional — nunca sin límite
+
+  const items: FeedItem[] = rows.slice(0, 5).map(r => ({
+    kind: "fourvenues_publication" as const,
+    entityId: r.id,
+    title: r.titleEs,
+    subtitle: r.bodyEs,
+    amount: null,
+    severity: r.type === "fourvenues_event_unpublished" ? ("warning" as const) : ("info" as const),
+    ctaPath: r.deepLink ?? "/admin/engagement/notifications",
+    createdAtMs: r.createdAt ? r.createdAt.getTime() : 0,
+  }));
+
+  return {
+    kind: "fourvenues_publication",
+    label: "Cambios de publicación Fourvenues",
+    icon: "🎫",
+    severity: rows.length > 0 ? "warning" : "info",
+    total: rows.length,
+    items,
+    ctaAllPath: "/admin/engagement/notifications",
+  };
+}
+
 // ─── Router ─────────────────────────────────────────────────────────────────
 
 export const notificationsRouter = router({
@@ -404,7 +474,7 @@ export const notificationsRouter = router({
   feed: staffProcedure.query(async ({ ctx }) => {
     const userId = ctx.user.id;
     const [
-      sLeads, sQuotes, sCancellations, sPending, sTpv, sUpcoming,
+      sLeads, sQuotes, sCancellations, sPending, sTpv, sUpcoming, sFourvenuesPublication,
     ] = await Promise.all([
       sourceLeads(userId),
       sourceQuotes(userId),
@@ -412,12 +482,14 @@ export const notificationsRouter = router({
       sourcePendingPayments(userId),
       sourceTpvAlerts(userId),
       sourceUpcomingReservations(userId),
+      sourceFourvenuesPublicationChanges(userId),
     ]);
 
     const sections: FeedSection[] = [
       sCancellations,  // critical primero
       sPending,
       sTpv,
+      sFourvenuesPublication,
       sLeads,
       sQuotes,
       sUpcoming,       // info al final (no es alerta)
@@ -436,11 +508,19 @@ export const notificationsRouter = router({
   dismiss: staffProcedure
     .input(z.object({
       kind: z.enum([
-        "lead", "quote", "cancellation", "pending_payment", "tpv_alert", "upcoming_reservation",
+        "lead", "quote", "cancellation", "pending_payment", "tpv_alert", "upcoming_reservation", "fourvenues_publication",
       ]),
       entityId: z.number().int(),
     }))
     .mutation(async ({ input, ctx }) => {
+      // FIX-05 — fourvenues_publication no usa admin_notification_dismissals:
+      // "dismiss" = marcar como leída la notificación real de Engagement
+      // Core (mismo campo readAt que ya usa el inbox del Student, ownership
+      // por userId ya verificado dentro de markRead).
+      if (input.kind === "fourvenues_publication") {
+        await markEngagementNotificationRead(input.entityId, ctx.user.id);
+        return { ok: true };
+      }
       // INSERT IGNORE-equivalent vía ON DUPLICATE KEY UPDATE no-op
       await db.execute(sql`
         INSERT INTO admin_notification_dismissals (user_id, kind, entity_id, dismissed_at)
@@ -454,11 +534,25 @@ export const notificationsRouter = router({
   dismissAll: staffProcedure
     .input(z.object({
       kind: z.enum([
-        "lead", "quote", "cancellation", "pending_payment", "tpv_alert", "upcoming_reservation",
+        "lead", "quote", "cancellation", "pending_payment", "tpv_alert", "upcoming_reservation", "fourvenues_publication",
       ]),
     }))
     .mutation(async ({ input, ctx }) => {
       const userId = ctx.user.id;
+      if (input.kind === "fourvenues_publication") {
+        // Deliberadamente NO markAllEngagementNotificationsRead(userId) —
+        // marcaría como leída CUALQUIER notificación de este admin, no solo
+        // las de fourvenues_publication (imprecisión real si algún día
+        // existe otro tipo de notificación admin sin leer). Update acotado
+        // al mismo filtro exacto que sourceFourvenuesPublicationChanges().
+        const s = await sourceFourvenuesPublicationChanges(userId);
+        await db.update(engagementNotifications).set({ readAt: new Date() }).where(and(
+          eq(engagementNotifications.userId, userId),
+          inArray(engagementNotifications.type, FOURVENUES_PUBLICATION_TYPES as unknown as string[]),
+          isNull(engagementNotifications.readAt),
+        ));
+        return { ok: true, dismissed: s.total };
+      }
       // Recolectar entityIds vigentes de la sección y dismiss-arlos todos.
       let entityIds: number[] = [];
       if (input.kind === "lead") {
