@@ -15,6 +15,7 @@ const {
   mockStartSyncRun, mockFinishSyncRun, mockRecordVenueIntegrationResult, mockSetSyncCursor, mockFindInternalIdForExternal,
   mockTryAcquireSyncLock, mockIsDueForScheduledSync, mockGetCurrentLockStatus,
   mockCreateAdapter, mockSyncEventCatalog, mockSyncTicketTypes, mockIngestTicketPurchase, mockIngestAttendance, mockResolveIdentity,
+  mockNotifyPublicationTransition,
 } = vi.hoisted(() => ({
   mockGetVenueIntegrationRaw: vi.fn(),
   mockGetProviderById: vi.fn(),
@@ -33,6 +34,7 @@ const {
   mockIngestTicketPurchase: vi.fn(),
   mockIngestAttendance: vi.fn(),
   mockResolveIdentity: vi.fn(),
+  mockNotifyPublicationTransition: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("./integrationsDb", () => ({
@@ -57,6 +59,7 @@ vi.mock("./identityResolver", () => ({ resolveIdentity: mockResolveIdentity }));
 vi.mock("./eventCatalogSync", () => ({ syncEventCatalog: mockSyncEventCatalog, syncTicketTypes: mockSyncTicketTypes }));
 vi.mock("../ticketing/ticketPurchasePipeline", () => ({ ingestTicketPurchase: mockIngestTicketPurchase }));
 vi.mock("../ticketing/attendancePipeline", () => ({ ingestAttendance: mockIngestAttendance }));
+vi.mock("./fourvenuesPublicationNotifier", () => ({ notifyPublicationTransition: mockNotifyPublicationTransition }));
 
 import { syncVenueIntegration, dryRunVenueIntegration } from "./integrationSyncService";
 
@@ -74,9 +77,25 @@ function baseIntegration(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-/** Fake mínimo — solo cubre `select({communityId}).from(communityVenues).where(...)`, la única query directa que hace el orquestador (el resto pasa por sub-pipelines ya mockeados). */
+/**
+ * Fake mínimo — cubre las queries directas que hace el orquestador (el
+ * resto pasa por sub-pipelines ya mockeados): `select({communityId}).from
+ * (communityVenues).where(...)` (sin .limit) y, desde FIX-05,
+ * `select({name}).from(venues).where(...).limit(1)` (nombre del venue para
+ * la notificación de publicación). `.then` hace la cadena "awaitable"
+ * directamente (para la query sin `.limit`); `.limit()` devuelve su propia
+ * promesa (para la query CON `.limit`) — ambas resuelven a `[]` por
+ * defecto, coherente con "sin datos reales, la orquestación no depende de
+ * su contenido salvo en los tests que sí lo necesiten".
+ */
 function fakeConn() {
-  return { select: () => ({ from: () => ({ where: async () => [] }) }) } as never;
+  const chain: any = {
+    from: () => chain,
+    where: () => chain,
+    limit: async () => [],
+    then: (resolve: (v: unknown[]) => void) => resolve([]),
+  };
+  return { select: () => chain } as never;
 }
 
 function fakeAdapter(overrides: Partial<Record<string, unknown>> = {}) {
@@ -104,6 +123,7 @@ beforeEach(() => {
   mockSyncTicketTypes.mockResolvedValue({ createdCount: 1, updatedCount: 0, ticketTypeIdByExternalId: new Map([["fvi_rate_001", 55]]) });
   mockIngestTicketPurchase.mockResolvedValue({ status: "created", order: { id: 501 }, ticketsCreated: 1, unresolvedTickets: 0 });
   mockIngestAttendance.mockResolvedValue({ status: "processed", attendance: { id: 1 } });
+  mockNotifyPublicationTransition.mockClear().mockResolvedValue(undefined);
 });
 
 describe("syncVenueIntegration — kill switch", () => {
@@ -295,6 +315,128 @@ describe("syncVenueIntegration — orden EVENTS → RATES → ORDERS/TICKETS →
     expect(result.status).toBe("failed");
     expect(mockSyncEventCatalog).not.toHaveBeenCalled();
     expect(mockFinishSyncRun).toHaveBeenCalledWith(900, expect.anything(), "failed", expect.stringContaining("401"));
+  });
+});
+
+describe("syncVenueIntegration — scope='catalogOnly' (FIX-05, spec §5-6/§13)", () => {
+  it("sincroniza el catálogo (listEvents/syncEventCatalog) pero NUNCA rates/orders/tickets/attendance", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
+    const adapter = fakeAdapter();
+    mockCreateAdapter.mockReturnValue(adapter);
+
+    const result = await syncVenueIntegration(1, { scope: "catalogOnly" }, fakeConn());
+
+    expect(adapter.listEvents).toHaveBeenCalledOnce();
+    expect(mockSyncEventCatalog).toHaveBeenCalledOnce();
+    expect(adapter.listTicketTypes).not.toHaveBeenCalled();
+    expect(adapter.listOrders).not.toHaveBeenCalled();
+    expect(adapter.listTickets).not.toHaveBeenCalled();
+    expect(adapter.listAttendance).not.toHaveBeenCalled();
+    expect(mockSyncTicketTypes).not.toHaveBeenCalled();
+    expect(mockIngestTicketPurchase).not.toHaveBeenCalled();
+    expect(mockIngestAttendance).not.toHaveBeenCalled();
+
+    expect(result.status).toBe("success");
+    expect(result.eventsCreated).toBe(1);
+    expect(result.ratesSynced).toBe(0);
+    expect(result.ordersCreated).toBe(0);
+    expect(result.ticketsFound).toBe(0);
+    expect(result.attendanceProcessed).toBe(0);
+  });
+
+  it("igual que el sync completo, adquiere/libera el MISMO lock por venue_integration (nunca un lock aparte por scope)", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+
+    await syncVenueIntegration(1, { scope: "catalogOnly", mode: "catalog" }, fakeConn());
+
+    expect(mockTryAcquireSyncLock).toHaveBeenCalledWith(
+      "venue_integration", 1, "incremental",
+      expect.objectContaining({ mode: "catalog" }),
+    );
+    expect(mockFinishSyncRun).toHaveBeenCalledOnce();
+    expect(mockRecordVenueIntegrationResult).toHaveBeenCalledWith(1, true, null);
+  });
+
+  it("scope omitido (default) sigue haciendo el pipeline completo — comportamiento previo a FIX-05 intacto", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
+    const adapter = fakeAdapter();
+    mockCreateAdapter.mockReturnValue(adapter);
+
+    await syncVenueIntegration(1, {}, fakeConn());
+
+    expect(adapter.listOrders).toHaveBeenCalled();
+    expect(mockIngestAttendance).toHaveBeenCalled();
+  });
+});
+
+describe("syncVenueIntegration — notificación de transición de publicación (FIX-05, spec §21-28)", () => {
+  it("evento con publicationTransition → llama a notifyPublicationTransition con eventName/venueName/transition correctos", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+    mockSyncEventCatalog.mockResolvedValue({
+      items: [{
+        externalId: "fvi_evt_001", name: "WHITE PARTY", outcome: "mapped_existing", eventId: 77,
+        publicationTransition: { eventId: 77, from: "unpublished", to: "published", startsAt: new Date(Date.now() + 864e5), endsAt: null },
+      }],
+      createdCount: 0, updatedCount: 1, ambiguousCount: 0, invalidCount: 0,
+    });
+
+    await syncVenueIntegration(1, {}, fakeConn());
+
+    expect(mockNotifyPublicationTransition).toHaveBeenCalledOnce();
+    const call = mockNotifyPublicationTransition.mock.calls[0][0];
+    expect(call.eventName).toBe("WHITE PARTY");
+    expect(call.transition).toMatchObject({ eventId: 77, from: "unpublished", to: "published" });
+  });
+
+  it("evento SIN publicationTransition (null, sin cambio real) → nunca llama a notifyPublicationTransition", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+    mockSyncEventCatalog.mockResolvedValue({
+      items: [{ externalId: "fvi_evt_001", name: "WHITE PARTY", outcome: "mapped_existing", eventId: 77, publicationTransition: null }],
+      createdCount: 0, updatedCount: 1, ambiguousCount: 0, invalidCount: 0,
+    });
+
+    await syncVenueIntegration(1, {}, fakeConn());
+
+    expect(mockNotifyPublicationTransition).not.toHaveBeenCalled();
+  });
+
+  it("se ejecuta también en scope='catalogOnly' — la notificación no depende del scope operacional", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+    mockSyncEventCatalog.mockResolvedValue({
+      items: [{
+        externalId: "fvi_evt_001", name: "WHITE PARTY", outcome: "created", eventId: 77,
+        publicationTransition: { eventId: 77, from: null, to: "published", startsAt: new Date(Date.now() + 864e5), endsAt: null },
+      }],
+      createdCount: 1, updatedCount: 0, ambiguousCount: 0, invalidCount: 0,
+    });
+
+    await syncVenueIntegration(1, { scope: "catalogOnly" }, fakeConn());
+
+    expect(mockNotifyPublicationTransition).toHaveBeenCalledOnce();
+  });
+
+  it("un fallo INESPERADO al notificar (aunque notifyPublicationTransition ya es best-effort por diseño, este es el segundo cinturón) NUNCA aborta el resto del sync real de eventos/tickets/asistencia", async () => {
+    mockGetVenueIntegrationRaw.mockResolvedValue(baseIntegration());
+    const adapter = fakeAdapter();
+    mockCreateAdapter.mockReturnValue(adapter);
+    mockNotifyPublicationTransition.mockRejectedValueOnce(new Error("boom"));
+    mockSyncEventCatalog.mockResolvedValue({
+      items: [{
+        externalId: "fvi_evt_001", name: "WHITE PARTY", outcome: "mapped_existing", eventId: 77,
+        publicationTransition: { eventId: 77, from: "unpublished", to: "published", startsAt: new Date(Date.now() + 864e5), endsAt: null },
+      }],
+      createdCount: 0, updatedCount: 1, ambiguousCount: 0, invalidCount: 0,
+    });
+
+    const result = await syncVenueIntegration(1, {}, fakeConn());
+
+    expect(result.status).toBe("success"); // el sync real de tickets/asistencia continúa con normalidad pese al fallo de notificación
+    expect(mockIngestTicketPurchase).toHaveBeenCalledOnce();
+    expect(mockIngestAttendance).toHaveBeenCalledOnce();
   });
 });
 

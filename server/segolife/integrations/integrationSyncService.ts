@@ -27,6 +27,7 @@ import { resolveIdentity } from "./identityResolver";
 import { syncEventCatalog, syncTicketTypes } from "./eventCatalogSync";
 import { ingestTicketPurchase, ingestPaymentlessTicket } from "../ticketing/ticketPurchasePipeline";
 import { ingestAttendance } from "../ticketing/attendancePipeline";
+import { notifyPublicationTransition } from "./fourvenuesPublicationNotifier";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -180,8 +181,18 @@ export interface VenueSyncOptions {
   suppressLoyalty?: boolean;
   /** Production Scheduler — quién disparó este run, solo para observabilidad (integration_sync_runs.metadata). Nunca cambia el comportamiento del sync. */
   trigger?: "manual" | "scheduler";
-  /** Production Scheduler — ventana estrecha/frecuente vs amplia/espaciada (spec §15-17), solo para observabilidad. */
-  mode?: "incremental" | "reconciliation";
+  /** Production Scheduler — ventana estrecha/frecuente vs amplia/espaciada (spec §15-17), solo para observabilidad. FIX-05 añade "catalog" (ventana futura amplia, ver integrationScheduler.ts) — solo para observabilidad, igual que los otros dos; el comportamiento real de alcance lo decide `scope`, no `mode`. */
+  mode?: "incremental" | "reconciliation" | "catalog";
+  /**
+   * FIX-05 (spec §5-6) — separación CATALOG/OPERATIONAL: "full" (default,
+   * comportamiento previo intacto) sincroniza EVENTS → RATES → ORDERS/
+   * TICKETS → ATTENDANCE. "catalogOnly" sincroniza y clasifica SOLO el
+   * catálogo de eventos (+ notifica transiciones de publicación) — nunca
+   * toca rates/orders/tickets/attendance, para poder usar una ventana
+   * futura mucho más amplia (descubrimiento) sin multiplicar el coste
+   * operacional del sync (que sigue usando su ventana estrecha habitual).
+   */
+  scope?: "full" | "catalogOnly";
 }
 
 /**
@@ -426,6 +437,48 @@ export async function syncVenueIntegration(venueIntegrationId: number, opts: Ven
     eventsAmbiguous = catalogResult.ambiguousCount;
     eventsInvalid = catalogResult.invalidCount;
     eventsUpdated = catalogResult.items.filter(i => i.outcome === "mapped_existing" || i.outcome === "candidate_adopted").length;
+
+    // FIX-05 — notificación Admin ante una transición REAL de publicación
+    // (spec §21-28). Corre para CUALQUIER modo (incremental/reconciliation/
+    // catalogOnly) — la notificación no depende de qué pasada del scheduler
+    // descubrió el cambio, solo de que ocurrió. Doble defensa best-effort:
+    // notifyPublicationTransition() ya nunca lanza por diseño propio, pero
+    // este try/catch adicional es la garantía real de que NADA relacionado
+    // con notificar (ni siquiera un fallo inesperado ajeno a esa función)
+    // puede abortar el sync real de eventos/tickets/asistencia.
+    try {
+      const [venueRow] = integration.venueId != null
+        ? await conn.select({ name: venues.name }).from(venues).where(eq(venues.id, integration.venueId)).limit(1)
+        : [];
+      for (const item of catalogResult.items) {
+        if (item.publicationTransition) {
+          await notifyPublicationTransition({ transition: item.publicationTransition, eventName: item.name, venueName: venueRow?.name ?? null }, conn);
+        }
+      }
+    } catch (err) {
+      console.error(`[FourvenuesSync] fallo al procesar notificaciones de publicación (venueIntegrationId=${integration.id}):`, err instanceof Error ? err.message : err);
+    }
+
+    // FIX-05 — catálogo-only (ventana futura amplia, spec §5/§6): descubre/
+    // clasifica eventos y notifica transiciones, pero NUNCA sincroniza
+    // rates/orders/tickets/attendance — eso sigue siendo responsabilidad
+    // exclusiva de incremental/reconciliation, con su ventana estrecha
+    // habitual. Evita multiplicar el coste operacional del sync solo por
+    // ampliar el descubrimiento de catálogo.
+    if (opts.scope === "catalogOnly") {
+      const createdCount = eventsCreated;
+      const updatedCount = eventsUpdated;
+      await setSyncCursor("venue_integration", integration.id, null, new Date(), conn);
+      await finishSyncRun(run.id, { fetchedCount, createdCount, updatedCount, unresolvedCount: 0, failedCount }, failedCount > 0 ? "partial" : "success");
+      await recordVenueIntegrationResult(integration.id, true, null);
+      return {
+        status: failedCount > 0 ? "partial" : "success", venueId: integration.venueId, eventsFound: normalizedEvents.length,
+        eventsCreated, eventsUpdated, eventsAmbiguous, eventsInvalid, ratesSynced: 0, ordersCreated: 0, ordersUpdated: 0,
+        ticketsUnresolved: 0, ticketsFound: 0, ticketsWithOrder: 0, ticketsWithoutOrder: 0,
+        paymentlessCreated: 0, paymentlessAlreadyExists: 0, paymentlessUnresolved: 0, paymentlessAttended: 0,
+        attendanceProcessed: 0, attendanceUnresolved: 0, failedCount,
+      };
+    }
 
     for (const item of catalogResult.items) {
       if (item.eventId == null) continue; // ambiguo — sin mapping resuelto, se omite (spec §12/§48)

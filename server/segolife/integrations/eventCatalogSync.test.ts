@@ -188,6 +188,88 @@ describe("syncEventCatalog — matching (spec §12-13)", () => {
   });
 });
 
+describe("syncEventCatalog — publicationTransition (FIX-05, base para notificaciones Admin)", () => {
+  it("mapped_existing: sourcePublicationStatus cambia (unpublished→published) → publicationTransition poblado", async () => {
+    const { db } = fakeDb([
+      [{ internalId: 42 }], // existingMapping
+      [{ sourcePublicationStatus: "unpublished" }], // getCurrentPublicationStatus (before)
+    ]);
+    mockUpdateEvent.mockResolvedValue({ id: 42 });
+
+    const result = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent({ sourcePublicationStatus: "published" })],
+    }, db);
+
+    expect(result.items[0].publicationTransition).toMatchObject({ eventId: 42, from: "unpublished", to: "published" });
+  });
+
+  it("mapped_existing: sourcePublicationStatus NO cambia (published→published) → publicationTransition=null (nunca notifica por un no-cambio)", async () => {
+    const { db } = fakeDb([
+      [{ internalId: 42 }], // existingMapping
+      [{ sourcePublicationStatus: "published" }], // getCurrentPublicationStatus (before) — igual al nuevo valor
+    ]);
+    mockUpdateEvent.mockResolvedValue({ id: 42 });
+
+    const result = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent({ sourcePublicationStatus: "published" })],
+    }, db);
+
+    expect(result.items[0].publicationTransition).toBeNull();
+  });
+
+  it("created: evento nunca visto antes, llega ya published → publicationTransition {from:null, to:'published'} (spec §26, no necesita pasar por unpublished)", async () => {
+    const { db } = fakeDb([
+      [], // existingMapping
+      [], // alreadyMapped
+      [], // sameVenue
+    ]);
+    mockCreateEvent.mockResolvedValue({ id: 77 });
+
+    const result = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent({ sourcePublicationStatus: "published" })],
+    }, db);
+
+    expect(result.items[0].publicationTransition).toMatchObject({ eventId: 77, from: null, to: "published" });
+  });
+
+  it("candidate_adopted: origen Fourvenues nunca registrado antes → publicationTransition {from:null, to:...}", async () => {
+    const candidateEvent = { id: 55, name: "Fixture Night @ Casanova", venueId: 10, startsAt: new Date("2027-01-10T23:00:00.000Z") };
+    const { db } = fakeDb([
+      [], // existingMapping
+      [], // alreadyMapped
+      [candidateEvent], // sameVenue
+    ]);
+
+    const result = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent({ sourcePublicationStatus: "unpublished" })],
+    }, db);
+
+    expect(result.items[0].publicationTransition).toMatchObject({ eventId: 55, from: null, to: "unpublished" });
+  });
+
+  it("invalid_missing_startsAt / ambiguous → publicationTransition siempre null (ningún evento se toca)", async () => {
+    const { db: db1 } = fakeDb([]);
+    const invalidResult = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent({ startsAt: null })],
+    }, db1);
+    expect(invalidResult.items[0].publicationTransition).toBeNull();
+
+    const candidate1 = { id: 55, name: "Fixture Night @ Casanova", venueId: 10, startsAt: new Date("2027-01-10T23:00:00.000Z") };
+    const candidate2 = { id: 56, name: "Fixture Night @ Casanova", venueId: 10, startsAt: new Date("2027-01-11T20:00:00.000Z") };
+    const { db: db2 } = fakeDb([[], [], [candidate1, candidate2]]);
+    const ambiguousResult = await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent()],
+    }, db2);
+    expect(ambiguousResult.items[0].publicationTransition).toBeNull();
+  });
+});
+
 describe("syncEventCatalog — startsAt ausente (Tía Felisa rollout, spec §9/§63)", () => {
   it("evento SIN mapping y startsAt=null → outcome 'invalid_missing_startsAt', NUNCA crea el evento ni un mapping, NUNCA inventa epoch", async () => {
     const { db, inserts } = fakeDb([]); // ni siquiera se llega a consultar existingMapping — se descarta antes

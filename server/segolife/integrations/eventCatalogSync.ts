@@ -72,6 +72,12 @@ function slugify(text: string): string {
   return normalizeName(text).replace(/\s+/g, "-").slice(0, 100) || "evento";
 }
 
+/** FIX-05 — lectura mínima previa a updateEvent() para poder reportar el "before" real de un evento ya mapeado; nunca se usa para decidir nada de negocio aquí, solo para que el llamador pueda detectar la transición. */
+async function getCurrentPublicationStatus(eventId: number, conn: DbHandle): Promise<SegolifeEvent["sourcePublicationStatus"]> {
+  const [row] = await conn.select({ sourcePublicationStatus: events.sourcePublicationStatus }).from(events).where(eq(events.id, eventId)).limit(1);
+  return row?.sourcePublicationStatus ?? null;
+}
+
 async function generateUniqueSlug(base: string, conn: DbHandle): Promise<string> {
   let slug = slugify(base);
   let suffix = 1;
@@ -82,11 +88,27 @@ async function generateUniqueSlug(base: string, conn: DbHandle): Promise<string>
   return slug;
 }
 
+/**
+ * FIX-05 — solo se puebla cuando sourcePublicationStatus REALMENTE cambió
+ * en ESTE sync (nunca en cada run, nunca "published→published"). El
+ * llamador (integrationSyncService.ts) decide si eso amerita una
+ * notificación Admin — esta capa solo reporta el hecho, nunca decide
+ * política de notificación ni toca la tabla `notifications`.
+ */
+export interface EventPublicationTransition {
+  eventId: number;
+  from: SegolifeEvent["sourcePublicationStatus"];
+  to: SegolifeEvent["sourcePublicationStatus"];
+  startsAt: Date;
+  endsAt: Date | null;
+}
+
 export interface EventSyncItemResult {
   externalId: string;
   name: string;
   outcome: "mapped_existing" | "candidate_adopted" | "created" | "ambiguous" | "invalid_missing_startsAt";
   eventId: number | null;
+  publicationTransition: EventPublicationTransition | null;
 }
 
 export interface SyncEventCatalogInput {
@@ -177,7 +199,7 @@ export async function syncEventCatalog(input: SyncEventCatalogInput, db?: DbHand
     // mapeado, conserva su fecha anterior intacta (Field ownership: esta
     // sincronización simplemente no puede confirmarla en este run).
     if (ev.startsAt === null) {
-      items.push({ externalId: ev.externalId, name: ev.name, outcome: "invalid_missing_startsAt", eventId: null });
+      items.push({ externalId: ev.externalId, name: ev.name, outcome: "invalid_missing_startsAt", eventId: null, publicationTransition: null });
       invalidCount++;
       continue;
     }
@@ -188,9 +210,14 @@ export async function syncEventCatalog(input: SyncEventCatalogInput, db?: DbHand
 
     let eventId: number;
     let outcome: EventSyncItemResult["outcome"];
+    let publicationTransition: EventPublicationTransition | null = null;
 
     if (existingMapping) {
       eventId = existingMapping.internalId;
+      // FIX-05 — "before" real, leído ANTES de escribir, para poder reportar
+      // si sourcePublicationStatus REALMENTE cambió en este sync run
+      // (integrationSyncService.ts decide si eso amerita notificar Admin).
+      const before = await getCurrentPublicationStatus(eventId, conn);
       // Field ownership: fecha/hora + sourcePublicationStatus se sincronizan
       // en un evento ya mapeado — updateEvent() decide si eso dispara
       // event_updated (sourcePublicationStatus nunca lo dispara, ver
@@ -198,13 +225,16 @@ export async function syncEventCatalog(input: SyncEventCatalogInput, db?: DbHand
       await updateEvent(eventId, { startsAt: ev.startsAt, endsAt: ev.endsAt ?? null, sourcePublicationStatus: ev.sourcePublicationStatus }, conn);
       outcome = "mapped_existing";
       updatedCount++;
+      if (before !== ev.sourcePublicationStatus) {
+        publicationTransition = { eventId, from: before, to: ev.sourcePublicationStatus, startsAt: ev.startsAt, endsAt: ev.endsAt ?? null };
+      }
     } else {
       const normalizedName = normalizeName(ev.name);
       const dayKey = resolveMadridMoment(ev.startsAt).date;
       const candidates = await findUnambiguousCandidate(input.provider, input.venueId, normalizedName, dayKey, conn);
 
       if (candidates.length > 1) {
-        items.push({ externalId: ev.externalId, name: ev.name, outcome: "ambiguous", eventId: null });
+        items.push({ externalId: ev.externalId, name: ev.name, outcome: "ambiguous", eventId: null, publicationTransition: null });
         ambiguousCount++;
         continue; // no se autovincula, no se crea duplicado — requiere resolución manual (fuera de alcance de esta fase, sin dashboard)
       } else if (candidates.length === 1) {
@@ -223,6 +253,10 @@ export async function syncEventCatalog(input: SyncEventCatalogInput, db?: DbHand
         }, conn);
         outcome = "candidate_adopted";
         updatedCount++;
+        // FIX-05 — un candidato adoptado NUNCA tuvo sourcePublicationStatus
+        // antes (era nativo, sin origen Fourvenues registrado) — from=null
+        // garantizado, sin necesidad de leerlo.
+        publicationTransition = { eventId, from: null, to: ev.sourcePublicationStatus, startsAt: ev.startsAt, endsAt: ev.endsAt ?? null };
       } else {
         const slug = await generateUniqueSlug(ev.name, conn);
         const created = await createEvent({
@@ -244,6 +278,7 @@ export async function syncEventCatalog(input: SyncEventCatalogInput, db?: DbHand
         });
         outcome = "created";
         createdCount++;
+        publicationTransition = { eventId, from: null, to: ev.sourcePublicationStatus, startsAt: ev.startsAt, endsAt: ev.endsAt ?? null };
       }
     }
 
@@ -251,7 +286,7 @@ export async function syncEventCatalog(input: SyncEventCatalogInput, db?: DbHand
       await upsertFourvenuesSalesChannel(eventId, ev.externalUrl, input.provider, input.integrationType, input.integrationId, conn);
     }
 
-    items.push({ externalId: ev.externalId, name: ev.name, outcome, eventId });
+    items.push({ externalId: ev.externalId, name: ev.name, outcome, eventId, publicationTransition });
   }
 
   return { items, createdCount, updatedCount, ambiguousCount, invalidCount };

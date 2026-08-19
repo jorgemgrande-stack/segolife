@@ -55,4 +55,15 @@ describe("deepLinkPolicy — sanitizeDeepLink", () => {
   it("rechaza una URL absoluta a /nueva-contrasena — nunca basta con que el path final coincida", () => {
     expect(sanitizeDeepLink("https://www.segolife.es/nueva-contrasena?token=abc123")).toBeNull();
   });
+
+  // FIX-05 — ficha de evento Admin (fourvenuesPublicationNotifier.ts). Patrón
+  // estrecho a propósito: solo /admin/events/:id, nunca un comodín /admin/.*.
+  it("acepta /admin/events/:id (FIX-05, notificación de publicación Fourvenues)", () => {
+    expect(sanitizeDeepLink("/admin/events/42")).toBe("/admin/events/42");
+  });
+
+  it("sigue rechazando rutas admin no relacionadas — el patrón nuevo NO es un comodín /admin/.*", () => {
+    expect(sanitizeDeepLink("/admin/users/1")).toBeNull();
+    expect(sanitizeDeepLink("/ie/admin/secret")).toBeNull(); // el caso ya cubierto arriba sigue rechazado
+  });
 });

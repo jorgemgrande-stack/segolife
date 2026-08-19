@@ -83,4 +83,38 @@ describe("templates — renderTemplate", () => {
     expect(ENGAGEMENT_TEMPLATES.benefit_granted.audienceType).toBe("transactional");
     expect(ENGAGEMENT_TEMPLATES.event_tonight.audienceType).toBe("marketing");
   });
+
+  // FIX-05 — plantillas Admin del catalog sync de Fourvenues (nunca dirigidas al Student).
+  describe("fourvenues_event_published / fourvenues_event_unpublished (FIX-05)", () => {
+    it("fourvenues_event_published interpola venueName/eventName/dateLabel y acepta el deep link admin real", () => {
+      const rendered = renderTemplate(
+        "fourvenues_event_published",
+        { venueName: "Casanova", eventName: "WHITE PARTY", dateLabel: "15/09/2026 00:30" },
+        "/admin/events/42"
+      );
+      expect(rendered.titleEs).toBe("Nuevo evento publicado en Fourvenues");
+      expect(rendered.bodyEs).toBe('Casanova ha publicado "WHITE PARTY" para el 15/09/2026 00:30.');
+      expect(rendered.deepLink).toBe("/admin/events/42");
+    });
+
+    it("fourvenues_event_unpublished interpola eventName/venueName, nunca afirma 'cancelado'", () => {
+      const rendered = renderTemplate(
+        "fourvenues_event_unpublished",
+        { venueName: "Tía Felisa", eventName: "MIÉRCOLES LOCOS" },
+        "/admin/events/206"
+      );
+      expect(rendered.bodyEn).toBe('"MIÉRCOLES LOCOS" at Tía Felisa is no longer published on Fourvenues and is not visible to students.');
+      expect(rendered.bodyEn.toLowerCase()).not.toContain("cancel");
+      expect(rendered.deepLink).toBe("/admin/events/206");
+    });
+
+    it("ambas son solo in_app, transactional, category=events — nunca email/SMS/WhatsApp automático (spec §20/§29)", () => {
+      expect(ENGAGEMENT_TEMPLATES.fourvenues_event_published.channels).toEqual(["in_app"]);
+      expect(ENGAGEMENT_TEMPLATES.fourvenues_event_unpublished.channels).toEqual(["in_app"]);
+      expect(ENGAGEMENT_TEMPLATES.fourvenues_event_published.audienceType).toBe("transactional");
+      expect(ENGAGEMENT_TEMPLATES.fourvenues_event_unpublished.audienceType).toBe("transactional");
+      expect(ENGAGEMENT_TEMPLATES.fourvenues_event_published.category).toBe("events");
+      expect(ENGAGEMENT_TEMPLATES.fourvenues_event_unpublished.category).toBe("events");
+    });
+  });
 });

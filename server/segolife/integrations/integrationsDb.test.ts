@@ -8,7 +8,7 @@
  * entre conexiones distintas.
  */
 import { describe, it, expect } from "vitest";
-import { tryAcquireSyncLock, isDueForScheduledSync, SYNC_STALE_LOCK_MINUTES } from "./integrationsDb";
+import { tryAcquireSyncLock, isDueForScheduledSync, getLastSuccessfulModeRunAt, SYNC_STALE_LOCK_MINUTES } from "./integrationsDb";
 
 /**
  * Fake de `db.transaction()` — reproduce la secuencia EXACTA de queries que
@@ -138,5 +138,46 @@ describe("isDueForScheduledSync — cálculo puro (spec §53)", () => {
   it("syncIntervalMinutes de la fila SIEMPRE gana sobre el default cuando está definido", () => {
     const lastSuccessAt = new Date(now.getTime() - 20 * 60_000);
     expect(isDueForScheduledSync({ lastSuccessAt, syncIntervalMinutes: 5 }, now, 9999)).toBe(true); // fila pide 5 min, ya pasaron 20 — debida pese al default enorme
+  });
+});
+
+/** Fake mínimo para getLastSuccessfulModeRunAt: select().from().where().orderBy().limit() → array de filas. */
+function fakeModeRunsDb(rows: Array<{ startedAt: Date; metadata: Record<string, unknown> | null }>) {
+  const chain: any = { from: () => chain, where: () => chain, orderBy: () => chain, limit: () => chain, then: (resolve: (v: unknown) => void) => resolve(rows) };
+  return { select: () => chain } as never;
+}
+
+describe("getLastSuccessfulModeRunAt — FIX-05 (3ª cadencia 'catalog', ventana ampliada 20→150)", () => {
+  it("encuentra el último run 'catalog' entre runs de otros modos intercalados", async () => {
+    const db = fakeModeRunsDb([
+      { startedAt: new Date("2026-08-19T16:30:00Z"), metadata: { mode: "incremental" } },
+      { startedAt: new Date("2026-08-19T16:29:00Z"), metadata: { mode: "catalog" } },
+      { startedAt: new Date("2026-08-19T16:20:00Z"), metadata: { mode: "incremental" } },
+    ]);
+    const result = await getLastSuccessfulModeRunAt("venue_integration", 1, "catalog", db);
+    expect(result).toEqual(new Date("2026-08-19T16:29:00Z"));
+  });
+
+  it("acepta 'incremental'/'reconciliation'/'catalog' como modos válidos (regresión de tipo — antes solo 2)", async () => {
+    const db = fakeModeRunsDb([{ startedAt: new Date("2026-08-19T10:00:00Z"), metadata: { mode: "reconciliation" } }]);
+    expect(await getLastSuccessfulModeRunAt("venue_integration", 1, "incremental", db)).toBeNull();
+    expect(await getLastSuccessfulModeRunAt("venue_integration", 1, "reconciliation", db)).toEqual(new Date("2026-08-19T10:00:00Z"));
+    expect(await getLastSuccessfulModeRunAt("venue_integration", 1, "catalog", db)).toBeNull();
+  });
+
+  it("modo nunca encontrado en la ventana → null, nunca lanza", async () => {
+    const db = fakeModeRunsDb([{ startedAt: new Date(), metadata: { mode: "incremental" } }]);
+    expect(await getLastSuccessfulModeRunAt("venue_integration", 1, "reconciliation", db)).toBeNull();
+  });
+
+  it("regresión real (spec §48): con 3 cadencias activas (incremental+catalog @10min, reconciliation @6h), el último 'reconciliation' puede quedar hasta ~72 runs atrás — el límite de 150 debe seguir encontrándolo, 20 (el valor original) no lo habría hecho", async () => {
+    const denseRows: Array<{ startedAt: Date; metadata: Record<string, unknown> }> = [];
+    for (let i = 0; i < 72; i++) {
+      denseRows.push({ startedAt: new Date(Date.now() - i * 5 * 60_000), metadata: { mode: i % 2 === 0 ? "incremental" : "catalog" } });
+    }
+    denseRows.push({ startedAt: new Date(Date.now() - 72 * 5 * 60_000), metadata: { mode: "reconciliation" } });
+    const db = fakeModeRunsDb(denseRows);
+    const result = await getLastSuccessfulModeRunAt("venue_integration", 1, "reconciliation", db);
+    expect(result).not.toBeNull(); // con el límite anterior de 20 esto habría sido null — reconciliation se habría disparado en cada tick
   });
 });

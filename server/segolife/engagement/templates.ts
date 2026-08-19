@@ -503,6 +503,32 @@ export const ENGAGEMENT_TEMPLATES: Record<string, EngagementTemplate> = {
     bodyEn: "{{eventName}}", bodyEs: "{{eventName}}",
     allowedVariables: ["eventName"],
   },
+
+  // ── FIX-05 — Fourvenues Future Catalog Sync: alertas operacionales Admin ──
+  // Destinatario SIEMPRE un usuario role=admin (ver
+  // fourvenuesPublicationNotifier.ts) — NUNCA un Student, nunca dirigidas a
+  // venue_admin salvo decisión explícita futura. Solo in_app (spec §20/§29:
+  // sin email/SMS/WhatsApp automático). Disparadas desde el catalog sync
+  // (integrationSyncService.ts), no desde un domain event de usuario — sin
+  // precedente previo de un job/scheduler llamando a createNotification()
+  // directamente, primer caso real de este patrón.
+  fourvenues_event_published: {
+    key: "fourvenues_event_published", version: 1, category: "events", adminCategory: "EVENTS",
+    audienceType: "transactional", channels: ["in_app"], status: "active",
+    description: "Fourvenues publicó un evento futuro (nuevo o borrador→publicado) — alerta operacional Admin, nunca dirigida al Student.", triggerEvent: "FourvenuesEventPublished (catalog sync, scheduler)",
+    titleEn: "New event published on Fourvenues", titleEs: "Nuevo evento publicado en Fourvenues",
+    bodyEn: "{{venueName}} has published \"{{eventName}}\" for {{dateLabel}}.", bodyEs: "{{venueName}} ha publicado \"{{eventName}}\" para el {{dateLabel}}.",
+    allowedVariables: ["venueName", "eventName", "dateLabel"],
+  },
+  fourvenues_event_unpublished: {
+    key: "fourvenues_event_unpublished", version: 1, category: "events", adminCategory: "EVENTS",
+    audienceType: "transactional", channels: ["in_app"], status: "active",
+    // Nunca "cancelado" — Fourvenues no da esa señal (solo active/visible, ver FIX-04) — solo "dejó de estar publicado".
+    description: "Fourvenues retiró de publicación un evento futuro/en curso ya conocido — nunca afirma 'cancelado', Fourvenues no da esa señal.", triggerEvent: "FourvenuesEventUnpublished (catalog sync, scheduler)",
+    titleEn: "Event removed from Fourvenues", titleEs: "Evento retirado de Fourvenues",
+    bodyEn: "\"{{eventName}}\" at {{venueName}} is no longer published on Fourvenues and is not visible to students.", bodyEs: "\"{{eventName}}\" en {{venueName}} ha dejado de estar publicado en Fourvenues y ya no es visible para los estudiantes.",
+    allowedVariables: ["venueName", "eventName"],
+  },
 };
 
 /**

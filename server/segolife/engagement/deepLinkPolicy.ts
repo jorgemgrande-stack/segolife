@@ -28,6 +28,13 @@ const ALLOWED_PATTERNS: RegExp[] = [
   // sin prefijo de comunidad. El token va en la query string, preservada
   // aparte por sanitizeDeepLink (solo el path se compara contra el patrón).
   /^\/nueva-contrasena$/,
+  // FIX-05 — ficha de evento en Admin (destinatario SIEMPRE un admin, nunca
+  // un Student — ver fourvenuesPublicationNotifier.ts). Patrón deliberadamente
+  // estrecho (solo /admin/events/:id, nunca /admin/.* en general) para no
+  // debilitar la protección real de esta whitelist: un deep_link de Student
+  // (p.ej. "/ie/admin/secret", ver test de abajo) sigue rechazándose igual
+  // que antes — esto solo añade UNA ruta admin concreta, nunca un comodín.
+  /^\/admin\/events\/\d+$/,
 ];
 
 export function sanitizeDeepLink(raw: string | null | undefined): string | null {

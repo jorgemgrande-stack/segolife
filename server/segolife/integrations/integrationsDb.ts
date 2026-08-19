@@ -378,17 +378,29 @@ export function isDueForScheduledSync(
  * suficiente al volumen real de Casanova, evita filtrar por JSON path en
  * SQL sin necesidad real de volumen.
  */
+/**
+ * FIX-05 — límite ampliado de 20 a 150: con solo 2 cadencias (incremental
+ * @10min + reconciliation @6h) ya cabían hasta 36 runs de incremental entre
+ * dos reconciliations, más que el límite anterior de 20 — un bug real
+ * latente (nunca confirmado como manifestado en producción, pero genuino:
+ * con 20 se podía perder el último run de reconciliation y
+ * `reconciliationDue` quedaba permanentemente `true`, disparando
+ * reconciliation en CADA tick en vez de cada 6h). Añadir la 3ª cadencia
+ * "catalog" (FIX-05, misma frecuencia que incremental) duplica la densidad
+ * de runs no-reconciliation entre medias (~72 en 6h) — 150 deja margen
+ * cómodo sin convertir esto en una tabla sin límite.
+ */
 export async function getLastSuccessfulModeRunAt(
   integrationType: "venue_integration" | "event_integration",
   integrationId: number,
-  mode: "incremental" | "reconciliation",
+  mode: "incremental" | "reconciliation" | "catalog",
   db?: DbHandle
 ): Promise<Date | null> {
   const conn = db ?? (await getDb());
   const rows = await conn.select({ startedAt: integrationSyncRuns.startedAt, metadata: integrationSyncRuns.metadata })
     .from(integrationSyncRuns)
     .where(and(eq(integrationSyncRuns.integrationType, integrationType), eq(integrationSyncRuns.integrationId, integrationId), eq(integrationSyncRuns.status, "success")))
-    .orderBy(desc(integrationSyncRuns.id)).limit(20);
+    .orderBy(desc(integrationSyncRuns.id)).limit(150);
   const match = rows.find(r => (r.metadata as Record<string, unknown> | null)?.mode === mode);
   return match?.startedAt ?? null;
 }

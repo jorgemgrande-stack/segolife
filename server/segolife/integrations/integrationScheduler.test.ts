@@ -48,6 +48,20 @@ function rawIntegration(overrides: Partial<Record<string, unknown>> = {}) {
   return { id: 1, venueId: 10, providerId: 5, enabled: true, syncEnabled: true, credentialsEncrypted: "blob", loyaltyEnabled: false, syncIntervalMinutes: 10, lastSuccessAt: null, ...overrides };
 }
 
+/**
+ * FIX-05 — getLastSuccessfulModeRunAt ahora se llama para DOS modos
+ * distintos por tick (catalog + reconciliation, cada uno con su propio
+ * reloj independiente) — un mock ciego a `mode` haría que controlar uno sin
+ * afectar al otro fuera imposible. `dueModes` son los modos que deben
+ * aparecer como "nunca corridos" (null → debidos); cualquier modo no
+ * listado se resuelve como "recién corrido" (no debido).
+ */
+function mockLastRunPerMode(dueModes: Array<"catalog" | "reconciliation">) {
+  mockGetLastSuccessfulModeRunAt.mockImplementation(async (_type: string, _id: number, mode: string) =>
+    dueModes.includes(mode as "catalog" | "reconciliation") ? null : new Date()
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockIsExternalIntegrationsGloballyEnabled.mockReturnValue(true);
@@ -136,13 +150,13 @@ describe("tick — due calculation (spec §53/§65)", () => {
     expect(mockSyncVenueIntegration).not.toHaveBeenCalled();
   });
 
-  it("reconciliation debida (nunca corrida) aunque incremental no lo esté → syncVenueIntegration llamado con mode='reconciliation'", async () => {
+  it("reconciliation debida (nunca corrida) aunque incremental/catalog no lo estén → syncVenueIntegration llamado con mode='reconciliation'", async () => {
     mockListProviders.mockResolvedValue([fourvenuesProvider()]);
     mockListVenueIntegrations.mockResolvedValue([safeIntegration()]);
     mockGetVenueIntegrationRaw.mockResolvedValue(rawIntegration());
     mockCanSync.mockReturnValue(true);
     mockIsDueForScheduledSync.mockReturnValue(false);
-    mockGetLastSuccessfulModeRunAt.mockResolvedValue(null);
+    mockLastRunPerMode(["reconciliation"]); // catalog recién corrido → no debido
 
     await tick();
 
@@ -150,19 +164,69 @@ describe("tick — due calculation (spec §53/§65)", () => {
     expect(mockSyncVenueIntegration).toHaveBeenCalledWith(1, expect.objectContaining({ trigger: "scheduler", mode: "reconciliation" }));
   });
 
-  it("incremental Y reconciliation debidas a la vez → ambas se ejecutan, nunca en paralelo (secuencial, mismo tick)", async () => {
+  it("incremental Y reconciliation debidas a la vez (catalog no) → ambas se ejecutan, nunca en paralelo (secuencial, mismo tick)", async () => {
     mockListProviders.mockResolvedValue([fourvenuesProvider()]);
     mockListVenueIntegrations.mockResolvedValue([safeIntegration()]);
     mockGetVenueIntegrationRaw.mockResolvedValue(rawIntegration());
     mockCanSync.mockReturnValue(true);
     mockIsDueForScheduledSync.mockReturnValue(true);
-    mockGetLastSuccessfulModeRunAt.mockResolvedValue(null);
+    mockLastRunPerMode(["reconciliation"]); // catalog recién corrido → no debido
 
     await tick();
 
     expect(mockSyncVenueIntegration).toHaveBeenCalledTimes(2);
     expect(mockSyncVenueIntegration.mock.calls[0][1]).toMatchObject({ mode: "incremental" });
     expect(mockSyncVenueIntegration.mock.calls[1][1]).toMatchObject({ mode: "reconciliation" });
+  });
+
+  // FIX-05 — cadencia CATALOG (spec §5-7): reloj independiente, ventana
+  // futura amplia, scope="catalogOnly" (nunca toca rates/orders/tickets/
+  // attendance) — nunca reutiliza el reloj de incremental ni de reconciliation.
+  it("catalog debida (nunca corrida) aunque incremental/reconciliation no lo estén → syncVenueIntegration llamado con mode='catalog', scope='catalogOnly', ventana amplia", async () => {
+    mockListProviders.mockResolvedValue([fourvenuesProvider()]);
+    mockListVenueIntegrations.mockResolvedValue([safeIntegration()]);
+    mockGetVenueIntegrationRaw.mockResolvedValue(rawIntegration());
+    mockCanSync.mockReturnValue(true);
+    mockIsDueForScheduledSync.mockReturnValue(false);
+    mockLastRunPerMode(["catalog"]); // reconciliation recién corrida → no debida
+
+    await tick();
+
+    expect(mockSyncVenueIntegration).toHaveBeenCalledTimes(1);
+    expect(mockSyncVenueIntegration).toHaveBeenCalledWith(1, expect.objectContaining({
+      trigger: "scheduler", mode: "catalog", scope: "catalogOnly",
+      historyFromDays: 2, futureUntilDays: 90, // spec §6 — mínimo 90 días futuros, GET /events/ ya pagina genéricamente sin coste significativo
+    }));
+  });
+
+  it("las TRES cadencias debidas a la vez → las tres se ejecutan, cada una con su modo/scope/ventana propios, nunca en paralelo (secuencial, mismo tick)", async () => {
+    mockListProviders.mockResolvedValue([fourvenuesProvider()]);
+    mockListVenueIntegrations.mockResolvedValue([safeIntegration()]);
+    mockGetVenueIntegrationRaw.mockResolvedValue(rawIntegration());
+    mockCanSync.mockReturnValue(true);
+    mockIsDueForScheduledSync.mockReturnValue(true);
+    mockLastRunPerMode(["catalog", "reconciliation"]);
+
+    await tick();
+
+    expect(mockSyncVenueIntegration).toHaveBeenCalledTimes(3);
+    expect(mockSyncVenueIntegration.mock.calls[0][1]).toMatchObject({ mode: "incremental", scope: "full" });
+    expect(mockSyncVenueIntegration.mock.calls[1][1]).toMatchObject({ mode: "catalog", scope: "catalogOnly" });
+    expect(mockSyncVenueIntegration.mock.calls[2][1]).toMatchObject({ mode: "reconciliation", scope: "full" });
+  });
+
+  it("catalog NUNCA sincroniza rates/orders/tickets/attendance — solo el catálogo de eventos (verificado vía el scope pasado a syncVenueIntegration, la separación real vive ahí)", async () => {
+    mockListProviders.mockResolvedValue([fourvenuesProvider()]);
+    mockListVenueIntegrations.mockResolvedValue([safeIntegration()]);
+    mockGetVenueIntegrationRaw.mockResolvedValue(rawIntegration());
+    mockCanSync.mockReturnValue(true);
+    mockIsDueForScheduledSync.mockReturnValue(false);
+    mockLastRunPerMode(["catalog"]);
+
+    await tick();
+
+    const catalogCall = mockSyncVenueIntegration.mock.calls.find(c => (c[1] as { mode?: string }).mode === "catalog");
+    expect(catalogCall?.[1]).toMatchObject({ scope: "catalogOnly" });
   });
 });
 
