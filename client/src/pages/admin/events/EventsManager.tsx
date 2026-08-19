@@ -31,7 +31,7 @@ const FOURVENUES_SOURCE_PREFIX = "integration:fourvenues";
  * "finalizado" para un evento que nunca llegó a publicarse), 3) finalizado
  * (temporal), 4) activo. NUNCA mezcla los tres conceptos en un único valor.
  */
-function eventStatusBadge(e: { status: string; sourceType?: string | null; sourcePublicationStatus?: string | null; startsAt: Date | string; endsAt?: Date | string | null }) {
+export function eventStatusBadge(e: { status: string; sourceType?: string | null; sourcePublicationStatus?: string | null; startsAt: Date | string; endsAt?: Date | string | null }) {
   if (e.status !== "active") return { label: "Inactivo", variant: "outline" as const };
   const isFourvenuesSourced = typeof e.sourceType === "string" && e.sourceType.startsWith(FOURVENUES_SOURCE_PREFIX);
   if (isFourvenuesSourced && e.sourcePublicationStatus !== "published") {
