@@ -186,7 +186,7 @@ export async function listStudents(
     name: r.user.name,
     email: r.user.email,
     phone: r.user.phone,
-    avatarUrl: r.user.avatarUrl,
+    avatarUrl: r.user.avatarStorageKey ? buildStudentPhotoUrl(r.profile.userId) : null,
     university: r.university,
     nationality: r.profile.nationality,
     degreeProgram: r.profile.degreeProgram,
@@ -219,12 +219,17 @@ export interface StudentDetail {
   tags: StudentTag[];
 }
 
+/** MG-03 — URL estable y autenticada (nunca la URL cruda del storage) que sirve la foto de perfil de un Student; ver server/segolife/students/studentPhotoRoutes.ts. */
+export function buildStudentPhotoUrl(userId: number): string {
+  return `/api/students/${userId}/photo`;
+}
+
 async function buildStudentDetail(
   profile: StudentProfile,
   conn: DbHandle
 ): Promise<StudentDetail> {
   const [[userRow], [universityRow], communitiesByUser, tagRows] = await Promise.all([
-    conn.select({ id: users.id, name: users.name, email: users.email, phone: users.phone, avatarUrl: users.avatarUrl, lastSignedIn: users.lastSignedIn })
+    conn.select({ id: users.id, name: users.name, email: users.email, phone: users.phone, avatarStorageKey: users.avatarStorageKey, lastSignedIn: users.lastSignedIn })
       .from(users).where(eq(users.id, profile.userId)).limit(1),
     profile.universityId
       ? conn.select().from(universities).where(eq(universities.id, profile.universityId)).limit(1)
@@ -238,7 +243,9 @@ async function buildStudentDetail(
 
   return {
     profile,
-    user: userRow ?? { id: profile.userId, name: null, email: null, phone: null, avatarUrl: null, lastSignedIn: null },
+    user: userRow
+      ? { id: userRow.id, name: userRow.name, email: userRow.email, phone: userRow.phone, avatarUrl: userRow.avatarStorageKey ? buildStudentPhotoUrl(userRow.id) : null, lastSignedIn: userRow.lastSignedIn }
+      : { id: profile.userId, name: null, email: null, phone: null, avatarUrl: null, lastSignedIn: null },
     university: universityRow ?? null,
     communities: communitiesByUser.get(profile.userId) ?? [],
     tags: tagRows.map(t => t.tag),
@@ -319,6 +326,19 @@ export async function updateStudentProfile(
   }
 
   return updated;
+}
+
+/** MG-03 — clave PRIVADA de storage de la foto de perfil (nunca la URL). `null` = sin foto (fallback a iniciales). */
+export async function getStudentAvatarKey(userId: number, db?: AnyDbHandle): Promise<string | null> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select({ avatarStorageKey: users.avatarStorageKey }).from(users).where(eq(users.id, userId)).limit(1);
+  return row?.avatarStorageKey ?? null;
+}
+
+/** MG-03 — nunca se llama con un userId ajeno: siempre ctx.user.id del propio Student (ver studentPhotoService.ts). */
+export async function updateStudentAvatarKey(userId: number, avatarStorageKey: string | null, db?: AnyDbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  await conn.update(users).set({ avatarStorageKey, updatedAt: new Date() }).where(eq(users.id, userId));
 }
 
 /** Campos exclusivos de administración (nunca editables por el propio estudiante). */

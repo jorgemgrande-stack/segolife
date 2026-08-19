@@ -301,7 +301,8 @@
     "back": "Back",
     "today": "Today",
     "tomorrow": "Tomorrow",
-    "close": "Close"
+    "close": "Close",
+    "cancel": "Cancel"
   },
   "nav": {
     "home": "Home",
@@ -563,7 +564,18 @@
     "historicalClaimedBadge": "History recovered",
     "historicalClaimedSince": "Recovered on {{date}}",
     "historicalClaimSuccess": "History recovered successfully",
-    "historicalClaimError": "Couldn't recover your history"
+    "historicalClaimError": "Couldn't recover your history",
+    "addPhoto": "Add photo",
+    "changePhoto": "Change photo",
+    "removePhoto": "Remove photo",
+    "photoUploaded": "Photo updated",
+    "photoRemoved": "Photo removed",
+    "photoUploadError": "Couldn't update your photo. Please try again.",
+    "photoInvalidType": "Invalid image. Use JPEG, PNG or WebP.",
+    "photoTooLarge": "Image too large (max 8 MB).",
+    "removePhotoConfirmTitle": "Remove profile photo?",
+    "removePhotoConfirmDescription": "You'll go back to showing your initials until you add a new photo.",
+    "removePhotoConfirmAction": "Remove photo"
   },
   "activity": {
     "title": "Activity",

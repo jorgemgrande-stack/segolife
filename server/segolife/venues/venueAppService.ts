@@ -25,6 +25,7 @@ import { resolveOperationalDate } from "./venueVisitService";
 import { isEventCurrentlyOpen } from "../ticketing/unifiedCheckinService";
 import { getWalletByUserId } from "../tokens/tokenLedgerService";
 import { getUserCommunitiesWithDetails } from "../../db/communitiesDb";
+import { getStudentPhotoDataUri } from "../students/studentPhotoService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -200,6 +201,15 @@ export interface VenueStudentCardActivity {
 export interface VenueStudentCard {
   userId: number;
   name: string;
+  /**
+   * MG-03 — data URI base64 ya lista para <img src>, o null sin foto
+   * (fallback a iniciales en el frontend). Nunca una URL: esta respuesta ya
+   * está autorizada por requireVenueAccess() + el token QR recién escaneado
+   * (ver venueApp.ts::studentCard) — la foto reutiliza EXACTAMENTE esa
+   * misma autorización en vez de exponer un endpoint nuevo que el Venue
+   * pudiera usar para enumerar Students (spec §10/§13).
+   */
+  photoDataUri: string | null;
   communities: string[];
   checkedInToday: boolean;
   walletBalance: number;
@@ -213,7 +223,7 @@ export async function getVenueStudentCard(userId: number, venueId: number, at: D
   const windowStart = new Date(at.getTime() - ROLLING_TODAY_WINDOW_MS);
   const activityWindowStart = new Date(at.getTime() - 90 * 24 * 60 * 60 * 1000); // 90 días — "reciente en este venue", nunca el historial completo
 
-  const [userRow, communities, wallet, attendanceToday, visitToday, benefits, recentAttendance, recentVisits, recentBenefitUses] = await Promise.all([
+  const [userRow, communities, wallet, attendanceToday, visitToday, benefits, recentAttendance, recentVisits, recentBenefitUses, photoDataUri] = await Promise.all([
     conn.select({ name: users.name }).from(users).where(eq(users.id, userId)).limit(1),
     getUserCommunitiesWithDetails(userId, conn as never),
     getWalletByUserId(userId, conn as never),
@@ -232,6 +242,7 @@ export async function getVenueStudentCard(userId: number, venueId: number, at: D
       .innerJoin(benefitDefinitions, eq(userBenefits.benefitDefinitionId, benefitDefinitions.id))
       .where(and(eq(userBenefits.userId, userId), eq(userBenefits.usedAtVenueId, venueId), gte(userBenefits.usedAt, activityWindowStart)))
       .orderBy(desc(userBenefits.usedAt)).limit(5),
+    getStudentPhotoDataUri(userId),
   ]);
 
   const eventIds = Array.from(new Set(recentAttendance.map(r => r.eventId)));
@@ -247,6 +258,7 @@ export async function getVenueStudentCard(userId: number, venueId: number, at: D
   return {
     userId,
     name: userRow[0]?.name ?? "—",
+    photoDataUri,
     communities: communities.map(c => c.name),
     checkedInToday: attendanceToday.length > 0 || visitToday.length > 0,
     walletBalance: wallet?.balance ?? 0,

@@ -12,6 +12,7 @@ import { createLocalAuthRouter } from "../localAuth";
 import { createPasswordResetRouter } from "../passwordReset";
 import { createAuthGuardMiddleware } from "../authGuard";
 import uploadRouter from "../uploadRoutes";
+import studentPhotoRouter from "../segolife/students/studentPhotoRoutes";
 import redsysRouter from "../redsysRoutes";
 import ticketPaymentWebhookRouter from "../ticketPaymentWebhookRoutes";
 import brevoWebhookRouter from "../brevoWebhookRoutes";
@@ -345,9 +346,21 @@ async function startServer() {
   app.use("/api/trpc", createAuthGuardMiddleware(USE_LOCAL_AUTH));
   // Servir archivos del storage local (fallback cuando S3/Forge no está configurado)
   const localStorageDir = process.env.LOCAL_STORAGE_PATH ?? "/tmp/local-storage";
+  // SEGOLIFE MG-03 — el subdirectorio "private/" del mismo volumen (fotos de
+  // perfil de Student, ver server/storage.ts::privateStoragePut) NUNCA debe
+  // ser servible por el montaje estático público de abajo. Va ANTES de
+  // express.static a propósito — sin esto, cualquiera con la clave (aunque
+  // sea difícil de adivinar) podría descargar la foto sin ninguna
+  // autenticación real, exactamente el riesgo que este directorio existe
+  // para evitar.
+  app.use("/local-storage/private", (_req, res) => {
+    res.status(403).json({ error: "No autorizado." });
+  });
   app.use("/local-storage", express.static(localStorageDir));
   // File upload endpoint
   app.use(uploadRouter);
+  // SEGOLIFE MG-03 — Student Profile Photo (subida propia + servido autenticado)
+  app.use(studentPhotoRouter);
 
   // Redsys IPN notification endpoint
   app.use(redsysRouter);

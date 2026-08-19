@@ -301,7 +301,8 @@
     "back": "Volver",
     "today": "Hoy",
     "tomorrow": "Mañana",
-    "close": "Cerrar"
+    "close": "Cerrar",
+    "cancel": "Cancelar"
   },
   "nav": {
     "home": "Inicio",
@@ -563,7 +564,18 @@
     "historicalClaimedBadge": "Historial recuperado",
     "historicalClaimedSince": "Recuperado el {{date}}",
     "historicalClaimSuccess": "Historial recuperado correctamente",
-    "historicalClaimError": "No se pudo recuperar el historial"
+    "historicalClaimError": "No se pudo recuperar el historial",
+    "addPhoto": "Añadir foto",
+    "changePhoto": "Cambiar foto",
+    "removePhoto": "Eliminar foto",
+    "photoUploaded": "Foto actualizada",
+    "photoRemoved": "Foto eliminada",
+    "photoUploadError": "No se pudo actualizar tu foto. Inténtalo de nuevo.",
+    "photoInvalidType": "Imagen no válida. Usa JPEG, PNG o WebP.",
+    "photoTooLarge": "Imagen demasiado grande (máx. 8 MB).",
+    "removePhotoConfirmTitle": "¿Eliminar foto de perfil?",
+    "removePhotoConfirmDescription": "Volverás a mostrar tus iniciales hasta que añadas una foto nueva.",
+    "removePhotoConfirmAction": "Eliminar foto"
   },
   "activity": {
     "title": "Actividad",

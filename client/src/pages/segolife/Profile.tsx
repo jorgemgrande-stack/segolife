@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { toast } from "sonner";
-import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell, Ticket, IdCard, Archive, UserPlus } from "lucide-react";
+import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell, Ticket, IdCard, Archive, UserPlus, Camera, Trash2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -10,13 +10,17 @@ import { isSupportedLocale, type SupportedLocale } from "@/lib/i18n";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
 import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { SegolifeIdentityQrContent } from "@/components/segolife/SegolifeIdentityQr";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 /**
  * Perfil definitivo de Segolife (Fase 6) — /:community/profile. Autoservicio
@@ -147,6 +151,161 @@ function initials(firstName: string, lastName: string, fallbackName: string): st
   return parts.slice(0, 2).map(p => p[0]).join("").toUpperCase();
 }
 
+// SEGOLIFE MG-03 — mismos límites que studentPhotoService.ts (validación
+// client-side es solo feedback rápido; la validación REAL es siempre
+// server-side, ver server/segolife/students/studentPhotoService.ts).
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+const ALLOWED_PHOTO_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
+
+/**
+ * Fotografía de perfil (spec MG-03) — sustituye el avatar de solo-iniciales
+ * cuando el Student tiene una foto real. Sube vía REST multipart (no tRPC —
+ * mismo criterio que server/uploadRoutes.ts: multipart/binary no encaja
+ * bien en JSON-RPC) a POST /api/students/me/photo; eliminar sí es una
+ * mutación tRPC normal (students.removeMyPhoto) porque no maneja bytes.
+ *
+ * `cacheBust` fuerza al navegador a repedir la imagen tras reemplazar/
+ * eliminar sin necesitar logout/login — la URL en sí (`/api/students/:id/
+ * photo`) es siempre la misma, así que sin esto el navegador podría seguir
+ * mostrando la foto anterior desde caché (spec §6: "controla cache
+ * invalidation correctamente").
+ */
+function StudentAvatarEditor({
+  avatarUrl,
+  displayInitials,
+  displayName,
+  subtitle,
+}: {
+  avatarUrl: string | null;
+  displayInitials: string;
+  displayName: string;
+  subtitle: string;
+}) {
+  const { t } = useTranslation();
+  const utils = trpc.useUtils();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [cacheBust, setCacheBust] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+
+  const removePhoto = trpc.students.removeMyPhoto.useMutation({
+    onSuccess: () => {
+      toast.success(t("profile.photoRemoved"));
+      setCacheBust(v => v + 1);
+      utils.students.me.invalidate();
+    },
+    onError: () => toast.error(t("profile.photoUploadError")),
+  });
+
+  async function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // permite re-seleccionar el mismo archivo dos veces seguidas
+    if (!file) return;
+
+    if (!ALLOWED_PHOTO_TYPES.has(file.type)) {
+      toast.error(t("profile.photoInvalidType"));
+      return;
+    }
+    if (file.size > MAX_PHOTO_BYTES) {
+      toast.error(t("profile.photoTooLarge"));
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("photo", file);
+      const res = await fetch("/api/students/me/photo", {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? "upload_failed");
+      }
+      toast.success(t("profile.photoUploaded"));
+      setCacheBust(v => v + 1);
+      await utils.students.me.invalidate();
+    } catch {
+      toast.error(t("profile.photoUploadError"));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const resolvedSrc = avatarUrl ? `${avatarUrl}${avatarUrl.includes("?") ? "&" : "?"}v=${cacheBust}` : undefined;
+
+  return (
+    <div className="flex items-center gap-4">
+      <div className="relative shrink-0">
+        <Avatar className="size-16">
+          {resolvedSrc && <AvatarImage src={resolvedSrc} alt={displayName} className="object-cover" />}
+          <AvatarFallback className="text-lg font-semibold text-foreground">{displayInitials}</AvatarFallback>
+        </Avatar>
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+          aria-label={avatarUrl ? t("profile.changePhoto") : t("profile.addPhoto")}
+          className="absolute -bottom-1 -right-1 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-opacity hover:opacity-90 disabled:opacity-60"
+        >
+          {uploading ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : <Camera className="size-3.5" aria-hidden="true" />}
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          className="sr-only"
+          onChange={handleFileSelected}
+        />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xl font-semibold text-foreground">{displayName}</p>
+        {subtitle && <p className="truncate text-sm text-muted-foreground">{subtitle}</p>}
+        <div className="mt-1 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="text-xs font-medium text-primary disabled:opacity-60"
+          >
+            {avatarUrl ? t("profile.changePhoto") : t("profile.addPhoto")}
+          </button>
+          {avatarUrl && (
+            <button
+              type="button"
+              onClick={() => setConfirmDeleteOpen(true)}
+              disabled={removePhoto.isPending}
+              className="flex items-center gap-1 text-xs font-medium text-destructive disabled:opacity-60"
+            >
+              <Trash2 className="size-3" aria-hidden="true" /> {t("profile.removePhoto")}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("profile.removePhotoConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("profile.removePhotoConfirmDescription")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => removePhoto.mutate()}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {t("profile.removePhotoConfirmAction")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
 export default function Profile() {
   const { t, i18n } = useTranslation();
   const { community, slug, availableLocales } = useCommunity();
@@ -224,19 +383,12 @@ export default function Profile() {
   return (
     <SegolifeAppShell requireAuth title={t("profile.title")}>
       <SegolifePageContainer className="space-y-7">
-        <div className="flex items-center gap-4">
-          <Avatar className="size-16">
-            <AvatarFallback className="text-lg font-semibold text-foreground">
-              {initials(me.profile.firstName ?? "", me.profile.lastName ?? "", me.user.name ?? "")}
-            </AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
-            <p className="truncate text-xl font-semibold text-foreground">{displayName}</p>
-            <p className="truncate text-sm text-muted-foreground">
-              {[university?.name, community?.name].filter(Boolean).join(" · ")}
-            </p>
-          </div>
-        </div>
+        <StudentAvatarEditor
+          avatarUrl={me.user.avatarUrl}
+          displayInitials={initials(me.profile.firstName ?? "", me.profile.lastName ?? "", me.user.name ?? "")}
+          displayName={displayName}
+          subtitle={[university?.name, community?.name].filter(Boolean).join(" · ")}
+        />
 
         <HistoricalClaimBanner />
 

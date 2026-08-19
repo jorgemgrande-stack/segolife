@@ -19,6 +19,7 @@ import {
 } from "../db/studentsDb";
 import { recordStudentAdminAction } from "../segolife/students/studentAdminActionsDb";
 import { listStudentsBySegment } from "../segolife/students/studentSegmentFilterService";
+import { removeMyPhoto } from "../segolife/students/studentPhotoService";
 import { getDb } from "../db";
 
 // Lectura del CRM de estudiantes: ver el listado/fichas.
@@ -244,4 +245,14 @@ export const studentsRouter = router({
       const updated = await updateStudentProfile(ctx.user.id, input);
       return { success: true, profile: updated };
     }),
+
+  // MG-03 — la subida vive en studentPhotoRoutes.ts (REST, multipart) por lo
+  // mismo que el resto de uploads de este proyecto; eliminar no maneja
+  // bytes, así que sigue aquí el patrón normal de mutación tRPC self-service
+  // (nunca un userId de input — siempre ctx.user.id, mismo criterio que
+  // updateProfile de arriba).
+  removeMyPhoto: protectedProcedure.mutation(async ({ ctx }) => {
+    await removeMyPhoto(ctx.user.id);
+    return { success: true };
+  }),
 });

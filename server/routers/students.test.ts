@@ -6,13 +6,21 @@
  * protectedProcedure/permissionProcedure rechaza ANTES de llamar al
  * resolver, así que se puede probar con `ctx.user = null` sin tocar la BD.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const { mockRemoveMyPhoto } = vi.hoisted(() => ({ mockRemoveMyPhoto: vi.fn() }));
+vi.mock("../segolife/students/studentPhotoService", () => ({ removeMyPhoto: mockRemoveMyPhoto }));
+
 import { studentsRouter } from "./students";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function callerWithoutSession() {
   return studentsRouter.createCaller({ user: null } as any);
 }
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe("students router — endpoint privado (nunca público)", () => {
   it("students.me (autoservicio) rechaza sin sesión", async () => {
@@ -37,5 +45,21 @@ describe("students router — endpoint privado (nunca público)", () => {
 
   it("students.addNote (escritura admin) rechaza sin sesión", async () => {
     await expect(callerWithoutSession().addNote({ studentProfileId: 1, note: "x" })).rejects.toThrow(/please login/i);
+  });
+
+  it("students.removeMyPhoto (MG-03, autoservicio) rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().removeMyPhoto()).rejects.toThrow(/please login/i);
+  });
+});
+
+describe("students.removeMyPhoto — siempre el propio ctx.user.id, nunca un id del cliente (MG-03)", () => {
+  it("con sesión, llama al servicio con el id de la sesión real (el input no acepta ningún userId)", async () => {
+    mockRemoveMyPhoto.mockResolvedValue(undefined);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const caller = studentsRouter.createCaller({ user: { id: 42, role: "user" } } as any);
+    const result = await caller.removeMyPhoto();
+    expect(result).toEqual({ success: true });
+    expect(mockRemoveMyPhoto).toHaveBeenCalledWith(42);
+    expect(mockRemoveMyPhoto).toHaveBeenCalledTimes(1);
   });
 });

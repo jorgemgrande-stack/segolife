@@ -16,6 +16,9 @@ import {
   listStudentNotes,
   addStudentNote,
   listStudents,
+  getStudentAvatarKey,
+  updateStudentAvatarKey,
+  buildStudentPhotoUrl,
 } from "./studentsDb";
 import { studentProfiles, users, universities, userCommunities, studentTagAssignments } from "../../drizzle/schema";
 
@@ -252,5 +255,63 @@ describe("studentsDb — filtro por comunidad (listStudents)", () => {
     const { items, total } = await listStudents({ communityIds: [999] }, db as unknown as Parameters<typeof listStudents>[1]);
     expect(items).toEqual([]);
     expect(total).toBe(0);
+  });
+});
+
+/** MG-03 — clave PRIVADA de storage de la foto (nunca la URL, ver buildStudentPhotoUrl más abajo). */
+describe("studentsDb — clave de foto de perfil (MG-03: getStudentAvatarKey/updateStudentAvatarKey)", () => {
+  it("getStudentAvatarKey devuelve la clave real cuando el Student tiene foto", async () => {
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, where: () => db, limit: () => db,
+      then: (resolve: (v: unknown) => void) => resolve([{ avatarStorageKey: "student-photos/42/abc.jpg" }]),
+    };
+    const key = await getStudentAvatarKey(42, db as unknown as Parameters<typeof getStudentAvatarKey>[1]);
+    expect(key).toBe("student-photos/42/abc.jpg");
+  });
+
+  it("getStudentAvatarKey devuelve null cuando el Student no tiene foto (columna NULL)", async () => {
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, where: () => db, limit: () => db,
+      then: (resolve: (v: unknown) => void) => resolve([{ avatarStorageKey: null }]),
+    };
+    const key = await getStudentAvatarKey(42, db as unknown as Parameters<typeof getStudentAvatarKey>[1]);
+    expect(key).toBeNull();
+  });
+
+  it("getStudentAvatarKey devuelve null si el usuario ni siquiera existe (nunca lanza)", async () => {
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, where: () => db, limit: () => db,
+      then: (resolve: (v: unknown) => void) => resolve([]),
+    };
+    const key = await getStudentAvatarKey(999999, db as unknown as Parameters<typeof getStudentAvatarKey>[1]);
+    expect(key).toBeNull();
+  });
+
+  it("updateStudentAvatarKey hace SET de la clave nueva sobre el userId exacto, nada más", async () => {
+    let setFields: Record<string, unknown> | null = null;
+    let whereArg: unknown = null;
+    const db: Record<string, unknown> = {
+      update: () => db,
+      set: (fields: Record<string, unknown>) => { setFields = fields; return db; },
+      where: (w: unknown) => { whereArg = w; return Promise.resolve(); },
+    };
+    await updateStudentAvatarKey(42, "student-photos/42/new.jpg", db as unknown as Parameters<typeof updateStudentAvatarKey>[2]);
+    expect(setFields).toMatchObject({ avatarStorageKey: "student-photos/42/new.jpg" });
+    expect(whereArg).toBeDefined();
+  });
+
+  it("updateStudentAvatarKey con null limpia la clave (eliminar foto)", async () => {
+    let setFields: Record<string, unknown> | null = null;
+    const db: Record<string, unknown> = {
+      update: () => db,
+      set: (fields: Record<string, unknown>) => { setFields = fields; return db; },
+      where: () => Promise.resolve(),
+    };
+    await updateStudentAvatarKey(42, null, db as unknown as Parameters<typeof updateStudentAvatarKey>[2]);
+    expect(setFields).toMatchObject({ avatarStorageKey: null });
+  });
+
+  it("buildStudentPhotoUrl construye la ruta estable autenticada, nunca una URL de storage cruda", () => {
+    expect(buildStudentPhotoUrl(42)).toBe("/api/students/42/photo");
   });
 });

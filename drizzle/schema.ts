@@ -41,6 +41,15 @@ export const users = mysqlTable("users", {
   supplierId: int("supplierId"), // vínculo a suppliers.id para usuarios con rol "supplier" (portal de proveedor)
   phone: varchar("phone", { length: 32 }),
   avatarUrl: text("avatarUrl"),
+  // SEGOLIFE MG-03 (Student Profile Photo) — clave de almacenamiento PRIVADA
+  // de la foto de perfil (nunca una URL pública). `avatarUrl` (arriba) queda
+  // sin tocar/sin escribir para fotos nuevas — el DTO expuesto al cliente
+  // sigue llamándose `avatarUrl` (cero cambios en los consumidores ya
+  // existentes de ese campo, p.ej. StudentsManager/StudentDetail admin) pero
+  // ahora se COMPUTA en servidor a partir de este key (ver
+  // studentPhotoService.ts::buildStudentPhotoUrl) — nunca se persiste la URL
+  // en sí, para no arrastrar una ruta obsoleta si cambia el prefijo interno.
+  avatarStorageKey: text("avatarStorageKey"),
   isActive: boolean("isActive").default(true).notNull(),
   passwordHash: text("passwordHash"),
   inviteToken: varchar("inviteToken", { length: 128 }),

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Loader2, QrCode, Keyboard, CheckCircle2, XCircle, AlertTriangle, X,
   UserCheck, MapPin, CalendarClock, Coins, Gift, Ticket, ArrowLeft,
@@ -339,6 +340,8 @@ function ResultBanner({ result, compact = false }: { result: ScanResult; compact
 
 type StudentCardData = {
   name: string;
+  /** SEGOLIFE MG-03 — data URI ya lista para <img>, o null sin foto (fallback a iniciales). Viene YA autorizada dentro de esta misma respuesta (ver venueAppService.ts::getVenueStudentCard) — nunca una URL/endpoint aparte. */
+  photoDataUri: string | null;
   communities: string[];
   checkedInToday: boolean;
   walletBalance: number;
@@ -352,13 +355,26 @@ const ACTIVITY_LABEL: Record<string, string> = {
   benefit_redeemed: "Beneficio canjeado",
 };
 
+/** Mismo criterio que Profile.tsx (Student App) — sin componente compartido entre ambas apps todavía, ver informe MG-03. */
+function cardInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length || name === "—") return "?";
+  return parts.slice(0, 2).map(p => p[0]).join("").toUpperCase();
+}
+
 function StudentCard({ card, onRedeem }: { card: StudentCardData; onRedeem: () => void }) {
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-border bg-card p-4 space-y-2">
-        <div className="flex items-center justify-between">
-          <p className="text-lg font-semibold text-foreground">{card.name}</p>
-          {card.checkedInToday && <span className="text-xs font-medium text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full">Aquí hoy</span>}
+        <div className="flex items-center gap-3">
+          <Avatar className="size-11 shrink-0">
+            {card.photoDataUri && <AvatarImage src={card.photoDataUri} alt={card.name} className="object-cover" />}
+            <AvatarFallback className="text-sm font-semibold">{cardInitials(card.name)}</AvatarFallback>
+          </Avatar>
+          <div className="min-w-0 flex-1 flex items-center justify-between gap-2">
+            <p className="text-lg font-semibold text-foreground truncate">{card.name}</p>
+            {card.checkedInToday && <span className="shrink-0 text-xs font-medium text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full">Aquí hoy</span>}
+          </div>
         </div>
         {card.communities.length > 0 && (
           <p className="text-sm text-muted-foreground">{card.communities.join(" · ")}</p>

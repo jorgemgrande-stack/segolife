@@ -7,11 +7,21 @@ import { ENV } from './_core/env';
 import {
   S3Client,
   PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
-import { writeFile, mkdir } from "fs/promises";
+import { writeFile, mkdir, readFile, unlink } from "fs/promises";
 import path from "path";
 
 const LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_PATH ?? "/tmp/local-storage";
+// SEGOLIFE MG-03 — subcarpeta DENTRO del mismo volumen persistente que
+// LOCAL_STORAGE_DIR (nunca un directorio nuevo: aquí no hay volumen montado
+// aparte, escribir fuera de LOCAL_STORAGE_DIR se perdería en cada deploy),
+// pero bloqueada explícitamente del montaje estático público `/local-storage`
+// (ver server/_core/index.ts, el middleware justo antes de esa línea) — la
+// única forma de leer algo de aquí es a través de un endpoint autenticado
+// que llame a privateStorageGetBytes(), nunca una URL directa.
+const PRIVATE_SUBDIR = "private";
 
 // ─── Backend selector ─────────────────────────────────────────────────────────
 
@@ -166,4 +176,74 @@ export async function storageGet(relKey: string): Promise<{ key: string; url: st
 /** Retorna true si hay almacenamiento externo (Forge o S3) configurado. */
 export function hasExternalStorage(): boolean {
   return useForge() || !!(ENV.s3AccessKey && ENV.s3SecretKey);
+}
+
+// ─── PRIVATE STORAGE (SEGOLIFE MG-03) ──────────────────────────────────────
+//
+// A diferencia de storagePut/storageGet (que SIEMPRE devuelven una URL
+// pública/permanente — ver comentario de s3Put/localPut), estas funciones
+// NUNCA devuelven una URL: solo bytes, y solo a quien las llame desde
+// server. El endpoint HTTP que las expone (server/segolife/students/
+// studentPhotoRoutes.ts) es quien decide, en cada request, si el usuario
+// autenticado tiene derecho a ver estos bytes concretos — la privacidad
+// vive en "nunca se entrega una URL fetcheable directamente", no en ACLs de
+// bucket (que hoy no están configuradas: SEGOLIFE producción no tiene S3
+// activo, ver `hasExternalStorage()` — todo cae al fallback local, motivo
+// de más para no depender de una ACL de bucket que no existe).
+//
+// Nota: sin backend Forge — SEGOLIFE nunca lo usa (LOCAL_AUTH, ver
+// CLAUDE.md), y Forge no expone un GetObject/DeleteObject genérico con el
+// que implementar esto correctamente.
+
+function privateKey(relKey: string): string {
+  return `${PRIVATE_SUBDIR}/${normalizeKey(relKey)}`;
+}
+
+export async function privateStoragePut(
+  relKey: string,
+  data: Buffer | Uint8Array | string,
+  contentType = "application/octet-stream"
+): Promise<{ key: string }> {
+  const key = privateKey(relKey);
+  const body = typeof data === "string" ? Buffer.from(data) : Buffer.from(data);
+  if (ENV.s3AccessKey && ENV.s3SecretKey) {
+    const s3 = getS3();
+    await s3.send(new PutObjectCommand({ Bucket: ENV.s3Bucket, Key: key, Body: body, ContentType: contentType }));
+    return { key };
+  }
+  const filePath = path.join(LOCAL_STORAGE_DIR, key);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, body);
+  return { key };
+}
+
+export async function privateStorageGetBytes(relKey: string): Promise<Buffer | null> {
+  const key = privateKey(relKey);
+  if (ENV.s3AccessKey && ENV.s3SecretKey) {
+    const s3 = getS3();
+    try {
+      const res = await s3.send(new GetObjectCommand({ Bucket: ENV.s3Bucket, Key: key }));
+      const bytes = await res.Body?.transformToByteArray();
+      return bytes ? Buffer.from(bytes) : null;
+    } catch {
+      return null;
+    }
+  }
+  const filePath = path.join(LOCAL_STORAGE_DIR, key);
+  try {
+    return await readFile(filePath);
+  } catch {
+    return null;
+  }
+}
+
+export async function privateStorageDelete(relKey: string): Promise<void> {
+  const key = privateKey(relKey);
+  if (ENV.s3AccessKey && ENV.s3SecretKey) {
+    const s3 = getS3();
+    await s3.send(new DeleteObjectCommand({ Bucket: ENV.s3Bucket, Key: key })).catch(() => {});
+    return;
+  }
+  const filePath = path.join(LOCAL_STORAGE_DIR, key);
+  await unlink(filePath).catch(() => {});
 }
