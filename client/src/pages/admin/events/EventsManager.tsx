@@ -22,23 +22,52 @@ const ALL = "__all__";
 const FOURVENUES_SOURCE_PREFIX = "integration:fourvenues";
 
 /**
- * FIX-04 (spec §36) — el badge "Estado" antes solo reflejaba events.status
- * (active/inactive), así que un evento finalizado hace un año seguía
- * mostrando "Activo" (CASO A, event 119) y un borrador de Fourvenues
- * mostraba "Activo" igual que uno publicado (CASO B). Prioridad: 1) status
- * admin-curado (inactive gana siempre, es una acción explícita del admin),
- * 2) borrador de Fourvenues (afecta si es comprable — más accionable que
- * "finalizado" para un evento que nunca llegó a publicarse), 3) finalizado
- * (temporal), 4) activo. NUNCA mezcla los tres conceptos en un único valor.
+ * FIX-05A — corrige un error de diseño real introducido en FIX-04: el
+ * badge "Estado" priorizaba el borrador de Fourvenues POR ENCIMA de lo
+ * temporal, así que un evento de hace un año que nunca llegó a publicarse
+ * (source_publication_status='unpublished'/null, muy común: la mayoría del
+ * histórico queda fuera de toda ventana de sync y nunca confirma su
+ * estado) mostraba "Borrador Fourvenues" en vez de "Finalizado" —
+ * mezclando exactamente lo que FIX-04 decía NUNCA mezclar: origen/editorial
+ * (providerStatus) vs. lifecycle temporal dentro de Segolife.
+ *
+ * Prioridad correcta: 1) status admin-curado (inactive gana siempre, acción
+ * explícita del admin), 2) FINALIZADO — lo temporal SIEMPRE gana sobre el
+ * origen para un evento ya pasado, sea cual sea su providerStatus (draft,
+ * publicado, o nunca confirmado) — un evento que ya ocurrió no es
+ * "actualmente en borrador", es histórico, punto, 3) borrador de
+ * Fourvenues (ahora solo relevante para eventos FUTUROS — mismo criterio
+ * que isEventStudentVisible() en eventsDb.ts, que ya eximía a los eventos
+ * pasados del gate de publicación), 4) activo.
+ *
+ * El providerStatus NUNCA se destruye ni se falsea (sourcePublicationStatus
+ * en BD queda intacto) — solo deja de ganar la etiqueta principal para un
+ * evento ya finalizado. Trazabilidad completa sigue disponible en
+ * /admin/events/:id (bloque "Origen — Fourvenues", ver EventDetail.tsx).
  */
 export function eventStatusBadge(e: { status: string; sourceType?: string | null; sourcePublicationStatus?: string | null; startsAt: Date | string; endsAt?: Date | string | null }) {
   if (e.status !== "active") return { label: "Inactivo", variant: "outline" as const };
+  if (isEventPast(e)) return { label: "Finalizado", variant: "secondary" as const };
   const isFourvenuesSourced = typeof e.sourceType === "string" && e.sourceType.startsWith(FOURVENUES_SOURCE_PREFIX);
   if (isFourvenuesSourced && e.sourcePublicationStatus !== "published") {
     return { label: "Borrador Fourvenues", variant: "secondary" as const };
   }
-  if (isEventPast(e)) return { label: "Finalizado", variant: "secondary" as const };
   return { label: "Activo", variant: "default" as const };
+}
+
+/**
+ * FIX-05A (spec §4, "el provider status puede seguir siendo visible como
+ * información secundaria — no eliminar trazabilidad") — solo para un
+ * evento Fourvenues ya FINALIZADO: qué se sabe de su estado de publicación
+ * real, sin que eso vuelva a ganarle a "Finalizado" en el badge principal.
+ */
+export function eventOriginCaption(e: { sourceType?: string | null; sourcePublicationStatus?: string | null; startsAt: Date | string; endsAt?: Date | string | null }): string | null {
+  const isFourvenuesSourced = typeof e.sourceType === "string" && e.sourceType.startsWith(FOURVENUES_SOURCE_PREFIX);
+  if (!isFourvenuesSourced || !isEventPast(e)) return null;
+  const label = e.sourcePublicationStatus === "published" ? "publicado"
+    : e.sourcePublicationStatus === "unpublished" ? "nunca publicado"
+    : "sin confirmar";
+  return `Fourvenues: ${label}`;
 }
 
 function fmtDateTime(d: Date | string | null | undefined) {
@@ -252,6 +281,9 @@ export default function EventsManager() {
                     <TableCell>{salesModeBadge(e)}</TableCell>
                     <TableCell>
                       <Badge variant={eventStatusBadge(e).variant}>{eventStatusBadge(e).label}</Badge>
+                      {eventOriginCaption(e) && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5">{eventOriginCaption(e)}</p>
+                      )}
                     </TableCell>
                     <TableCell>
                       <button

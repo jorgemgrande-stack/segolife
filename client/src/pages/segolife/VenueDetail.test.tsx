@@ -6,6 +6,7 @@ import "@/lib/i18n";
 const {
   mockVenueQuery,
   mockEventsQuery,
+  mockEndedEventsQuery,
   mockGalleryQuery,
   mockAuthMe,
   mockRewardBatch,
@@ -13,6 +14,7 @@ const {
 } = vi.hoisted(() => ({
   mockVenueQuery: vi.fn(),
   mockEventsQuery: vi.fn(),
+  mockEndedEventsQuery: vi.fn(),
   mockGalleryQuery: vi.fn(),
   mockAuthMe: vi.fn(),
   mockRewardBatch: vi.fn(),
@@ -22,7 +24,7 @@ const {
 vi.mock("@/lib/trpc", () => ({
   trpc: {
     venues: { publicGetBySlug: { useQuery: mockVenueQuery } },
-    events: { publicByVenue: { useQuery: mockEventsQuery } },
+    events: { publicByVenue: { useQuery: mockEventsQuery }, publicEnded: { useQuery: mockEndedEventsQuery } },
     gallery: { getItems: { useQuery: mockGalleryQuery } },
     tokens: { previewMyEventRewardBatch: { useQuery: mockRewardBatch } },
     communities: { list: { useQuery: noopQuery }, myMemberships: { useQuery: noopQuery } },
@@ -96,6 +98,11 @@ function mockEvents(events: unknown[]) {
   mockEventsQuery.mockReturnValue({ data: events, isLoading: false });
 }
 
+/** FIX-05A — Ended Events es ahora una query aparte (community-scoped), separada de publicByVenue (que solo alimenta Upcoming). */
+function mockEnded(events: unknown[]) {
+  mockEndedEventsQuery.mockReturnValue({ data: events, isLoading: false });
+}
+
 function mockGallery(photos: unknown[]) {
   mockGalleryQuery.mockReturnValue({ data: photos, isLoading: false });
 }
@@ -121,6 +128,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockAnonymous();
   mockEvents([]);
+  mockEnded([]);
   mockGallery([]);
   mockRewardBatch.mockReturnValue({ data: undefined, isLoading: false });
 });
@@ -162,24 +170,34 @@ describe("VenueDetail — Upcoming Events", () => {
   });
 });
 
-describe("VenueDetail — Past Events", () => {
-  it("oculta la sección Past Events si no hay ninguno (aunque sí haya próximos)", () => {
+describe("VenueDetail — Ended Events (FIX-05A, antes 'Past Events' — fuente de datos separada, community-scoped)", () => {
+  it("oculta la sección si no hay ninguno finalizado (aunque sí haya próximos)", () => {
     mockDetail();
     mockEvents([
       { id: 1, slug: "upcoming-1", name: "Upcoming One", imageUrl: null, startsAt: new Date(Date.now() + 86400000), isFeatured: false, venue: null },
     ]);
+    mockEnded([]);
     renderAt("/ie/venues/casanova");
-    expect(screen.queryByText(/^(past events|eventos anteriores)$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^(ended events|eventos finalizados)$/i)).not.toBeInTheDocument();
   });
 
-  it("muestra Past Events con tratamiento visual atenuado cuando sí existen", () => {
+  it("muestra Ended Events con tratamiento visual atenuado cuando sí existen", () => {
     mockDetail();
-    mockEvents([
+    mockEnded([
       { id: 2, slug: "past-1", name: "Past One", imageUrl: null, startsAt: new Date(Date.now() - 10 * 86400000), isFeatured: false, venue: null },
     ]);
     renderAt("/ie/venues/casanova");
-    expect(screen.getByText(/^(past events|eventos anteriores)$/i)).toBeInTheDocument();
+    expect(screen.getByText(/^(ended events|eventos finalizados)$/i)).toBeInTheDocument();
     expect(screen.getByText("Past One").closest("a")).toHaveClass("opacity-60");
+  });
+
+  it("pide publicEnded con venueId + communityId reales — nunca histórico de otra comunidad (spec §9)", () => {
+    mockDetail();
+    renderAt("/ie/venues/casanova");
+    expect(mockEndedEventsQuery).toHaveBeenCalledWith(
+      { venueId: 1, communityId: 1, limit: 8 },
+      expect.objectContaining({ enabled: true })
+    );
   });
 });
 
@@ -291,10 +309,10 @@ describe("VenueDetail — badge de SegoTokens en Upcoming Events (MG-02, hallazg
     expect(mockRewardBatch).toHaveBeenCalledWith({ items: [{ key: "1", eventId: 1, venueId: 1 }] }, expect.objectContaining({ enabled: true }));
   });
 
-  it("Past Events nunca muestra el badge, aunque el lote tuviera datos para ese id (un evento ya pasado no se puede comprar/asistir)", () => {
+  it("Ended Events nunca muestra el badge, aunque el lote tuviera datos para ese id (un evento ya pasado no se puede comprar/asistir)", () => {
     mockAuthenticated();
     mockDetail();
-    mockEvents([
+    mockEnded([
       { id: 2, slug: "past-1", name: "Past One", imageUrl: null, startsAt: new Date(Date.now() - 10 * 86400000), isFeatured: false, venue: null },
     ]);
     mockRewardBatch.mockReturnValue({ data: { "2": { conditionalRewards: [{ eligible: true, totalTokens: 100 }], totalGuaranteedTokens: 0, effectiveRate: null } }, isLoading: false });

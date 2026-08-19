@@ -15,6 +15,7 @@ import {
   listFeaturedEvents,
   listEventsByVenue,
   listUpcomingEvents,
+  listEndedEvents,
   reorderFeaturedEvents,
   isEventStudentVisible,
 } from "../db/eventsDb";
@@ -196,6 +197,20 @@ export const eventsRouter = router({
   publicByVenue: publicProcedure
     .input(z.object({ venueId: z.number().int().positive() }))
     .query(async ({ input }) => listEventsByVenue(input.venueId)),
+
+  /**
+   * FIX-05A — "Ended Events" (Explore + VenueDetail). Sin autenticación,
+   * mismo criterio público que el resto — communityId/venueId opcionales
+   * (Explore no manda venueId; VenueDetail manda ambos). `limit` acotado
+   * (máx 50) — nunca "todo el histórico sin control" (spec §14).
+   */
+  publicEnded: publicProcedure
+    .input(z.object({
+      communityId: z.number().int().positive().optional(),
+      venueId: z.number().int().positive().optional(),
+      limit: z.number().int().min(1).max(50).default(20),
+    }))
+    .query(async ({ input }) => listEndedEvents(input)),
 
   /**
    * `purchaseAction` (Fase 5, puntos 59-60) se calcula aquí en vez de exigir

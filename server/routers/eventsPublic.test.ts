@@ -9,9 +9,10 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockGetEventBySlug, mockListEventsByVenue, mockComputePurchaseAction } = vi.hoisted(() => ({
+const { mockGetEventBySlug, mockListEventsByVenue, mockListEndedEvents, mockComputePurchaseAction } = vi.hoisted(() => ({
   mockGetEventBySlug: vi.fn(),
   mockListEventsByVenue: vi.fn(),
+  mockListEndedEvents: vi.fn(),
   mockComputePurchaseAction: vi.fn(),
 }));
 
@@ -32,6 +33,7 @@ vi.mock("../db/eventsDb", async (importOriginal) => {
     listActiveEvents: vi.fn(),
     listFeaturedEvents: vi.fn(),
     listEventsByVenue: mockListEventsByVenue,
+    listEndedEvents: mockListEndedEvents,
     isEventStudentVisible: actual.isEventStudentVisible,
   };
 });
@@ -154,5 +156,31 @@ describe("events router — publicByVenue (Venue→Event, punto 91)", () => {
     ]);
     const result = await publicCaller().publicByVenue({ venueId: 6 });
     expect(result[0].venue?.name).toBe("Tanker Events");
+  });
+});
+
+describe("events router — publicEnded (FIX-05A, Ended Events)", () => {
+  it("delega en listEndedEvents con communityId/venueId/limit, sin exigir sesión", async () => {
+    mockListEndedEvents.mockResolvedValue([{ ...baseEvent({ id: 30 }), venue: VENUE, communities: [] }]);
+    const result = await publicCaller().publicEnded({ communityId: 1, venueId: 1, limit: 10 });
+    expect(result).toHaveLength(1);
+    expect(mockListEndedEvents).toHaveBeenCalledWith({ communityId: 1, venueId: 1, limit: 10 });
+  });
+
+  it("sin communityId/venueId (Explore sin venue) sigue funcionando — ambos opcionales", async () => {
+    mockListEndedEvents.mockResolvedValue([]);
+    const result = await publicCaller().publicEnded({ limit: 20 });
+    expect(result).toEqual([]);
+    expect(mockListEndedEvents).toHaveBeenCalledWith({ limit: 20 });
+  });
+
+  it("limit por defecto es 20 cuando no se especifica", async () => {
+    mockListEndedEvents.mockResolvedValue([]);
+    await publicCaller().publicEnded({});
+    expect(mockListEndedEvents).toHaveBeenCalledWith({ limit: 20 });
+  });
+
+  it("limit rechaza valores fuera de rango (spec §14 — nunca 'todo el histórico sin control')", async () => {
+    await expect(publicCaller().publicEnded({ limit: 500 })).rejects.toThrow();
   });
 });

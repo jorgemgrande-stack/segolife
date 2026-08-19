@@ -84,4 +84,19 @@ describe("computePurchaseAction", () => {
     // Ni siquiera se consulta el canal — el evento pasado corta antes.
     expect(mockListTicketTypes).not.toHaveBeenCalled();
   });
+
+  // FIX-05A — regresión explícita: el CTA de compra de un evento finalizado
+  // debe ser SIEMPRE inválido sin importar su providerStatus de Fourvenues
+  // (publicado, borrador, o nunca confirmado). computePurchaseAction() ya
+  // decidía esto SOLO por fecha desde antes de FIX-04/FIX-05 (nunca lee
+  // sourceType/sourcePublicationStatus) — este test documenta y fija ese
+  // invariante explícitamente, para que un evento Fourvenues histórico
+  // (event 119, o cualquier borrador que además ya pasó) nunca pueda
+  // parecer comprable en el Event Detail público.
+  it("evento pasado Fourvenues-sourced (sourcePublicationStatus='published' en el input) → sigue unavailable — el providerStatus NUNCA influye en el CTA", async () => {
+    const db = makeMockDb([{ isPrimary: true, salesMode: "native", status: "active" }]);
+    const pastFourvenuesEvent = { ...PAST, sourceType: "integration:fourvenues_integrations", sourcePublicationStatus: "published" };
+    expect(await computePurchaseAction(1, pastFourvenuesEvent, db)).toEqual({ type: "unavailable" });
+    expect(mockListTicketTypes).not.toHaveBeenCalled();
+  });
 });

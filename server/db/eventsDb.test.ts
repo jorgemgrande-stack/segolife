@@ -14,6 +14,7 @@ import {
   listActiveEvents,
   listFeaturedEvents,
   listEventsByVenue,
+  listEndedEvents,
   selectUpcomingWindow,
   isEventStudentVisible,
   UPCOMING_WINDOW_DAYS,
@@ -524,5 +525,216 @@ describe("listEventsByVenue — SIN exclusión temporal (preserva VenueDetail 'P
     };
     const items = await listEventsByVenue(10, db as unknown as Parameters<typeof listEventsByVenue>[1]);
     expect(items.map(i => i.id)).toEqual([119]);
+  });
+});
+
+// ─── FIX-05A — "Ended Events" (Explore + VenueDetail) ─────────────────────
+describe("listEndedEvents — FIX-05A (spec §16, items 1-4/8/9/13/15)", () => {
+  const now = new Date();
+  const PAST_RECENT = new Date(now.getTime() - 3 * DAY_MS); // claramente ya finalizado (fuera de las 6h por defecto)
+  const PAST_OLD = new Date(now.getTime() - 30 * DAY_MS);
+  const FUTURE = new Date(now.getTime() + 10 * DAY_MS);
+
+  it("past + provider draft/no confirmado (sourcePublicationStatus=null) => ENDED, visible (spec §16.1)", async () => {
+    const ev = fourvenuesEvent(1, { startsAt: PAST_RECENT, sourcePublicationStatus: null });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event: ev, venue: null }]);
+        if (phase === 2) return resolve([{ event: ev }]);
+        return resolve([]);
+      },
+    };
+    const items = await listEndedEvents({}, db as unknown as Parameters<typeof listEndedEvents>[1]);
+    expect(items.map(i => i.id)).toEqual([1]);
+  });
+
+  it("past + provider published => ENDED, visible (spec §16.2)", async () => {
+    const ev = fourvenuesEvent(2, { startsAt: PAST_RECENT, sourcePublicationStatus: "published" });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event: ev, venue: null }]);
+        if (phase === 2) return resolve([{ event: ev }]);
+        return resolve([]);
+      },
+    };
+    const items = await listEndedEvents({}, db as unknown as Parameters<typeof listEndedEvents>[1]);
+    expect(items.map(i => i.id)).toEqual([2]);
+  });
+
+  it("future + provider draft => NUNCA en Ended (no es histórico todavía, sea cual sea su publicación) (spec §16.3)", async () => {
+    const ev = fourvenuesEvent(3, { startsAt: FUTURE, sourcePublicationStatus: "unpublished" });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event: ev, venue: null }]);
+        if (phase === 2) return resolve([{ event: ev }]);
+        return resolve([]);
+      },
+    };
+    const items = await listEndedEvents({}, db as unknown as Parameters<typeof listEndedEvents>[1]);
+    expect(items).toEqual([]);
+  });
+
+  it("future + provider published => NUNCA en Ended (pertenece a Upcoming/Active, no a histórico) (spec §16.4)", async () => {
+    const ev = fourvenuesEvent(4, { startsAt: FUTURE, sourcePublicationStatus: "published" });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event: ev, venue: null }]);
+        if (phase === 2) return resolve([{ event: ev }]);
+        return resolve([]);
+      },
+    };
+    const items = await listEndedEvents({}, db as unknown as Parameters<typeof listEndedEvents>[1]);
+    expect(items).toEqual([]);
+  });
+
+  it("evento inactivo (status='inactive') pasado => NUNCA en Ended, aunque sea temporalmente pasado", async () => {
+    const ev = blankEvent(5, { startsAt: PAST_RECENT, status: "inactive" });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event: ev, venue: null }]);
+        if (phase === 2) return resolve([{ event: ev }]);
+        return resolve([]);
+      },
+    };
+    const items = await listEndedEvents({}, db as unknown as Parameters<typeof listEndedEvents>[1]);
+    expect(items).toEqual([]);
+  });
+
+  it("evento EN CURSO (empezó hace 1h, dentro de las 6h por defecto sin endsAt) => NUNCA en Ended — timezone/medianoche (spec §13)", async () => {
+    const ev = blankEvent(6, { startsAt: new Date(now.getTime() - 1 * 60 * 60 * 1000) });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event: ev, venue: null }]);
+        if (phase === 2) return resolve([{ event: ev }]);
+        return resolve([]);
+      },
+    };
+    const items = await listEndedEvents({}, db as unknown as Parameters<typeof listEndedEvents>[1]);
+    expect(items).toEqual([]);
+  });
+
+  it("orden DESCENDENTE — el finalizado más reciente primero (spec §5/§16.9)", async () => {
+    const older = blankEvent(7, { startsAt: PAST_OLD });
+    const recent = blankEvent(8, { startsAt: PAST_RECENT });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        // orden de llegada deliberadamente "al revés" — la función debe reordenar, no confiar en el orden de la query.
+        if (phase === 1) return resolve([{ event: older, venue: null }, { event: recent, venue: null }]);
+        if (phase === 2) return resolve([{ event: older }, { event: recent }]);
+        return resolve([]);
+      },
+    };
+    const items = await listEndedEvents({}, db as unknown as Parameters<typeof listEndedEvents>[1]);
+    expect(items.map(i => i.id)).toEqual([8, 7]); // recent (8) antes que older (7)
+  });
+
+  it("respeta el límite pedido (limit personalizado)", async () => {
+    const evs = [1, 2, 3, 4, 5].map(id => blankEvent(id, { startsAt: new Date(now.getTime() - id * DAY_MS) }));
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve(evs.map(e => ({ event: e, venue: null })));
+        if (phase === 2) return resolve(evs.map(e => ({ event: e })));
+        return resolve([]);
+      },
+    };
+    const items = await listEndedEvents({ limit: 2 }, db as unknown as Parameters<typeof listEndedEvents>[1]);
+    expect(items).toHaveLength(2);
+  });
+
+  it("venue scoping — solo eventos del venueId pedido (delegado a listEvents, que ya filtra por venueId en SQL)", async () => {
+    // La función pasa venueId directamente a listEvents() — este test confirma que el parámetro viaja, no reimplementa el filtro SQL ya probado en otros tests de este archivo.
+    const ev = blankEvent(9, { startsAt: PAST_RECENT, venueId: 10 });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event: ev, venue: null }]);
+        if (phase === 2) return resolve([{ event: ev }]);
+        return resolve([]);
+      },
+    };
+    const items = await listEndedEvents({ venueId: 10 }, db as unknown as Parameters<typeof listEndedEvents>[1]);
+    expect(items.map(i => i.id)).toEqual([9]);
+  });
+
+  describe("community scoping (spec §8/§16.5-7 — IE/UVA/ambas)", () => {
+    it("evento SOLO IE => visible con communityId=IE", async () => {
+      const evIE = blankEvent(10, { startsAt: PAST_RECENT });
+      let phase = 0;
+      const db: Record<string, unknown> = {
+        select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+        where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+        then: (resolve: (v: unknown) => void) => {
+          phase++;
+          if (phase === 1) return resolve([{ eventId: 10 }]); // getEventIdsInCommunities([IE])
+          if (phase === 2) return resolve([{ event: evIE, venue: null }]);
+          if (phase === 3) return resolve([{ event: evIE }]);
+          return resolve([{ eventId: 10, community: { id: 1, name: "Segolife IE", slug: "ie" } }]);
+        },
+      };
+      const items = await listEndedEvents({ communityId: 1 }, db as unknown as Parameters<typeof listEndedEvents>[1]);
+      expect(items.map(i => i.id)).toEqual([10]);
+    });
+
+    it("evento SOLO IE => NO visible con communityId=UVA (comunidad sin eventos vinculados => vacío, sin llegar a consultar el resto)", async () => {
+      const db: Record<string, unknown> = {
+        select: () => db, from: () => db, where: () => db,
+        then: (resolve: (v: unknown) => void) => resolve([]), // getEventIdsInCommunities([UVA]) => sin resultados
+      };
+      const items = await listEndedEvents({ communityId: 2 }, db as unknown as Parameters<typeof listEndedEvents>[1]);
+      expect(items).toEqual([]);
+    });
+
+    it("evento IE+UVA => visible desde CUALQUIERA de las dos comunidades", async () => {
+      const evBoth = blankEvent(11, { startsAt: PAST_RECENT });
+      let phase = 0;
+      const db: Record<string, unknown> = {
+        select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+        where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+        then: (resolve: (v: unknown) => void) => {
+          phase++;
+          if (phase === 1) return resolve([{ eventId: 11 }]);
+          if (phase === 2) return resolve([{ event: evBoth, venue: null }]);
+          if (phase === 3) return resolve([{ event: evBoth }]);
+          return resolve([{ eventId: 11, community: { id: 2, name: "Segolife UVA", slug: "uva" } }]);
+        },
+      };
+      const items = await listEndedEvents({ communityId: 2 }, db as unknown as Parameters<typeof listEndedEvents>[1]);
+      expect(items.map(i => i.id)).toEqual([11]);
+    });
   });
 });

@@ -12,7 +12,7 @@ import {
   type SalesChannel,
 } from "../../drizzle/schema";
 import { emitEngagementEvent } from "../segolife/engagement/engagementEvents";
-import { isEventPast } from "../../shared/segolife/eventTiming";
+import { isEventPast, sortByStartDescending } from "../../shared/segolife/eventTiming";
 
 /**
  * FIX-04 — prefijo real de events.sourceType para eventos sincronizados
@@ -467,6 +467,48 @@ export async function listEventsByVenue(venueId: number, db?: DbHandle): Promise
   const conn = db ?? (await getDb());
   const { items } = await listEvents({ communityIds: "all", venueId, status: "active", limit: 200, offset: 0 }, conn);
   return items.filter(e => isEventStudentVisible(e));
+}
+
+/**
+ * FIX-05A — "Ended Events": eventos ya finalizados, Student-visible,
+ * ordenados del más reciente al más antiguo. Sirve TANTO a Explore
+ * (communityId, sin venueId) como a VenueDetail (communityId + venueId) —
+ * una sola función, nunca dos casi-duplicadas.
+ *
+ * Mismo criterio que listEventsByVenue (isEventStudentVisible, temporal-
+ * aware — el gate de publicación de Fourvenues está exento para eventos
+ * pasados) MÁS un filtro adicional de isEventPast, porque a diferencia de
+ * listEventsByVenue esta función SOLO quiere los ya finalizados. Nunca usa
+ * `studentSafe` a nivel SQL (no temporal-aware): la mayoría del histórico
+ * real tiene sourcePublicationStatus=NULL (nunca confirmado, fuera de toda
+ * ventana de sync) y studentSafe lo bloquearía igual que a un borrador
+ * futuro real — vaciaría por error casi todo el histórico legítimo.
+ *
+ * A diferencia de listEventsByVenue (communityIds="all" fijo, sin cambiar
+ * ese comportamiento pre-existente de Upcoming), esta función SÍ aplica el
+ * filtro de comunidad cuando se recibe communityId — Ended Events es una
+ * superficie nueva, sin comportamiento previo que preservar, y el spec
+ * exige explícitamente el scoping por comunidad aquí.
+ *
+ * Límite de página fijo con margen (200, mismo criterio que
+ * listEventsByVenue) para absorber pérdidas por el filtro en JS sin
+ * paginación SQL real — el volumen real (~150-200 eventos históricos
+ * totales hoy) lo hace seguro; nunca "cargar todo sin límite".
+ */
+export async function listEndedEvents(
+  filters: { communityId?: number; venueId?: number; limit?: number },
+  db?: DbHandle
+): Promise<EventListItem[]> {
+  const conn = db ?? (await getDb());
+  const { items } = await listEvents({
+    communityIds: filters.communityId ? [filters.communityId] : "all",
+    venueId: filters.venueId,
+    status: "active",
+    limit: 200,
+    offset: 0,
+  }, conn);
+  const ended = items.filter(e => isEventStudentVisible(e) && isEventPast(e));
+  return sortByStartDescending(ended).slice(0, filters.limit ?? 20);
 }
 
 // ─── MG-01 — "Upcoming" (Home, pestaña Próximos) ───────────────────────────

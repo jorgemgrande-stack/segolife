@@ -28,14 +28,24 @@ import { cn } from "@/lib/utils";
  * explore.mapUnavailable y se muestra el listado completo (REAL DATA ONLY).
  */
 
-type EventDateFilter = "today" | "tomorrow" | "week" | "all";
+type EventDateFilter = "today" | "tomorrow" | "week" | "all" | "ended";
 
 function isSameLocalDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-/** Filtro de fecha en cliente — comparación de límites de día en hora local del navegador, suficiente para un chip de filtro (no es un límite de negocio ni de seguridad). */
+/**
+ * Filtro de fecha en cliente — comparación de límites de día en hora local
+ * del navegador, suficiente para un chip de filtro (no es un límite de
+ * negocio ni de seguridad). "ended" NUNCA pasa por aquí — usa su propia
+ * query (publicEnded, Student-visible + temporal-aware de verdad, ver
+ * eventsDb.ts::listEndedEvents) en vez de filtrar en cliente sobre
+ * publicActive (que ya excluye todo lo pasado en el servidor) — por eso
+ * este chequeo defensivo devuelve false explícitamente en vez de caer al
+ * branch de "week" por accidente.
+ */
 function matchesDateFilter(startsAt: string | Date, filter: EventDateFilter, now: Date): boolean {
+  if (filter === "ended") return false;
   if (filter === "all") return true;
   const starts = new Date(startsAt);
   if (filter === "today") return isSameLocalDay(starts, now);
@@ -68,38 +78,65 @@ function FilterChip({ label, active, onClick }: { label: string; active: boolean
 function EventsTab({ slug, communityId, search }: { slug: string; communityId?: number; search: string }) {
   const { t } = useTranslation();
   const { isAuthenticated } = useAuth();
-  const { data: events, isLoading, isError, refetch } = trpc.events.publicActive.useQuery({ communityId });
   const [dateFilter, setDateFilter] = useState<EventDateFilter>("all");
   const now = useMemo(() => new Date(), []);
 
+  // "all" (y today/tomorrow/week) siguen consumiendo EXCLUSIVAMENTE
+  // publicActive — nunca mezcla borradores ni histórico (spec FIX-05A §6:
+  // "'All' NO debe volver a mezclar borradores privados"). Ended Events es
+  // una fuente de datos DISTINTA a propósito (publicEnded/listEndedEvents,
+  // Student-visible + temporal-aware de verdad — la mayoría del histórico
+  // real ni siquiera tiene sourcePublicationStatus confirmado, así que
+  // filtrar en cliente sobre publicActive sería directamente incorrecto:
+  // publicActive nunca incluye eventos pasados en absoluto).
+  const { data: events, isLoading, isError, refetch } = trpc.events.publicActive.useQuery(
+    { communityId },
+    { enabled: dateFilter !== "ended" }
+  );
+  const endedQ = trpc.events.publicEnded.useQuery(
+    { communityId, limit: 24 },
+    { enabled: dateFilter === "ended" }
+  );
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    if (dateFilter === "ended") {
+      return (endedQ.data ?? []).filter(e => !q || e.name.toLowerCase().includes(q));
+    }
     return (events ?? []).filter(
       e => matchesDateFilter(e.startsAt, dateFilter, now) && (!q || e.name.toLowerCase().includes(q))
     );
-  }, [events, dateFilter, search, now]);
+  }, [events, endedQ.data, dateFilter, search, now]);
 
   // SEGOTOKENS REWARD PREVIEW (Fase 10.6, spec §30/§31) — UN solo request de
   // red para toda la grilla visible (nunca N por card); solo con sesión, ya
   // que previewMyEventRewardBatch es autoservicio del propio Student.
   // Limitado a los primeros 24 eventos visibles (mismo tope que el servidor).
+  // Ended Events NUNCA recibe reward preview — mismo criterio ya
+  // establecido en VenueDetail.tsx para su sección de Past Events (un
+  // evento ya finalizado no tiene una recompensa "por venir" que previsualizar).
   const batchItems = useMemo(
-    () => filtered.slice(0, 24).map(e => ({ key: String(e.id), eventId: e.id, venueId: e.venue?.id ?? undefined })),
-    [filtered]
+    () => (dateFilter === "ended" ? [] : filtered.slice(0, 24).map(e => ({ key: String(e.id), eventId: e.id, venueId: e.venue?.id ?? undefined }))),
+    [filtered, dateFilter]
   );
   const rewardBatchQ = trpc.tokens.previewMyEventRewardBatch.useQuery(
     { items: batchItems },
     { enabled: isAuthenticated && batchItems.length > 0 }
   );
 
-  if (isLoading) return <SegolifeCardGridSkeleton />;
-  if (isError) return <SegolifeErrorState onRetry={() => refetch()} />;
+  const loading = dateFilter === "ended" ? endedQ.isLoading : isLoading;
+  const errored = dateFilter === "ended" ? endedQ.isError : isError;
+  const retry = dateFilter === "ended" ? () => endedQ.refetch() : () => refetch();
+
+  if (loading) return <SegolifeCardGridSkeleton />;
+  if (errored) return <SegolifeErrorState onRetry={retry} />;
 
   const filters: { key: EventDateFilter; label: string }[] = [
     { key: "today", label: t("explore.filterToday") },
     { key: "tomorrow", label: t("explore.filterTomorrow") },
     { key: "week", label: t("explore.filterThisWeek") },
     { key: "all", label: t("explore.filterAll") },
+    { key: "ended", label: t("explore.filterEnded") },
   ];
 
   return (
@@ -122,7 +159,7 @@ function EventsTab({ slug, communityId, search }: { slug: string; communityId?: 
               key={e.id}
               event={e}
               slug={slug}
-              rewardBadge={formatCardRewardBadge(rewardBatchQ.data?.[String(e.id)], t)}
+              rewardBadge={dateFilter === "ended" ? null : formatCardRewardBadge(rewardBatchQ.data?.[String(e.id)], t)}
             />
           ))}
         </div>

@@ -43,7 +43,7 @@ const CONTAINER = "mx-auto max-w-[1280px] px-4 sm:px-6 xl:px-10";
  */
 export default function VenueDetail() {
   const { t } = useTranslation();
-  const { slug: communitySlug } = useCommunity();
+  const { slug: communitySlug, community } = useCommunity();
   const params = useParams<{ community: string; slug: string }>();
   const [, navigate] = useLocation();
   const venueSlug = params.slug;
@@ -59,14 +59,26 @@ export default function VenueDetail() {
     { venueId: venue?.id ?? 0 },
     { enabled: !!venue?.id }
   );
+  // FIX-05A — "Ended Events" (spec §7/§9): a diferencia de publicByVenue
+  // (arriba, deliberadamente sin comunidad — comportamiento previo de
+  // Upcoming Events intacto, sin tocar), esta query SÍ aplica el scoping
+  // de comunidad — "eventos de este venue + visibles para esta comunidad +
+  // ya finalizados", nunca histórico de otra comunidad. `limit` acota la
+  // página inicial (spec §14, mismo criterio ya usado aquí: 8, igual que
+  // el tope anterior de Past Events).
+  const { data: endedEventsData, isLoading: endedLoading } = trpc.events.publicEnded.useQuery(
+    { venueId: venue?.id, communityId: community?.id, limit: 8 },
+    { enabled: !!venue?.id }
+  );
   const { data: galleryPhotos, isLoading: galleryLoading } = trpc.gallery.getItems.useQuery(
     { venueId: venue?.id, category: "venue_gallery" },
     { enabled: !!venue?.id }
   );
 
-  const { upcoming: upcomingEvents, past: pastEvents } = splitUpcomingPast(venueEvents ?? []);
-  const hasEventsData = !eventsLoading;
-  const hasAnyEvents = hasEventsData && (upcomingEvents.length > 0 || pastEvents.length > 0);
+  const { upcoming: upcomingEvents } = splitUpcomingPast(venueEvents ?? []);
+  const endedEvents = endedEventsData ?? [];
+  const hasEventsData = !eventsLoading && !endedLoading;
+  const hasAnyEvents = hasEventsData && (upcomingEvents.length > 0 || endedEvents.length > 0);
 
   // SEGOTOKENS REWARD PREVIEW (MG-02 — hallazgo real: esta ficha reutiliza
   // el mismo SegolifeEventCard que Home/Explore, pero nunca le pasaba
@@ -170,12 +182,12 @@ export default function VenueDetail() {
               </div>
             )}
 
-            {/* ── PAST EVENTS — tratamiento secundario, nunca CTA de compra; oculto si no hay nada que mostrar en absoluto ── */}
-            {hasEventsData && pastEvents.length > 0 && (
+            {/* ── ENDED EVENTS — tratamiento secundario, nunca CTA de compra; community-scoped (spec FIX-05A §7/§9); oculto si no hay nada que mostrar en absoluto ── */}
+            {!endedLoading && endedEvents.length > 0 && (
               <section>
                 <SectionHeading muted>{t("venueDetail.pastEventsLabel")}</SectionHeading>
                 <div className="mt-4">
-                  <EventGrid events={pastEvents.slice(0, 8)} slug={communitySlug!} size="sm" muted />
+                  <EventGrid events={endedEvents} slug={communitySlug!} size="sm" muted />
                 </div>
               </section>
             )}
