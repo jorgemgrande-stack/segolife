@@ -177,6 +177,10 @@ function fourvenuesEventDetail(overrides: Partial<Record<string, unknown>> = {})
     event: {
       id: 42, slug: "pre-opening-x-fcking-wednesdays", status: "active",
       sourceType: "integration:fourvenues_integrations", sourcePublicationStatus: "unpublished",
+      // Futuro a propósito: isEventStudentVisible() ya no aplica el gate de
+      // publicación a eventos pasados (ver eventsDb.ts) — estos tests
+      // prueban precisamente ese gate, así que el evento debe ser futuro.
+      startsAt: new Date(Date.now() + 10 * 86400000), endsAt: null,
       ...overrides,
     },
     venue: null,
@@ -234,5 +238,21 @@ describe("events.publicGetBySlug — FIX-04 (borrador de Fourvenues nunca accesi
     mockGetEventBySlug.mockResolvedValue(null);
     const result = await callerWithoutSession().publicGetBySlug({ slug: "no-existe" });
     expect(result).toBeNull();
+  });
+
+  // Bug real descubierto en el primer sync de producción: el sync
+  // incremental de Fourvenues solo revisita ~180 días atrás, así que un
+  // evento de hace casi un año (event 119 real) NUNCA vuelve a recibir un
+  // sourcePublicationStatus confirmado — se queda en NULL para siempre. El
+  // acceso histórico legítimo (p.ej. desde un ticket ya comprado) no debe
+  // romperse por eso.
+  it("evento Fourvenues YA PASADO con sourcePublicationStatus=null (caso real: event 119, fuera de la ventana de sync) -> SÍ accesible, el gate de publicación no aplica a eventos pasados", async () => {
+    mockGetEventBySlug.mockResolvedValue(fourvenuesEventDetail({
+      id: 119, slug: "welcome-back-bash", sourcePublicationStatus: null,
+      startsAt: new Date(Date.now() - 330 * 86400000),
+    }));
+    mockComputePurchaseAction.mockResolvedValue({ type: "unavailable" });
+    const result = await callerWithoutSession().publicGetBySlug({ slug: "welcome-back-bash" });
+    expect(result).not.toBeNull();
   });
 });

@@ -27,9 +27,7 @@ export const FOURVENUES_SOURCE_TYPE_PREFIX = "integration:fourvenues";
 /**
  * REGLA FUNDAMENTAL (FIX-04): visibilidad de origen (lo que dice Fourvenues)
  * ≠ visibilidad admin ≠ visibilidad pública del Student. Esta función decide
- * SOLO la tercera, sin componente temporal (eso lo decide cada llamador —
- * ver comentarios en listActiveEvents/listFeaturedEvents vs.
- * listEventsByVenue/publicGetBySlug).
+ * SOLO la tercera.
  *
  * Un evento nativo o de cualquier origen no-Fourvenues (sourceType nulo, o
  * que no empiece por el prefijo de Fourvenues — p.ej. Weezevent, que nunca
@@ -39,23 +37,51 @@ export const FOURVENUES_SOURCE_TYPE_PREFIX = "integration:fourvenues";
  * que ver con Fourvenues — una regresión real sobre el catálogo nativo, no
  * algo que pida el spec.
  *
- * Un evento SÍ originado en Fourvenues con sourcePublicationStatus
- * "unpublished" o "unknown" (incluye NULL — antes de esta migración, o
- * antes del primer sync tras ella) NUNCA se considera visible — fail
- * closed, nunca se asume "published" por ausencia de dato.
+ * Un evento FUTURO/EN CURSO originado en Fourvenues con
+ * sourcePublicationStatus "unpublished" o "unknown" (incluye NULL — antes
+ * de esta migración, o antes del primer sync tras ella) NUNCA se considera
+ * visible — fail closed, nunca se asume "published" por ausencia de dato.
+ *
+ * PERO ese gate de publicación solo protege discovery/compra futura — nunca
+ * se aplica a un evento YA PASADO (bug real descubierto en el primer sync
+ * de producción: la sincronización incremental de Fourvenues solo revisita
+ * ~180 días atrás, así que un evento de hace casi un año como el 119 NUNCA
+ * vuelve a recibir un sourcePublicationStatus confirmado y se queda en NULL
+ * para siempre — aplicarle el mismo fail-closed que a un evento futuro lo
+ * ocultaría permanentemente de VenueDetail "Past Events"/getEventBySlug,
+ * violando "el acceso histórico legítimo nunca se rompe". Una vez pasado,
+ * lo único que importa es `status` (el toggle admin-curado, siempre
+ * respetado) — el estado de publicación de origen deja de ser una cuestión
+ * de seguridad.
  */
-export function isEventStudentVisible(event: {
-  status: SegolifeEvent["status"];
-  sourceType?: string | null;
-  sourcePublicationStatus?: SegolifeEvent["sourcePublicationStatus"];
-}): boolean {
+export function isEventStudentVisible(
+  event: {
+    status: SegolifeEvent["status"];
+    sourceType?: string | null;
+    sourcePublicationStatus?: SegolifeEvent["sourcePublicationStatus"];
+    startsAt: Date | string;
+    endsAt?: Date | string | null;
+  },
+  now: Date = new Date()
+): boolean {
   if (event.status !== "active") return false;
   const isFourvenuesSourced = typeof event.sourceType === "string" && event.sourceType.startsWith(FOURVENUES_SOURCE_TYPE_PREFIX);
-  if (isFourvenuesSourced && event.sourcePublicationStatus !== "published") return false;
+  if (isFourvenuesSourced && event.sourcePublicationStatus !== "published" && !isEventPast(event, now)) return false;
   return true;
 }
 
-/** Misma regla que isEventStudentVisible() (mitad "origen Fourvenues", nunca la comprobación de `status` — ver listEvents, que ya filtra status por separado), expresada en SQL para listEvents({ studentSafe: true }). */
+/**
+ * Variante SQL de la mitad "origen Fourvenues" de isEventStudentVisible()
+ * (nunca la comprobación de `status`, que listEvents ya filtra por
+ * separado) para listEvents({ studentSafe: true }) — a propósito SIN la
+ * excepción temporal de la versión JS (no distingue pasado/futuro): solo la
+ * usan listActiveEvents/listFeaturedEvents/listUpcomingEvents, que YA
+ * excluyen los eventos pasados por su cuenta (isEventPast / fromDate), así
+ * que un evento pasado con sourcePublicationStatus sin confirmar nunca
+ * llega a depender de esta condición para ser correcto. listEventsByVenue
+ * (que sí necesita conservar el histórico) usa la versión JS temporal-aware
+ * en su lugar — nunca esta.
+ */
 function fourvenuesPublicationSafeCondition(): SQL {
   const notFourvenuesSourced = or(isNull(events.sourceType), not(like(events.sourceType, `${FOURVENUES_SOURCE_TYPE_PREFIX}%`)))!;
   return or(notFourvenuesSourced, eq(events.sourcePublicationStatus, "published"))!;
@@ -426,11 +452,21 @@ export async function reorderFeaturedEvents(orderedIds: number[], db?: DbHandle)
   );
 }
 
-/** FIX-04 — solo filtro de seguridad de publicación (studentSafe), sin exclusión temporal: VenueDetail.tsx ya separa esta misma lista en Upcoming/Past (splitUpcomingPast) — un borrador de Fourvenues nunca debe llegar aquí, pero un evento histórico legítimo sí (acceso vía la sección "Past Events" ya existente). */
+/**
+ * FIX-04 — filtro de seguridad de publicación aplicado en JS (nunca SQL
+ * `studentSafe`, a propósito: isEventStudentVisible ya excluye el gate de
+ * publicación para eventos pasados — ver su comentario — así que un evento
+ * histórico de Fourvenues sin sourcePublicationStatus confirmado, como el
+ * 119, sigue siendo accesible aquí). Sin exclusión temporal aparte:
+ * VenueDetail.tsx ya separa esta misma lista en Upcoming/Past
+ * (splitUpcomingPast) — un borrador FUTURO de Fourvenues nunca debe llegar
+ * aquí, pero un evento histórico legítimo sí (acceso vía la sección
+ * "Past Events" ya existente).
+ */
 export async function listEventsByVenue(venueId: number, db?: DbHandle): Promise<EventListItem[]> {
   const conn = db ?? (await getDb());
-  const { items } = await listEvents({ communityIds: "all", venueId, status: "active", studentSafe: true, limit: 200, offset: 0 }, conn);
-  return items;
+  const { items } = await listEvents({ communityIds: "all", venueId, status: "active", limit: 200, offset: 0 }, conn);
+  return items.filter(e => isEventStudentVisible(e));
 }
 
 // ─── MG-01 — "Upcoming" (Home, pestaña Próximos) ───────────────────────────
