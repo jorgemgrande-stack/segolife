@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Route } from "wouter";
 import i18n from "@/lib/i18n";
 
@@ -13,8 +14,10 @@ import i18n from "@/lib/i18n";
  * este bug real (no solo "el texto existe", sino "el texto responde al
  * idioma").
  */
-const { mockMyActive, noopQuery, noopMutation } = vi.hoisted(() => ({
+const { mockMyActive, mockSubmitProposal, mockVenuesPublicActive, noopQuery, noopMutation } = vi.hoisted(() => ({
   mockMyActive: vi.fn(),
+  mockSubmitProposal: vi.fn(),
+  mockVenuesPublicActive: vi.fn(),
   noopQuery: () => ({ data: undefined, isLoading: false }),
   noopMutation: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -27,8 +30,9 @@ vi.mock("@/lib/trpc", () => ({
       myProposals: { useQuery: noopQuery },
       trending: { useQuery: noopQuery },
       respond: { useMutation: noopMutation },
-      submitProposal: { useMutation: noopMutation },
+      submitProposal: { useMutation: mockSubmitProposal },
     },
+    venues: { publicActive: { useQuery: mockVenuesPublicActive } },
     tokens: { previewMyReward: { useQuery: noopQuery } },
     useUtils: () => ({
       community: {
@@ -77,6 +81,8 @@ function renderAt(path: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockMyActive.mockReturnValue({ data: [], isLoading: false });
+  mockVenuesPublicActive.mockReturnValue({ data: [{ id: 5, name: "Casanova" }, { id: 6, name: "Tía Felisa" }], isLoading: false });
+  mockSubmitProposal.mockReturnValue({ mutate: vi.fn(), isPending: false });
 });
 
 afterEach(() => {
@@ -114,5 +120,58 @@ describe("ComunityHub — i18n (Fase 16, DELIVERY BLOCKER corregido)", () => {
     renderAt("/ie/comunity");
     expect(screen.getByText(/Yes \/ No/)).toBeInTheDocument();
     expect(screen.queryByText(/Sí \/ No/)).not.toBeInTheDocument();
+  });
+});
+
+describe("ComunityHub — ProponerTab: extensión Community Proposals (venue + fecha sugerida)", () => {
+  async function openProposeTab() {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /^propose$|^proponer$/i }));
+    return user;
+  }
+
+  it("el desplegable de venue ofrece los venues reales de la comunidad, nunca hardcodeados", async () => {
+    await i18n.changeLanguage("en");
+    renderAt("/ie/comunity");
+    await openProposeTab();
+    expect(mockVenuesPublicActive).toHaveBeenCalledWith({ communityId: 1 });
+    expect(screen.getByText(/related venue/i)).toBeInTheDocument();
+  });
+
+  it("el envío incluye venueId y suggestedDate cuando el Student los rellena — nunca comunidad/scope/moderación (nunca expuestos en el formulario)", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Beach volleyball");
+    await user.click(screen.getByRole("button", { name: /this weekend/i }));
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({
+      communityId: 1,
+      title: "Beach volleyball",
+      venueId: null, // no se seleccionó venue en este test — sigue siendo opcional
+      suggestedDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    }));
+    // El payload nunca incluye claves reservadas al Admin (comunidad ya va
+    // como communityId real de la sesión, nunca un selector propio del
+    // formulario — no hay ningún control de "alcance"/"audiencia" en el DOM).
+    expect(screen.queryByText(/administrative scope|alcance administrativo/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/audience|audiencia/i)).not.toBeInTheDocument();
+  });
+
+  it("sin rellenar la fecha sugerida, se envía null — nunca una fecha inventada", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Movie night");
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ suggestedDate: null }));
   });
 });

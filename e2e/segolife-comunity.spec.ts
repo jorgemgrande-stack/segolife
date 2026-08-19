@@ -76,4 +76,28 @@ test.describe("COMUNITY — estudiante autenticado", () => {
     await input.fill("Idea de prueba E2E — nunca se envía");
     await expect(page.getByRole("button", { name: /enviar idea/i })).toBeEnabled();
   });
+
+  // Community Proposals (backlog) — venue relacionado + fecha sugerida con
+  // presets, extensión del formulario Student. Mismo criterio que el test
+  // anterior: escribe/interactúa pero NUNCA pulsa "Enviar idea" (spec §29,
+  // prohibido fabricar propuestas reales en producción).
+  test("la pestaña Proponer ofrece venue relacionado y fecha sugerida con presets — sin enviar nada real", async ({ page }) => {
+    await login(page);
+    await page.goto("/ie/comunity");
+    await page.getByRole("tab", { name: "Proponer" }).click();
+
+    await expect(page.getByText(/local relacionado/i)).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText(/cuándo te gustaría que fuera/i)).toBeVisible();
+
+    const thisWeekendBtn = page.getByRole("button", { name: /este finde/i });
+    await expect(thisWeekendBtn).toBeVisible();
+    await thisWeekendBtn.click();
+
+    const dateInput = page.locator('input[type="date"]');
+    await expect(dateInput).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
+
+    // NUNCA campos reservados al Admin (comunidad ya viene de la sesión real, nunca un selector propio).
+    await expect(page.getByText(/alcance administrativo/i)).not.toBeVisible();
+    await expect(page.getByText(/audiencia/i)).not.toBeVisible();
+  });
 });

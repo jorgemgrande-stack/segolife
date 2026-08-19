@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Vote, Coins, Heart, Loader2, Send, Flame } from "lucide-react";
 import { type ComunityQuestionType } from "@/lib/comunity";
@@ -175,18 +176,62 @@ function ProposalLinkList({ slug, items }: { slug: string; items: { id: number; 
 
 // ─── PROPONER ────────────────────────────────────────────────────────────
 
+/**
+ * Community Proposals (backlog) — el formulario Student se acerca al
+ * wizard Admin (ComunityWizard.tsx) SOLO en lo que tiene sentido para un
+ * usuario final: venue relacionado y "cuándo te gustaría que fuera"
+ * (con presets, misma idea que los FLASH_PRESETS de urgencia del wizard
+ * Admin, adaptados a una fecha sugerida en vez de un cierre de votación —
+ * una idea de Student no tiene ventana de votación, así que "urgencia" se
+ * expresa aquí como la propia fecha sugerida). NUNCA comunidad/scope/
+ * audiencia/tipo de pregunta/visibilidad de resultados — esos campos son
+ * estructuralmente admin-only (encuestas COMUNITY formales, otra tabla).
+ * `venueId`/`suggestedDate` ya existían en el backend (submitProposal,
+ * communityStudentProposalDb.ts) sin usarse nunca desde el cliente.
+ *
+ * Imagen de portada: NO se añade esta noche — el propio wizard Admin no
+ * tiene subida real (solo un campo de URL con la instrucción "sube en
+ * CMS→Multimedia y pega la URL aquí"), así que no hay ningún patrón de
+ * subida pública ya construido y accesible para un Student que reutilizar
+ * seguro; construir uno nuevo (endpoint público de subida de imágenes)
+ * es superficie de abuso/moderación real que merece una decisión propia,
+ * no una mejora de una noche. Documentado como BUSINESS DECISION REQUIRED.
+ */
+function toDateOnly(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function nextWeekendDate(): string {
+  const d = new Date();
+  const diff = ((6 - d.getDay()) % 7) || 7; // próximo sábado real, nunca "hoy" si hoy ya es sábado
+  d.setDate(d.getDate() + diff);
+  return toDateOnly(d);
+}
+function nextWeekDate(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 7);
+  return toDateOnly(d);
+}
+
 function ProponerTab() {
   const { t } = useTranslation();
   const { community } = useCommunity();
   const utils = trpc.useUtils();
   const { data: myProposals } = trpc.community.myProposals.useQuery();
   const { data: trending } = trpc.community.trending.useQuery(community?.id ? { communityId: community.id } : {});
+  const { data: venues } = trpc.venues.publicActive.useQuery(community?.id ? { communityId: community.id } : {});
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [venueId, setVenueId] = useState("");
+  const [suggestedDate, setSuggestedDate] = useState("");
+
+  function resetForm() {
+    setTitle(""); setDescription(""); setVenueId(""); setSuggestedDate("");
+  }
 
   const submitMut = trpc.community.submitProposal.useMutation({
-    onSuccess: () => { toast.success(t("comunity.ideaSubmitted")); setTitle(""); setDescription(""); utils.community.myProposals.invalidate(); },
+    onSuccess: () => { toast.success(t("comunity.ideaSubmitted")); resetForm(); utils.community.myProposals.invalidate(); },
     onError: e => toast.error(e.message),
   });
 
@@ -208,6 +253,43 @@ function ProponerTab() {
         <p className="text-sm font-semibold text-foreground">{t("comunity.proposeAPlan")}</p>
         <div><Label>{t("comunity.whatDoYouPropose")}</Label><Input value={title} onChange={e => setTitle(e.target.value)} placeholder={t("comunity.proposePlaceholder")} maxLength={256} /></div>
         <div><Label>{t("comunity.tellUsMore")}</Label><Textarea rows={3} value={description} onChange={e => setDescription(e.target.value)} maxLength={2000} /></div>
+
+        <div>
+          <Label className="mb-1.5 block">{t("comunity.relatedVenue")}</Label>
+          <Select value={venueId || "none"} onValueChange={v => setVenueId(v === "none" ? "" : v)}>
+            <SelectTrigger className="w-full"><SelectValue placeholder={t("comunity.noVenue")} /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">{t("comunity.noVenue")}</SelectItem>
+              {(venues ?? []).map(v => <SelectItem key={v.id} value={String(v.id)}>{v.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div>
+          <Label className="mb-1.5 block">{t("comunity.whenWouldYouLike")}</Label>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant={suggestedDate === nextWeekendDate() ? "default" : "outline"} size="sm" onClick={() => setSuggestedDate(nextWeekendDate())}>
+              {t("comunity.thisWeekend")}
+            </Button>
+            <Button type="button" variant={suggestedDate === nextWeekDate() ? "default" : "outline"} size="sm" onClick={() => setSuggestedDate(nextWeekDate())}>
+              {t("comunity.nextWeek")}
+            </Button>
+            <Input
+              type="date"
+              value={suggestedDate}
+              onChange={e => setSuggestedDate(e.target.value)}
+              min={toDateOnly(new Date())}
+              className="h-8 w-auto"
+              aria-label={t("comunity.customDate")}
+            />
+            {suggestedDate && (
+              <button type="button" onClick={() => setSuggestedDate("")} className="text-xs text-muted-foreground underline">
+                {t("comunity.clearDate")}
+              </button>
+            )}
+          </div>
+        </div>
+
         {approvedReward > 0 && (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Coins className="size-3.5 shrink-0 text-primary" /> {t("comunity.approvedRewardHint", { amount: approvedReward })}
@@ -216,7 +298,13 @@ function ProponerTab() {
         <Button
           className="w-full"
           disabled={!title.trim() || !community?.id || submitMut.isPending}
-          onClick={() => community?.id && submitMut.mutate({ communityId: community.id, title: title.trim(), description: description.trim() || null })}
+          onClick={() => community?.id && submitMut.mutate({
+            communityId: community.id,
+            title: title.trim(),
+            description: description.trim() || null,
+            venueId: venueId ? Number(venueId) : null,
+            suggestedDate: suggestedDate || null,
+          })}
         >
           {submitMut.isPending ? <Loader2 className="size-4 animate-spin mr-1.5" /> : <Send className="size-4 mr-1.5" />} {t("comunity.submitIdea")}
         </Button>
