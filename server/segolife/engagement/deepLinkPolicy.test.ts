@@ -66,4 +66,13 @@ describe("deepLinkPolicy — sanitizeDeepLink", () => {
     expect(sanitizeDeepLink("/admin/users/1")).toBeNull();
     expect(sanitizeDeepLink("/ie/admin/secret")).toBeNull(); // el caso ya cubierto arriba sigue rechazado
   });
+
+  // Community Proposals (backlog) — cola de moderación (communityProposalNotifier.ts).
+  it("acepta /admin/comunity/moderacion (alerta admin de idea nueva de Student)", () => {
+    expect(sanitizeDeepLink("/admin/comunity/moderacion")).toBe("/admin/comunity/moderacion");
+  });
+
+  it("literal exacta — nunca un comodín /admin/comunity/.*", () => {
+    expect(sanitizeDeepLink("/admin/comunity/otro-panel")).toBeNull();
+  });
 });

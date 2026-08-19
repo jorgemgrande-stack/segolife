@@ -12,9 +12,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // REAL del Student que llama. Se mockean sus dos únicas dependencias para
 // probar la comprobación de membresía sin tocar BD — mismo criterio que
 // el resto de este repo (aislar la unidad bajo test).
-const { mockGetUserCommunities, mockSubmitStudentProposal } = vi.hoisted(() => ({
+const { mockGetUserCommunities, mockSubmitStudentProposal, mockNotifyStudentProposalSubmitted } = vi.hoisted(() => ({
   mockGetUserCommunities: vi.fn(),
   mockSubmitStudentProposal: vi.fn(),
+  mockNotifyStudentProposalSubmitted: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../db/communitiesDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../db/communitiesDb")>();
@@ -24,6 +25,13 @@ vi.mock("../segolife/community/communityStudentProposalDb", async (importOrigina
   const actual = await importOriginal<typeof import("../segolife/community/communityStudentProposalDb")>();
   return { ...actual, submitStudentProposal: mockSubmitStudentProposal };
 });
+// Community Proposals (backlog, spec §15.B) — se mockea para probar la
+// DELEGACIÓN del router sin abrir el pool de BD real de este notificador
+// (fire-and-forget, ver community.ts) — el notificador en sí ya está
+// probado por su cuenta en communityProposalNotifier.test.ts.
+vi.mock("../segolife/community/communityProposalNotifier", () => ({
+  notifyStudentProposalSubmitted: mockNotifyStudentProposalSubmitted,
+}));
 
 import { communityRouter } from "./community";
 
@@ -113,6 +121,7 @@ describe("community router — submitProposal: la comunidad SIEMPRE se deriva de
   beforeEach(() => {
     mockGetUserCommunities.mockReset();
     mockSubmitStudentProposal.mockReset();
+    mockNotifyStudentProposalSubmitted.mockClear().mockResolvedValue(undefined);
   });
 
   it("REGRESIÓN IDOR — un Student de la comunidad 1 NUNCA puede proponer en la comunidad 2 aunque manipule communityId en el body", async () => {
@@ -145,6 +154,22 @@ describe("community router — submitProposal: la comunidad SIEMPRE se deriva de
     ]);
     mockSubmitStudentProposal.mockResolvedValue({ id: 901, communityId: 2, title: "x", status: "pending_moderation" });
     const result = await callerAs(7).submitProposal({ communityId: 2, title: "x" });
+    expect(result.success).toBe(true);
+  });
+
+  it("spec §15.B — un envío válido dispara la alerta admin (best-effort, delega en el notificador dedicado)", async () => {
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    const idea = { id: 902, communityId: 1, title: "Karaoke night", status: "pending_moderation" };
+    mockSubmitStudentProposal.mockResolvedValue(idea);
+    await callerAs(7).submitProposal({ communityId: 1, title: "Karaoke night" });
+    expect(mockNotifyStudentProposalSubmitted).toHaveBeenCalledWith(idea, null);
+  });
+
+  it("si el notificador falla, la idea SIGUE guardándose con éxito (best-effort, nunca bloquea)", async () => {
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    mockSubmitStudentProposal.mockResolvedValue({ id: 903, communityId: 1, title: "x", status: "pending_moderation" });
+    mockNotifyStudentProposalSubmitted.mockRejectedValue(new Error("boom"));
+    const result = await callerAs(7).submitProposal({ communityId: 1, title: "x" });
     expect(result.success).toBe(true);
   });
 });

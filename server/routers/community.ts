@@ -28,6 +28,7 @@ import {
 import { communityResponseValues, communityResponses, communityOptions as communityOptionsTable } from "../../drizzle/schema";
 import { eq, sql } from "drizzle-orm";
 import { getUserCommunities } from "../db/communitiesDb";
+import { notifyStudentProposalSubmitted } from "../segolife/community/communityProposalNotifier";
 
 const communityViewProcedure = permissionProcedure("community.view", ["admin"]);
 const communityManageProcedure = permissionProcedure("community.manage", ["admin"]);
@@ -521,6 +522,8 @@ export const communityRouter = router({
         throw new TRPCError({ code: "FORBIDDEN", message: "No perteneces a esa comunidad" });
       }
       const idea = await submitStudentProposal({ ...input, studentUserId: ctx.user.id });
+      // Best-effort — spec §15.B, nunca bloquea el guardado real de la idea.
+      notifyStudentProposalSubmitted(idea, ctx.user.name ?? null).catch(() => {});
       return { success: true, idea };
     }),
 

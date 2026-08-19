@@ -35,6 +35,10 @@ const ALLOWED_PATTERNS: RegExp[] = [
   // (p.ej. "/ie/admin/secret", ver test de abajo) sigue rechazándose igual
   // que antes — esto solo añade UNA ruta admin concreta, nunca un comodín.
   /^\/admin\/events\/\d+$/,
+  // Community Proposals (backlog) — cola de moderación de ideas de Student
+  // (destinatario SIEMPRE un admin, ver communityProposalNotifier.ts).
+  // Mismo criterio que la ruta anterior: literal exacta, nunca un comodín.
+  /^\/admin\/comunity\/moderacion$/,
 ];
 
 export function sanitizeDeepLink(raw: string | null | undefined): string | null {

@@ -495,6 +495,20 @@ export const ENGAGEMENT_TEMPLATES: Record<string, EngagementTemplate> = {
     bodyEn: "{{title}}", bodyEs: "{{title}}",
     allowedVariables: ["title"],
   },
+  // Community Proposals (backlog, spec §15.B) — plantilla NUEVA, nunca
+  // reutiliza planplay_proposal_approved (adminCategory PLAN_AND_PLAY,
+  // status "prepared" — módulo deprecado, instrucción permanente: no
+  // construir nada nuevo alrededor de Plan & Play). Solo alerta operacional
+  // Admin de que hay una idea nueva pendiente de moderar — la confirmación
+  // al propio Student ya existe (toast inmediato al enviar, ComunityHub.tsx).
+  community_student_proposal_submitted: {
+    key: "community_student_proposal_submitted", version: 1, category: "events", adminCategory: "COMMUNITY",
+    audienceType: "transactional", channels: ["in_app"], status: "active",
+    description: "Un Student envió una idea nueva — pendiente de moderación admin.", triggerEvent: "CommunityStudentProposalSubmitted",
+    titleEn: "New idea to review", titleEs: "Nueva idea para revisar",
+    bodyEn: "{{studentName}} proposed: \"{{proposalTitle}}\"", bodyEs: "{{studentName}} propuso: \"{{proposalTitle}}\"",
+    allowedVariables: ["studentName", "proposalTitle"],
+  },
   community_interested_event_published: {
     key: "community_interested_event_published", version: 1, category: "events", adminCategory: "COMMUNITY",
     audienceType: "transactional", channels: ["in_app"], status: "active",
