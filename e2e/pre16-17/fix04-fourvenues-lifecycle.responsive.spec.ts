@@ -37,7 +37,7 @@ test.describe("FIX-04 — acceso directo por slug a un borrador de Fourvenues (C
     await page.waitForLoadState("networkidle");
     await dismissCookies(page);
 
-    await expect(page.getByText(/evento no encontrado/i)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/event not found|evento no encontrado/i)).toBeVisible({ timeout: 15000 });
     // Nunca revela el nombre real del evento en borrador ni ofrece compra.
     await expect(page.getByText(DRAFT_EVENT_NAME, { exact: false })).not.toBeVisible();
     await expect(page.getByRole("button", { name: /comprar|continuar|checkout/i })).not.toBeVisible();
@@ -49,7 +49,7 @@ test.describe("FIX-04 — acceso directo por slug a un borrador de Fourvenues (C
     await page.waitForLoadState("networkidle");
     await dismissCookies(page);
 
-    await expect(page.getByText(/evento no encontrado/i)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/event not found|evento no encontrado/i)).toBeVisible({ timeout: 15000 });
     await expect(page.getByText(DRAFT_EVENT_NAME, { exact: false })).not.toBeVisible();
   });
 });
@@ -68,11 +68,11 @@ test.describe("FIX-04 — Home Tonight/Upcoming y Explore nunca muestran el borr
     // este spec): 0 eventos publicados futuros en ningún venue conectado
     // (Fourvenues o nativo) — Tonight/Upcoming deben mostrar su estado
     // vacío real, nunca quedarse cargando ni fabricar contenido.
-    await expect(page.getByText(/no hay eventos esta noche/i)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/no events tonight|no hay eventos esta noche/i)).toBeVisible({ timeout: 15000 });
     const upcomingTab = page.getByRole("tab", { name: /upcoming|próximos/i });
     if (await upcomingTab.isVisible({ timeout: 3000 }).catch(() => false)) {
       await upcomingTab.click();
-      await expect(page.getByText(/no hay próximos eventos/i)).toBeVisible({ timeout: 10000 });
+      await expect(page.getByText(/no upcoming events|no hay próximos eventos/i)).toBeVisible({ timeout: 10000 });
     }
   });
 
