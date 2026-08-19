@@ -8,9 +8,15 @@ import { loginViaUI } from "./fixtures/auth";
  * criterio que fix04-fourvenues-lifecycle).
  *
  * Casos reales usados:
- * - event 119 "WELCOME BACK BASH" (slug welcome-back-bash), Casanova,
- *   finalizado hace 11+ meses, asignado a IE+UVA — confirmado accesible
- *   (histórico legítimo) por eventsDb.ts::listEndedEvents.
+ * - event 118 "PRE OPENING X HOUSEMAF" (slug pre-opening-x-housemaf),
+ *   Casanova, finalizado hace ~5 días (14/08/2026), asignado a IE+UVA —
+ *   confirmado en producción como el evento MÁS RECIENTE del ranking DESC
+ *   de Ended Events real para este venue (verificado por lectura directa
+ *   antes de este spec: event 119 "WELCOME BACK BASH", usado en los tests
+ *   unitarios de FIX-04/05A, es en realidad el evento MÁS ANTIGUO de los
+ *   88 reales — rank 88/88 — y nunca aparecería dentro de un límite de
+ *   página razonable de 8-24; se usa aquí un evento que SÍ es alcanzable
+ *   con los límites reales de la UI, evitando un falso negativo).
  * - pre-opening-x-fcking-wednesdays — borrador real de Fourvenues,
  *   confirmado en FIX-04 — NUNCA debe aparecer en Ended Events (es
  *   futuro, no finalizado, y además un borrador).
@@ -18,10 +24,23 @@ import { loginViaUI } from "./fixtures/auth";
  * Admin (/admin/events) requiere credenciales que no existen en
  * .env.e2e.local — CREDENTIAL REQUIRED, cubierto en su lugar por
  * EventsManager.test.tsx (eventStatusBadge/eventOriginCaption).
+ *
+ * /uva/explore — igualmente CREDENTIAL REQUIRED: .env.e2e.local solo define
+ * una cuenta `student` (E2E_STUDENT_COMMUNITY=ie), sin ninguna cuenta UVA.
+ * Un Student autenticado que navega a la URL de otra comunidad de la que no
+ * es miembro real es redirigido a su propia comunidad por un guard previo y
+ * ya documentado (SegolifeAppShell.tsx, "Bug real reportado con capturas" —
+ * anterior a FIX-05A) — comportamiento correcto, no un bug de Ended Events.
+ * El primer intento de este spec probó `/uva/explore` con la cuenta IE-only
+ * y falló por timeout esperando el chip "Ended Events", que nunca llega a
+ * renderizarse porque la página redirige antes a /ie. El aislamiento por
+ * comunidad de Ended Events (IE-only, UVA-rechazado, IE+UVA-ambos) ya está
+ * cubierto a nivel unitario en server/db/eventsDb.test.ts
+ * ("listEndedEvents — FIX-05A", 12 tests, incluye los 3 casos de scoping).
  */
 
-const ENDED_EVENT_NAME = "WELCOME BACK BASH";
-const ENDED_EVENT_SLUG = "welcome-back-bash";
+const ENDED_EVENT_NAME = "PRE OPENING X HOUSEMAF";
+const ENDED_EVENT_SLUG = "pre-opening-x-housemaf";
 const DRAFT_EVENT_NAME = "PRE OPENING X FCKING WEDNESDAYS";
 
 async function dismissCookies(page: import("@playwright/test").Page) {
@@ -30,20 +49,18 @@ async function dismissCookies(page: import("@playwright/test").Page) {
 }
 
 test.describe("FIX-05A — Explore: filtro Ended Events (spec §6/§8)", () => {
-  for (const community of ["ie", "uva"] as const) {
-    test(`/${community}/explore — Ended Events muestra el histórico real (event 119, IE+UVA), nunca un borrador futuro`, async ({ page }) => {
-      await loginViaUI(page, student.email, student.password);
-      await page.goto(`/${community}/explore`);
-      await page.waitForLoadState("networkidle");
-      await dismissCookies(page);
+  test("/ie/explore — Ended Events muestra el histórico real (event 118, IE+UVA), nunca un borrador futuro", async ({ page }) => {
+    await loginViaUI(page, student.email, student.password);
+    await page.goto("/ie/explore");
+    await page.waitForLoadState("networkidle");
+    await dismissCookies(page);
 
-      await page.getByText(/ended events|eventos finalizados/i).click();
-      await page.waitForLoadState("networkidle");
+    await page.getByText(/ended events|eventos finalizados/i).click();
+    await page.waitForLoadState("networkidle");
 
-      await expect(page.getByText(ENDED_EVENT_NAME, { exact: false })).toBeVisible({ timeout: 15000 });
-      await expect(page.getByText(DRAFT_EVENT_NAME, { exact: false })).not.toBeVisible();
-    });
-  }
+    await expect(page.getByText(ENDED_EVENT_NAME, { exact: false })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(DRAFT_EVENT_NAME, { exact: false })).not.toBeVisible();
+  });
 });
 
 test.describe("FIX-05A — Venue Detail: Ended Events community/venue-scoped (spec §7/§9)", () => {
