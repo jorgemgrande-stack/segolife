@@ -4003,6 +4003,19 @@ export const events = mysqlTable("events", {
   // creando a mano, sin origen.
   sourceType:   varchar("source_type", { length: 64 }),
   sourceId:     int("source_id"),
+  // FIX-04 — separado a propósito de `status` (toggle admin-curado, ver
+  // setEventActive) y de la clasificación temporal (upcoming/ongoing/past,
+  // shared/segolife/eventTiming.ts): esto es lo que el PROVEEDOR EXTERNO
+  // (hoy Fourvenues) dice sobre si el evento está publicado en su propio
+  // origen. "published"/"unpublished" se derivan de campos reales del
+  // proveedor (Fourvenues: `active` + `visible`, ver
+  // fourvenuesIntegrationsAdapter.ts) — nunca inventados. `unknown` es el
+  // valor seguro por defecto: eventos nativos (sin proveedor) y eventos
+  // Fourvenues sincronizados antes de esta columna existir se quedan en
+  // `unknown` hasta el próximo sync real — nunca se asume "published" solo
+  // porque ya era visible antes (fail-closed, ver isEventStudentVisible en
+  // eventsDb.ts).
+  sourcePublicationStatus: mysqlEnum("source_publication_status", ["published", "unpublished", "unknown"]),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });

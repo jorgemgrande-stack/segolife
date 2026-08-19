@@ -17,6 +17,15 @@
  * descripción editorial/imagen propia/SEO/Benefits/SegoTokens/Plan&Play:
  * este sync nunca los toca.
  *
+ * FIX-04 — `sourcePublicationStatus` es una EXCEPCIÓN deliberada a "solo
+ * fecha/hora se resincroniza": es un campo derivado del origen (Fourvenues
+ * `active`/`visible`, ver fourvenuesIntegrationsAdapter.ts), nunca curado
+ * por un admin — así que SÍ se re-sincroniza en cada sync, igual que
+ * fecha/hora, para que un evento que pasa de borrador a publicado (o al
+ * revés) en Fourvenues se refleje sin esperar a que alguien lo edite a
+ * mano. Nunca dispara `event_updated` (no es un cambio material de cara al
+ * Communication Center).
+ *
  * MATCHING — nunca fuzzy, nunca solo por nombre:
  *  1. external_entity_mappings ya confirmado (provider+externalType="event")
  *     → usar ese evento, sin comparar nada más.
@@ -182,8 +191,11 @@ export async function syncEventCatalog(input: SyncEventCatalogInput, db?: DbHand
 
     if (existingMapping) {
       eventId = existingMapping.internalId;
-      // Field ownership: SOLO fecha/hora se sincroniza en un evento ya mapeado — updateEvent() decide si eso dispara event_updated.
-      await updateEvent(eventId, { startsAt: ev.startsAt, endsAt: ev.endsAt ?? null }, conn);
+      // Field ownership: fecha/hora + sourcePublicationStatus se sincronizan
+      // en un evento ya mapeado — updateEvent() decide si eso dispara
+      // event_updated (sourcePublicationStatus nunca lo dispara, ver
+      // comentario de cabecera).
+      await updateEvent(eventId, { startsAt: ev.startsAt, endsAt: ev.endsAt ?? null, sourcePublicationStatus: ev.sourcePublicationStatus }, conn);
       outcome = "mapped_existing";
       updatedCount++;
     } else {
@@ -201,6 +213,14 @@ export async function syncEventCatalog(input: SyncEventCatalogInput, db?: DbHand
           provider: input.provider, integrationType: input.integrationType, integrationId: input.integrationId,
           externalType: "event", externalId: ev.externalId, internalType: "event", internalId: eventId,
         });
+        // FIX-04 — el candidato adoptado no traía origen registrado
+        // (sourceType/sourceId nulos, evento nativo hasta este momento).
+        // Sin esto, isEventStudentVisible() nunca podría aplicarle el
+        // filtro de publicación de Fourvenues, aunque ya esté vinculado.
+        await updateEvent(eventId, {
+          sourceType: `integration:${input.provider}`, sourceId: input.integrationId,
+          sourcePublicationStatus: ev.sourcePublicationStatus,
+        }, conn);
         outcome = "candidate_adopted";
         updatedCount++;
       } else {
@@ -215,6 +235,7 @@ export async function syncEventCatalog(input: SyncEventCatalogInput, db?: DbHand
           imageUrl: ev.imageUrl ?? null,
           sourceType: `integration:${input.provider}`,
           sourceId: input.integrationId,
+          sourcePublicationStatus: ev.sourcePublicationStatus,
         }, input.communityIds, conn);
         eventId = created.id;
         await conn.insert(externalEntityMappings).ignore().values({

@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { eq, and, or, like, inArray, gte, desc, asc, type SQL } from "drizzle-orm";
+import { eq, and, or, like, not, isNull, inArray, gte, desc, asc, type SQL } from "drizzle-orm";
 import {
   events,
   venues,
@@ -12,6 +12,54 @@ import {
   type SalesChannel,
 } from "../../drizzle/schema";
 import { emitEngagementEvent } from "../segolife/engagement/engagementEvents";
+import { isEventPast } from "../../shared/segolife/eventTiming";
+
+/**
+ * FIX-04 — prefijo real de events.sourceType para eventos sincronizados
+ * desde Fourvenues (ver eventCatalogSync.ts: `integration:${provider}`,
+ * provider="fourvenues_integrations"). Constante única para que el filtro
+ * SQL (fourvenuesPublicationSafeCondition) y el predicado JS
+ * (isEventStudentVisible) nunca diverjan silenciosamente sobre qué eventos
+ * están sujetos al concepto de publicación de Fourvenues.
+ */
+export const FOURVENUES_SOURCE_TYPE_PREFIX = "integration:fourvenues";
+
+/**
+ * REGLA FUNDAMENTAL (FIX-04): visibilidad de origen (lo que dice Fourvenues)
+ * ≠ visibilidad admin ≠ visibilidad pública del Student. Esta función decide
+ * SOLO la tercera, sin componente temporal (eso lo decide cada llamador —
+ * ver comentarios en listActiveEvents/listFeaturedEvents vs.
+ * listEventsByVenue/publicGetBySlug).
+ *
+ * Un evento nativo o de cualquier origen no-Fourvenues (sourceType nulo, o
+ * que no empiece por el prefijo de Fourvenues — p.ej. Weezevent, que nunca
+ * pasa por eventCatalogSync/syncEventCatalog) NUNCA queda sujeto a
+ * sourcePublicationStatus: ese campo solo lo escribe el sync de Fourvenues.
+ * Aplicarlo fuera de ese origen ocultaría eventos que nunca tuvieron nada
+ * que ver con Fourvenues — una regresión real sobre el catálogo nativo, no
+ * algo que pida el spec.
+ *
+ * Un evento SÍ originado en Fourvenues con sourcePublicationStatus
+ * "unpublished" o "unknown" (incluye NULL — antes de esta migración, o
+ * antes del primer sync tras ella) NUNCA se considera visible — fail
+ * closed, nunca se asume "published" por ausencia de dato.
+ */
+export function isEventStudentVisible(event: {
+  status: SegolifeEvent["status"];
+  sourceType?: string | null;
+  sourcePublicationStatus?: SegolifeEvent["sourcePublicationStatus"];
+}): boolean {
+  if (event.status !== "active") return false;
+  const isFourvenuesSourced = typeof event.sourceType === "string" && event.sourceType.startsWith(FOURVENUES_SOURCE_TYPE_PREFIX);
+  if (isFourvenuesSourced && event.sourcePublicationStatus !== "published") return false;
+  return true;
+}
+
+/** Misma regla que isEventStudentVisible() (mitad "origen Fourvenues", nunca la comprobación de `status` — ver listEvents, que ya filtra status por separado), expresada en SQL para listEvents({ studentSafe: true }). */
+function fourvenuesPublicationSafeCondition(): SQL {
+  const notFourvenuesSourced = or(isNull(events.sourceType), not(like(events.sourceType, `${FOURVENUES_SOURCE_TYPE_PREFIX}%`)))!;
+  return or(notFourvenuesSourced, eq(events.sourcePublicationStatus, "published"))!;
+}
 
 // Pool persistente top-level — mismo patrón que server/db/studentsDb.ts / venuesDb.ts.
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
@@ -52,6 +100,8 @@ export interface EventListFilters {
   fromDate?: Date;
   /** "startsAt" (por defecto, cronológico) o "homeSortOrder" (orden curado a mano en /admin/cms/inicio). */
   orderBy?: "startsAt" | "homeSortOrder";
+  /** FIX-04 — superficies PÚBLICAS únicamente: aplica fourvenuesPublicationSafeCondition además de cualquier filtro `status` ya pasado. Nunca usado por el Admin (que debe seguir viendo borradores Fourvenues, solo etiquetados). */
+  studentSafe?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -135,6 +185,7 @@ export async function listEvents(
   if (filters.status) conditions.push(eq(events.status, filters.status));
   if (filters.isFeatured !== undefined) conditions.push(eq(events.isFeatured, filters.isFeatured));
   if (filters.fromDate) conditions.push(gte(events.startsAt, filters.fromDate));
+  if (filters.studentSafe) conditions.push(fourvenuesPublicationSafeCondition());
   if (filters.search) {
     const q = `%${filters.search}%`;
     conditions.push(or(like(events.name, q), like(events.description, q))!);
@@ -230,6 +281,8 @@ export interface CreateEventInput {
   /** Origen del evento (p.ej. "community_proposal") — ver events.sourceType/sourceId. */
   sourceType?: string | null;
   sourceId?: number | null;
+  /** Ver events.sourcePublicationStatus — solo relevante para eventos de un proveedor con concepto real de publicación (hoy Fourvenues, ver eventCatalogSync.ts). El resto de callers lo deja sin especificar (columna queda NULL = "unknown"). */
+  sourcePublicationStatus?: SegolifeEvent["sourcePublicationStatus"];
 }
 
 /** communityIds: comunidades a las que se vincula el evento al crearlo (puede ser []). */
@@ -255,6 +308,19 @@ export interface UpdateEventFields {
   endsAt?: Date | null;
   capacity?: number | null;
   imageUrl?: string | null;
+  /**
+   * FIX-04 — antes solo se podían fijar en createEvent(); faltaban aquí
+   * porque nada necesitaba escribirlos en un evento YA existente. Ahora
+   * eventCatalogSync.ts los necesita en el camino "candidate_adopted" (un
+   * evento nativo pre-existente que se vincula a un evento real de
+   * Fourvenues): sin esto, ese evento adoptado nunca quedaba con origen
+   * Fourvenues registrado, y por tanto isEventStudentVisible() nunca podía
+   * aplicarle el filtro de publicación (gap real, no cosmético).
+   */
+  sourceType?: string | null;
+  sourceId?: number | null;
+  /** Ver events.sourcePublicationStatus. Solo el sync de Fourvenues lo pasa (eventCatalogSync.ts) — nunca dispara `event_updated` (no es un cambio material de cara al Communication Center, spec FIX-04 §31). */
+  sourcePublicationStatus?: SegolifeEvent["sourcePublicationStatus"];
 }
 
 /**
@@ -324,22 +390,32 @@ export async function setEventCommunities(id: number, communityIds: number[], db
 // Sin autenticación — solo eventos activos, opcionalmente filtrados por una
 // única comunidad (uso real: bloque de /ie y /uva).
 
+/**
+ * FIX-04 — superficie de discovery futuro: además del filtro de seguridad
+ * de publicación (studentSafe, SQL), un evento ya finalizado nunca se
+ * ofrece aquí como "activo"/comprable (CASO A del spec — event 119).
+ * Filtro temporal en JS (reutiliza isEventPast, shared/segolife/
+ * eventTiming.ts — nunca un cálculo de fecha nuevo), no en SQL: el acceso
+ * histórico legítimo (VenueDetail "Past Events" vía listEventsByVenue,
+ * tickets/actividad vía getEventBySlug) pasa por funciones que NUNCA
+ * aplican esta exclusión temporal, solo la de seguridad de publicación.
+ */
 export async function listActiveEvents(communityId?: number, db?: DbHandle): Promise<EventListItem[]> {
   const conn = db ?? (await getDb());
   const { items } = await listEvents(
-    { communityIds: communityId ? [communityId] : "all", status: "active", limit: 200, offset: 0 },
+    { communityIds: communityId ? [communityId] : "all", status: "active", studentSafe: true, limit: 200, offset: 0 },
     conn
   );
-  return items;
+  return items.filter(e => !isEventPast(e));
 }
 
 export async function listFeaturedEvents(communityId?: number, db?: DbHandle): Promise<EventListItem[]> {
   const conn = db ?? (await getDb());
   const { items } = await listEvents(
-    { communityIds: communityId ? [communityId] : "all", status: "active", isFeatured: true, orderBy: "homeSortOrder", limit: 50, offset: 0 },
+    { communityIds: communityId ? [communityId] : "all", status: "active", isFeatured: true, studentSafe: true, orderBy: "homeSortOrder", limit: 50, offset: 0 },
     conn
   );
-  return items;
+  return items.filter(e => !isEventPast(e));
 }
 
 /** Reordena los eventos destacados de la Home — mismo patrón que reorderGalleryItems (index → homeSortOrder). */
@@ -350,9 +426,10 @@ export async function reorderFeaturedEvents(orderedIds: number[], db?: DbHandle)
   );
 }
 
+/** FIX-04 — solo filtro de seguridad de publicación (studentSafe), sin exclusión temporal: VenueDetail.tsx ya separa esta misma lista en Upcoming/Past (splitUpcomingPast) — un borrador de Fourvenues nunca debe llegar aquí, pero un evento histórico legítimo sí (acceso vía la sección "Past Events" ya existente). */
 export async function listEventsByVenue(venueId: number, db?: DbHandle): Promise<EventListItem[]> {
   const conn = db ?? (await getDb());
-  const { items } = await listEvents({ communityIds: "all", venueId, status: "active", limit: 200, offset: 0 }, conn);
+  const { items } = await listEvents({ communityIds: "all", venueId, status: "active", studentSafe: true, limit: 200, offset: 0 }, conn);
   return items;
 }
 
@@ -383,11 +460,19 @@ export function selectUpcomingWindow(events: EventListItem[], at: Date, windowDa
   return withinWindow.length > 0 ? withinWindow : events;
 }
 
-/** Eventos futuros más próximos para la pestaña "Upcoming" de la Home — ver selectUpcomingWindow para el algoritmo de ventana + fallback. */
+/**
+ * Eventos futuros más próximos para la pestaña "Upcoming" de la Home — ver
+ * selectUpcomingWindow para el algoritmo de ventana + fallback.
+ *
+ * FIX-04 — studentSafe se aplica ANTES del fallback de ventana: un borrador
+ * de Fourvenues nunca debe ser "rescatado" por selectUpcomingWindow solo
+ * porque no hubiera otros eventos publicados dentro de los 20 días (spec
+ * §24 — el fallback nunca debe rescatar drafts).
+ */
 export async function listUpcomingEvents(communityIds: number[] | "all", at: Date, db?: DbHandle): Promise<EventListItem[]> {
   const conn = db ?? (await getDb());
   const { items } = await listEvents(
-    { communityIds, status: "active", fromDate: at, orderBy: "startsAt", limit: UPCOMING_EVENTS_LIMIT, offset: 0 },
+    { communityIds, status: "active", studentSafe: true, fromDate: at, orderBy: "startsAt", limit: UPCOMING_EVENTS_LIMIT, offset: 0 },
     conn
   );
   return selectUpcomingWindow(items, at);

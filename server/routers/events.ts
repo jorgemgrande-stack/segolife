@@ -16,6 +16,7 @@ import {
   listEventsByVenue,
   listUpcomingEvents,
   reorderFeaturedEvents,
+  isEventStudentVisible,
 } from "../db/eventsDb";
 import { computePurchaseAction } from "../segolife/ticketing/purchaseAction";
 import { requireVenueAccess } from "../segolife/benefits/venueStaffAccess";
@@ -220,7 +221,13 @@ export const eventsRouter = router({
     .input(z.object({ slug: z.string().min(1).max(128), communityId: z.number().int().positive().optional() }))
     .query(async ({ input }) => {
       const detail = await getEventBySlug(input.slug);
-      if (!detail || detail.event.status !== "active") return null;
+      // FIX-04 — antes solo comprobaba status==="active"; un borrador de
+      // Fourvenues (active local, pero unpublished/unknown en origen) podía
+      // seguir siendo comprable con solo conocer el slug directo. Mismo
+      // "no encontrado" que un slug inexistente — nunca revela que el
+      // evento existe pero está en borrador (spec §16/§43, mismo criterio
+      // ya aplicado al check de comunidad justo debajo).
+      if (!detail || !isEventStudentVisible(detail.event)) return null;
       if (input.communityId != null && detail.communities.length > 0 && !detail.communities.some(c => c.id === input.communityId)) {
         return null;
       }

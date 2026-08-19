@@ -84,6 +84,8 @@ export const fourvenuesIntEventsFixture = {
       flyer: "https://example.invalid/flyer.jpg",
       start: 1799650800, // 2027-01-10T23:00:00Z (fixture)
       end: 1799672400, // 2027-01-11T05:00:00Z (fixture)
+      active: true,
+      visible: true,
     },
   ],
 };

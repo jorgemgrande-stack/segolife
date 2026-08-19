@@ -15,9 +15,31 @@ import { toast } from "sonner";
 import { Search, CalendarDays, Loader2, Plus, Star, ImageIcon } from "lucide-react";
 import { useAdminCommunity } from "@/contexts/AdminCommunityContext";
 import { ADMIN_COMMUNITY_FILTER_ALL } from "@shared/segolife/adminCommunityFilter";
-import { getEventTemporalStatus, isEventTonight } from "@shared/segolife/eventTiming";
+import { isEventTonight, isEventPast, splitUpcomingPast, sortByStartAscending } from "@shared/segolife/eventTiming";
 
 const ALL = "__all__";
+
+const FOURVENUES_SOURCE_PREFIX = "integration:fourvenues";
+
+/**
+ * FIX-04 (spec §36) — el badge "Estado" antes solo reflejaba events.status
+ * (active/inactive), así que un evento finalizado hace un año seguía
+ * mostrando "Activo" (CASO A, event 119) y un borrador de Fourvenues
+ * mostraba "Activo" igual que uno publicado (CASO B). Prioridad: 1) status
+ * admin-curado (inactive gana siempre, es una acción explícita del admin),
+ * 2) borrador de Fourvenues (afecta si es comprable — más accionable que
+ * "finalizado" para un evento que nunca llegó a publicarse), 3) finalizado
+ * (temporal), 4) activo. NUNCA mezcla los tres conceptos en un único valor.
+ */
+function eventStatusBadge(e: { status: string; sourceType?: string | null; sourcePublicationStatus?: string | null; startsAt: Date | string; endsAt?: Date | string | null }) {
+  if (e.status !== "active") return { label: "Inactivo", variant: "outline" as const };
+  const isFourvenuesSourced = typeof e.sourceType === "string" && e.sourceType.startsWith(FOURVENUES_SOURCE_PREFIX);
+  if (isFourvenuesSourced && e.sourcePublicationStatus !== "published") {
+    return { label: "Borrador Fourvenues", variant: "secondary" as const };
+  }
+  if (isEventPast(e)) return { label: "Finalizado", variant: "secondary" as const };
+  return { label: "Activo", variant: "default" as const };
+}
 
 function fmtDateTime(d: Date | string | null | undefined) {
   if (!d) return "—";
@@ -71,12 +93,21 @@ export default function EventsManager() {
   // `new Date()` repetido). No son filtros de servidor nuevos porque no hace
   // falta: 100 eventos por página es un volumen manejable para calcular en
   // el cliente (mismo criterio ya aplicado al filtro temporal existente).
+  //
+  // FIX-04 (spec §10) — orden por defecto: próximos ASC (el más cercano
+  // primero) agrupados ANTES que pasados DESC (el más reciente primero) —
+  // antes la tabla venía en orden cronológico plano desde el servidor
+  // (ORDER BY starts_at ASC), lo que enterraba los eventos próximos detrás
+  // de años de histórico. Reutiliza splitUpcomingPast (shared/segolife/
+  // eventTiming.ts, ya usado por VenueDetail.tsx) — ambos subconjuntos ya
+  // vienen ordenados correctamente, solo hace falta concatenarlos.
   const timeFiltered = useMemo(() => {
     const items = data?.items ?? [];
-    const byTime = timeFilter === "all" ? items
-      : timeFilter === "tonight" ? items.filter(e => isEventTonight(e))
-      : timeFilter === "upcoming" ? items.filter(e => getEventTemporalStatus(e) !== "past")
-      : items.filter(e => getEventTemporalStatus(e) === "past");
+    const { upcoming, past } = splitUpcomingPast(items);
+    const byTime = timeFilter === "all" ? [...upcoming, ...past]
+      : timeFilter === "tonight" ? sortByStartAscending(items.filter(e => isEventTonight(e)))
+      : timeFilter === "upcoming" ? upcoming
+      : past;
     if (salesFilter === "all") return byTime;
     if (salesFilter === "none") return byTime.filter(e => !e.primarySalesChannel);
     return byTime.filter(e => e.primarySalesChannel?.salesMode === salesFilter);
@@ -220,9 +251,7 @@ export default function EventsManager() {
                     <TableCell className="text-muted-foreground">{fmtDateTime(e.startsAt)}</TableCell>
                     <TableCell>{salesModeBadge(e)}</TableCell>
                     <TableCell>
-                      <Badge variant={e.status === "active" ? "default" : "outline"}>
-                        {e.status === "active" ? "Activo" : "Inactivo"}
-                      </Badge>
+                      <Badge variant={eventStatusBadge(e).variant}>{eventStatusBadge(e).label}</Badge>
                     </TableCell>
                     <TableCell>
                       <button

@@ -15,19 +15,26 @@ const { mockGetEventBySlug, mockListEventsByVenue, mockComputePurchaseAction } =
   mockComputePurchaseAction: vi.fn(),
 }));
 
-vi.mock("../db/eventsDb", () => ({
-  listEvents: vi.fn(),
-  getEventById: vi.fn(),
-  getEventBySlug: mockGetEventBySlug,
-  createEvent: vi.fn(),
-  updateEvent: vi.fn(),
-  setEventActive: vi.fn(),
-  setEventFeatured: vi.fn(),
-  setEventCommunities: vi.fn(),
-  listActiveEvents: vi.fn(),
-  listFeaturedEvents: vi.fn(),
-  listEventsByVenue: mockListEventsByVenue,
-}));
+vi.mock("../db/eventsDb", async (importOriginal) => {
+  // isEventStudentVisible es la función REAL (pura, sin BD) — el resto de
+  // eventsDb queda mockeado como antes de FIX-04. Sin esto, publicGetBySlug
+  // (que ahora la llama) lanza "no export defined on mock".
+  const actual = await importOriginal<typeof import("../db/eventsDb")>();
+  return {
+    listEvents: vi.fn(),
+    getEventById: vi.fn(),
+    getEventBySlug: mockGetEventBySlug,
+    createEvent: vi.fn(),
+    updateEvent: vi.fn(),
+    setEventActive: vi.fn(),
+    setEventFeatured: vi.fn(),
+    setEventCommunities: vi.fn(),
+    listActiveEvents: vi.fn(),
+    listFeaturedEvents: vi.fn(),
+    listEventsByVenue: mockListEventsByVenue,
+    isEventStudentVisible: actual.isEventStudentVisible,
+  };
+});
 
 vi.mock("../segolife/ticketing/purchaseAction", () => ({
   computePurchaseAction: mockComputePurchaseAction,

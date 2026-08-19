@@ -72,6 +72,7 @@ function normalizedEvent(overrides: Partial<Record<string, unknown>> = {}) {
     imageUrl: "https://example.invalid/flyer.jpg",
     startsAt: new Date("2027-01-10T23:00:00.000Z"),
     endsAt: new Date("2027-01-11T05:00:00.000Z"),
+    sourcePublicationStatus: "published" as const,
     ...overrides,
   };
 }
@@ -94,7 +95,7 @@ describe("syncEventCatalog — matching (spec §12-13)", () => {
     }, db);
 
     expect(result.items[0]).toMatchObject({ outcome: "mapped_existing", eventId: 42 });
-    expect(mockUpdateEvent).toHaveBeenCalledWith(42, { startsAt: normalizedEvent().startsAt, endsAt: normalizedEvent().endsAt }, db);
+    expect(mockUpdateEvent).toHaveBeenCalledWith(42, { startsAt: normalizedEvent().startsAt, endsAt: normalizedEvent().endsAt, sourcePublicationStatus: "published" }, db);
     expect(mockCreateEvent).not.toHaveBeenCalled();
     expect(inserts.some(i => "externalId" in i.values)).toBe(false); // no crea un mapping nuevo, ya existía
     expect(updates).toHaveLength(0); // el update pasa por eventsDb (mockeado), no por conn.update directo
@@ -135,7 +136,14 @@ describe("syncEventCatalog — matching (spec §12-13)", () => {
 
     expect(result.items[0]).toMatchObject({ outcome: "candidate_adopted", eventId: 55 });
     expect(mockCreateEvent).not.toHaveBeenCalled();
-    expect(mockUpdateEvent).not.toHaveBeenCalled(); // adoptar el mapping NUNCA reescribe el evento existente
+    // FIX-04 — adoptar SÍ registra el origen (antes no quedaba rastro de que
+    // este evento nativo ya estaba vinculado a Fourvenues, y
+    // isEventStudentVisible() nunca podía protegerlo) — pero NUNCA toca
+    // contenido editorial (name/description/imageUrl), que es lo que esta
+    // prueba protege realmente.
+    expect(mockUpdateEvent).toHaveBeenCalledWith(55, {
+      sourceType: "integration:fourvenues_integrations", sourceId: 1, sourcePublicationStatus: "published",
+    }, db);
     expect(inserts.some(i => i.values.externalType === "event" && i.values.internalId === 55)).toBe(true);
   });
 

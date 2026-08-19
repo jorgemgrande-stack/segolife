@@ -13,7 +13,9 @@ import {
   setEventFeatured,
   listActiveEvents,
   listFeaturedEvents,
+  listEventsByVenue,
   selectUpcomingWindow,
+  isEventStudentVisible,
   UPCOMING_WINDOW_DAYS,
   UPCOMING_EVENTS_LIMIT,
 } from "./eventsDb";
@@ -364,5 +366,126 @@ describe("selectUpcomingWindow — ventana de 20 días + fallback (spec MG-01 §
   it("respeta un límite razonable de resultados (UPCOMING_EVENTS_LIMIT) — documentado, mismo criterio que Tonight/Featured de no cargar cientos de eventos", () => {
     expect(UPCOMING_EVENTS_LIMIT).toBeGreaterThan(0);
     expect(UPCOMING_EVENTS_LIMIT).toBeLessThanOrEqual(20);
+  });
+});
+
+// ─── FIX-04 — Fourvenues Event Lifecycle & Publication Status ─────────────
+// REGLA FUNDAMENTAL: visibilidad de origen (Fourvenues) ≠ visibilidad admin
+// ≠ visibilidad pública del Student — isEventStudentVisible() decide SOLO
+// la tercera, sin componente temporal (eso lo decide cada llamador).
+
+describe("isEventStudentVisible — mapper/transición (spec FIX-04, nunca inventar 'published')", () => {
+  it("evento nativo (sin sourceType) activo → visible, aunque sourcePublicationStatus sea null", () => {
+    expect(isEventStudentVisible({ status: "active", sourceType: null, sourcePublicationStatus: null })).toBe(true);
+  });
+
+  it("evento nativo inactivo (status='inactive') → NUNCA visible, sea cual sea el origen", () => {
+    expect(isEventStudentVisible({ status: "inactive", sourceType: null, sourcePublicationStatus: null })).toBe(false);
+  });
+
+  it("evento Weezevent (event_integration, sourceType ajeno a Fourvenues) activo → visible — nunca sujeto al gate de publicación de Fourvenues", () => {
+    expect(isEventStudentVisible({ status: "active", sourceType: "weezevent", sourcePublicationStatus: null })).toBe(true);
+  });
+
+  it("evento Fourvenues activo + sourcePublicationStatus='published' → visible", () => {
+    expect(isEventStudentVisible({ status: "active", sourceType: "integration:fourvenues_integrations", sourcePublicationStatus: "published" })).toBe(true);
+  });
+
+  it("evento Fourvenues activo + sourcePublicationStatus='unpublished' (borrador real, caso pre-opening-x-fcking-wednesdays) → NUNCA visible", () => {
+    expect(isEventStudentVisible({ status: "active", sourceType: "integration:fourvenues_integrations", sourcePublicationStatus: "unpublished" })).toBe(false);
+  });
+
+  it("evento Fourvenues activo + sourcePublicationStatus='unknown' → NUNCA visible (fail-closed, nunca se asume publicado)", () => {
+    expect(isEventStudentVisible({ status: "active", sourceType: "integration:fourvenues_integrations", sourcePublicationStatus: "unknown" })).toBe(false);
+  });
+
+  it("evento Fourvenues activo + sourcePublicationStatus=null (nunca sincronizado tras la migración) → NUNCA visible — mismo criterio que 'unknown'", () => {
+    expect(isEventStudentVisible({ status: "active", sourceType: "integration:fourvenues_integrations", sourcePublicationStatus: null })).toBe(false);
+  });
+
+  it("evento Fourvenues inactivo (status='inactive') + sourcePublicationStatus='published' → NUNCA visible (status manda primero)", () => {
+    expect(isEventStudentVisible({ status: "inactive", sourceType: "integration:fourvenues_integrations", sourcePublicationStatus: "published" })).toBe(false);
+  });
+});
+
+/** Extiende blankEvent() con sourceType/sourcePublicationStatus para las pruebas de FIX-04. */
+function fourvenuesEvent(id: number, overrides: Partial<Record<string, unknown>> = {}) {
+  return blankEvent(id, { sourceType: "integration:fourvenues_integrations", sourcePublicationStatus: "unpublished", ...overrides });
+}
+
+describe("listActiveEvents/listFeaturedEvents — exclusión temporal (CASO A, event 119 nunca 'Activo' para el Student)", () => {
+  const now = new Date();
+  const pastDate = new Date(now.getTime() - 30 * DAY_MS); // claramente finalizado
+
+  it("listActiveEvents excluye un evento activo pero YA FINALIZADO — un evento de hace un mes nunca se ofrece como 'activo'/comprable (evento 119 real: Fourvenues, active/visible=true en origen, pero temporalmente pasado)", async () => {
+    const eventPast = fourvenuesEvent(119, { startsAt: pastDate, sourcePublicationStatus: "published" });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event: eventPast, venue: null }]);
+        if (phase === 2) return resolve([{ event: eventPast }]);
+        return resolve([]);
+      },
+    };
+    const items = await listActiveEvents(undefined, db as unknown as Parameters<typeof listActiveEvents>[1]);
+    expect(items).toHaveLength(0);
+  });
+
+  it("listActiveEvents SÍ devuelve un evento activo futuro (comportamiento normal, sin regresión)", async () => {
+    const eventFuture = blankEvent(2, { startsAt: new Date(now.getTime() + 10 * DAY_MS) });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event: eventFuture, venue: null }]);
+        if (phase === 2) return resolve([{ event: eventFuture }]);
+        return resolve([]);
+      },
+    };
+    const items = await listActiveEvents(undefined, db as unknown as Parameters<typeof listActiveEvents>[1]);
+    expect(items).toHaveLength(1);
+  });
+
+  it("listFeaturedEvents también excluye un destacado ya finalizado — la seguridad de publicación siempre prevalece sobre el flag Featured", async () => {
+    const eventPast = blankEvent(3, { isFeatured: true, startsAt: pastDate });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event: eventPast, venue: null }]);
+        if (phase === 2) return resolve([{ event: eventPast }]);
+        return resolve([]);
+      },
+    };
+    const items = await listFeaturedEvents(undefined, db as unknown as Parameters<typeof listFeaturedEvents>[1]);
+    expect(items).toHaveLength(0);
+  });
+});
+
+describe("listEventsByVenue — SIN exclusión temporal (preserva VenueDetail 'Past Events')", () => {
+  it("devuelve tanto eventos futuros como pasados — el filtro temporal es responsabilidad del cliente (splitUpcomingPast), no de esta función", async () => {
+    const now = new Date();
+    const eventPast = blankEvent(1, { startsAt: new Date(now.getTime() - 30 * DAY_MS) });
+    const eventFuture = blankEvent(2, { startsAt: new Date(now.getTime() + 10 * DAY_MS) });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event: eventPast, venue: null }, { event: eventFuture, venue: null }]);
+        if (phase === 2) return resolve([{ event: eventPast }, { event: eventFuture }]);
+        return resolve([]);
+      },
+    };
+    const items = await listEventsByVenue(10, db as unknown as Parameters<typeof listEventsByVenue>[1]);
+    expect(items.map(i => i.id).sort()).toEqual([1, 2]);
   });
 });

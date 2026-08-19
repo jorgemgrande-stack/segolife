@@ -105,6 +105,7 @@ export function createWeezeventAdapter(transport: IntegrationTransport, capabili
         startsAt: e.start ? new Date(e.start) : null, // nunca epoch — ver NormalizedEvent.startsAt
         endsAt: e.end ? new Date(e.end) : null,
         externalUrl: e.site_url ?? null,
+        sourcePublicationStatus: "unknown", // FIX-04 — Weezevent es event_integration (nunca pasa por eventCatalogSync, ver integrationSyncService.ts); sin señal real de publicación conocida
       }));
     },
 

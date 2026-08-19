@@ -33,6 +33,21 @@ interface FourvenuesIntEventDto {
   start?: number; // unix segundos
   end?: number;
   url?: string;
+  /**
+   * FIX-04 — confirmados presentes en la respuesta real (ya documentados en
+   * docs/integrations/fourvenues.md línea 88, pero antes NUNCA declarados en
+   * este DTO — se descartaban en silencio al mapear a NormalizedEvent).
+   * Verificado empíricamente contra Casanova/Tía Felisa 2026-08-19:
+   * `active=false` es la señal real de "borrador" (confirmado contra
+   * pre-opening-x-fcking-wednesdays, reportado como borrador por un humano
+   * verificando directamente en Fourvenues); `visible=false` aparece en
+   * eventos históricos claramente de prueba (p.ej. "PRUEBA para viernes
+   * FV") con active=true — se interpreta como "oculto en el propio
+   * storefront de Fourvenues aunque esté activo". Publicación real = ambos
+   * true (ver deriveSourcePublicationStatus).
+   */
+  active?: boolean;
+  visible?: boolean;
 }
 
 interface FourvenuesIntRateOptionDto {
@@ -81,6 +96,19 @@ function mapTicketStatus(ticket: FourvenuesIntTicketDto): NormalizedTicket["stat
   if (ticket.enter === 1) return "used";
   if (ticket.status && ticket.status !== "activated") return "cancelled";
   return "issued";
+}
+
+/**
+ * FIX-04 — deriva el estado de publicación real del evento en Fourvenues.
+ * Nunca asume "published" ante ausencia de datos (fail-closed): si el
+ * proveedor no devuelve `active`/`visible` en absoluto, el resultado es
+ * "unknown", nunca "published" — ver eventsDb.ts::isEventStudentVisible,
+ * que trata "unknown" como no visible para el Student.
+ */
+export function deriveSourcePublicationStatus(e: { active?: boolean; visible?: boolean }): "published" | "unpublished" | "unknown" {
+  if (e.active === undefined && e.visible === undefined) return "unknown";
+  if (e.active === true && e.visible !== false) return "published";
+  return "unpublished";
 }
 
 export interface FourvenuesSyncWindow {
@@ -271,6 +299,7 @@ export function createFourvenuesIntegrationsAdapter(transport: IntegrationTransp
         startsAt: e.start ? new Date(e.start * 1000) : null, // nunca epoch — ver NormalizedEvent.startsAt (Tía Felisa rollout, mismo riesgo que el bug real del scheduler)
         endsAt: e.end ? new Date(e.end * 1000) : null,
         externalUrl: e.url ?? null,
+        sourcePublicationStatus: deriveSourcePublicationStatus(e),
       }));
     },
 

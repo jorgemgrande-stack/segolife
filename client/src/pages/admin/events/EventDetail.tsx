@@ -14,8 +14,75 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { ArrowLeft, Loader2, CalendarDays, Star, Upload, ImageIcon, Plug } from "lucide-react";
 import { EventTicketingTab } from "./EventTicketingTab";
+import { getEventTemporalStatus, type EventTemporalStatus } from "@shared/segolife/eventTiming";
 
 const NONE = "__none__";
+
+const FOURVENUES_SOURCE_PREFIX = "integration:fourvenues";
+
+const PUBLICATION_STATUS_LABEL: Record<string, string> = {
+  published: "Publicado",
+  unpublished: "Borrador",
+  unknown: "Desconocido",
+};
+
+const TEMPORAL_STATUS_LABEL: Record<EventTemporalStatus, string> = {
+  upcoming: "Próximo",
+  ongoing: "En curso",
+  past: "Finalizado",
+};
+
+/**
+ * FIX-04 — bloque de origen Fourvenues (spec §37): Provider / estado de
+ * publicación en origen / estado temporal / última sincronización. Reutiliza
+ * datos ya existentes y seguros — integrations.listVenueIntegrations (misma
+ * query que /admin/integrations, ya autorizada para admin) para
+ * lastSyncAt del venue, y getEventTemporalStatus (shared/segolife/
+ * eventTiming.ts) para el estado temporal — nunca un volcado del payload
+ * crudo de Fourvenues, nunca una query nueva paralela.
+ */
+function EventFourvenuesSourceBlock({ event }: { event: { venueId: number | null; sourcePublicationStatus: string | null; startsAt: Date | string; endsAt: Date | string | null } }) {
+  const { data: venueIntegrations } = trpc.integrations.listVenueIntegrations.useQuery(
+    { venueId: event.venueId ?? undefined },
+    { enabled: event.venueId != null }
+  );
+  const fourvenuesIntegration = (venueIntegrations ?? []).find(i => i.providerKey === "fourvenues_integrations");
+  const publicationStatus = event.sourcePublicationStatus ?? "unknown";
+  const temporalStatus = getEventTemporalStatus(event);
+
+  return (
+    <div className="bg-card border border-border rounded-lg p-5">
+      <h3 className="text-sm font-semibold flex items-center gap-1.5 mb-3"><Plug className="w-4 h-4" /> Origen — Fourvenues</h3>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div>
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Proveedor</p>
+          <p className="text-sm text-foreground">Fourvenues</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Estado en origen</p>
+          <Badge variant={publicationStatus === "published" ? "default" : "secondary"}>
+            {PUBLICATION_STATUS_LABEL[publicationStatus] ?? publicationStatus}
+          </Badge>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Estado temporal</p>
+          <Badge variant={temporalStatus === "past" ? "outline" : "secondary"}>{TEMPORAL_STATUS_LABEL[temporalStatus]}</Badge>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Última sincronización</p>
+          <p className="text-sm text-foreground">
+            {fourvenuesIntegration?.lastSyncAt ? new Date(fourvenuesIntegration.lastSyncAt).toLocaleString("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
+          </p>
+        </div>
+      </div>
+      {publicationStatus !== "published" && (
+        <p className="text-xs text-muted-foreground mt-3">
+          Este evento está sincronizado desde Fourvenues pero NO está publicado en origen — no es visible ni comprable para el Student, aunque aparezca en este panel de administración.
+        </p>
+      )}
+    </div>
+  );
+}
 
 /** Pestaña Media — flyer del evento (Fase 8.6, punto 49). REUSE: mismo /api/upload/image. */
 function EventMediaTab({ eventId, imageUrl }: { eventId: number; imageUrl: string | null }) {
@@ -286,6 +353,17 @@ export default function EventDetail() {
             </div>
           </div>
         </div>
+
+        {detail.event.sourceType?.startsWith(FOURVENUES_SOURCE_PREFIX) && (
+          <EventFourvenuesSourceBlock
+            event={{
+              venueId: detail.event.venueId,
+              sourcePublicationStatus: detail.event.sourcePublicationStatus,
+              startsAt: detail.event.startsAt,
+              endsAt: detail.event.endsAt,
+            }}
+          />
+        )}
 
         <Tabs defaultValue="general">
           <TabsList>

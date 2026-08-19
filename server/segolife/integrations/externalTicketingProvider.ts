@@ -44,6 +44,14 @@ export interface NormalizedEvent {
   startsAt: Date | null;
   endsAt?: Date | null;
   externalUrl?: string | null;
+  /**
+   * FIX-04 — estado de publicación en el proveedor de origen, derivado por
+   * cada adapter de sus propios campos reales (nunca inventado aquí). Un
+   * adapter que no tenga forma de conocerlo debe devolver "unknown"
+   * explícitamente, nunca omitir el campo — eventCatalogSync.ts lo trata
+   * como obligatorio para poder aplicar fail-closed de forma consistente.
+   */
+  sourcePublicationStatus: "published" | "unpublished" | "unknown";
   raw?: Record<string, unknown>;
 }
 

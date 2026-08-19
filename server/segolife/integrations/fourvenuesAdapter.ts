@@ -112,6 +112,7 @@ export function createFourvenuesAdapter(transport: IntegrationTransport, capabil
         imageUrl: e.image ?? null,
         startsAt: e.start_date ? new Date(e.start_date) : null, // nunca epoch — ver NormalizedEvent.startsAt
         endsAt: e.end_date ? new Date(e.end_date) : null,
+        sourcePublicationStatus: "unknown", // FIX-04 — Channel Manager sin credenciales reales/sin uso; sin señal real de publicación conocida
         raw: { location_id: e.location_id },
       }));
     },

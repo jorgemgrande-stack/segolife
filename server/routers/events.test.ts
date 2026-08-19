@@ -33,12 +33,19 @@ vi.mock("../segolife/venues/venueAppService", async (importOriginal) => {
   return { ...actual, getVenueEventsView: mockGetVenueEventsView, getEventLiveStats: mockGetEventLiveStats };
 });
 
-// MG-01 — publicUpcoming (pestaña "Upcoming" de la Home).
-const { mockListUpcomingEvents } = vi.hoisted(() => ({ mockListUpcomingEvents: vi.fn() }));
+// MG-01 — publicUpcoming (pestaña "Upcoming" de la Home). FIX-04 —
+// publicGetBySlug (protección de acceso directo por slug a un borrador).
+const { mockListUpcomingEvents, mockGetEventBySlug } = vi.hoisted(() => ({
+  mockListUpcomingEvents: vi.fn(),
+  mockGetEventBySlug: vi.fn(),
+}));
 vi.mock("../db/eventsDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../db/eventsDb")>();
-  return { ...actual, listUpcomingEvents: mockListUpcomingEvents };
+  return { ...actual, listUpcomingEvents: mockListUpcomingEvents, getEventBySlug: mockGetEventBySlug };
 });
+
+const { mockComputePurchaseAction } = vi.hoisted(() => ({ mockComputePurchaseAction: vi.fn() }));
+vi.mock("../segolife/ticketing/purchaseAction", () => ({ computePurchaseAction: mockComputePurchaseAction }));
 
 import { eventsRouter } from "./events";
 
@@ -155,5 +162,77 @@ describe("events.publicUpcoming — MG-01 (pestaña Upcoming de la Home)", () =>
   it("una comunidad distinta (UVA en vez de IE) también resuelve como comunidad real, nunca hardcodeada", async () => {
     await callerWithoutSession().publicUpcoming({ communityId: 7 });
     expect(mockListUpcomingEvents).toHaveBeenCalledWith([7], expect.any(Date));
+  });
+});
+
+/**
+ * FIX-04 — protección de acceso directo por slug: conocer el slug NUNCA
+ * debe bastar para acceder a un borrador de Fourvenues (caso real:
+ * pre-opening-x-fcking-wednesdays). Mismo "no encontrado" que un slug
+ * inexistente, nunca revela que el evento existe en borrador — mismo
+ * criterio ya aplicado (antes de este cambio) al check de comunidad.
+ */
+function fourvenuesEventDetail(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    event: {
+      id: 42, slug: "pre-opening-x-fcking-wednesdays", status: "active",
+      sourceType: "integration:fourvenues_integrations", sourcePublicationStatus: "unpublished",
+      ...overrides,
+    },
+    venue: null,
+    communities: [],
+  };
+}
+
+describe("events.publicGetBySlug — FIX-04 (borrador de Fourvenues nunca accesible por slug directo)", () => {
+  beforeEach(() => {
+    mockGetEventBySlug.mockReset();
+    mockComputePurchaseAction.mockReset();
+  });
+
+  it("evento Fourvenues sourcePublicationStatus='unpublished' (caso real: pre-opening-x-fcking-wednesdays) -> null, NUNCA se expone", async () => {
+    mockGetEventBySlug.mockResolvedValue(fourvenuesEventDetail());
+    const result = await callerWithoutSession().publicGetBySlug({ slug: "pre-opening-x-fcking-wednesdays" });
+    expect(result).toBeNull();
+    expect(mockComputePurchaseAction).not.toHaveBeenCalled();
+  });
+
+  it("evento Fourvenues sourcePublicationStatus='unknown' -> null (fail-closed, nunca se asume publicado)", async () => {
+    mockGetEventBySlug.mockResolvedValue(fourvenuesEventDetail({ sourcePublicationStatus: "unknown" }));
+    const result = await callerWithoutSession().publicGetBySlug({ slug: "algun-evento" });
+    expect(result).toBeNull();
+  });
+
+  it("evento Fourvenues sourcePublicationStatus=null (nunca sincronizado tras la migración) -> null", async () => {
+    mockGetEventBySlug.mockResolvedValue(fourvenuesEventDetail({ sourcePublicationStatus: null }));
+    const result = await callerWithoutSession().publicGetBySlug({ slug: "algun-evento" });
+    expect(result).toBeNull();
+  });
+
+  it("evento Fourvenues sourcePublicationStatus='published' (caso real: event 119, temporal aparte) -> visible, calcula purchaseAction con normalidad", async () => {
+    mockGetEventBySlug.mockResolvedValue(fourvenuesEventDetail({ sourcePublicationStatus: "published" }));
+    mockComputePurchaseAction.mockResolvedValue({ type: "unavailable" });
+    const result = await callerWithoutSession().publicGetBySlug({ slug: "welcome-back-bash" });
+    expect(result).not.toBeNull();
+    expect(mockComputePurchaseAction).toHaveBeenCalled();
+  });
+
+  it("evento nativo (sin sourceType, nunca tocado por Fourvenues) activo -> visible, sin exigir sourcePublicationStatus — sin regresión sobre el catálogo nativo", async () => {
+    mockGetEventBySlug.mockResolvedValue(fourvenuesEventDetail({ sourceType: null, sourcePublicationStatus: null }));
+    mockComputePurchaseAction.mockResolvedValue({ type: "unavailable" });
+    const result = await callerWithoutSession().publicGetBySlug({ slug: "fiesta-nativa" });
+    expect(result).not.toBeNull();
+  });
+
+  it("evento inactivo (status='inactive') -> null, comportamiento previo intacto", async () => {
+    mockGetEventBySlug.mockResolvedValue(fourvenuesEventDetail({ status: "inactive", sourcePublicationStatus: "published" }));
+    const result = await callerWithoutSession().publicGetBySlug({ slug: "evento-desactivado" });
+    expect(result).toBeNull();
+  });
+
+  it("slug inexistente -> null, mismo camino que un borrador (nunca distingue las dos respuestas)", async () => {
+    mockGetEventBySlug.mockResolvedValue(null);
+    const result = await callerWithoutSession().publicGetBySlug({ slug: "no-existe" });
+    expect(result).toBeNull();
   });
 });

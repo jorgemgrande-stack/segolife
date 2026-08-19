@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createFourvenuesIntegrationsAdapter } from "./fourvenuesIntegrationsAdapter";
+import { createFourvenuesIntegrationsAdapter, deriveSourcePublicationStatus } from "./fourvenuesIntegrationsAdapter";
 import { CapabilityNotSupportedError, type IntegrationTransport } from "./externalTicketingProvider";
 import { createMockTransport } from "./mockTransport";
 import {
@@ -66,6 +66,47 @@ describe("FourvenuesIntegrationsAdapter — contract tests (Integrations API, fo
     const a = createFourvenuesIntegrationsAdapter(t);
     const events = await a.listEvents(credentials);
     expect(events[0].externalUrl).toBe("https://www.fourvenues.com/casanova/fixture");
+  });
+
+  it("listEvents deriva sourcePublicationStatus='published' del fixture base (active=true, visible=true)", async () => {
+    const events = await adapter.listEvents(credentials);
+    expect(events[0].sourcePublicationStatus).toBe("published");
+  });
+
+  // FIX-04 — deriveSourcePublicationStatus: confirmado empíricamente contra
+  // Casanova/Tía Felisa 2026-08-19 (pre-opening-x-fcking-wednesdays,
+  // reportado en borrador por un humano en Fourvenues: active=false,
+  // visible=true; "PRUEBA para viernes FV", evento de prueba histórico:
+  // active=true, visible=false). NUNCA asume "published" ante ausencia de
+  // datos (fail-closed) — ver eventsDb.ts::isEventStudentVisible.
+  describe("deriveSourcePublicationStatus (spec §mapper — nunca inventar 'published')", () => {
+    it("active=true, visible=true → published", () => {
+      expect(deriveSourcePublicationStatus({ active: true, visible: true })).toBe("published");
+    });
+    it("active=false, visible=true → unpublished (caso real: pre-opening-x-fcking-wednesdays)", () => {
+      expect(deriveSourcePublicationStatus({ active: false, visible: true })).toBe("unpublished");
+    });
+    it("active=true, visible=false → unpublished (caso real: evento de prueba oculto en Fourvenues)", () => {
+      expect(deriveSourcePublicationStatus({ active: true, visible: false })).toBe("unpublished");
+    });
+    it("active=false, visible=false → unpublished", () => {
+      expect(deriveSourcePublicationStatus({ active: false, visible: false })).toBe("unpublished");
+    });
+    it("ambos campos ausentes → unknown, NUNCA published por defecto", () => {
+      expect(deriveSourcePublicationStatus({})).toBe("unknown");
+    });
+    it("solo 'visible' presente (sin 'active') → unpublished, fail-closed (nunca published sin active=true confirmado)", () => {
+      expect(deriveSourcePublicationStatus({ visible: true })).toBe("unpublished");
+    });
+  });
+
+  it("listEvents — proveedor sin active/visible en absoluto (payload legacy) → sourcePublicationStatus='unknown', nunca 'published'", async () => {
+    const t = createMockTransport({
+      "GET /events/": { success: true, data: [{ ...fourvenuesIntEventsFixture.data[0], active: undefined, visible: undefined }] },
+    });
+    const a = createFourvenuesIntegrationsAdapter(t);
+    const events = await a.listEvents(credentials);
+    expect(events[0].sourcePublicationStatus).toBe("unknown");
   });
 
   it("listTicketTypes aplana options[] eligiendo la opción más barata, precio en céntimos, PERO preserva todas las opciones en raw.options (nunca se pierden)", async () => {
