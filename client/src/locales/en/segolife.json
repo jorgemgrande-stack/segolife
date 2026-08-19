@@ -592,6 +592,10 @@
     "typeEarned": "SegoTokens earned",
     "typeSpent": "SegoTokens spent",
     "typeClawback": "SegoTokens reversed (refund)",
+    "typePhoto": "Profile",
+    "photoAdded": "Profile photo added",
+    "photoUpdated": "Profile photo updated",
+    "photoRemoved": "Profile photo removed",
     "typeBenefitUnlocked": "Benefit unlocked",
     "typeBenefitUsed": "Benefit used"
   },

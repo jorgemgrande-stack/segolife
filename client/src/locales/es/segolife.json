@@ -592,6 +592,10 @@
     "typeEarned": "SegoTokens ganados",
     "typeSpent": "SegoTokens gastados",
     "typeClawback": "SegoTokens revertidos (reembolso)",
+    "typePhoto": "Perfil",
+    "photoAdded": "Foto de perfil añadida",
+    "photoUpdated": "Foto de perfil actualizada",
+    "photoRemoved": "Foto de perfil eliminada",
     "typeBenefitUnlocked": "Beneficio desbloqueado",
     "typeBenefitUsed": "Beneficio usado"
   },

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, Coins, Gift, CheckCircle2 } from "lucide-react";
+import { ChevronLeft, Coins, Gift, CheckCircle2, Camera } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
@@ -10,7 +10,7 @@ import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
 import { SegolifeRowSkeleton } from "@/components/segolife/SegolifeSkeletons";
 import { Button } from "@/components/ui/button";
 
-type ActivityEntryType = "earned" | "spent" | "clawback" | "benefitUnlocked" | "benefitUsed";
+type ActivityEntryType = "earned" | "spent" | "clawback" | "benefitUnlocked" | "benefitUsed" | "photoAdded" | "photoUpdated" | "photoRemoved";
 
 interface ActivityEntry {
   id: string;
@@ -27,6 +27,20 @@ const KICKER_KEY: Record<ActivityEntryType, string> = {
   clawback: "activity.typeClawback",
   benefitUnlocked: "activity.typeBenefitUnlocked",
   benefitUsed: "activity.typeBenefitUsed",
+  // MG-03B — Profile Photo Activity: kicker genérico compartido (mismo
+  // criterio kicker=categoría / label=detalle específico que ya usan
+  // ledger/benefits arriba) — el detalle específico (added/updated/removed)
+  // va en `label`, nunca duplicado aquí. Nunca un movimiento de SegoTokens
+  // (ver studentPhotoEventsDb.ts) — nunca aparece un importe (render de abajo).
+  photoAdded: "activity.typePhoto",
+  photoUpdated: "activity.typePhoto",
+  photoRemoved: "activity.typePhoto",
+};
+
+const PHOTO_LABEL_KEY: Record<"photoAdded" | "photoUpdated" | "photoRemoved", string> = {
+  photoAdded: "activity.photoAdded",
+  photoUpdated: "activity.photoUpdated",
+  photoRemoved: "activity.photoRemoved",
 };
 
 const ICON_STYLES: Record<ActivityEntryType, string> = {
@@ -41,11 +55,15 @@ const ICON_STYLES: Record<ActivityEntryType, string> = {
   clawback: "bg-destructive/10 text-destructive",
   benefitUnlocked: "bg-accent/10 text-accent",
   benefitUsed: "bg-primary/10 text-primary",
+  photoAdded: "bg-secondary text-muted-foreground",
+  photoUpdated: "bg-secondary text-muted-foreground",
+  photoRemoved: "bg-secondary text-muted-foreground",
 };
 
 function ActivityIcon({ type }: { type: ActivityEntryType }) {
   if (type === "benefitUnlocked") return <Gift className="size-5" aria-hidden="true" />;
   if (type === "benefitUsed") return <CheckCircle2 className="size-5" aria-hidden="true" />;
+  if (type === "photoAdded" || type === "photoUpdated" || type === "photoRemoved") return <Camera className="size-5" aria-hidden="true" />;
   return <Coins className="size-5" aria-hidden="true" />;
 }
 
@@ -67,8 +85,9 @@ export default function Activity() {
   const { data: ledger, isLoading: ledgerLoading } = trpc.tokens.listMyLedger.useQuery({ limit: 50, offset: 0 });
   const { isLoading: redemptionsLoading } = trpc.consumptionQr.myRedemptions.useQuery({ limit: 20 });
   const { data: benefits, isLoading: benefitsLoading } = trpc.benefits.myBenefits.useQuery();
+  const { data: photoEvents, isLoading: photoEventsLoading } = trpc.students.myPhotoActivity.useQuery();
 
-  const isLoading = ledgerLoading || redemptionsLoading || benefitsLoading;
+  const isLoading = ledgerLoading || redemptionsLoading || benefitsLoading || photoEventsLoading;
 
   const entries = useMemo<ActivityEntry[]>(() => {
     const items: ActivityEntry[] = [];
@@ -107,8 +126,23 @@ export default function Activity() {
       }
     }
 
+    // MG-03B — Profile Photo Activity: nunca lleva `amount` (ni +0 ni ningún
+    // otro valor) — no es un movimiento económico, ver render de abajo.
+    const PHOTO_TYPE: Record<"added" | "updated" | "removed", "photoAdded" | "photoUpdated" | "photoRemoved"> = {
+      added: "photoAdded", updated: "photoUpdated", removed: "photoRemoved",
+    };
+    for (const ev of photoEvents ?? []) {
+      const type = PHOTO_TYPE[ev.action];
+      items.push({
+        id: `photo-${ev.id}`,
+        type,
+        label: t(PHOTO_LABEL_KEY[type]),
+        at: new Date(ev.occurredAt),
+      });
+    }
+
     return items.sort((a, b) => b.at.getTime() - a.at.getTime());
-  }, [ledger, benefits, i18n.language]);
+  }, [ledger, benefits, photoEvents, i18n.language, t]);
 
   return (
     <SegolifeAppShell requireAuth hideNav title={t("activity.title")}>

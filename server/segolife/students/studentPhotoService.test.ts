@@ -10,12 +10,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import sharp from "sharp";
 
-const { mockGetStudentAvatarKey, mockUpdateStudentAvatarKey, mockPrivateStoragePut, mockPrivateStorageDelete, mockPrivateStorageGetBytes } = vi.hoisted(() => ({
+const { mockGetStudentAvatarKey, mockUpdateStudentAvatarKey, mockPrivateStoragePut, mockPrivateStorageDelete, mockPrivateStorageGetBytes, mockRecordStudentPhotoEvent } = vi.hoisted(() => ({
   mockGetStudentAvatarKey: vi.fn(),
   mockUpdateStudentAvatarKey: vi.fn(),
   mockPrivateStoragePut: vi.fn(),
   mockPrivateStorageDelete: vi.fn(),
   mockPrivateStorageGetBytes: vi.fn(),
+  mockRecordStudentPhotoEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../db/studentsDb", () => ({
@@ -28,6 +29,13 @@ vi.mock("../../storage", () => ({
   privateStoragePut: mockPrivateStoragePut,
   privateStorageDelete: mockPrivateStorageDelete,
   privateStorageGetBytes: mockPrivateStorageGetBytes,
+}));
+
+// MG-03B — Profile Photo Activity: se mockea para probar solo la ORQUESTACIÓN
+// (qué acción se registra y cuándo) — la escritura real ya está probada por
+// su cuenta en studentPhotoEventsDb.test.ts.
+vi.mock("./studentPhotoEventsDb", () => ({
+  recordStudentPhotoEvent: mockRecordStudentPhotoEvent,
 }));
 
 import {
@@ -157,6 +165,62 @@ describe("removeMyPhoto — limpieza (spec §15)", () => {
     await removeMyPhoto(42);
     expect(mockUpdateStudentAvatarKey).toHaveBeenCalledWith(42, null);
     expect(mockPrivateStorageDelete).not.toHaveBeenCalled();
+  });
+});
+
+describe("MG-03B — Profile Photo Activity: registro de added/updated/removed", () => {
+  it("primera foto (sin foto previa) → registra 'added', exactamente una vez", async () => {
+    mockGetStudentAvatarKey.mockResolvedValue(null);
+    mockPrivateStoragePut.mockResolvedValue({ key: "student-photos/42/first.jpg" });
+    const input = await realJpeg(400, 400);
+    await replaceMyPhoto(42, input, "image/jpeg");
+    expect(mockRecordStudentPhotoEvent).toHaveBeenCalledTimes(1);
+    expect(mockRecordStudentPhotoEvent).toHaveBeenCalledWith(42, "added");
+  });
+
+  it("reemplazo de una foto ya existente → registra 'updated', nunca 'added'", async () => {
+    mockGetStudentAvatarKey.mockResolvedValue("student-photos/42/old.jpg");
+    mockPrivateStoragePut.mockResolvedValue({ key: "student-photos/42/new.jpg" });
+    const input = await realJpeg(400, 400);
+    await replaceMyPhoto(42, input, "image/jpeg");
+    expect(mockRecordStudentPhotoEvent).toHaveBeenCalledTimes(1);
+    expect(mockRecordStudentPhotoEvent).toHaveBeenCalledWith(42, "updated");
+  });
+
+  it("eliminar una foto real → registra 'removed'", async () => {
+    mockGetStudentAvatarKey.mockResolvedValue("student-photos/42/key.jpg");
+    await removeMyPhoto(42);
+    expect(mockRecordStudentPhotoEvent).toHaveBeenCalledTimes(1);
+    expect(mockRecordStudentPhotoEvent).toHaveBeenCalledWith(42, "removed");
+  });
+
+  it("eliminar SIN tener foto (no-op real) → NUNCA registra 'removed' — idempotencia real, no solo de red (spec §7)", async () => {
+    mockGetStudentAvatarKey.mockResolvedValue(null);
+    await removeMyPhoto(42);
+    expect(mockRecordStudentPhotoEvent).not.toHaveBeenCalled();
+  });
+
+  it("si falla el registro de actividad, la foto YA guardada NUNCA se deshace (best-effort)", async () => {
+    mockGetStudentAvatarKey.mockResolvedValue(null);
+    mockPrivateStoragePut.mockResolvedValue({ key: "student-photos/42/first.jpg" });
+    mockRecordStudentPhotoEvent.mockRejectedValueOnce(new Error("boom"));
+    const input = await realJpeg(400, 400);
+    const result = await replaceMyPhoto(42, input, "image/jpeg");
+    expect(result.url).toBe("/api/students/42/photo");
+    expect(mockUpdateStudentAvatarKey).toHaveBeenCalled();
+  });
+
+  it("nunca toca token_ledger/SegoTokens — ni add ni update ni remove concede ni descuenta ST", async () => {
+    mockGetStudentAvatarKey.mockResolvedValueOnce(null).mockResolvedValueOnce("student-photos/42/key.jpg");
+    mockPrivateStoragePut.mockResolvedValue({ key: "student-photos/42/new.jpg" });
+    const input = await realJpeg(400, 400);
+    await replaceMyPhoto(42, input, "image/jpeg");
+    await removeMyPhoto(42);
+    // Ningún mock de tokenLedgerService fue siquiera importado/mockeado en
+    // este fichero — si replaceMyPhoto/removeMyPhoto tocaran el ledger de
+    // verdad, este test fallaría por intentar abrir una conexión MySQL real.
+    expect(mockRecordStudentPhotoEvent).toHaveBeenCalledWith(42, "added");
+    expect(mockRecordStudentPhotoEvent).toHaveBeenCalledWith(42, "removed");
   });
 });
 

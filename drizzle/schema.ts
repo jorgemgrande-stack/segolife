@@ -3858,6 +3858,22 @@ export const studentLoginEvents = mysqlTable("student_login_events", {
 export type StudentLoginEvent = typeof studentLoginEvents.$inferSelect;
 export type InsertStudentLoginEvent = typeof studentLoginEvents.$inferInsert;
 
+// ─── SEGOLIFE: STUDENT_PHOTO_EVENTS (MG-03B — Profile Photo Activity) ──────────
+// Mismo criterio exacto que student_login_events: histórico mínimo, sin
+// fabricar retroactivo, sin guardar la imagen/URL/path de storage (solo la
+// ACCIÓN — describe el hecho, nunca almacena una copia de la foto). Nunca
+// concede SegoTokens, nunca es un movimiento de token_ledger.
+export const studentPhotoEvents = mysqlTable("student_photo_events", {
+  id:           int("id").autoincrement().primaryKey(),
+  userId:       int("user_id").notNull(),
+  occurredAt:   timestamp("occurred_at").defaultNow().notNull(),
+  action:       mysqlEnum("action", ["added", "updated", "removed"]).notNull(),
+}, (table) => ({
+  userIdIdx: index("student_photo_events_user_id_idx").on(table.userId),
+}));
+export type StudentPhotoEvent = typeof studentPhotoEvents.$inferSelect;
+export type InsertStudentPhotoEvent = typeof studentPhotoEvents.$inferInsert;
+
 // ─── SEGOLIFE: STUDENT_ADMIN_ACTIONS (Student 360) ─────────────────────────────
 // Auditado antes de crearse (docs/students/student-360-audit-and-architecture.md
 // §7): para ajustes de SegoTokens y Benefits la trazabilidad YA existe

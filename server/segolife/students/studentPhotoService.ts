@@ -19,6 +19,7 @@ import { randomUUID } from "crypto";
 import sharp, { type Metadata } from "sharp";
 import { privateStoragePut, privateStorageDelete, privateStorageGetBytes } from "../../storage";
 import { getStudentAvatarKey, updateStudentAvatarKey, buildStudentPhotoUrl } from "../../db/studentsDb";
+import { recordStudentPhotoEvent } from "./studentPhotoEventsDb";
 
 export { buildStudentPhotoUrl };
 
@@ -105,6 +106,16 @@ export async function replaceMyPhoto(userId: number, rawBuffer: Buffer, declared
     await privateStorageDelete(previousKey);
   }
 
+  // MG-03B — Profile Photo Activity: describe la ACCIÓN de usuario (una
+  // llamada exitosa = una actividad), nunca cada operación técnica interna
+  // (upload+update BD+delete del anterior). Best-effort: un fallo aquí
+  // nunca deshace una foto ya guardada con éxito.
+  try {
+    await recordStudentPhotoEvent(userId, previousKey ? "updated" : "added");
+  } catch (err) {
+    console.error(`[StudentPhoto] No se pudo registrar la actividad (userId=${userId}):`, err instanceof Error ? err.message : err);
+  }
+
   return { url: buildStudentPhotoUrl(userId) };
 }
 
@@ -114,6 +125,16 @@ export async function removeMyPhoto(userId: number): Promise<void> {
   await updateStudentAvatarKey(userId, null);
   if (previousKey) {
     await privateStorageDelete(previousKey);
+  }
+  // MG-03B — solo hubo una eliminación REAL si ya había una foto; llamar a
+  // esto sin foto previa es un no-op y no debe generar una actividad falsa
+  // (idempotencia real, no solo de red — spec §7).
+  if (previousKey) {
+    try {
+      await recordStudentPhotoEvent(userId, "removed");
+    } catch (err) {
+      console.error(`[StudentPhoto] No se pudo registrar la actividad (userId=${userId}):`, err instanceof Error ? err.message : err);
+    }
   }
 }
 

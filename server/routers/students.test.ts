@@ -8,8 +8,12 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockRemoveMyPhoto } = vi.hoisted(() => ({ mockRemoveMyPhoto: vi.fn() }));
+const { mockRemoveMyPhoto, mockListPhotoEventsByUserId } = vi.hoisted(() => ({
+  mockRemoveMyPhoto: vi.fn(),
+  mockListPhotoEventsByUserId: vi.fn(),
+}));
 vi.mock("../segolife/students/studentPhotoService", () => ({ removeMyPhoto: mockRemoveMyPhoto }));
+vi.mock("../segolife/students/studentPhotoEventsDb", () => ({ listPhotoEventsByUserId: mockListPhotoEventsByUserId }));
 
 import { studentsRouter } from "./students";
 
@@ -50,6 +54,10 @@ describe("students router — endpoint privado (nunca público)", () => {
   it("students.removeMyPhoto (MG-03, autoservicio) rechaza sin sesión", async () => {
     await expect(callerWithoutSession().removeMyPhoto()).rejects.toThrow(/please login/i);
   });
+
+  it("students.myPhotoActivity (MG-03B, autoservicio) rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().myPhotoActivity()).rejects.toThrow(/please login/i);
+  });
 });
 
 describe("students.removeMyPhoto — siempre el propio ctx.user.id, nunca un id del cliente (MG-03)", () => {
@@ -61,5 +69,22 @@ describe("students.removeMyPhoto — siempre el propio ctx.user.id, nunca un id 
     expect(result).toEqual({ success: true });
     expect(mockRemoveMyPhoto).toHaveBeenCalledWith(42);
     expect(mockRemoveMyPhoto).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("students.myPhotoActivity — IDOR: siempre el propio ctx.user.id, ningún Student puede leer la actividad de otro (MG-03B)", () => {
+  it("con sesión, consulta SOLO con el id de la sesión real — el procedure no acepta ningún userId de input", async () => {
+    mockListPhotoEventsByUserId.mockResolvedValue([{ id: 1, userId: 42, action: "added", occurredAt: new Date() }]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const callerA = studentsRouter.createCaller({ user: { id: 42, role: "user" } } as any);
+    await callerA.myPhotoActivity();
+    expect(mockListPhotoEventsByUserId).toHaveBeenCalledWith(42);
+
+    mockListPhotoEventsByUserId.mockClear();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const callerB = studentsRouter.createCaller({ user: { id: 99, role: "user" } } as any);
+    await callerB.myPhotoActivity();
+    expect(mockListPhotoEventsByUserId).toHaveBeenCalledWith(99);
+    expect(mockListPhotoEventsByUserId).not.toHaveBeenCalledWith(42);
   });
 });

@@ -20,6 +20,7 @@ import {
 import { recordStudentAdminAction } from "../segolife/students/studentAdminActionsDb";
 import { listStudentsBySegment } from "../segolife/students/studentSegmentFilterService";
 import { removeMyPhoto } from "../segolife/students/studentPhotoService";
+import { listPhotoEventsByUserId } from "../segolife/students/studentPhotoEventsDb";
 import { getDb } from "../db";
 
 // Lectura del CRM de estudiantes: ver el listado/fichas.
@@ -255,4 +256,9 @@ export const studentsRouter = router({
     await removeMyPhoto(ctx.user.id);
     return { success: true };
   }),
+
+  // MG-03B — Profile Photo Activity: siempre ctx.user.id (nunca un userId de
+  // input), mismo criterio de autoservicio que el resto de este router —
+  // ningún Student puede leer la actividad de foto de otro.
+  myPhotoActivity: protectedProcedure.query(async ({ ctx }) => listPhotoEventsByUserId(ctx.user.id)),
 });

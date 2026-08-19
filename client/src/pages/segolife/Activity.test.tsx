@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { Route } from "wouter";
-import "@/lib/i18n";
+import i18n from "@/lib/i18n";
 
 /**
  * Activity.test.tsx — FIX-01. Primera cobertura de esta página. El caso
@@ -13,7 +13,7 @@ import "@/lib/i18n";
  * ver Activity.tsx, y el Student se habría quedado sin saber cuántos
  * SegoTokens le retiraron).
  */
-const { mockAuthMe, mockHomeSummary, mockStudentsMe, mockUseCommunity, mockListMyLedger, mockMyRedemptions, mockMyBenefits, noopQuery } = vi.hoisted(() => ({
+const { mockAuthMe, mockHomeSummary, mockStudentsMe, mockUseCommunity, mockListMyLedger, mockMyRedemptions, mockMyBenefits, mockMyPhotoActivity, noopQuery } = vi.hoisted(() => ({
   mockAuthMe: vi.fn(),
   mockHomeSummary: vi.fn(),
   mockStudentsMe: vi.fn(),
@@ -21,6 +21,7 @@ const { mockAuthMe, mockHomeSummary, mockStudentsMe, mockUseCommunity, mockListM
   mockListMyLedger: vi.fn(),
   mockMyRedemptions: vi.fn(),
   mockMyBenefits: vi.fn(),
+  mockMyPhotoActivity: vi.fn(),
   noopQuery: () => ({ data: undefined, isLoading: false }),
 }));
 
@@ -31,7 +32,7 @@ vi.mock("@/lib/trpc", () => ({
       logout: { useMutation: () => ({ mutate: vi.fn() }) },
     },
     home: { getSummary: { useQuery: mockHomeSummary } },
-    students: { me: { useQuery: mockStudentsMe } },
+    students: { me: { useQuery: mockStudentsMe }, myPhotoActivity: { useQuery: mockMyPhotoActivity } },
     studentNotifications: { unreadCount: { useQuery: noopQuery } },
     communities: { list: { useQuery: noopQuery }, myMemberships: { useQuery: noopQuery } },
     config: { getPublicSettings: { useQuery: noopQuery } },
@@ -88,9 +89,13 @@ beforeEach(() => {
   mockStudentsMe.mockReturnValue({ data: undefined });
   mockMyRedemptions.mockReturnValue({ data: [], isLoading: false });
   mockMyBenefits.mockReturnValue({ data: [], isLoading: false });
+  mockMyPhotoActivity.mockReturnValue({ data: [], isLoading: false });
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  i18n.changeLanguage("en");
+});
 
 const CLAWBACK_KICKER = /segotokens reversed \(refund\)|segotokens revertidos \(reembolso\)/i;
 const SPENT_KICKER = /segotokens spent|segotokens gastados/i;
@@ -142,5 +147,54 @@ describe("Activity — FIX-01: un clawback (sourceType='reversal') nunca se conf
     mockListMyLedger.mockReturnValue({ data: undefined, isLoading: false });
     renderAt("/ie/activity");
     expect(screen.getByText(/no activity yet|todavía no tienes actividad/i)).toBeInTheDocument();
+  });
+});
+
+describe("Activity — MG-03B: Profile Photo Activity (added/updated/removed, sin ST)", () => {
+  function photoEvent(id: number, action: "added" | "updated" | "removed", occurredAt: string) {
+    return { id, userId: 42, action, occurredAt: new Date(occurredAt) };
+  }
+
+  it("un evento 'added' se renderiza como 'Profile photo added' (EN)", async () => {
+    await i18n.changeLanguage("en");
+    mockMyPhotoActivity.mockReturnValue({ data: [photoEvent(1, "added", "2026-08-15T10:00:00Z")], isLoading: false });
+    renderAt("/ie/activity");
+    expect(screen.getByText("Profile photo added")).toBeInTheDocument();
+  });
+
+  it("un evento 'updated' se renderiza como 'Foto de perfil actualizada' (ES)", async () => {
+    await i18n.changeLanguage("es");
+    mockMyPhotoActivity.mockReturnValue({ data: [photoEvent(2, "updated", "2026-08-15T10:00:00Z")], isLoading: false });
+    renderAt("/ie/activity");
+    expect(screen.getByText("Foto de perfil actualizada")).toBeInTheDocument();
+  });
+
+  it("un evento 'removed' se renderiza correctamente", async () => {
+    await i18n.changeLanguage("en");
+    mockMyPhotoActivity.mockReturnValue({ data: [photoEvent(3, "removed", "2026-08-15T10:00:00Z")], isLoading: false });
+    renderAt("/ie/activity");
+    expect(screen.getByText("Profile photo removed")).toBeInTheDocument();
+  });
+
+  it("NUNCA muestra un importe de SegoTokens junto a un evento de foto — ni +0 ni ningún otro valor", async () => {
+    await i18n.changeLanguage("en");
+    mockMyPhotoActivity.mockReturnValue({ data: [photoEvent(1, "added", "2026-08-15T10:00:00Z")], isLoading: false });
+    renderAt("/ie/activity");
+    expect(screen.queryByText(/^\+0$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^-0$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^\+\d+$/)).not.toBeInTheDocument();
+  });
+
+  it("orden temporal correcto: un evento de foto se intercala con el ledger por fecha real, no aparece siempre al final", async () => {
+    await i18n.changeLanguage("en");
+    mockListMyLedger.mockReturnValue({
+      data: [{ id: 1, direction: "credit", amount: 50, reason: "Compra", sourceType: "ticket", createdAt: new Date("2026-08-10T10:00:00Z") }],
+      isLoading: false,
+    });
+    mockMyPhotoActivity.mockReturnValue({ data: [photoEvent(1, "added", "2026-08-20T10:00:00Z")], isLoading: false });
+    renderAt("/ie/activity");
+    const rows = screen.getAllByText(/Profile photo added|Compra/);
+    // El evento de foto (20 ago) es más reciente que la compra (10 ago) — debe aparecer PRIMERO.
+    expect(rows[0]).toHaveTextContent("Profile photo added");
   });
 });
