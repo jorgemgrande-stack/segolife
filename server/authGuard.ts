@@ -166,6 +166,7 @@ const PUBLIC_TRPC_ROUTES = new Set([
   "events.publicByVenue",
   "events.publicGetBySlug",
   "events.publicUpcoming",
+  "events.publicEnded", // FIX-05A — Ended Events (Explore + VenueDetail), navegable sin sesión igual que el resto de public*
 
   // ── Segolife: Referral & Invite Rewards Engine (Fase 8) — landing pública
   //    de invitación /invite/:code, el visitante todavía no tiene sesión ──
@@ -185,7 +186,8 @@ function extractProcedureNames(url: string): string[] {
   return procedurePart.split(",").map(p => p.trim()).filter(Boolean);
 }
 
-function isPublicRoute(procedures: string[]): boolean {
+/** Exportado solo para tests (authGuard.test.ts) — evita reimplementar la lista blanca ni mockear Express req/res/next para probar esta decisión pura. */
+export function isPublicRoute(procedures: string[]): boolean {
   return procedures.every(p => PUBLIC_TRPC_ROUTES.has(p));
 }
 
