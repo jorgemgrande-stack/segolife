@@ -494,9 +494,10 @@ function AdminLayoutInner({ children, title }: AdminLayoutProps) {
     .filter((item) => isFlagVisible((item as { flagKey?: string }).flagKey));
 
   // ── Feed unificado de notificaciones (polling cada 60s) ─────────────────
-  // El endpoint `notifications.feed` agrega 6 fuentes (leads, quotes,
-  // cancellations, pending_payments, tpv_alerts, upcoming_reservations),
-  // excluyendo los items que este usuario ya ha silenciado.
+  // El endpoint `notifications.feed` agrega 7 fuentes (leads, quotes,
+  // cancellations, pending_payments, tpv_alerts, upcoming_reservations,
+  // fourvenues_publication — FIX-05), excluyendo los items que este usuario
+  // ya ha silenciado.
   const utils = trpc.useUtils();
   const { data: feed } = trpc.notifications.feed.useQuery(undefined, {
     enabled: isAuthenticated && ["admin", "agente"].includes(userRole),
@@ -517,7 +518,7 @@ function AdminLayoutInner({ children, title }: AdminLayoutProps) {
     onSuccess: () => utils.notifications.feed.invalidate(),
   });
 
-  type FeedKind = "lead" | "quote" | "cancellation" | "pending_payment" | "tpv_alert" | "upcoming_reservation";
+  type FeedKind = "lead" | "quote" | "cancellation" | "pending_payment" | "tpv_alert" | "upcoming_reservation" | "fourvenues_publication";
   const severityColor: Record<string, string> = {
     info:     "text-sky-400",
     warning:  "text-amber-400",
