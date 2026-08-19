@@ -10,8 +10,10 @@
  * aquí con test de regresión explícito.
  */
 import { describe, it, expect } from "vitest";
-import { filterTonight } from "./homeSummaryService";
+import { filterTonight, pickTicketToday } from "./homeSummaryService";
 import type { EventListItem } from "../../db/eventsDb";
+import type { MyTicketWithEvent } from "../ticketing/ticketingDb";
+import type { EventTicket } from "../../../drizzle/schema";
 
 function makeEvent(id: number, startsAt: Date): EventListItem {
   return {
@@ -36,6 +38,111 @@ function makeEvent(id: number, startsAt: Date): EventListItem {
     primarySalesChannel: null,
   };
 }
+
+function makeTicket(id: number, eventId: number, eventStartsAt: Date, overrides: Partial<{ status: EventTicket["status"]; qrToken: string | null }> = {}): MyTicketWithEvent {
+  return {
+    ticket: {
+      id, eventId, ticketTypeId: null, orderId: 900, userId: 42,
+      salesChannel: "native", provider: null, externalTicketId: null, externalParticipantId: null,
+      status: overrides.status ?? "issued",
+      qrToken: overrides.qrToken !== undefined ? overrides.qrToken : `qr-${id}`,
+      qrTokenHash: null, issuedAt: new Date("2026-08-01"), cancelledAt: null, refundedAt: null,
+      metadata: null, createdAt: new Date("2026-08-01"), updatedAt: new Date("2026-08-01"),
+    },
+    event: { id: eventId, name: `Event ${eventId}`, slug: `event-${eventId}`, startsAt: eventStartsAt, imageUrl: null },
+  };
+}
+
+describe("pickTicketToday — FIX-02: mismo día operativo (06:00 Europe/Madrid) que filterTonight, nunca medianoche de calendario", () => {
+  // Mismo evento de referencia que filterTonight: 2026-08-18 22:00 Madrid (CEST, UTC+2) = 20:00 UTC.
+  const eventTonight = new Date("2026-08-18T20:00:00Z");
+
+  it("REGRESIÓN — a las 23:59 (mismo día de calendario) el ticket de esta noche sigue apareciendo", () => {
+    const at = new Date("2026-08-18T21:59:00Z"); // 23:59 Madrid
+    const result = pickTicketToday([makeTicket(1, 10, eventTonight)], at);
+    expect(result?.id).toBe(1);
+  });
+
+  it("REGRESIÓN — a las 00:00 EXACTAS (medianoche de calendario cruzada) el ticket NUNCA desaparece — bug real de MG-01 heredado, ahora corregido", () => {
+    const at = new Date("2026-08-18T22:00:00Z"); // 00:00 Madrid del día siguiente
+    const result = pickTicketToday([makeTicket(1, 10, eventTonight)], at);
+    expect(result?.id).toBe(1);
+  });
+
+  it("a las 00:30 el ticket sigue apareciendo — misma noche operativa", () => {
+    const at = new Date("2026-08-18T22:30:00Z"); // 00:30 Madrid
+    const result = pickTicketToday([makeTicket(1, 10, eventTonight)], at);
+    expect(result?.id).toBe(1);
+  });
+
+  it("a las 02:00 el ticket sigue apareciendo", () => {
+    const at = new Date("2026-08-19T00:00:00Z"); // 02:00 Madrid
+    const result = pickTicketToday([makeTicket(1, 10, eventTonight)], at);
+    expect(result?.id).toBe(1);
+  });
+
+  it("a las 05:59 (último minuto antes del corte operativo) el ticket TODAVÍA aparece", () => {
+    const at = new Date("2026-08-19T03:59:00Z"); // 05:59 Madrid
+    const result = pickTicketToday([makeTicket(1, 10, eventTonight)], at);
+    expect(result?.id).toBe(1);
+  });
+
+  it("a las 06:00 EXACTAS (corte operativo real) el ticket de la noche anterior YA NO aparece como 'hoy'", () => {
+    const at = new Date("2026-08-19T04:00:00Z"); // 06:00 Madrid — cruza el corte operativo
+    const result = pickTicketToday([makeTicket(1, 10, eventTonight)], at);
+    expect(result).toBeNull();
+  });
+
+  it("DST Europe/Madrid (cambio de horario, 2026-10-25 CEST→CET) — un ticket de la noche que cruza la transición sigue resolviendo a la misma noche operativa", () => {
+    // Evento 2026-10-24 23:00 Madrid (CEST, UTC+2) = 21:00 UTC.
+    const eventAcrossDst = new Date("2026-10-24T21:00:00Z");
+    // `at` 2026-10-25 04:00 Madrid — YA en CET (UTC+1), tras la transición a las 03:00 CEST/02:00 CET = 03:00 UTC.
+    const at = new Date("2026-10-25T03:00:00Z");
+    const result = pickTicketToday([makeTicket(1, 10, eventAcrossDst)], at);
+    expect(result?.id).toBe(1);
+  });
+
+  it("evento de la noche ANTERIOR (ya pasada) no aparece como ticket de hoy", () => {
+    const eventYesterday = new Date("2026-08-17T20:00:00Z"); // 22:00 Madrid, noche anterior
+    const at = eventTonight; // 22:00 Madrid de la noche siguiente
+    const result = pickTicketToday([makeTicket(1, 10, eventYesterday)], at);
+    expect(result).toBeNull();
+  });
+
+  it("evento de la noche SIGUIENTE (todavía no llega) no aparece como ticket de hoy", () => {
+    const eventTomorrow = new Date("2026-08-19T20:00:00Z"); // 22:00 Madrid, noche siguiente
+    const at = eventTonight;
+    const result = pickTicketToday([makeTicket(1, 10, eventTomorrow)], at);
+    expect(result).toBeNull();
+  });
+
+  it("un ticket 'used' NUNCA se propone como el ticket de hoy, aunque el evento sea el de esta noche", () => {
+    const at = eventTonight;
+    const result = pickTicketToday([makeTicket(1, 10, eventTonight, { status: "used" })], at);
+    expect(result).toBeNull();
+  });
+
+  it("un ticket 'issued' válido de esta noche sí se propone, con qrToken real", () => {
+    const at = eventTonight;
+    const result = pickTicketToday([makeTicket(1, 10, eventTonight, { qrToken: "real-qr-abc" })], at);
+    expect(result).toEqual({
+      id: 1, qrToken: "real-qr-abc",
+      event: { id: 10, name: "Event 10", slug: "event-10", startsAt: eventTonight, imageUrl: null },
+    });
+  });
+
+  it("múltiples tickets: solo el 'issued' de esta noche se propone — ignora used, ayer y mañana", () => {
+    const at = eventTonight;
+    const tickets = [
+      makeTicket(1, 10, new Date("2026-08-17T20:00:00Z")), // ayer, issued — no cuenta
+      makeTicket(2, 11, eventTonight, { status: "used" }), // hoy pero used — no cuenta
+      makeTicket(3, 12, eventTonight), // hoy, issued — ESTE
+      makeTicket(4, 13, new Date("2026-08-19T20:00:00Z")), // mañana, issued — no cuenta
+    ];
+    const result = pickTicketToday(tickets, at);
+    expect(result?.id).toBe(3);
+  });
+});
 
 describe("filterTonight — día operativo de nightlife (spec MG-01 §3)", () => {
   // 2026-08-18 22:00 Europe/Madrid (CEST, UTC+2) = 20:00 UTC.

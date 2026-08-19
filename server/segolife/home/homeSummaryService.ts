@@ -22,7 +22,7 @@ import { tokenRules, tokenLedger, type TokenRule } from "../../../drizzle/schema
 import { getWalletByUserId, type AnyDbHandle } from "../tokens/tokenLedgerService";
 import { countRecentEarnEvents, countDistinctVenuesVisited } from "../tokens/tokenLedgerService";
 import { calculateBaseTokens, findApplicableCampaign } from "../tokens/tokenRuleEngine";
-import { resolveMadridMoment, resolveOperationalDate } from "../tokens/tokenScheduleService";
+import { resolveOperationalDate } from "../tokens/tokenScheduleService";
 import { listUserBenefits, listMarketplaceBenefits, type UserBenefitListItemWithDefinition, type MarketplaceBenefitItem } from "../../db/benefitsDb";
 import { listActiveEvents, listFeaturedEvents, type EventListItem } from "../../db/eventsDb";
 import { listMyTickets, type MyTicketWithEvent } from "../ticketing/ticketingDb";
@@ -223,11 +223,25 @@ async function computeCrossVenueDiscovery(userId: number, communityId: number | 
   return { bonus: calculateBaseTokens(rule, {}), visited, threshold: rule.recurrenceThreshold! };
 }
 
-/** Ticket propio (nativo) para un evento de HOY (spec §12) — solo status="issued" expone qrToken, igual que ticketPurchase.myTickets. Nunca inventa un ticket si no hay ninguno real emitido. */
-function pickTicketToday(tickets: MyTicketWithEvent[], at: Date): HomeTicket | null {
-  const today = resolveMadridMoment(at).date;
+/**
+ * Ticket propio (nativo) para un evento de HOY (spec §12) — solo
+ * status="issued" expone qrToken, igual que ticketPurchase.myTickets. Nunca
+ * inventa un ticket si no hay ninguno real emitido.
+ *
+ * FIX-02 — bug real heredado de MG-01: esta función seguía comparando
+ * `resolveMadridMoment` (medianoche de calendario) en vez del día OPERATIVO
+ * de nightlife (límite 06:00 Europe/Madrid) que `filterTonight` ya usa
+ * arriba en este mismo archivo desde MG-01. Un ticket válido para una
+ * fiesta que empezó, p.ej., a las 23:30 desaparecía artificialmente de
+ * "hoy" en cuanto el reloj cruzaba la medianoche de calendario (00:00),
+ * aunque la noche siguiera en curso — mismo bug, misma causa raíz,
+ * distinta función. Se reutiliza EXACTAMENTE el mismo predicado que
+ * filterTonight, sin duplicar lógica de fecha nueva.
+ */
+export function pickTicketToday(tickets: MyTicketWithEvent[], at: Date): HomeTicket | null {
+  const today = resolveOperationalDate(at);
   const match = tickets.find(t =>
-    t.ticket.status === "issued" && t.event != null && resolveMadridMoment(new Date(t.event.startsAt)).date === today
+    t.ticket.status === "issued" && t.event != null && resolveOperationalDate(new Date(t.event.startsAt)) === today
   );
   if (!match || !match.event) return null;
   return {
