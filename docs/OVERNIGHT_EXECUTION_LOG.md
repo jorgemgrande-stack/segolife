@@ -77,3 +77,21 @@ Búsqueda exhaustiva de una definición canónica previa: `git log --all --oneli
 Misma búsqueda exhaustiva: `git log --all` (0 commits con "MG-04"/"MG04"), `grep -rn "MG-04"` en todo el repo (0 resultados), `docs/SEGOLIFE_ROADMAP.md` y `docs/PRE16_OVERNIGHT_WORKLOG.md` (0 resultados), memoria de sesiones previas (0 referencias). No existe ninguna especificación de negocio para "MG-04" en ningún lugar del repositorio ni de las conversaciones previas indexadas.
 
 **Clasificación: MG-04 = BUSINESS SPEC NOT FOUND.**
+
+---
+
+## 5. Community Proposals — auditoría inicial y hallazgo CRITICAL/HIGH (IDOR)
+
+**Arquitectura encontrada:** dos sistemas SEPARADOS bajo el nombre "COMUNITY", confirmados por el propio comentario de `drizzle/schema.ts` (línea ~6060): `community_student_proposals` (ideas simples de Student — título/descripción/venue/suggestedDate/category, apoyo tipo "me gusta" vía `community_supports`, lifecycle de moderación `pending_moderation→approved/rejected`) y `community_proposals` (encuestas estructuradas de Admin — tipo de pregunta, audiencia segmentada, timing/urgencia, visibilidad de resultados). Un admin puede "convertir" una idea aprobada en una encuesta formal (`sourceStudentProposalId`), pero nunca se reescribe la fila original. El wizard Admin (`ComunityWizard.tsx`) es de la SEGUNDA familia — sus campos de audiencia/tipo de pregunta/visibilidad de resultados son estructuralmente admin-only y quedan fuera de alcance para el formulario Student, tal y como exige el spec (§12: "NO permitir al Student elegir... moderación... estados internos").
+
+**Hallazgo CRITICAL/HIGH (IDOR real, corregido antes de continuar per spec §5):** `server/routers/community.ts::submitProposal` aceptaba `communityId` directamente del body de la petición SIN comprobar nunca que el Student que llama fuera realmente miembro de esa comunidad — ni el router ni `submitStudentProposal` (`communityStudentProposalDb.ts`) validaban membresía. El cliente (`ProponerTab`) siempre envía la comunidad real vía `useCommunity()`, pero nada en el servidor impedía manipular la petición (devtools/API directa) para proponer en la comunidad de otro Student — vulnerabilidad activa en producción hasta este fix.
+
+**Fix:** se añade una comprobación de membresía real (`getUserCommunities(ctx.user.id)` + `FORBIDDEN` si no hay overlap) en el router, antes de llamar a `submitStudentProposal` — sin tocar su firma ni su lógica de escritura, reutilizando el mismo patrón `getUserCommunities`/`assertUserAccessible` ya establecido en `tokens.ts`.
+
+**Tests:** 4 nuevos en `community.test.ts` (regresión IDOR explícita, caso feliz con membresía real, edge case sin ninguna comunidad, membresía IE+UVA doble). 19/19 verde. TypeScript 118 (baseline, cero nuevos).
+
+**Commit:** `b8850c4` (rama `fix/community-proposal-idor`).
+
+**Deploy:** Railway Online, deployment `1ab414ab-7221-49a2-82e6-0c2786abbe8f`, health/ready 200, logs limpios.
+
+**Hallazgo adicional (no bug, oportunidad de reutilización):** el backend YA acepta `venueId`/`suggestedDate`/`category` en `submitProposal` (validados por zod, escritos en `communityStudentProposalDb.ts`) — el frontend (`ProponerTab`) nunca los expone. Esto reduce sustancialmente el trabajo de la extensión de UX pedida en el backlog (§12): no hace falta tocar backend/schema para venue/fecha sugerida/categoría, solo el formulario. Continúa la extensión de UI a continuación.
