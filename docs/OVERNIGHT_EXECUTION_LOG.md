@@ -100,6 +100,34 @@ Misma búsqueda exhaustiva: `git log --all` (0 commits con "MG-04"/"MG04"), `gre
 
 ---
 
+## 7. Integration Health (backlog §18) + FIX-01 Operational Review (§19)
+
+**Superficie ya existente encontrada:** `client/src/pages/admin/integrations/IntegrationsManager.tsx` + `integrations.getSchedulerStatus` — panel admin YA completo por integración (`schedulerProcessRunning`, `lastSuccessAt`, `lastErrorMessage`, `due`/`nextDueAt`, `syncIntervalMinutes`, `loyaltyEnabled`, polling cada 30s). No se construye nada nuevo — spec §18 explícitamente lo pide así ("reutiliza... Command Center... NO construyas una plataforma de observabilidad nueva").
+
+**Fourvenues:** configured=SÍ (credenciales por integración en BD, no env vars globales). Scheduler activo (`fourvenues_scheduler_enabled=true`), confirmado en los logs de CADA uno de los ~9 despliegues de esta sesión — tick cada minuto, catalog+incremental sync, `status=success` sin una sola vez `failed>0` observada en toda la noche. Último evento real: 29 eventos en catálogo, sincronización limpia.
+
+**Brevo:** `BREVO_API_KEY`/`BREVO_WEBHOOK_TOKEN` presentes en Railway (verificado por NOMBRE de variable únicamente, vía `railway variables --json`, nunca se imprimió ningún valor). Estado operativo completo (si el envío real funciona de extremo a extremo) no verificable esta noche sin credenciales admin ni un envío real controlado — clasificado **MANUAL/CONTROLLED TEST REQUIRED** (spec §22), no forzado.
+
+**Payment Provider:** confirmado **EXTERNAL DEPENDENCY** — cero variables `REDSYS_*`/`PAYMENT_*` en Railway (verificado por nombre), consistente con el hallazgo de código de FIX-01 (`unconfiguredPaymentProvider` en uso). Sin cambios — no se inventan credenciales, no se conecta ningún sandbox como si fuera producción.
+
+**Schedulers:** `FourvenuesScheduler` y `EngagementScheduler` activos (confirmado en logs de cada deploy). El resto (Abandoned Checkout, Installment Overdue, Cancellation Stale, Email Ingestion, Expense Email Ingestion, Commercial Email Sync, Card Terminal Matching/Relink, Email Automation, Tax Reminder) desactivados por feature flag — estado esperado, sin cambios.
+
+**Token Clawback Reconciliation (FIX-01 Operational Review, spec §19):** query READ-ONLY real en producción (`ticket_orders` con `status IN ('refunded','partially_refunded')`, filtrado por `metadata.loyaltyReconciliationRequired=true`) — **0 de 0** órdenes en ese estado existen en producción hoy. Cero clawbacks pendientes, cero riesgo. **Recomendación: mantener `token_clawback_reconciliation_enabled=false`** — no hay nada que reconciliar y no existe justificación operacional para activarlo esta noche. Cero mutación económica.
+
+**`/api/health`/`/api/ready`:** revisados — ya separan correctamente liveness (nunca toca BD) de readiness (SELECT 1 real), y **deliberadamente NO** acoplan ninguna integración externa a su resultado — exactamente lo que pide el spec ("nunca hagas que /api/health caiga por una integración opcional externa"). Sin cambios: ya está bien diseñado, tocar esto sería introducir riesgo sin beneficio.
+
+**Resultado: DONE.**
+
+---
+
+## 7B. Benefit "Bienvenida nuevo estudiante" — auditoría Fase 19 (backlog §20)
+
+Query READ-ONLY real en producción (`benefit_definitions`, todas las filas): **solo existen 3 definiciones activas hoy** — "Mañana Updown en tia Felisa" (id=1, Tía Felisa), "2x1 en consumición" (id=2, Tía Felisa), "20% de descuento" (id=3, Casanova). Ninguna se llama "Bienvenida"/"Welcome" ni nada similar — el hallazgo histórico de Fase 19 (incompleto/caducado/asociado a Tía Felisa/ya comprado por Students reales) describe un Benefit que **ya no existe en esta forma** en el catálogo actual.
+
+**Clasificación: NO LONGER RELEVANT.** El catálogo actual (3 definiciones, todas activas, sin anomalías visibles) ha sustituido por completo lo que describía el hallazgo de Fase 19. Cero mutación — no se modificó, eliminó ni se devolvió ST de ninguna compra.
+
+---
+
 ## 5. Community Proposals — auditoría inicial y hallazgo CRITICAL/HIGH (IDOR)
 
 **Arquitectura encontrada:** dos sistemas SEPARADOS bajo el nombre "COMUNITY", confirmados por el propio comentario de `drizzle/schema.ts` (línea ~6060): `community_student_proposals` (ideas simples de Student — título/descripción/venue/suggestedDate/category, apoyo tipo "me gusta" vía `community_supports`, lifecycle de moderación `pending_moderation→approved/rejected`) y `community_proposals` (encuestas estructuradas de Admin — tipo de pregunta, audiencia segmentada, timing/urgencia, visibilidad de resultados). Un admin puede "convertir" una idea aprobada en una encuesta formal (`sourceStudentProposalId`), pero nunca se reescribe la fila original. El wizard Admin (`ComunityWizard.tsx`) es de la SEGUNDA familia — sus campos de audiencia/tipo de pregunta/visibilidad de resultados son estructuralmente admin-only y quedan fuera de alcance para el formulario Student, tal y como exige el spec (§12: "NO permitir al Student elegir... moderación... estados internos").
