@@ -179,6 +179,48 @@ autorización explícita para escritura directa de producción.
 Sesión posterior a las anteriores (SEC-01, esta misma tabla, auditoría
 Fourvenues La Finca). Cubre SEC-02 y el roadmap final de cierre.
 
+## H. MG-05 — Student Proposal Voting Configuration — 2026-08-21 — DONE
+
+El Student puede proponer, al enviar una idea en Community → Propose,
+CÓMO debería responder la comunidad si se aprueba — reutilizando
+exactamente los mismos 9 tipos de pregunta del motor canónico de Admin
+(`single_choice`/`yes_no`/`percentage_scale`/`scale_1_5`/`multiselect`/
+`ranking`/`attendance_intention`/`me_apunto`/`open_text`), nunca un
+segundo modelo paralelo. Siempre opcional — enviar una idea sin proponer
+voto sigue funcionando exactamente igual que antes.
+
+**Modelo**: 2 columnas nuevas NULLABLE en `community_student_proposals`
+(`proposed_question_type`, `proposed_options` JSON) — migración 0163,
+aditiva, aplicada en local y producción, cero backfill, cero fila
+existente tocada.
+
+**Validación**: nuevo `validateQuestionTypeOptions()` (única semántica
+compartida) — aplicado tanto al nuevo camino de Student como, por
+prevención, a `community.create` y `convertStudentProposalToFormal` de
+Admin, que hasta ahora NUNCA validaban server-side que el tipo de
+pregunta y sus opciones fueran una combinación posible (solo el
+formulario React lo impedía) — un caller directo de la API podía crear
+`single_choice` sin opciones o `yes_no` con opciones arbitrarias.
+
+**Moderación**: la cola de Admin (`/admin/comunity/moderacion`) muestra
+ahora el tipo de respuesta propuesto y sus opciones de forma legible, y
+el diálogo "Convertir en propuesta formal" se pre-rellena con la
+propuesta del Student — siempre editable, el Admin conserva la decisión
+final.
+
+**Tests**: 34 (validador puro) + 13 (capa de BD, incluida compatibilidad
+histórica) + 26 (formulario Student, los 9 tipos) + 10 (moderación
+Admin) = 83 tests nuevos, más 6 escenarios Playwright reales en
+producción (desktop/tablet/mobile, cuenta Student QA, sin Submit real —
+sin mecanismo de limpieza seguro para una idea ya enviada). Suite
+completa 3525/3525, TypeScript 0, build PASS. Desplegado y verificado
+(SHA/health/ready/logs).
+
+**Sin tocar**: SegoTokens (proponer/configurar el tipo de voto nunca
+genera movimientos), Fourvenues, Benefits, RBAC, el aislamiento de
+comunidad ya corregido en MG-04 (sigue sin existir ningún selector de
+comunidad en el formulario Student).
+
 ### G1. SEC-02 — Session Persistence & Safe Reauthentication — RESUELTO
 Causa raíz probada (no era TTL corto — JWT/cookie ya eran de 30 días):
 faltaba renovación deslizante + el frontend trataba cualquier 401 aislado
