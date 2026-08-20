@@ -28,7 +28,7 @@ import {
 import { communityResponseValues, communityResponses, communityOptions as communityOptionsTable } from "../../drizzle/schema";
 import { eq, sql } from "drizzle-orm";
 import { getUserCommunities } from "../db/communitiesDb";
-import { notifyStudentProposalSubmitted } from "../segolife/community/communityProposalNotifier";
+import { notifyStudentProposalSubmitted, notifyStudentProposalApproved, notifyStudentProposalRejected } from "../segolife/community/communityProposalNotifier";
 
 const communityViewProcedure = permissionProcedure("community.view", ["admin"]);
 const communityManageProcedure = permissionProcedure("community.manage", ["admin"]);
@@ -389,6 +389,8 @@ export const communityRouter = router({
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ input, ctx }) => {
       const proposal = await approveStudentProposal(input.id, ctx.user.id);
+      // FINAL ZERO-DEBT (Block D) — best-effort, nunca bloquea la aprobación ya guardada.
+      if (proposal) notifyStudentProposalApproved(proposal).catch(() => {});
       return { success: true, proposal };
     }),
 
@@ -396,6 +398,7 @@ export const communityRouter = router({
     .input(z.object({ id: z.number().int().positive(), reasonInternal: z.string().min(1).max(512), reasonStudent: z.string().max(512).nullish() }))
     .mutation(async ({ input, ctx }) => {
       const proposal = await rejectStudentProposal(input.id, ctx.user.id, input.reasonInternal, input.reasonStudent);
+      if (proposal) notifyStudentProposalRejected(proposal).catch(() => {});
       return { success: true, proposal };
     }),
 

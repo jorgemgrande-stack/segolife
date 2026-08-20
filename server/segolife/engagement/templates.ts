@@ -509,6 +509,30 @@ export const ENGAGEMENT_TEMPLATES: Record<string, EngagementTemplate> = {
     bodyEn: "{{studentName}} proposed: \"{{proposalTitle}}\"", bodyEs: "{{studentName}} propuso: \"{{proposalTitle}}\"",
     allowedVariables: ["studentName", "proposalTitle"],
   },
+  // FINAL ZERO-DEBT (Block D) — cierre del lifecycle de moderación de
+  // ideas de Student: hasta ahora solo el Admin recibía alerta al crear
+  // (community_student_proposal_submitted); el Student nunca sabía si su
+  // idea fue aprobada o rechazada salvo mirando activamente "Tus ideas".
+  community_student_proposal_approved: {
+    key: "community_student_proposal_approved", version: 1, category: "events", adminCategory: "COMMUNITY",
+    audienceType: "transactional", channels: ["in_app"], status: "active",
+    description: "Tu idea de Community fue aprobada por el equipo.", triggerEvent: "CommunityStudentProposalApproved",
+    titleEn: "Your idea was approved!", titleEs: "¡Tu idea fue aprobada!",
+    bodyEn: "\"{{proposalTitle}}\" is moving forward.", bodyEs: "\"{{proposalTitle}}\" sigue adelante.",
+    allowedVariables: ["proposalTitle"],
+  },
+  // rejectionReasonStudent es SIEMPRE opcional y NUNCA rejectionReasonInternal
+  // (ver comentario de schema.ts community_student_proposals) — cuando no
+  // hay motivo visible, el body usa solo el título, nunca inventa un motivo.
+  community_student_proposal_rejected: {
+    key: "community_student_proposal_rejected", version: 1, category: "events", adminCategory: "COMMUNITY",
+    audienceType: "transactional", channels: ["in_app"], status: "active",
+    description: "Tu idea de Community no fue aprobada esta vez.", triggerEvent: "CommunityStudentProposalRejected",
+    titleEn: "Update on your idea", titleEs: "Novedades sobre tu idea",
+    bodyEn: "\"{{proposalTitle}}\" wasn't approved this time.{{reasonSuffixEn}}",
+    bodyEs: "\"{{proposalTitle}}\" no se aprobó esta vez.{{reasonSuffixEs}}",
+    allowedVariables: ["proposalTitle", "reasonSuffixEn", "reasonSuffixEs"],
+  },
   community_interested_event_published: {
     key: "community_interested_event_published", version: 1, category: "events", adminCategory: "COMMUNITY",
     audienceType: "transactional", channels: ["in_app"], status: "active",

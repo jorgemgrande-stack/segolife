@@ -20,7 +20,7 @@
 import { eq, and } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { users } from "../../../drizzle/schema";
+import { users, communities } from "../../../drizzle/schema";
 import { createNotification } from "../engagement/notificationService";
 import { renderTemplate } from "../engagement/templates";
 import type { CommunityStudentProposal } from "../../../drizzle/schema";
@@ -71,5 +71,83 @@ export async function notifyStudentProposalSubmitted(proposal: CommunityStudentP
     }
   } catch (err) {
     console.error(`[CommunityProposalNotifier] fallo al notificar proposalId=${proposal.id}:`, err instanceof Error ? err.message : err);
+  }
+}
+
+/** slug de la comunidad de la propia idea — para el deep_link `/${slug}/comunity` (ya en la whitelist, ver deepLinkPolicy.ts). */
+async function resolveCommunitySlug(communityId: number, conn: DbHandle): Promise<string | null> {
+  const [row] = await conn.select({ slug: communities.slug }).from(communities).where(eq(communities.id, communityId)).limit(1);
+  return row?.slug ?? null;
+}
+
+/**
+ * FINAL ZERO-DEBT (Block D) — cierra el lifecycle: hasta ahora el Student
+ * nunca se enteraba de que su idea fue aprobada salvo entrando a mirar
+ * "Tus ideas" activamente. Best-effort (nunca lanza — un fallo aquí nunca
+ * debe deshacer una aprobación ya guardada). Idempotente por
+ * `templateKey:proposalId` (UNIQUE real de notifications.idempotencyKey) —
+ * un reintento de la mutación de aprobar nunca duplica la notificación.
+ */
+export async function notifyStudentProposalApproved(proposal: CommunityStudentProposal, db?: DbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  try {
+    const slug = await resolveCommunitySlug(proposal.communityId, conn);
+    if (!slug) return; // comunidad inexistente/borrada — nunca genera un deep_link roto
+    const templateKey = "community_student_proposal_approved";
+    const rendered = renderTemplate(templateKey, { proposalTitle: proposal.title }, `/${slug}/comunity`);
+    await createNotification({
+      userId: proposal.studentUserId,
+      communityId: proposal.communityId,
+      type: templateKey,
+      category: "events",
+      audienceType: "transactional",
+      rendered,
+      templateKey,
+      templateVersion: 1,
+      sourceType: "community_student_proposal",
+      sourceId: proposal.id,
+      idempotencyKey: `${templateKey}:${proposal.id}`,
+    }, conn);
+  } catch (err) {
+    console.error(`[CommunityProposalNotifier] fallo al notificar aprobación proposalId=${proposal.id}:`, err instanceof Error ? err.message : err);
+  }
+}
+
+/**
+ * `reasonStudent` es SIEMPRE el motivo visible (nunca `rejectionReasonInternal`
+ * — ver comentario de schema.ts). Cuando el admin no rellenó un motivo
+ * visible, el mensaje nunca inventa uno — solo el título.
+ */
+export async function notifyStudentProposalRejected(proposal: CommunityStudentProposal, db?: DbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  try {
+    const slug = await resolveCommunitySlug(proposal.communityId, conn);
+    if (!slug) return;
+    const templateKey = "community_student_proposal_rejected";
+    const reasonStudent = proposal.rejectionReasonStudent?.trim();
+    const rendered = renderTemplate(
+      templateKey,
+      {
+        proposalTitle: proposal.title,
+        reasonSuffixEn: reasonStudent ? ` Reason: "${reasonStudent}"` : "",
+        reasonSuffixEs: reasonStudent ? ` Motivo: "${reasonStudent}"` : "",
+      },
+      `/${slug}/comunity`
+    );
+    await createNotification({
+      userId: proposal.studentUserId,
+      communityId: proposal.communityId,
+      type: templateKey,
+      category: "events",
+      audienceType: "transactional",
+      rendered,
+      templateKey,
+      templateVersion: 1,
+      sourceType: "community_student_proposal",
+      sourceId: proposal.id,
+      idempotencyKey: `${templateKey}:${proposal.id}`,
+    }, conn);
+  } catch (err) {
+    console.error(`[CommunityProposalNotifier] fallo al notificar rechazo proposalId=${proposal.id}:`, err instanceof Error ? err.message : err);
   }
 }

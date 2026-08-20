@@ -12,10 +12,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // REAL del Student que llama. Se mockean sus dos únicas dependencias para
 // probar la comprobación de membresía sin tocar BD — mismo criterio que
 // el resto de este repo (aislar la unidad bajo test).
-const { mockGetUserCommunities, mockSubmitStudentProposal, mockNotifyStudentProposalSubmitted } = vi.hoisted(() => ({
+const {
+  mockGetUserCommunities, mockSubmitStudentProposal, mockNotifyStudentProposalSubmitted,
+  mockApproveStudentProposal, mockRejectStudentProposal,
+  mockNotifyStudentProposalApproved, mockNotifyStudentProposalRejected,
+} = vi.hoisted(() => ({
   mockGetUserCommunities: vi.fn(),
   mockSubmitStudentProposal: vi.fn(),
   mockNotifyStudentProposalSubmitted: vi.fn().mockResolvedValue(undefined),
+  mockApproveStudentProposal: vi.fn(),
+  mockRejectStudentProposal: vi.fn(),
+  mockNotifyStudentProposalApproved: vi.fn().mockResolvedValue(undefined),
+  mockNotifyStudentProposalRejected: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../db/communitiesDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../db/communitiesDb")>();
@@ -23,14 +31,21 @@ vi.mock("../db/communitiesDb", async (importOriginal) => {
 });
 vi.mock("../segolife/community/communityStudentProposalDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/community/communityStudentProposalDb")>();
-  return { ...actual, submitStudentProposal: mockSubmitStudentProposal };
+  return {
+    ...actual,
+    submitStudentProposal: mockSubmitStudentProposal,
+    approveStudentProposal: mockApproveStudentProposal,
+    rejectStudentProposal: mockRejectStudentProposal,
+  };
 });
-// Community Proposals (backlog, spec §15.B) — se mockea para probar la
-// DELEGACIÓN del router sin abrir el pool de BD real de este notificador
-// (fire-and-forget, ver community.ts) — el notificador en sí ya está
-// probado por su cuenta en communityProposalNotifier.test.ts.
+// Community Proposals (backlog, spec §15.B) / FINAL ZERO-DEBT Block D — se
+// mockea para probar la DELEGACIÓN del router sin abrir el pool de BD real
+// de este notificador (fire-and-forget, ver community.ts) — el notificador
+// en sí ya está probado por su cuenta en communityProposalNotifier.test.ts.
 vi.mock("../segolife/community/communityProposalNotifier", () => ({
   notifyStudentProposalSubmitted: mockNotifyStudentProposalSubmitted,
+  notifyStudentProposalApproved: mockNotifyStudentProposalApproved,
+  notifyStudentProposalRejected: mockNotifyStudentProposalRejected,
 }));
 
 import { communityRouter } from "./community";
@@ -42,6 +57,10 @@ function callerWithoutSession() {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function callerAs(id: number) {
   return communityRouter.createCaller({ user: { id, role: "user" } } as any);
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function callerAsAdmin(id: number) {
+  return communityRouter.createCaller({ user: { id, role: "admin" } } as any);
 }
 
 describe("community router — ningún endpoint admin es accesible sin sesión", () => {
@@ -246,5 +265,56 @@ describe("community router — submitProposal MG-04: imagen de portada + urgenci
     expect(callArg).not.toHaveProperty("moderatedByUserId");
     expect(callArg).not.toHaveProperty("featured");
     expect(callArg).not.toHaveProperty("segoTokens");
+  });
+});
+
+describe("community router — approveStudentProposal/rejectStudentProposal: notificación al Student (FINAL ZERO-DEBT, Block D)", () => {
+  beforeEach(() => {
+    mockApproveStudentProposal.mockReset();
+    mockRejectStudentProposal.mockReset();
+    mockNotifyStudentProposalApproved.mockClear().mockResolvedValue(undefined);
+    mockNotifyStudentProposalRejected.mockClear().mockResolvedValue(undefined);
+  });
+
+  it("aprobar dispara notifyStudentProposalApproved con la propuesta real, fire-and-forget", async () => {
+    const proposal = { id: 900, studentUserId: 7, communityId: 1, title: "Padel el sábado", status: "approved" };
+    mockApproveStudentProposal.mockResolvedValue(proposal);
+    await callerAsAdmin(1).approveStudentProposal({ id: 900 });
+    expect(mockNotifyStudentProposalApproved).toHaveBeenCalledWith(proposal);
+  });
+
+  it("rechazar dispara notifyStudentProposalRejected con la propuesta real", async () => {
+    const proposal = { id: 901, studentUserId: 7, communityId: 1, title: "x", status: "rejected", rejectionReasonStudent: "Ya hay uno programado" };
+    mockRejectStudentProposal.mockResolvedValue(proposal);
+    await callerAsAdmin(1).rejectStudentProposal({ id: 901, reasonInternal: "motivo interno cualquiera" });
+    expect(mockNotifyStudentProposalRejected).toHaveBeenCalledWith(proposal);
+  });
+
+  it("si approveStudentProposal devuelve null (id inexistente), nunca se intenta notificar", async () => {
+    mockApproveStudentProposal.mockResolvedValue(null);
+    await callerAsAdmin(1).approveStudentProposal({ id: 999 });
+    expect(mockNotifyStudentProposalApproved).not.toHaveBeenCalled();
+  });
+
+  it("si rejectStudentProposal devuelve null, nunca se intenta notificar", async () => {
+    mockRejectStudentProposal.mockResolvedValue(null);
+    await callerAsAdmin(1).rejectStudentProposal({ id: 999, reasonInternal: "motivo" });
+    expect(mockNotifyStudentProposalRejected).not.toHaveBeenCalled();
+  });
+
+  it("si el notificador de aprobación falla, la aprobación SIGUE devolviendo éxito (best-effort, nunca bloquea)", async () => {
+    const proposal = { id: 902, studentUserId: 7, communityId: 1, title: "x", status: "approved" };
+    mockApproveStudentProposal.mockResolvedValue(proposal);
+    mockNotifyStudentProposalApproved.mockRejectedValue(new Error("boom"));
+    const result = await callerAsAdmin(1).approveStudentProposal({ id: 902 });
+    expect(result.success).toBe(true);
+  });
+
+  it("si el notificador de rechazo falla, el rechazo SIGUE devolviendo éxito", async () => {
+    const proposal = { id: 903, studentUserId: 7, communityId: 1, title: "x", status: "rejected" };
+    mockRejectStudentProposal.mockResolvedValue(proposal);
+    mockNotifyStudentProposalRejected.mockRejectedValue(new Error("boom"));
+    const result = await callerAsAdmin(1).rejectStudentProposal({ id: 903, reasonInternal: "motivo" });
+    expect(result.success).toBe(true);
   });
 });
