@@ -11,11 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { ChevronLeft, ChevronRight, Loader2, Plus, X, Vote } from "lucide-react";
 import { ComunityAudienceBuilder, EMPTY_COMUNITY_AUDIENCE, toComunityAudienceDefinition, type ComunityAudienceForm } from "@/components/admin/comunity/ComunityAudienceBuilder";
-import { QUESTION_TYPE_LABEL, type ComunityQuestionType } from "@/lib/comunity";
+import { QUESTION_TYPE_LABEL, QUESTION_TYPES_WITH_OPTIONS, type ComunityQuestionType } from "@/lib/comunity";
 
 const STEPS = ["Pregunta", "Tipo de respuesta", "Audiencia", "Timing", "Gamificación", "Revisión", "Publicar"] as const;
-
-const TYPES_WITH_OPTIONS: ComunityQuestionType[] = ["single_choice", "multiselect", "ranking", "percentage_scale"];
 
 const FLASH_PRESETS: { label: string; minutes: number }[] = [
   { label: "15 min", minutes: 15 },
@@ -72,7 +70,7 @@ export default function ComunityWizard() {
     onError: e => toast.error(e.message),
   });
 
-  const needsOptions = TYPES_WITH_OPTIONS.includes(questionType);
+  const needsOptions = QUESTION_TYPES_WITH_OPTIONS.includes(questionType);
   const cleanOptions = options.map(o => o.trim()).filter(Boolean);
 
   function applyFlashPreset(minutes: number) {

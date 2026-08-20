@@ -9,6 +9,17 @@ export type ComunityQuestionType =
 
 export type ComunityStatus = "draft" | "scheduled" | "active" | "closed" | "cancelled" | "converted";
 
+/**
+ * MG-05 — única fuente de verdad de "qué tipos necesitan opciones/criterios
+ * discretos" en el cliente (antes duplicado de forma idéntica en
+ * ComunityWizard.tsx y ComunityModeration.tsx — ahora también reutilizado
+ * por el bloque de configuración de voto propuesta del Student en
+ * ComunityHub.tsx). Debe coincidir SIEMPRE con
+ * server/segolife/community/communityQuestionTypeValidation.ts
+ * (QUESTION_TYPES_WITH_OPTIONS) — mismo concepto, una sola semántica.
+ */
+export const QUESTION_TYPES_WITH_OPTIONS: ComunityQuestionType[] = ["single_choice", "multiselect", "ranking", "percentage_scale"];
+
 export const QUESTION_TYPE_LABEL: Record<ComunityQuestionType, string> = {
   single_choice: "Elección única",
   yes_no: "Sí / No",
