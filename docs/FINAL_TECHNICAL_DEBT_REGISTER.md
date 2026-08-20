@@ -236,19 +236,23 @@ en el propio deploy y corregido: el log `session rejected: expired`
 inundaba los logs (~5/min sostenido, tráfico anónimo normal con cookie
 caducada) — throttled a 1/min.
 
-### G2. LA FINCA CLUB — activación de producción — DIAGNOSTICADO, PENDIENTE DE CONFIRMACIÓN
-Probado de forma inequívoca y read-only: las credenciales guardadas
+### G2. LA FINCA CLUB — activación de producción — RESUELTO 2026-08-21 (OPS-01)
+Probado de forma inequívoca y read-only que las credenciales guardadas
 (`venue_integrations.id=4`) son `ik_live_...` (estilo producción) y
 responden `200 {"success":true}` contra la API de PRODUCCIÓN de
-Fourvenues Integrations, y `404 "Integration not found"` contra sandbox
-(el valor guardado `environment=sandbox` es simplemente el campo
-equivocado, no un problema de credenciales). Fix listo
-(`environment→production`, `enabled=1`, `sync_enabled=1`,
-`loyalty_enabled` deliberadamente sin tocar hasta verificar el primer
-sync) pero es una escritura real de producción — bloqueada por el
-clasificador de permisos de la sesión, correctamente. **CONTROLLED
-MANUAL ACTION REQUIRED** — pendiente de confirmación explícita del
-usuario.
+Fourvenues Integrations (el valor guardado `environment=sandbox` era
+simplemente el campo equivocado, no un problema de credenciales).
+Activado en producción (`environment=production`, `enabled=1`,
+`sync_enabled=1`, `status=connected`; `loyalty_enabled` queda
+deliberadamente en `0`, mismo patrón de activación gradual que las otras
+3 venues). El scheduler recogió la integración automáticamente (0
+cambios de código) e importó 2 eventos reales + 6 tipos de entrada;
+segundo sync confirmó idempotencia (0 duplicados). Detalle completo en
+`OPS-01 FOURVENUES LA FINCA PRODUCTION ACTIVATION FINAL REPORT` y en la
+fila LA FINCA CLUB de `GO_LIVE_CONTROL_BOARD.md`. Verificado de nuevo en
+vivo 2026-08-21 (closure): las 4 integraciones (Casanova/Limoncello/Tía
+Felisa/La Finca) siguen `environment=production`/`enabled=1`/
+`sync_enabled=1`/`status=connected`, con `last_success_at` reciente.
 
 ### G3. NEXT-01 — Nombre real de Venue en Admin Integrations — RESUELTO
 `IntegrationsManager.tsx` mostraba "venue #3" en vez del nombre real.
@@ -316,3 +320,100 @@ con `.first()`.
   `routers.ts:1629+`) — datos de ejemplo estáticos con marca/URLs
   heredadas. Página sin ruta activa en el frontend (huérfana, superseded
   por `EngagementTemplatesViewer.tsx`), cero riesgo real.
+
+---
+
+## I. SUPERPROMPT FINAL REMAINING ACTIONS & MAINTENANCE MODE — 2026-08-21 — DONE
+
+Última pasada antes de Maintenance Mode. Verificación fresca de todo lo
+cerrado en sesiones anteriores (G/G1-G6, H) — sin drift encontrado salvo
+G2 (corregido arriba) — más 6 hallazgos nuevos, los 6 resueltos.
+
+### I1. `MaintenanceModeControl.tsx` — branding Náyade en el mensaje por defecto — RESUELTO
+`DEFAULT_MESSAGE` (mostrado si nunca se ha guardado un mensaje propio)
+mencionaba "Náyade Experiences"/"Hotel Náyade". Producción ya tenía un
+`site_maintenance_message` propio guardado (nunca se llegó a mostrar a un
+visitante real), pero el texto de fallback en sí era incorrecto —
+corregido a un mensaje neutro de Segolife.
+
+### I2. Security sweep — 4 hallazgos de código, dormidos, corregidos (closure, no exploit conocido)
+- **#2/5 (MEDIA)**: `/api/students/me/photo` (MG-03) y
+  `/api/community/proposal-image` (MG-04) — subida con `sharp()`
+  decode/resize sin rate limit, a diferencia de toda otra ruta de subida.
+  Aplicado el mismo `uploadRateLimit` (20 req/min/IP).
+- **#3 (MEDIA)**: `invoicePreviewToken()` caía a
+  `"local-dev-secret-change-me"` sin guard de producción si `JWT_SECRET`
+  faltara — a diferencia de `localAuth.ts`. `JWT_SECRET` está configurado
+  hoy (nunca explotable en la práctica), pero ahora lanza en arranque de
+  producción si faltara, igual que `localAuth.ts`.
+- **#4/8 (MEDIA, inalcanzable hoy)**: `ghlWebhookRouter.ts`,
+  `vapiWebhookRouter.ts`, `routes/ghlInboxRouter.ts` comparaban el secreto
+  del webhook con `!==` (filtración por temporización) en vez de
+  `timingSafeEqual` — mismo patrón que Brevo ya corregía. Los 3 secretos
+  están sin configurar en producción hoy (503 antes de llegar a la
+  comparación), pero es el mismo defecto de código real. Corregido.
+- **#7 (ALTA)**: `community.trending` no comprobaba membresía de
+  comunidad — cualquier Student autenticado podía omitir `communityId` (o
+  pasar el de otra comunidad) y recibir nombres/ideas pendientes de
+  moderación de OTRAS comunidades. Corregido reutilizando el mismo patrón
+  de `submitProposal` (`getUserCommunities` + `getCommunityAccess`): un
+  admin global conserva "todas" (uso real de `ComunityManager.tsx`); un
+  Student ahora exige un `communityId` del que sea miembro real, o
+  `BAD_REQUEST`/`FORBIDDEN`. Verificado en vivo en producción con las
+  cuentas QA (Student→propia comunidad: 200; sin communityId: 400; otra
+  comunidad: 403; Admin→todas: 200 sin cambios).
+- 5 tests nuevos en `community.test.ts` (38/38 verde), suite completa
+  3530/3530, `tsc --noEmit` 0, build PASS. Desplegado y verificado
+  (SHA `7da25ad`/health/ready/logs limpios).
+
+### I3. RBAC — `AdminLayout.tsx` (nav/rutas del sidebar) es 100% rol legacy, el servidor ya es RBAC-first — DOCUMENTADO, NO CORREGIDO
+Auditoría dedicada (agente en background): el sidebar y los guards de
+ruta de `AdminLayout.tsx` filtran módulos por `user.role` (legacy) en un
+array `roles: [...]` por item, mientras que prácticamente todos los
+routers del servidor ya usan `permissionProcedure`/`checkRbacOrLegacy`
+(RBAC-first). Hoy no hay discrepancia visible: el único camino real de
+cambio de rol (`changeUserRole`, `UsersManager.tsx`) mantiene
+`rbac_user_roles` sincronizado. Pero `assignRbacRole`/`removeRbacRole`
+(server, alcanzables por un admin, sin UI) ya permiten desacoplar RBAC
+del rol legacy — el mismo tipo de divergencia que causó el incidente real
+de `herre.casanova@gmail.com` (SEC-01). **Severidad**: Baja-Media,
+arquitectónica, no explotable hoy. **No corregido en este cierre**: el
+fix real (exponer `permissions[]` en `auth.me`, migrar cada entrada de
+`navItems` a su permission key) toca ~20+ entradas de navegación con
+riesgo moderado de mostrar/ocultar de más si alguna key no calza
+exactamente con su `permissionProcedure` — desproporcionado para el
+criterio "cambio pequeño y seguro" de este cierre. **Próxima acción**: si
+se retoma, migrar `navItems` permiso a permiso contra la tabla de
+`permissionProcedure` ya documentada, con regresión visual completa por
+rol.
+
+### I4. Re-verificación (sin drift) de lo ya cerrado en sesiones anteriores
+- **Fourvenues (G3/G6, OPS-01)**: 4/4 integraciones
+  (Casanova/Limoncello/Tía Felisa/La Finca) siguen
+  `environment=production`/`enabled=1`/`sync_enabled=1`/
+  `status=connected`, `last_success_at` reciente (2026-08-20/21), 0
+  mappings duplicados, 0 huérfanos, 0 contaminación cruzada. Scheduler
+  sigue 100% data-driven (sin `if venueId === X`).
+- **MG-05**: los 3 tests de `ComunityHub.test.tsx` (26) y
+  `ComunityModeration.test.tsx` (10) siguen verdes en la suite completa;
+  sin cambios de código en esta pasada.
+- **SEC-02**: SHA/health/ready/logs verificados limpios tras cada uno de
+  los 4 despliegues de este cierre; ninguna sesión real se vio afectada.
+- **CRM (A4)**: 0 coincidencias de "Náyade" en `CRMDashboard.tsx` —
+  sigue corregido.
+- **Partners/Proveedores (A3)**, **legal (D2)**, **`restaurantLinks.ts`
+  (D3)**, **`organizations` (D4)**: sin cambios, siguen exactamente como
+  se documentó — no se ha tocado ninguno (branding profundo/decisión de
+  negocio/legal, fuera del criterio de fix seguro de este cierre).
+- **`regression.recalculate.test.ts` (A2)**: sigue existiendo, sigue
+  LOW OPTIONAL DEBT — no se ha reescrito (ninguna necesidad nueva lo
+  justifica).
+
+### CLASIFICACIÓN FINAL — MAINTENANCE MODE
+**B — MAINTENANCE READY WITH LOW DEBT.** Cero deuda técnica accionable de
+severidad CRÍTICA/ALTA/MEDIA sin resolver. Lo que queda abierto es, en su
+totalidad: decisiones de negocio/legales explícitas (G5 Payment Provider,
+D1 Benefit Bienvenida, D2 legal, D3/D4 branding profundo), deuda
+arquitectónica de baja severidad y no explotable hoy (I3 RBAC nav), y una
+mejora de fidelidad de test opcional (A2). Ninguna requiere una acción de
+código para poder operar con seguridad en Maintenance Mode.
