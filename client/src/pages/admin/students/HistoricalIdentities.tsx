@@ -18,8 +18,6 @@ import { useUrlParam } from "@/hooks/useUrlParam";
 const ALL = "__all__";
 const PAGE_SIZE = 25;
 
-const VENUE_NAMES: Record<number, string> = { 1: "Casanova", 4: "Limoncello", 7: "Tía Felisa" };
-
 const STATUS_LABEL: Record<string, string> = {
   UNREGISTERED: "No registrado",
   POSSIBLE_MATCH: "Posible coincidencia",
@@ -92,6 +90,13 @@ export default function HistoricalIdentities() {
   const [sortBy, setSortBy] = useState<SortBy>("lastActivity");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
+  // Venues reales de la BD — nunca una lista fija de venues Fourvenues
+  // conocidos (un venue nuevo con integración recién dada de alta debe
+  // aparecer aquí sin tocar código, mismo criterio que IntegrationsManager.tsx).
+  const { data: venuesResult } = trpc.venues.list.useQuery({ limit: 200 });
+  const venues = venuesResult?.items ?? [];
+  const venueNameById = Object.fromEntries(venues.map(v => [v.id, v.name]));
+
   useEffect(() => { setPage(0); }, [search, venueId, status, crossVenueOnly, sortBy, sortDir]);
 
   const { data, isLoading, error } = trpc.historicalIdentities.list.useQuery({
@@ -121,7 +126,7 @@ export default function HistoricalIdentities() {
           <div>
             <h2 className="text-lg font-semibold text-foreground">Estudiantes históricos</h2>
             <p className="text-sm text-muted-foreground">
-              Identidades y actividad histórica importada de Fourvenues (Casanova, Tía Felisa, Limoncello) — personas reales, aún no vinculadas a una cuenta Segolife.
+              Identidades y actividad histórica importada de Fourvenues — personas reales, aún no vinculadas a una cuenta Segolife.
               {typeof data?.total === "number" ? ` · ${data.total} identidad(es)` : ""}
             </p>
           </div>
@@ -137,9 +142,9 @@ export default function HistoricalIdentities() {
             <SelectTrigger className="w-[160px]"><SelectValue placeholder="Venue" /></SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL}>Todos los venues</SelectItem>
-              <SelectItem value="1">Casanova</SelectItem>
-              <SelectItem value="7">Tía Felisa</SelectItem>
-              <SelectItem value="4">Limoncello</SelectItem>
+              {venues.map(v => (
+                <SelectItem key={v.id} value={String(v.id)}>{v.name}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
 
@@ -199,7 +204,7 @@ export default function HistoricalIdentities() {
                     <TableCell><Badge variant={STATUS_VARIANT[item.status]}>{STATUS_LABEL[item.status]}</Badge></TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {item.venueIds.map(id => <Badge key={id} variant="secondary">{VENUE_NAMES[id] ?? `#${id}`}</Badge>)}
+                        {item.venueIds.map(id => <Badge key={id} variant="secondary">{venueNameById[id] ?? `#${id}`}</Badge>)}
                         {item.crossVenue && <Badge variant="outline">cross-venue</Badge>}
                       </div>
                     </TableCell>
