@@ -51,6 +51,43 @@ describe("submitStudentProposal — MG-04: coverImageUrl y urgency", () => {
   });
 });
 
+describe("submitStudentProposal — MG-05: configuración de voto propuesta (opcional, nunca obligatoria)", () => {
+  it("sin proposedQuestionType, ambos campos se guardan null — proponer configuración de voto nunca es obligatorio (comportamiento pre-MG-05 intacto)", async () => {
+    const { db, getInserted } = makeSubmitMockDb();
+    await submitStudentProposal({ studentUserId: 7, communityId: 1, title: "x" }, db);
+    expect(getInserted()[0]).toMatchObject({ proposedQuestionType: null, proposedOptions: null });
+  });
+
+  it("yes_no: se guarda sin necesitar opciones", async () => {
+    const { db, getInserted } = makeSubmitMockDb();
+    await submitStudentProposal({ studentUserId: 7, communityId: 1, title: "x", proposedQuestionType: "yes_no" }, db);
+    expect(getInserted()[0]).toMatchObject({ proposedQuestionType: "yes_no", proposedOptions: null });
+  });
+
+  it("single_choice con 2+ opciones válidas: se guardan recortadas (trim)", async () => {
+    const { db, getInserted } = makeSubmitMockDb();
+    await submitStudentProposal({
+      studentUserId: 7, communityId: 1, title: "x",
+      proposedQuestionType: "single_choice", proposedOptions: ["  Jueves  ", "Viernes"],
+    }, db);
+    expect(getInserted()[0]).toMatchObject({ proposedQuestionType: "single_choice", proposedOptions: ["Jueves", "Viernes"] });
+  });
+
+  it("single_choice sin opciones suficientes: RECHAZA — el servidor nunca confía solo en el formulario", async () => {
+    const { db } = makeSubmitMockDb();
+    await expect(submitStudentProposal({
+      studentUserId: 7, communityId: 1, title: "x", proposedQuestionType: "single_choice", proposedOptions: ["Solo una"],
+    }, db)).rejects.toThrow();
+  });
+
+  it("yes_no con opciones arbitrarias: RECHAZA (bug real que el servidor no comprobaba antes de MG-05)", async () => {
+    const { db } = makeSubmitMockDb();
+    await expect(submitStudentProposal({
+      studentUserId: 7, communityId: 1, title: "x", proposedQuestionType: "yes_no", proposedOptions: ["Jueves", "Viernes"],
+    }, db)).rejects.toThrow();
+  });
+});
+
 function makeListMockDb(rows: Array<{ proposal: Record<string, unknown>; studentName: string | null; venueName: string | null }>) {
   const db: Record<string, unknown> = {
     select: (_sel: unknown) => db,
@@ -90,5 +127,23 @@ describe("listStudentProposals — MG-04: venueName resuelto vía leftJoin (gap 
     const { items } = await listStudentProposals({ communityIds: "all" }, db);
     expect(items[0].coverImageUrl).toBe("https://cdn.example.com/x.jpg");
     expect(items[0].urgency).toBe("no_rush");
+  });
+
+  it("MG-05: una idea anterior a esta fase (sin proposedQuestionType/proposedOptions en la fila real) sigue listándose con normalidad — nunca rompe registros históricos", async () => {
+    const db = makeListMockDb([
+      { proposal: { id: 4, title: "Idea anterior a MG-05", venueId: null, coverImageUrl: null, urgency: null, createdAt: new Date() }, studentName: "Ana", venueName: null },
+    ]);
+    const { items } = await listStudentProposals({ communityIds: "all" }, db);
+    expect(items[0].proposedQuestionType).toBeUndefined();
+    expect(items[0].id).toBe(4);
+  });
+
+  it("MG-05: propaga proposedQuestionType/proposedOptions tal cual desde la fila de BD", async () => {
+    const db = makeListMockDb([
+      { proposal: { id: 5, title: "Con voto propuesto", venueId: null, coverImageUrl: null, urgency: null, createdAt: new Date(), proposedQuestionType: "single_choice", proposedOptions: ["Jueves", "Viernes"] }, studentName: "Ana", venueName: null },
+    ]);
+    const { items } = await listStudentProposals({ communityIds: "all" }, db);
+    expect(items[0].proposedQuestionType).toBe("single_choice");
+    expect(items[0].proposedOptions).toEqual(["Jueves", "Viernes"]);
   });
 });

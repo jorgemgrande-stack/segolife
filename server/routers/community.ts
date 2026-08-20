@@ -29,6 +29,7 @@ import { communityResponseValues, communityResponses, communityOptions as commun
 import { eq, sql } from "drizzle-orm";
 import { getUserCommunities } from "../db/communitiesDb";
 import { notifyStudentProposalSubmitted, notifyStudentProposalApproved, notifyStudentProposalRejected } from "../segolife/community/communityProposalNotifier";
+import { validateQuestionTypeOptions } from "../segolife/community/communityQuestionTypeValidation";
 
 const communityViewProcedure = permissionProcedure("community.view", ["admin"]);
 const communityManageProcedure = permissionProcedure("community.manage", ["admin"]);
@@ -206,8 +207,14 @@ export const communityRouter = router({
     .mutation(async ({ input, ctx }) => {
       const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
       assertCommunityIdsWithinAccess(access, input.communityIds);
+      // MG-05 §9 — antes solo el wizard (React) impedía una combinación
+      // imposible (p.ej. single_choice sin opciones, o yes_no con
+      // opciones); el servidor nunca lo comprobaba. Mismo validador que
+      // usa ahora la propuesta de Student — una sola semántica.
+      const validation = validateQuestionTypeOptions(input.questionType, input.options);
+      if (!validation.ok) throw new TRPCError({ code: "BAD_REQUEST", message: validation.error });
       const { communityIds, ...fields } = input;
-      const proposal = await createProposal({ ...fields, createdByUserId: ctx.user.id, communityIds }, undefined);
+      const proposal = await createProposal({ ...fields, options: validation.cleanOptions.length > 0 ? validation.cleanOptions : undefined, createdByUserId: ctx.user.id, communityIds }, undefined);
       return { success: true, proposal };
     }),
 
@@ -417,6 +424,13 @@ export const communityRouter = router({
       const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
       assertCommunityIdsWithinAccess(access, [idea.communityId]);
 
+      // MG-05 §9/§12 — el Admin puede aceptar tal cual la configuración
+      // propuesta por el Student, o cambiarla por completo (este mutation
+      // ya lo permitía); en cualquier caso, lo que finalmente se envíe
+      // debe ser una combinación válida — mismo validador que community.create.
+      const validation = validateQuestionTypeOptions(input.questionType, input.options);
+      if (!validation.ok) throw new TRPCError({ code: "BAD_REQUEST", message: validation.error });
+
       const proposal = await createProposal({
         title: idea.title,
         description: idea.description,
@@ -425,7 +439,7 @@ export const communityRouter = router({
         startsAt: idea.suggestedDate ? new Date(idea.suggestedDate) : null,
         sourceStudentProposalId: idea.id,
         createdByUserId: ctx.user.id,
-        options: input.options,
+        options: validation.cleanOptions.length > 0 ? validation.cleanOptions : undefined,
         communityIds: [idea.communityId],
       });
       await markStudentProposalConverted(idea.id, proposal.id);
@@ -521,6 +535,12 @@ export const communityRouter = router({
       // el propio esquema, no por una lista de bloqueo aparte).
       coverImageUrl: z.string().url().max(512).nullish(),
       urgency: z.enum(["no_rush", "soon", "urgent"]).nullish(),
+      // MG-05 — Student Proposal Voting Configuration (spec §3-9). Mismo
+      // enum canónico que Admin (questionTypeEnum) — nunca un tipo
+      // paralelo. Ambos opcionales: proponer configuración de voto nunca
+      // es obligatorio para enviar una idea.
+      proposedQuestionType: questionTypeEnum.optional(),
+      proposedOptions: z.array(z.string().min(1).max(256)).max(20).optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       // Community Proposals backlog — bug real (IDOR) encontrado en la

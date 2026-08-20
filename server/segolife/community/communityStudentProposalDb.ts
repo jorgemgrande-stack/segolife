@@ -10,6 +10,7 @@ import {
   communityStudentProposals, communitySupports, users, venues,
   type CommunityStudentProposal, type InsertCommunityStudentProposal, type CommunitySupport,
 } from "../../../drizzle/schema";
+import { validateQuestionTypeOptions, type ComunityQuestionType } from "./communityQuestionTypeValidation";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 3 });
 const _db = drizzle(_pool);
@@ -42,12 +43,29 @@ export interface SubmitStudentProposalInput {
   // `urgency` es la preferencia del Student, NUNCA prioridad admin.
   coverImageUrl?: string | null;
   urgency?: "no_rush" | "soon" | "urgent" | null;
+  // MG-05 — Student Proposal Voting Configuration (spec §3-9). Propuesta,
+  // NUNCA orden: el Admin sigue siendo la autoridad final al moderar/
+  // convertir (ver convertStudentProposalToFormal en routers/community.ts).
+  // Ambos opcionales — un Student puede enviar su idea sin proponer
+  // configuración de voto, exactamente como antes de esta fase.
+  proposedQuestionType?: ComunityQuestionType | null;
+  proposedOptions?: string[] | null;
 }
 
 export async function submitStudentProposal(input: SubmitStudentProposalInput, db?: AnyDbHandle): Promise<CommunityStudentProposal> {
   const conn = db ?? (await getDb());
   const title = sanitizeText(input.title, MAX_TITLE_LENGTH);
   if (!title) throw new Error("El título no puede estar vacío");
+
+  // Nunca confiar únicamente en el formulario React — mismo validador que
+  // usa Admin al crear/convertir una propuesta real (spec MG-05 §9).
+  let proposedOptions: string[] | null = null;
+  if (input.proposedQuestionType) {
+    const validation = validateQuestionTypeOptions(input.proposedQuestionType, input.proposedOptions);
+    if (!validation.ok) throw new Error(validation.error);
+    proposedOptions = validation.cleanOptions.length > 0 ? validation.cleanOptions.map(o => sanitizeText(o, 256)) : null;
+  }
+
   const values: InsertCommunityStudentProposal = {
     studentUserId: input.studentUserId,
     communityId: input.communityId,
@@ -58,6 +76,8 @@ export async function submitStudentProposal(input: SubmitStudentProposalInput, d
     category: input.category ?? null,
     coverImageUrl: input.coverImageUrl ?? null,
     urgency: input.urgency ?? null,
+    proposedQuestionType: input.proposedQuestionType ?? null,
+    proposedOptions,
     status: "pending_moderation",
   };
   const insertResult = await (conn as DbHandle).insert(communityStudentProposals).values(values);
