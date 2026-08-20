@@ -11,6 +11,12 @@ Documentos complementarios de esta fase: `docs/GO_LIVE_CONTROL_BOARD.md`
 (cuadro de lanzamiento + matrices) y
 `docs/PAYMENT_PROVIDER_ACTIVATION_CHECKLIST.md`.
 
+> **Nota 2026-08-20**: las cifras de esta fase ("3/3 integraciones
+> Fourvenues") reflejan el estado en su fecha de verificación. Desde
+> entonces se dio de alta una 4ª integración (La Finca Club, pendiente de
+> activar) — estado real y actualizado siempre en
+> `docs/GO_LIVE_CONTROL_BOARD.md`, nunca en este snapshot histórico.
+
 ---
 
 ## 19A — SegoTokens Commercial Activation
