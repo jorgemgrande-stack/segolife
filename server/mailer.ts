@@ -34,7 +34,7 @@ function parseSender(raw: string): { name: string; email: string } {
   // Formatos: "Nombre <email>" o solo "email"
   const match = raw.match(/^(.+?)\s*<(.+?)>$/);
   if (match) return { name: match[1].trim(), email: match[2].trim() };
-  return { name: getSystemSettingSync("brand_name", "Skicenter"), email: raw.trim() };
+  return { name: getSystemSettingSync("brand_name", "Segolife"), email: raw.trim() };
 }
 
 // ─── Modo 1: Brevo HTTP API ───────────────────────────────────────────────────
@@ -46,7 +46,7 @@ async function sendViaBrevoApiTracked(params: MailParams): Promise<SendResult> {
   if (!apiKey) return { success: false };
 
   const noreplyEmail = getSystemSettingSync("email_noreply_sender", "");
-  const brandName = getSystemSettingSync("brand_name", "Skicenter");
+  const brandName = getSystemSettingSync("brand_name", "Segolife");
   const fromRaw = params.from
     ?? process.env.SMTP_FROM
     ?? (noreplyEmail ? `${brandName} <${noreplyEmail}>` : `${brandName} <noreply@example.com>`);

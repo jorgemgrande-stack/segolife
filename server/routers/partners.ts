@@ -18,6 +18,7 @@ import { sendEmail } from "../mailer";
 import { buildPartnerReservationConfirmHtml } from "../emailTemplates";
 import { createLead as dbCreateLead, getUserByInviteToken, setUserPassword, createBookingFromReservation, upsertClientFromReservation, generateReservationNumber, getGHLCredentials } from "../db";
 import { reservations } from "../../drizzle/schema";
+import { canonicalBaseUrl } from "../_core/canonicalHost";
 import { storagePut } from "../storage";
 import { htmlToPdf } from "../pdfGenerator";
 import { createGHLContact, triggerGHLWorkflow, syncLeadUrlsToGHL } from "../ghl";
@@ -456,7 +457,7 @@ export const partnersRouter = router({
       }
 
       // Enviar email de invitación
-      const origin = process.env.APP_URL ?? "https://www.skicenter.es";
+      const origin = canonicalBaseUrl();
       const inviteUrl = `${origin}/partner/activar?token=${token}`;
       await sendEmail({
         to: input.email,
@@ -679,7 +680,7 @@ export const partnersRouter = router({
         try {
           const [resForUrl] = await db.select({ publicToken: reservations.publicToken })
             .from(reservations).where(eq(reservations.id, reservationId)).limit(1);
-          const baseUrl = process.env.APP_URL ?? "https://www.skicenter.es";
+          const baseUrl = canonicalBaseUrl();
           const reservationUrl = resForUrl?.publicToken ? `${baseUrl}/presupuesto/${resForUrl.publicToken}` : undefined;
           const bookingDateFormatted = (() => {
             try {
@@ -734,7 +735,7 @@ export const partnersRouter = router({
             const [resForUrl] = await db.select({ publicToken: reservations.publicToken })
               .from(reservations).where(eq(reservations.id, reservationId)).limit(1);
             if (resForUrl?.publicToken) {
-              const base = process.env.APP_URL ?? "https://www.skicenter.es";
+              const base = canonicalBaseUrl();
               syncLeadUrlsToGHL({
                 ghlContactId,
                 quoteUrl: `${base}/presupuesto/${resForUrl.publicToken}`,
@@ -937,7 +938,7 @@ export const partnersRouter = router({
           const first = created[0];
           const [resForUrl] = await db.select({ publicToken: reservations.publicToken })
             .from(reservations).where(eq(reservations.id, first.reservationId)).limit(1);
-          const baseUrl = process.env.APP_URL ?? "https://www.skicenter.es";
+          const baseUrl = canonicalBaseUrl();
           const reservationUrl = resForUrl?.publicToken ? `${baseUrl}/presupuesto/${resForUrl.publicToken}` : undefined;
           const fmtDate = (s: string) => {
             try {

@@ -13,6 +13,7 @@ import { sendManagedEmail, logDirectEmail } from "./emailManager";
 import { getBusinessEmail, getSystemSettingSync } from "./config";
 import { getDb } from "./db";
 import { reservations } from "../drizzle/schema";
+import { canonicalBaseUrl } from "./_core/canonicalHost";
 
 export interface ReservationEmailData {
   id: number;
@@ -35,7 +36,7 @@ export interface ReservationEmailData {
 
 function reservationPublicUrl(publicToken?: string | null): string | undefined {
   if (!publicToken) return undefined;
-  const base = process.env.APP_URL ?? "https://www.skicenter.es";
+  const base = canonicalBaseUrl();
   return `${base}/presupuesto/${publicToken}`;
 }
 
@@ -109,7 +110,7 @@ export async function sendReservationPaidNotifications(
   const adminEmail = process.env.ADMIN_EMAIL;
   const bccList = [copyEmail, ...(adminEmail ? [adminEmail] : [])];
 
-  const confirmSubject = `✅ Reserva confirmada — ${reservation.productName} — ${getSystemSettingSync("brand_name", "Skicenter")}`;
+  const confirmSubject = `✅ Reserva confirmada — ${reservation.productName} — ${getSystemSettingSync("brand_name", "Segolife")}`;
   const confirmHtml = buildReservationConfirmHtml({
     merchantOrder: reservation.merchantOrder,
     productName: reservation.productName,
@@ -220,7 +221,7 @@ export async function sendReservationFailedNotifications(
       templateKey: "reservation_failed",
       triggerEvent: "reservation_payment_failed",
       recipientEmail: reservation.customerEmail,
-      subject: `❌ Pago no completado — ${reservation.productName} — Náyade Experiences`,
+      subject: `❌ Pago no completado — ${reservation.productName} — ${getSystemSettingSync("brand_name", "Segolife")}`,
       html: buildReservationFailedHtml({
         merchantOrder: reservation.merchantOrder,
         productName: reservation.productName,

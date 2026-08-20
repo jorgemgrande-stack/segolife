@@ -20,6 +20,7 @@ import { quotes, ghlWebhookLogs, vapiCalls } from "../drizzle/schema";
 import { createLead } from "./db";
 import { generateDocumentNumber } from "./documentNumbers";
 import { extractFromTranscript } from "./routers/vapiCalls";
+import { getSystemSettingSync } from "./config";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
 const _db = drizzle(_pool);
@@ -285,7 +286,7 @@ vapiWebhookRouter.post("/api/vapi/webhook", express.json({ limit: "1mb" }), asyn
       quoteNumber,
       leadId,
       agentId: 0, // sistema — sin usuario autenticado
-      title: `Presupuesto Skicenter — ${name}`,
+      title: `Presupuesto ${getSystemSettingSync("brand_name", "Segolife")} — ${name}`,
       status: "borrador",
       items: [],
       subtotal: "0",

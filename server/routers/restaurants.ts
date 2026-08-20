@@ -17,8 +17,9 @@ import {
 } from "../restaurantsDb";
 import { notifyOwner } from "../_core/notification";
 import { buildRedsysForm, generateMerchantOrder, getRedsysUrl } from "../redsys";
+import { canonicalBaseUrl } from "../_core/canonicalHost";
 
-const SITE_URL = (process.env.APP_URL ?? 'https://www.skicenter.es').trim();
+const SITE_URL = canonicalBaseUrl();
 import { buildRestaurantPaymentLinkHtml, buildRestaurantConfirmHtml } from "../emailTemplates";
 import { sendManagedEmail } from "../emailManager";
 
@@ -404,7 +405,7 @@ export const restaurantsRouter = router({
           merchantParams: redsysForm.Ds_MerchantParameters,
           signature: redsysForm.Ds_Signature,
           signatureVersion: redsysForm.Ds_SignatureVersion,
-          origin: input.origin,
+          origin: input.origin ?? SITE_URL,
           bookingId: booking!.id,
         }).catch(err => console.error("[RestaurantPaymentEmail] Error:", err));
       } else {

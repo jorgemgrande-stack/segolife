@@ -32,6 +32,7 @@ import { eq, and, gte, lte, desc, sql, inArray } from "drizzle-orm";
 import { sendEmail } from "../mailer";
 import { storagePut } from "../storage";
 import { generateDocumentNumber } from "../documentNumbers";
+import { canonicalBaseUrl } from "../_core/canonicalHost";
 import { htmlToPdf } from "../pdfGenerator";
 import { assertModuleEnabled } from "../_core/flagGuard";
 import { getSystemSetting } from "../config";
@@ -606,7 +607,7 @@ export const suppliersRouter = router({
         if (nu) await db.update(users).set({ ...(({ supplierId: input.supplierId }) as any) }).where(eq(users.id, nu.id));
       }
 
-      const origin = process.env.APP_URL ?? "https://www.skicenter.es";
+      const origin = canonicalBaseUrl();
       const inviteUrl = `${origin}/supplier/activar?token=${token}`;
       await sendEmail({
         to: email,

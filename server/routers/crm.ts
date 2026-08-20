@@ -3,7 +3,9 @@
  * Ciclo completo: Lead ? Presupuesto ? Pago Redsys ? Reserva ? Factura PDF
  */
 
-const SITE_URL = (process.env.APP_URL ?? 'https://www.skicenter.es').trim();
+import { canonicalBaseUrl } from "../_core/canonicalHost";
+
+const SITE_URL = canonicalBaseUrl();
 
 import { router, protectedProcedure, publicProcedure, staffProcedure, adminProcedure } from "../_core/trpc";
 import { assertModuleEnabled } from "../_core/flagGuard";
@@ -1635,7 +1637,7 @@ export const crmRouter = router({
         // Generar token único de aceptación si no existe ya
         const { randomBytes } = await import("crypto");
         const token = quote.paymentLinkToken ?? randomBytes(32).toString("hex");
-        const origin = input.origin ?? "https://www.skicenter.es";
+        const origin = input.origin ?? canonicalBaseUrl();
         const acceptUrl = `${origin}/presupuesto/${token}`;
 
         // Update quote
@@ -1721,7 +1723,7 @@ export const crmRouter = router({
         let paymentLinkUrl = quote.paymentLinkUrl;
         if (!paymentLinkUrl || !quote.paymentLinkToken) {
           const token = randomBytes(32).toString("hex");
-          const origin = input.origin ?? "https://www.skicenter.es";
+          const origin = input.origin ?? canonicalBaseUrl();
           paymentLinkUrl = `${origin}/presupuesto/${token}`;
           await db.update(quotes).set({
             paymentLinkToken: token,
@@ -3019,7 +3021,7 @@ export const crmRouter = router({
           // Generar token de aceptación SIEMPRE antes de enviar el email
           const { randomBytes } = await import("crypto");
           const token = randomBytes(32).toString("hex");
-          const origin = input.origin ?? "https://www.skicenter.es";
+          const origin = input.origin ?? canonicalBaseUrl();
           const acceptUrl = `${origin}/presupuesto/${token}`;
 
           await db.update(quotes).set({
@@ -4644,7 +4646,7 @@ export const crmRouter = router({
         const [res] = await db.select().from(reservations).where(eq(reservations.id, input.id));
         if (!res) throw new TRPCError({ code: "NOT_FOUND", message: "Reserva no encontrada" });
         const isTransfer = res.paymentMethod === "transferencia";
-        const base = process.env.APP_URL ?? "https://www.skicenter.es";
+        const base = canonicalBaseUrl();
         const reservationUrl = (res as any).publicToken ? `${base}/presupuesto/${(res as any).publicToken}` : undefined;
         let html: string;
         let subject: string;
@@ -5196,7 +5198,7 @@ export const crmRouter = router({
             // Recuperar publicToken de la reserva recién creada (lo genera MySQL por DEFAULT)
             const [resRow] = await db.select({ publicToken: reservations.publicToken })
               .from(reservations).where(eq(reservations.id, reservationId)).limit(1);
-            const base = process.env.APP_URL ?? "https://www.skicenter.es";
+            const base = canonicalBaseUrl();
             const reservationUrl = resRow?.publicToken ? `${base}/presupuesto/${resRow.publicToken}` : undefined;
             const html = buildConfirmationHtml({
               clientName: input.customerName,
@@ -5245,7 +5247,7 @@ export const crmRouter = router({
               // El workflow WhatsApp lee {{contact.presupuesto_url}} para el botón.
               const [resForUrl] = await db.select({ publicToken: reservations.publicToken })
                 .from(reservations).where(eq(reservations.id, reservationId)).limit(1);
-              const baseUrl = process.env.APP_URL ?? "https://www.skicenter.es";
+              const baseUrl = canonicalBaseUrl();
               const publicReservationUrl = resForUrl?.publicToken
                 ? `${baseUrl}/presupuesto/${resForUrl.publicToken}`
                 : undefined;

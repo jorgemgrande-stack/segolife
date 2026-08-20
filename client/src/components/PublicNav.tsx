@@ -169,6 +169,15 @@ export default function PublicNav() {
     { staleTime: 5 * 60 * 1000 } // 5 min cache
   );
 
+  // Logo real de Segolife — nunca brand_logo_url/brand_name (heredado de
+  // Náyade), mismas claves segolife_* que usa SegolifeHeader/AdminLayout.
+  const { data: publicSettings } = trpc.config.getPublicSettings.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+  const brandLogo = publicSettings?.segolife_brand_logo_url || "/icons/segolife-icon.svg";
+  const brandName = publicSettings?.segolife_brand_name || "Segolife";
+
   // Construir estructura de navegación a partir de los datos de BD
   const navLinks: NavItem[] = (() => {
     if (!menuData || menuData.length === 0) return FALLBACK_NAV;
@@ -231,8 +240,8 @@ export default function PublicNav() {
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2.5 cursor-pointer">
             <img
-              src="https://d2xsxph8kpxj0f.cloudfront.net/310519663410228097/AV298FS8t5SaTurBBRqhgQ/nayade_blue_e9563f49.png"
-              alt="Náyade Experiences"
+              src={brandLogo}
+              alt={brandName}
               className="h-14 w-auto object-contain"
             />
             <div className="flex flex-col leading-none">

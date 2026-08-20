@@ -13,6 +13,7 @@ import { createGHLContact, triggerGHLWorkflow, syncLeadUrlsToGHL } from "../ghl"
 import { createCashMovementIfNotExists, getDefaultCashAccountId, recordCashTransferToCentral } from "./cashRegisterHelper";
 import { calcularREAVSimple } from "../reav";
 import { getDailyControlCenter } from "./dailyControl";
+import { canonicalBaseUrl } from "../_core/canonicalHost";
 import {
   cashRegisters,
   cashSessions,
@@ -1300,7 +1301,7 @@ export const tpvRouter = router({
           const [resForUrl] = await db.select({ publicToken: reservations.publicToken })
             .from(reservations).where(eq(reservations.id, reservationId)).limit(1);
           if (resForUrl?.publicToken) {
-            const baseUrl = process.env.APP_URL ?? "https://www.skicenter.es";
+            const baseUrl = canonicalBaseUrl();
             reservationUrl = `${baseUrl}/presupuesto/${resForUrl.publicToken}`;
           }
         }
@@ -1382,7 +1383,7 @@ export const tpvRouter = router({
                 const [resForUrl] = await db.select({ publicToken: reservations.publicToken })
                   .from(reservations).where(eq(reservations.id, reservationId)).limit(1);
                 if (resForUrl?.publicToken) {
-                  const base = process.env.APP_URL ?? "https://www.skicenter.es";
+                  const base = canonicalBaseUrl();
                   syncLeadUrlsToGHL({
                     ghlContactId,
                     quoteUrl: `${base}/presupuesto/${resForUrl.publicToken}`,

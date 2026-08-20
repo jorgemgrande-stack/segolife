@@ -1,6 +1,7 @@
 import { router, publicProcedure, protectedProcedure, permissionProcedure } from "../_core/trpc";
+import { canonicalBaseUrl } from "../_core/canonicalHost";
 
-const SITE_URL = (process.env.APP_URL ?? 'https://www.skicenter.es').trim();
+const SITE_URL = canonicalBaseUrl();
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {

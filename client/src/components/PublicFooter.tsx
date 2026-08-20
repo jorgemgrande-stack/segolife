@@ -1,6 +1,7 @@
 import { Link } from "wouter";
 import { Anchor, Mail, Phone, MapPin, Instagram, Facebook, Youtube, Clock } from "lucide-react";
 import { usePublicPhone } from "@/hooks/usePublicPhone";
+import { trpc } from "@/lib/trpc";
 
 const colExperiencias = [
   { label: "Blob Jump", href: "/experiencias/blob-jump" },
@@ -33,6 +34,14 @@ const colServicios = [
 
 export default function PublicFooter() {
   const { phone, phoneTel } = usePublicPhone();
+  // Logo/nombre real de Segolife — nunca brand_logo_url/brand_name (heredado
+  // de Náyade), mismas claves segolife_* que usa SegolifeHeader/PublicNav.
+  const { data: publicSettings } = trpc.config.getPublicSettings.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+  const brandLogo = publicSettings?.segolife_brand_logo_url || "/icons/segolife-icon.svg";
+  const brandName = publicSettings?.segolife_brand_name || "Segolife";
 
   return (
     <footer className="bg-lago-dark text-white">
@@ -43,8 +52,8 @@ export default function PublicFooter() {
           <div className="lg:col-span-2">
             <Link href="/" className="inline-block mb-5 cursor-pointer">
               <img
-                src="https://d2xsxph8kpxj0f.cloudfront.net/310519663410228097/AV298FS8t5SaTurBBRqhgQ/nayade_White_41263eee.png"
-                alt="Náyade Experiences"
+                src={brandLogo}
+                alt={brandName}
                 className="h-20 w-auto object-contain"
               />
             </Link>
@@ -141,7 +150,7 @@ export default function PublicFooter() {
       <div className="border-t border-white/10">
         <div className="container py-5 flex flex-col md:flex-row items-center justify-between gap-3">
           <p className="text-white/40 text-xs font-display text-center md:text-left">
-            © {new Date().getFullYear()} Náyade Experiences · Todos los derechos reservados · Los Ángeles de San Rafael, Segovia
+            © {new Date().getFullYear()} {brandName} · Todos los derechos reservados · Los Ángeles de San Rafael, Segovia
           </p>
           <div className="flex items-center gap-5">
             <Link href="/privacidad">

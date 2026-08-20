@@ -13,8 +13,9 @@ import { getRatingsByEntityType } from "../db/reviewsDb";
 import { createReservation } from "../db";
 import { buildRedsysForm, generateMerchantOrder } from "../redsys";
 import { assertModuleEnabled } from "../_core/flagGuard";
+import { canonicalBaseUrl } from "../_core/canonicalHost";
 
-const SITE_URL = (process.env.APP_URL ?? 'https://www.skicenter.es').trim();
+const SITE_URL = canonicalBaseUrl();
 
 const adminProcedure = permissionProcedure("settings.manage", ["admin"]).use(async ({ ctx, next }) => {
   await assertModuleEnabled("hotel_module_enabled");
