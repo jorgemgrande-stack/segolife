@@ -15,9 +15,19 @@ import express from "express";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { eq } from "drizzle-orm";
-import { randomBytes } from "crypto";
+import { randomBytes, timingSafeEqual } from "crypto";
 import { quotes, ghlWebhookLogs, vapiCalls } from "../drizzle/schema";
 import { createLead } from "./db";
+
+// Comparación en tiempo constante — mismo criterio que brevoWebhookRoutes.ts
+// (`===` sobre un secreto filtra por temporización cuánto del valor es
+// correcto; closure security sweep, hallazgo #4/8). Actualmente inalcanzable
+// (VAPI_WEBHOOK_SECRET no está configurado en producción), pero es el mismo
+// defecto de código real que ya se corrigió en Brevo.
+function secretMatches(provided: string | undefined, expected: string): boolean {
+  if (typeof provided !== "string" || provided.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+}
 import { generateDocumentNumber } from "./documentNumbers";
 import { extractFromTranscript } from "./routers/vapiCalls";
 import { getSystemSettingSync } from "./config";
@@ -166,7 +176,7 @@ vapiWebhookRouter.post("/api/vapi/webhook", express.json({ limit: "1mb" }), asyn
   const provided =
     (req.headers["x-vapi-secret"] as string | undefined) ??
     (req.query.secret as string | undefined);
-  if (provided !== secret) {
+  if (!secretMatches(provided, secret)) {
     console.warn("[VAPI Webhook] Petición rechazada — secreto inválido");
     return res.status(401).json({ ok: false, error: "Unauthorized" });
   }

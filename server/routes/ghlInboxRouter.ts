@@ -18,11 +18,22 @@ import express from "express";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { eq, desc, and, sql } from "drizzle-orm";
+import { timingSafeEqual } from "crypto";
 import { ghlConversations, ghlMessages, ghlWebhookEvents, siteSettings } from "../../drizzle/schema";
 import { ghlInboxEmitter } from "../ghlInboxEvents";
 import { getUserFromRequest } from "../localAuth";
 import { sdk } from "../_core/sdk";
 import type { Request, Response, NextFunction } from "express";
+
+// Comparación en tiempo constante — mismo criterio que brevoWebhookRoutes.ts
+// (`===` sobre un secreto filtra por temporización cuánto del valor es
+// correcto; closure security sweep, hallazgo #4/8). Actualmente inalcanzable
+// (GHL_WEBHOOK_SECRET no está configurado en producción), pero es el mismo
+// defecto de código real que ya se corrigió en Brevo.
+function secretMatches(provided: string | undefined, expected: string): boolean {
+  if (typeof provided !== "string" || provided.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+}
 
 const USE_LOCAL_AUTH = process.env.LOCAL_AUTH === "true";
 
@@ -535,7 +546,7 @@ ghlInboxRouter.post(
     const provided =
       (req.headers["x-ghl-secret"] as string | undefined) ??
       (req.query.secret as string | undefined);
-    if (provided !== secret) {
+    if (!secretMatches(provided, secret)) {
       log("warn", "Webhook con secreto inválido — ignorado silenciosamente");
       return res.status(200).json({ ok: true }); // Siempre 200 para evitar reintentos de GHL
     }
