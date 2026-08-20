@@ -28,6 +28,10 @@ export default function IntegrationsManager() {
   const { data: eventsResult } = trpc.events.list.useQuery({});
   const venues = venuesResult?.items;
   const events = eventsResult?.items;
+  // NEXT-01: nombre real del venue en vez de solo "venue #id" — dinámico
+  // contra la fuente canónica (venues.list), nunca un mapa hardcodeado
+  // (soporta cualquier venue futuro sin tocar este componente).
+  const venueNameById: Record<number, string> = Object.fromEntries((venues ?? []).map((v: { id: number; name: string }) => [v.id, v.name]));
 
   const [showCreate, setShowCreate] = useState<"venue" | "event" | null>(null);
   const [venueId, setVenueId] = useState<string>("");
@@ -173,7 +177,7 @@ export default function IntegrationsManager() {
               {venueIntegrations.map(i => (
                 <div key={i.id} className="border border-border rounded-lg px-3 py-2 text-sm space-y-2">
                   <div className="flex items-center justify-between">
-                    <span>venue #{i.venueId} · {i.providerKey === "fourvenues_integrations" ? "Integrations API" : "Channel Manager"} · {i.environment} · {i.credentialsConfigured ? `····${i.credentialsLast4 ?? ""}` : "Awaiting credentials"}</span>
+                    <span>{(i.venueId != null ? venueNameById[i.venueId] : undefined) ?? `venue #${i.venueId}`} · {i.providerKey === "fourvenues_integrations" ? "Integrations API" : "Channel Manager"} · {i.environment} · {i.credentialsConfigured ? `····${i.credentialsLast4 ?? ""}` : "Awaiting credentials"}</span>
                     <div className="flex items-center gap-2">
                       <Badge variant={i.status === "connected" ? "default" : i.status === "error" ? "destructive" : "secondary"}>{i.status}</Badge>
                       <Button size="sm" variant="outline" onClick={() => setEditingVenueCredsId(editingVenueCredsId === i.id ? null : i.id)}>
@@ -245,7 +249,10 @@ export default function IntegrationsManager() {
             {confirmSyncId != null && (
               <div className="text-sm space-y-1.5 py-2">
                 <p><span className="text-muted-foreground">Integración:</span> #{confirmSyncId} — Fourvenues Integrations API</p>
-                <p><span className="text-muted-foreground">Venue:</span> {venueIntegrations?.find(v => v.id === confirmSyncId)?.venueId}</p>
+                <p><span className="text-muted-foreground">Venue:</span> {(() => {
+                  const vid = venueIntegrations?.find(v => v.id === confirmSyncId)?.venueId;
+                  return vid != null ? (venueNameById[vid] ?? `#${vid}`) : "";
+                })()}</p>
                 <p><span className="text-muted-foreground">Ventana:</span> por defecto (180 días atrás / 365 días adelante) — piloto recomendado: 30/90</p>
                 {previewById[confirmSyncId] && previewById[confirmSyncId].status === "ok" && (
                   <p className="text-muted-foreground">Preview más reciente: {previewById[confirmSyncId].eventsFound} eventos, {previewById[confirmSyncId].ordersFound} pedidos, {previewById[confirmSyncId].ticketsFound} entradas.</p>
