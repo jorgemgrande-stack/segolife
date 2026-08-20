@@ -15,6 +15,17 @@ function hasHorizontalOverflow(page: import("@playwright/test").Page) {
   return page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 2);
 }
 
+// El banner de cookies (CookieBanner.tsx) es un card fixed/bottom-0/max-w-md
+// centrado, exactamente igual que el bottom nav debajo — mientras no se
+// descarta, su `pointer-events-auto` intercepta el tap de CUALQUIER item del
+// nav (no solo Comunity: mismo comportamiento pre-existente, confirmado al
+// reproducir sin este dismiss — no es una regresión de este fix). Mismo
+// patrón que el resto de la suite (fix03/final-admin-qa).
+async function dismissCookies(page: import("@playwright/test").Page) {
+  const btn = page.getByRole("button", { name: /accept all|aceptar todas/i });
+  if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) await btn.click();
+}
+
 test.describe("FIX-07 — Student con bottom nav (mobile/tablet): Community visible y accesible en 1 toque", () => {
   test("Community aparece en el bottom nav, marca active state, Propose/Your ideas cargan, y volver a Home deja la navegación estable", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name === "desktop", "Desktop usa el sidebar fijo — cubierto por el describe de abajo");
@@ -24,6 +35,7 @@ test.describe("FIX-07 — Student con bottom nav (mobile/tablet): Community visi
 
     await loginViaUI(page, student.email, student.password);
     await page.waitForLoadState("networkidle");
+    await dismissCookies(page);
 
     const bottomNav = page.locator("nav.segolife-safe-bottom");
     await expect(bottomNav).toBeVisible();
@@ -59,6 +71,8 @@ test.describe("FIX-07 — Student con bottom nav (mobile/tablet): Community visi
     test.skip(testInfo.project.name === "desktop", "Cubierto por el smoke de desktop de abajo");
 
     await loginViaUI(page, student.email, student.password);
+    await page.waitForLoadState("networkidle");
+    await dismissCookies(page);
     await page.goto(`/${student.community}/comunity`);
     await page.waitForLoadState("networkidle");
 
@@ -73,6 +87,8 @@ test.describe("FIX-07 — Student con bottom nav (mobile/tablet): Community visi
     test.skip(testInfo.project.name === "desktop", "El guard es agnóstico de viewport — una comprobación basta");
 
     await loginViaUI(page, student.email, student.password);
+    await page.waitForLoadState("networkidle");
+    await dismissCookies(page);
     await page.goto("/uva/comunity");
     await page.waitForLoadState("networkidle");
     await expect(page).not.toHaveURL(/\/uva\//);
@@ -85,6 +101,7 @@ test.describe("FIX-07 — Desktop smoke: Community en el sidebar, sin regresión
 
     await loginViaUI(page, student.email, student.password);
     await page.waitForLoadState("networkidle");
+    await dismissCookies(page);
 
     const sidebar = page.locator("aside");
     await expect(sidebar).toBeVisible();
