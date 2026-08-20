@@ -20,7 +20,7 @@
  * que SIEMPRE funciona para el propio host que la fijó.
  */
 import { describe, it, expect } from "vitest";
-import { sessionCookieOptions, clearSessionCookieOptions } from "./localAuth";
+import { sessionCookieOptions, clearSessionCookieOptions, AUTH_SESSION_TTL_SECONDS } from "./localAuth";
 
 describe("sessionCookieOptions — producción, host real de segolife.es", () => {
   it("host www.segolife.es: declara domain='.segolife.es' (cubre apex + www + futuros subdominios)", () => {
@@ -46,8 +46,8 @@ describe("sessionCookieOptions — producción, host real de segolife.es", () =>
     expect(opts.path).toBe("/");
   });
 
-  it("maxAge es 30 días en milisegundos", () => {
-    expect(sessionCookieOptions("production", "www.segolife.es").maxAge).toBe(30 * 24 * 60 * 60 * 1000);
+  it("maxAge sigue en lockstep con AUTH_SESSION_TTL_SECONDS (SEC-02 — antes fijo a 30 días, ahora sesión deslizante)", () => {
+    expect(sessionCookieOptions("production", "www.segolife.es").maxAge).toBe(AUTH_SESSION_TTL_SECONDS * 1000);
   });
 });
 

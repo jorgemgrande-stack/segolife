@@ -7,7 +7,7 @@
 
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
 import type { User } from "../../drizzle/schema";
-import { getUserFromRequest } from "../localAuth";
+import { getUserAndMaybeRenewSession } from "../localAuth";
 
 export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
@@ -15,13 +15,20 @@ export type TrpcContext = {
   user: User | null;
 };
 
+/**
+ * SEC-02: cada request tRPC autenticada es "actividad real" del usuario —
+ * el punto correcto para renovar la sesión de forma deslizante si procede
+ * (getUserAndMaybeRenewSession decide internamente si hace falta, según
+ * AUTH_SESSION_RENEWAL_THRESHOLD_SECONDS; la mayoría de requests no
+ * escriben ninguna cookie nueva).
+ */
 export async function createLocalContext(
   opts: CreateExpressContextOptions
 ): Promise<TrpcContext> {
   let user: User | null = null;
 
   try {
-    user = await getUserFromRequest(opts.req);
+    user = await getUserAndMaybeRenewSession(opts.req, opts.res);
   } catch {
     user = null;
   }
