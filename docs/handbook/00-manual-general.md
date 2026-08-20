@@ -28,6 +28,17 @@ identificarse en cualquier local mediante un **QR** personal.
 Un mismo usuario puede tener como máximo un rol operativo — no hay cuentas
 que combinen, por ejemplo, Student y Responsable de local a la vez.
 
+## Duración de la sesión
+
+La sesión permanece activa durante toda la jornada mientras haya actividad
+normal en la plataforma — no hace falta volver a iniciar sesión solo por
+dejar una pestaña abierta un rato o atender a un cliente entre una acción y
+otra. Si una sesión deja de usarse durante un tiempo prolongado, o ha pasado
+ya varios días desde el último inicio de sesión, la plataforma pedirá volver
+a iniciar sesión mostrando el motivo ("Tu sesión ha caducado. Vuelve a
+iniciar sesión para continuar.") y, tras identificarse de nuevo, se vuelve
+automáticamente a la pantalla en la que se estaba trabajando.
+
 ## El ecosistema, superficie por superficie
 
 - **Master (`segolife.es` / `www.segolife.es`)**: home pública, punto de
