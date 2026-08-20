@@ -48,14 +48,11 @@ comportamiento en runtime. **`npx tsc --noEmit` → 0 errores** (partía de
   decidir el destino real del teléfono/catálogo de contacto.
 - **Bloqueante**: No.
 
-### A4. `client/src/pages/admin/crm/CRMDashboard.tsx` — títulos de presupuesto por defecto
-- **Severidad**: Cosmética.
-- **Descripción**: 4 sitios usan `"Presupuesto Nayade Experiences"` como
-  texto por defecto en campos editables del formulario de creación de
-  presupuesto. Admin-only, editable antes de guardar, detrás de
-  `crm_module_enabled` desactivado.
-- **Próxima acción**: cambio trivial de 4 strings si se reactiva el CRM.
-- **Bloqueante**: No.
+### A4. ~~`client/src/pages/admin/crm/CRMDashboard.tsx` — títulos de presupuesto por defecto~~ — RESUELTO 2026-08-20
+Los 4 sitios que usaban `"Presupuesto Nayade Experiences"` como texto por
+defecto se cambiaron a `"Presupuesto Segolife"` (superprompt FINAL
+OPERATIONAL CLOSURE, bloque 9 LOW-DEBT CLEANUP). Cambio puro de texto de
+UI, sin lógica tocada.
 
 ---
 
@@ -107,6 +104,27 @@ historial de lo que SÍ estaba roto y ya se solucionó, con verificación.
 definida, y su ventana de compra ya caducó. Requiere decisión comercial
 inmediata (qué otorgar) — **prioridad alta, no técnica**.
 
+**Actualización 2026-08-20 (superprompt FINAL OPERATIONAL CLOSURE) — SIGUE
+ABIERTO, empeorando activamente:** re-auditado read-only contra
+producción. La fila (`slug='bienvenida-nuevo-estudiante'`) sigue
+`active=1`, sigue sin `product_id`/`discount_type`/`discount_value`
+asignado, y `registrationService.ts` (`WELCOME_BENEFIT_SLUG` hardcodeado)
+sigue concediéndola automáticamente a **todo estudiante nuevo que se
+registra hoy** — no es solo deuda histórica. Recuento real actualizado: 5
+concesiones a 3 Students (2 `manual` del día de creación, 2
+`token_purchase` con 5 ST reales cada una = 10 ST gastados, 1
+`registration_welcome` automática) — 2 más de las 3 documentadas
+originalmente aquí. `docs/OVERNIGHT_EXECUTION_LOG.md` §7B había cerrado
+esto como "NO LONGER RELEVANT" comprobando solo el campo `name` (que sí
+se renombró) sin ver que `slug`/`description` siguen siendo la misma fila
+sin resolver — **ese cierre fue incorrecto**, se corrige aquí.
+Clasificación: BUSINESS DECISION REQUIRED en dos frentes independientes —
+(1) desactivar la fila para frenar nuevas concesiones rotas (acción
+técnica segura y reversible, pendiente de confirmación explícita por
+tratarse de datos de producción), y (2) qué hacer por los 2 Students que
+ya gastaron ST reales (reembolso/recompensa retroactiva/nada — decisión
+comercial, no técnica).
+
 ### D2. Páginas legales con "Hotel Náyade"
 `TerminosCondiciones.tsx`/`CondicionesCancelacion.tsx` mencionan un
 producto (Hotel Náyade) que no es de Segolife. No editado — contenido
@@ -153,6 +171,96 @@ autorización explícita para escritura directa de producción.
   `venueId` desde IDs hijos); webhooks de GHL y Brevo (ya siguen el patrón
   503/no-configurado — 401/no-coincide correcto); validación de firma HMAC
   de Redsys IPN.
+
+---
+
+## G. SUPERPROMPT FINAL OPERATIONAL CLOSURE — 2026-08-20
+
+Sesión posterior a las anteriores (SEC-01, esta misma tabla, auditoría
+Fourvenues La Finca). Cubre SEC-02 y el roadmap final de cierre.
+
+### G1. SEC-02 — Session Persistence & Safe Reauthentication — RESUELTO
+Causa raíz probada (no era TTL corto — JWT/cookie ya eran de 30 días):
+faltaba renovación deslizante + el frontend trataba cualquier 401 aislado
+como sesión muerta sin confirmar ni conservar `returnTo`. Corregido:
+sesión deslizante con tope absoluto real (`AUTH_SESSION_TTL_SECONDS`
+24h/`AUTH_SESSION_RENEWAL_THRESHOLD_SECONDS` 2h/
+`AUTH_SESSION_ABSOLUTE_TTL_SECONDS` 7d, todos configurables por env,
+default seguro), `isActive` ahora se comprueba de forma centralizada para
+TODO procedure (antes solo `employeeProcedure`/`gestoriaProcedure`), y el
+frontend confirma en fresco antes de redirigir. Desplegado y verificado
+en producción (SHA/health/ready/logs limpios). Bug secundario encontrado
+en el propio deploy y corregido: el log `session rejected: expired`
+inundaba los logs (~5/min sostenido, tráfico anónimo normal con cookie
+caducada) — throttled a 1/min.
+
+### G2. LA FINCA CLUB — activación de producción — DIAGNOSTICADO, PENDIENTE DE CONFIRMACIÓN
+Probado de forma inequívoca y read-only: las credenciales guardadas
+(`venue_integrations.id=4`) son `ik_live_...` (estilo producción) y
+responden `200 {"success":true}` contra la API de PRODUCCIÓN de
+Fourvenues Integrations, y `404 "Integration not found"` contra sandbox
+(el valor guardado `environment=sandbox` es simplemente el campo
+equivocado, no un problema de credenciales). Fix listo
+(`environment→production`, `enabled=1`, `sync_enabled=1`,
+`loyalty_enabled` deliberadamente sin tocar hasta verificar el primer
+sync) pero es una escritura real de producción — bloqueada por el
+clasificador de permisos de la sesión, correctamente. **CONTROLLED
+MANUAL ACTION REQUIRED** — pendiente de confirmación explícita del
+usuario.
+
+### G3. NEXT-01 — Nombre real de Venue en Admin Integrations — RESUELTO
+`IntegrationsManager.tsx` mostraba "venue #3" en vez del nombre real.
+Resuelto dinámicamente contra `venues.list` (ya cargado en el
+componente), nunca un mapa hardcodeado. 3 tests nuevos. Desplegado y
+verificado.
+
+### G4. `server/mailer.ts` — remitente de email nunca leía el valor real configurado — RESUELTO (bug real activo)
+`getSystemSettingSync("email_noreply_sender", "")` lee de una caché en
+memoria que solo se rellena cuando algo llama a la versión ASYNC
+`getSystemSetting()` para esa misma clave — ningún caller async existía
+para `email_noreply_sender` en todo el repo, así que la caché nunca se
+calentaba y el helper devolvía SIEMPRE el fallback `""`, cayendo en
+`noreply@example.com` (dominio reservado, Brevo lo rechaza siempre) sin
+importar lo que hubiera en `system_settings`. Así fallaron 2 invitaciones
+reales a un miembro real del equipo (`herre.casanova@gmail.com`,
+2026-08-18 y 2026-08-20). Corregido: las funciones de envío (ya async)
+usan la versión async del getter. 2 tests nuevos. Desplegado y
+verificado.
+
+### G5. Payment Provider — rutas de checkout heredadas de Náyade, vivas y rotas
+`server/redsys.ts`/`redsysRoutes.ts` (heredado de Náyade Experiences)
+sigue montado y las rutas frontend que lo disparan (`/checkout`,
+`/hotel`, `/spa`, `/restaurantes`, `/presupuesto`, `/reserva/ok`) siguen
+enrutadas y alcanzables hoy en `www.segolife.es` — sin `REDSYS_MERCHANT_*`
+configurado en producción, cualquier intento construiría un formulario
+Redsys inválido (Redsys lo rechazaría; no es un riesgo de cobro, es una
+ruta muerta/confusa). El motor real de tickets de Segolife
+(`server/segolife/ticketing/payments/*`) es una abstracción propia,
+deliberadamente independiente de `redsys.ts`, apuntando hoy a
+`unconfiguredPaymentProvider` (falla honesto, nunca simula éxito).
+SegoTokens/Benefits confirmados 100% independientes de cualquier
+proveedor de pago. **BUSINESS DECISION REQUIRED**: ¿se retiran del
+enrutado público esas páginas heredadas de Náyade, dado que el producto
+ya no es reservas de hotel/spa/restaurante? No se ha tocado el enrutado
+en esta sesión (retirar rutas es una acción de mayor alcance que un
+string, fuera del criterio "narrow/safe fix" de este cierre).
+
+### G6. QA visual (Chromium/Playwright, producción real, desktop/tablet/mobile)
+23 specs existentes (`e2e/pre16-17/`, cuenta Admin QA real) — 205 passed,
+18 flaky (verde al reintentar, ruido de red normal contra producción
+real), 1 skipped. De los 12 fallos no absorbidos por el reintento: 11 son
+**DATA STATE**, no bugs — verificado read-only que ahora mismo existen
+193 eventos reales pero 51 son borradores de Fourvenues sin publicar
+(`source_publication_status='unpublished'`) y solo 1 está `published`
+(en el pasado) — cero eventos activos/futuros publicados en absoluto
+ahora mismo, así que Explore/Home/Events legítimamente no tienen nada que
+mostrar (el filtro "nunca mostrar un borrador" funciona exactamente como
+se diseñó). El fallo restante era un bug real de TEST (no de la app):
+`mg01-home-tonight-upcoming.responsive.spec.ts` usaba un locator
+`getByRole('link', {name: /explore all/i})` sin `.first()` — con Upcoming
+vacío, la sección Tonight (con su propio CTA idéntico) sigue montada a la
+vez, así que hay legítimamente 2 links con el mismo nombre — corregido
+con `.first()`.
 
 ---
 

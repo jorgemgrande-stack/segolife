@@ -55,6 +55,17 @@ realmente el Beneficio (descuento, producto, importe) es una decisión
 comercial, no técnica — pero dado que ya hay Students reales con esta
 concesión en la mano, se recomienda resolverlo con prioridad alta.
 
+**Actualización 2026-08-20 — SIGUE SIN RESOLVER, y sigue activo:** un
+cierre posterior (`docs/OVERNIGHT_EXECUTION_LOG.md` §7B) marcó esto "no
+longer relevant" comprobando solo el campo `name` — la fila real
+(`slug='bienvenida-nuevo-estudiante'`) nunca cambió de estado, sigue
+`active=1`/sin recompensa asignada, y `registrationService.ts` la sigue
+concediendo automáticamente a cada estudiante nuevo HOY. Recuento
+actualizado: 5 concesiones a 3 Students (2 más de las 3 documentadas
+arriba — 2 `manual` adicionales del mismo día de creación de la fila), 2
+de ellas con 5 ST reales gastados cada una. Ver
+`docs/FINAL_TECHNICAL_DEBT_REGISTER.md` §D1 para el detalle completo.
+
 ## Matriz SegoTokens por venue
 
 | Venue | Ganar ST | Gastar ST | Máx. % | 100% ST | Horario | Estado |
