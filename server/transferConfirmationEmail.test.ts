@@ -20,6 +20,7 @@ const mockData = {
   taxAmount: "24.89",
   total: "143.39",
   invoiceUrl: "https://cdn.example.com/invoices/FAC-2026-0001.pdf",
+  reservationUrl: "https://cdn.example.com/presupuesto/abc123token",
   confirmedBy: "Admin Náyade",
   confirmedAt: new Date("2026-03-22T18:00:00Z"),
 };
@@ -58,16 +59,16 @@ describe("buildTransferConfirmationHtml", () => {
     expect(html).toContain("143.39");
   });
 
-  it("incluye el enlace de descarga de la factura PDF cuando se proporciona", () => {
+  it("incluye el botón 'Ver tu reserva' cuando se proporciona reservationUrl", () => {
     const html = buildTransferConfirmationHtml(mockData);
-    expect(html).toContain("https://cdn.example.com/invoices/FAC-2026-0001.pdf");
-    expect(html).toContain("Descargar Factura");
+    expect(html).toContain("https://cdn.example.com/presupuesto/abc123token");
+    expect(html).toContain("Ver tu reserva");
   });
 
-  it("no incluye el bloque de descarga si no hay URL de factura", () => {
-    const { invoiceUrl: _, ...dataWithoutInvoice } = mockData;
-    const html = buildTransferConfirmationHtml(dataWithoutInvoice);
-    expect(html).not.toContain("Descargar Factura");
+  it("no incluye el botón 'Ver tu reserva' si no hay reservationUrl", () => {
+    const { reservationUrl: _, ...dataWithoutReservationUrl } = mockData;
+    const html = buildTransferConfirmationHtml(dataWithoutReservationUrl);
+    expect(html).not.toContain("Ver tu reserva");
   });
 
   it("menciona explícitamente que el pago fue por transferencia bancaria", () => {

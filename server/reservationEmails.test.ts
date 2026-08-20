@@ -5,16 +5,6 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock de nodemailer
-vi.mock("nodemailer", () => ({
-  default: {
-    createTransport: vi.fn(() => ({
-      sendMail: vi.fn().mockResolvedValue({ messageId: "test-id" }),
-      verify: vi.fn().mockResolvedValue(true),
-    })),
-  },
-}));
-
 // Mock de notifyOwner
 vi.mock("./_core/notification", () => ({
   notifyOwner: vi.fn().mockResolvedValue(true),
@@ -25,10 +15,24 @@ vi.mock("./db", () => ({
   getDb: vi.fn(),
 }));
 
+// Mock de emailManager — sendManagedEmail es el punto real de envío al
+// cliente desde la migración a Brevo HTTP API (server/reservationEmails.ts
+// ya no usa nodemailer directamente para el email al cliente).
+vi.mock("./emailManager", () => ({
+  sendManagedEmail: vi.fn().mockResolvedValue(true),
+  logDirectEmail: vi.fn().mockResolvedValue(true),
+}));
+
+// Mock de mailer — usado para las copias BCC internas (equipo), no para el
+// email al cliente. Sin mock haría una llamada real a la API de Brevo.
+vi.mock("./mailer", () => ({
+  sendEmail: vi.fn().mockResolvedValue(true),
+}));
+
 import { sendReservationPaidNotifications, sendReservationFailedNotifications, confirmReservationAndNotify } from "./reservationEmails";
 import { notifyOwner } from "./_core/notification";
 import { getDb } from "./db";
-import nodemailer from "nodemailer";
+import { sendManagedEmail } from "./emailManager";
 
 const mockReservation = {
   id: 1,
@@ -67,19 +71,13 @@ describe("sendReservationPaidNotifications", () => {
     );
   });
 
-  it("envía email al cliente cuando SMTP está configurado", async () => {
-    process.env.SMTP_HOST = "smtp.example.com";
-    process.env.SMTP_USER = "user@example.com";
-    process.env.SMTP_PASS = "password";
-    process.env.SMTP_PORT = "587";
-
+  it("envía email al cliente vía sendManagedEmail", async () => {
     await sendReservationPaidNotifications(mockReservation);
 
-    const mockTransport = (nodemailer.createTransport as any).mock.results[0]?.value;
-    expect(mockTransport?.sendMail).toHaveBeenCalledOnce();
-    expect(mockTransport?.sendMail).toHaveBeenCalledWith(
+    expect(sendManagedEmail).toHaveBeenCalledOnce();
+    expect(sendManagedEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: mockReservation.customerEmail,
+        recipientEmail: mockReservation.customerEmail,
         subject: expect.stringContaining(mockReservation.productName),
         html: expect.stringContaining(mockReservation.merchantOrder),
       })
@@ -117,19 +115,13 @@ describe("sendReservationFailedNotifications", () => {
     );
   });
 
-  it("envía email de fallo al cliente cuando SMTP está configurado", async () => {
-    process.env.SMTP_HOST = "smtp.example.com";
-    process.env.SMTP_USER = "user@example.com";
-    process.env.SMTP_PASS = "password";
-    process.env.SMTP_PORT = "587";
-
+  it("envía email de fallo al cliente vía sendManagedEmail", async () => {
     await sendReservationFailedNotifications(mockReservation, "0190");
 
-    const mockTransport = (nodemailer.createTransport as any).mock.results[0]?.value;
-    expect(mockTransport?.sendMail).toHaveBeenCalledOnce();
-    expect(mockTransport?.sendMail).toHaveBeenCalledWith(
+    expect(sendManagedEmail).toHaveBeenCalledOnce();
+    expect(sendManagedEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: mockReservation.customerEmail,
+        recipientEmail: mockReservation.customerEmail,
         subject: expect.stringContaining("no completado"),
       })
     );

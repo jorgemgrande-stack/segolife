@@ -44,8 +44,12 @@ import { tokensRouter } from "./tokens";
 function callerWithoutSession() {
   return tokensRouter.createCaller({ user: null } as any);
 }
+// id fuera de rango real (999999): nunca colisiona con un usuario sembrado
+// en la BD local con roles RBAC reales ya asignados (checkRbacOrLegacy
+// resuelve por RBAC real si el id coincide, ignorando el `role` fabricado
+// aquí) — mismo fix que server/nayade.test.ts.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function callerAs(role: string, id = 1) {
+function callerAs(role: string, id = 999999) {
   return tokensRouter.createCaller({ user: { id, role } } as any);
 }
 

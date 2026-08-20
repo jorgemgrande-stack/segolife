@@ -41,7 +41,11 @@ function createAdminContext(): TrpcContext {
 
 function createUserContext(role: "user" | "admin" | "agente" | "monitor" = "user"): TrpcContext {
   const user: AuthenticatedUser = {
-    id: 2,
+    // id fuera de rango real (nunca colisiona con un usuario sembrado en la
+    // BD local, p.ej. id=2 es un admin real de nayade — checkRbacOrLegacy
+    // consulta rbac_user_roles por id real, ignorando el `role` fabricado
+    // aquí, si el id coincide con un usuario con roles RBAC ya asignados).
+    id: 999999,
     openId: `test-user-${role}`,
     email: `${role}@test.com`,
     name: `Test ${role}`,
@@ -135,7 +139,12 @@ describe("public API", () => {
 // ─── Lead Creation Tests ──────────────────────────────────────────────────────
 
 describe("leads", () => {
-  it("submitLead requires name and email", async () => {
+  // crm_module_enabled está desactivado en Segolife (CRM heredado del
+  // negocio turístico de Náyade) — ver server/_core/segolifeFeatureFlagBaseline.ts
+  // y server/routers/legacyTourismModuleGating.test.ts. submitLead rechaza
+  // FORBIDDEN antes de tocar la BD, igual que el resto de procedures del
+  // módulo legacy.
+  it("submitLead rechaza FORBIDDEN con crm_module_enabled desactivado", async () => {
     const caller = appRouter.createCaller(createPublicContext());
     await expect(
       caller.public.submitLead({
@@ -143,7 +152,7 @@ describe("leads", () => {
         email: "test@example.com",
         message: "Quiero información sobre esquí",
       })
-    ).resolves.toBeDefined();
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
 
@@ -169,16 +178,21 @@ describe("admin access control", () => {
 });
 
 // ─── CRM Leads & Quotes Module Tests ───────────────────────────────────────
+// crm_module_enabled está desactivado en Segolife — ver
+// server/routers/legacyTourismModuleGating.test.ts (cobertura dedicada del
+// mismo gate). Estos dos rechazan igual, antes de tocar la BD.
 describe("crm leads & quotes module", () => {
-  it("staff can list leads via crm router", async () => {
+  it("staff no puede listar leads via crm router — crm_module_enabled desactivado", async () => {
     const caller = appRouter.createCaller(createAdminContext());
-    const result = await caller.crm.leads.list({ limit: 10, offset: 0 });
-    expect(Array.isArray(result)).toBe(true);
+    await expect(
+      caller.crm.leads.list({ limit: 10, offset: 0 })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
-  it("staff can list quotes via crm router", async () => {
+  it("staff no puede listar quotes via crm router — crm_module_enabled desactivado", async () => {
     const caller = appRouter.createCaller(createAdminContext());
-    const result = await caller.crm.quotes.list({ limit: 10, offset: 0 });
-    expect(Array.isArray(result)).toBe(true);
+    await expect(
+      caller.crm.quotes.list({ limit: 10, offset: 0 })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
 

@@ -8,9 +8,12 @@
  * permiso). Se corrigió a operationsViewProc (mismo gate que sus
  * procedures hermanos updateOperational/getDashboardStats en este router).
  *
- * checkRbacOrLegacy cae a fallbackAllowedRoles cuando no hay BD real en
- * test — igual que legacyTourismModuleGating.test.ts, no hace falta
- * mockear nada para probar el rechazo por rol.
+ * En CI (sin BD real) checkRbacOrLegacy cae a fallbackAllowedRoles — no hace
+ * falta mockear nada para probar el rechazo por rol. En local (con BD real
+ * de desarrollo disponible) se resuelve por RBAC real — de ahí que los ids
+ * de usuario fabricados aquí usen un id fuera de rango (999999), para no
+ * colisionar con una cuenta admin real ya sembrada en la BD local (mismo
+ * fix que server/nayade.test.ts).
  */
 import { describe, it, expect } from "vitest";
 import { operationsRouter } from "./operations";
@@ -26,13 +29,13 @@ describe("operations.ts — dailyOrders.getForDate / activities.getForDate ya no
 
   it("PRE-16.16B fix: rol 'user' autenticado sin operations.view -> FORBIDDEN (antes: pasaba, exponía PII de clientes)", async () => {
     await expect(
-      caller({ id: 1, role: "user", isActive: true }).dailyOrders.getForDate({ date: "2026-09-01" })
+      caller({ id: 999999, role: "user", isActive: true }).dailyOrders.getForDate({ date: "2026-09-01" })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   it("PRE-16.16B fix: rol 'employee' (Portal del Empleado) tampoco alcanza PII operativa vía este endpoint", async () => {
     await expect(
-      caller({ id: 1, role: "employee", isActive: true }).dailyOrders.getForDate({ date: "2026-09-01" })
+      caller({ id: 999999, role: "employee", isActive: true }).dailyOrders.getForDate({ date: "2026-09-01" })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
@@ -41,7 +44,10 @@ describe("operations.ts — dailyOrders.getForDate / activities.getForDate ya no
     // fallar después del gate — lo único que este caso garantiza es que el
     // gate en sí no rechaza con FORBIDDEN a un rol que sí debe pasar.
     try {
-      await caller({ id: 1, role: "monitor", isActive: true }).dailyOrders.getForDate({ date: "2026-09-01" });
+      // id fuera de rango real: nunca colisiona con un usuario sembrado en la
+      // BD local con roles RBAC reales ya asignados (mismo fix que
+      // server/nayade.test.ts) — aquí SÍ hay BD real disponible en local.
+      await caller({ id: 999999, role: "monitor", isActive: true }).dailyOrders.getForDate({ date: "2026-09-01" });
     } catch (e: any) {
       expect(e.code).not.toBe("FORBIDDEN");
     }
@@ -49,7 +55,7 @@ describe("operations.ts — dailyOrders.getForDate / activities.getForDate ya no
 
   it("activities.getForDate: mismo fix, mismo comportamiento", async () => {
     await expect(
-      caller({ id: 1, role: "user", isActive: true }).activities.getForDate({ date: "2026-09-01" })
+      caller({ id: 999999, role: "user", isActive: true }).activities.getForDate({ date: "2026-09-01" })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

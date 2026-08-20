@@ -180,12 +180,20 @@ function processSource3CRMReservations(
 ): SettlementLine[] {
   const productIdSet = new Set(products.map((p) => p.id));
   const lines: SettlementLine[] = [];
-  const crmChannels = ["crm", "web", "telefono", "email", "otro"];
+  // SOURCE 3 cubre "cualquier canal" salvo TPV_FISICO, que ya se procesa en
+  // SOURCE 2 (server/routers/suppliers.ts: sin filtro de canal, solo
+  // statusReservation/statusPayment — la exclusión de TPV_FISICO viene de
+  // que SOURCE 2 consulta una fuente de datos ya restringida a TPV).
+  const nonTpvChannels = [
+    "ONLINE_DIRECTO", "ONLINE_ASISTIDO", "VENTA_DELEGADA",
+    "TELEFONO", "EMAIL",
+    "PARTNER", "TICKETING", "MANUAL", "API",
+  ];
 
   const crmReservations = reservations.filter(
     (r) =>
       r.status === "paid" &&
-      crmChannels.includes(r.channel) &&
+      nonTpvChannels.includes(r.channel) &&
       (r.paidAt ?? 0) >= periodFromMs &&
       (r.paidAt ?? 0) <= periodToMs
   );
