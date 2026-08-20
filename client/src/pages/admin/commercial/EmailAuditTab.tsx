@@ -73,7 +73,6 @@ const AUDIT_DATA: AuditEntry[] = [
     hasSubject: true,
     hasBody: true,
     isCronDriven: true,
-    cronSource: null,
     status: "ok",
     notes: "Envío manual únicamente. Los recordatorios automáticos los gestionan commercial_reminder_1/2/3 vía emailAutomationJob.",
   },

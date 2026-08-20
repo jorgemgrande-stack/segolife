@@ -102,6 +102,7 @@ export async function calculateLegoPackPrice(
     isOptional: boolean;
     isClientEditable: boolean;
     isClientVisible: boolean;
+    isQuantityEditable: boolean;
     isActiveInOperation: boolean;
     quantity: number;
     basePrice: number;
@@ -203,6 +204,7 @@ export async function calculateLegoPackPrice(
       isOptional: line.isOptional,
       isClientEditable: line.isClientEditable,
       isClientVisible: line.isClientVisible,
+      isQuantityEditable: line.isQuantityEditable,
       isActiveInOperation: isActiveInOp,
       quantity,
       basePrice: lineTotalBase,

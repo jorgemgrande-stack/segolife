@@ -44,7 +44,7 @@ import {
   type CommercialReminderEmailData,
 } from "./emailTemplates";
 
-const COMMERCIAL_TEMPLATE_BUILDERS: Record<string, (d: CommercialReminderEmailData) => string> = {
+const COMMERCIAL_TEMPLATE_BUILDERS: Record<string, ((d: CommercialReminderEmailData) => string) | undefined> = {
   commercial_reminder_1: buildCommercialReminder1Html,
   commercial_reminder_2: buildCommercialReminder2Html,
   commercial_reminder_3: buildCommercialReminder3Html,

@@ -217,11 +217,11 @@ async function syncFolder(
         const fromName = (fromAddr?.name ?? "").slice(0, 254) || null;
 
         const toArr = parsed.to
-          ? (Array.isArray(parsed.to.value) ? parsed.to.value : [parsed.to.value])
+          ? (Array.isArray(parsed.to) ? parsed.to.flatMap((a) => a.value) : parsed.to.value)
               .map((a: any) => a?.address ?? "").filter(Boolean)
           : [];
         const ccArr = parsed.cc
-          ? (Array.isArray(parsed.cc.value) ? parsed.cc.value : [parsed.cc.value])
+          ? (Array.isArray(parsed.cc) ? parsed.cc.flatMap((a) => a.value) : parsed.cc.value)
               .map((a: any) => a?.address ?? "").filter(Boolean)
           : [];
 

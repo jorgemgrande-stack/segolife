@@ -687,7 +687,7 @@ export const cardTerminalBatchesRouter = router({
 
       return {
         unlinkedTpvOps: Number(unlinkedOps[0]?.cnt ?? 0),
-        staleFailedPayments: Number((staleFailedResult[0] as any[])?.[0]?.cnt ?? 0),
+        staleFailedPayments: Number((staleFailedResult[0] as unknown as any[])?.[0]?.cnt ?? 0),
       };
     }),
 

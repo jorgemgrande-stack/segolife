@@ -369,7 +369,7 @@ function ClientHistoryModal({ client, onClose, onStartWhatsApp }: { client: Clie
         id: `lead-${data.lead.id}`,
         date: new Date(data.lead.createdAt),
         type: "lead",
-        title: `Lead #${data.lead.id} — ${data.lead.opportunityName ?? data.lead.name}`,
+        title: `Lead #${data.lead.id} — ${data.lead.name}`,
         subtitle: `Origen: ${data.lead.source ?? "—"} · Estado: ${data.lead.opportunityStatus ?? "—"}`,
         color: "border-l-blue-500",
         dotColor: "bg-blue-500 border-blue-300",
@@ -590,7 +590,7 @@ function ClientHistoryModal({ client, onClose, onStartWhatsApp }: { client: Clie
                         <UserPlus className="w-4 h-4 text-blue-400" />
                       </div>
                       <div>
-                        <div className="text-white text-sm font-medium">{data.lead.opportunityName ?? data.lead.name}</div>
+                        <div className="text-white text-sm font-medium">{data.lead.name}</div>
                         <div className="text-white/40 text-xs">Lead #{data.lead.id} · {fmtDate(data.lead.createdAt)} · {data.lead.source ?? "—"}</div>
                       </div>
                       <Link href={`/admin/crm?lead=${data.lead.id}`} className="ml-auto">

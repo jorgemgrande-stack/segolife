@@ -373,7 +373,7 @@ export const cardTerminalOperationsRouter = router({
           .select({ id: reservations.id, reservationNumber: reservations.reservationNumber })
           .from(reservations)
           .where(sql`${reservations.id} IN (${sql.join(reservationIds.map(id => sql`${id}`), sql`, `)})`);
-        for (const r of resRows) reservationNumberMap[r.id] = r.reservationNumber;
+        for (const r of resRows) if (r.reservationNumber) reservationNumberMap[r.id] = r.reservationNumber;
       }
 
       const enrichedData = data.map(r => ({

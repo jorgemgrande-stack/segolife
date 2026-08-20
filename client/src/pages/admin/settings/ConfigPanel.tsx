@@ -305,7 +305,7 @@ function SettingField({ settingKey, label, description, value, isSensitive }: Se
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="text-sm font-medium text-foreground">{label}</span>
-            {isDangerous && <AlertTriangle className="w-3.5 h-3.5 text-amber-500" title="Cambio crítico — requiere confirmación" />}
+            {isDangerous && <span title="Cambio crítico — requiere confirmación"><AlertTriangle className="w-3.5 h-3.5 text-amber-500" /></span>}
           </div>
           {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
           <p className="text-xs font-mono text-muted-foreground/50 mt-0.5">{settingKey}</p>
@@ -742,7 +742,7 @@ export default function ConfigPanel() {
                     <Icon className="w-4 h-4 shrink-0" />
                     <span className="text-sm flex-1 truncate">{section.label}</span>
                     {section.id === "avanzado"
-                      ? <Shield className="w-3.5 h-3.5 shrink-0 text-amber-500" title="Solo administradores técnicos" />
+                      ? <span title="Solo administradores técnicos"><Shield className="w-3.5 h-3.5 shrink-0 text-amber-500" /></span>
                       : <StatusDot status={status} />
                     }
                   </button>

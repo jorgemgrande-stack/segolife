@@ -23,6 +23,7 @@ function ghlLog(
     httpStatus?: number;
     errorBody?: string;
     stack?: string;
+    url?: string;
   }
 ) {
   const entry = {
@@ -37,6 +38,7 @@ function ghlLog(
     ...(ctx?.httpStatus !== undefined && { httpStatus: ctx.httpStatus }),
     ...(ctx?.errorBody !== undefined && { errorBody: ctx.errorBody?.slice(0, 300) }),
     ...(ctx?.stack     !== undefined && { stack: ctx.stack }),
+    ...(ctx?.url       !== undefined && { url: ctx.url }),
   };
   const line = JSON.stringify(entry);
   if (level === "error") console.error(line);

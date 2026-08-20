@@ -13,7 +13,7 @@
  * - Usa UPDATE atómico con SELECT para evitar race conditions
  */
 
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle, type MySql2Database } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { eq, and, sql } from "drizzle-orm";
 import { documentCounters, documentNumberLogs } from "../drizzle/schema";
@@ -21,7 +21,7 @@ import { documentCounters, documentNumberLogs } from "../drizzle/schema";
 // Pool lazy: se crea la primera vez que se necesita, no al importar el módulo.
 // Esto evita crash en arranque si DATABASE_URL aún no está disponible.
 let _pool: ReturnType<typeof mysql.createPool> | null = null;
-let _db: ReturnType<typeof drizzle> | null = null;
+let _db: MySql2Database<Record<string, unknown>> | null = null;
 let _tablesReady = false;
 
 function getDb() {
@@ -38,7 +38,7 @@ function getDb() {
 // Crea las tablas si no existen — idempotente, corre una sola vez por proceso.
 // Protege contra entornos donde las migraciones no se han aplicado (ej: Railway
 // con schema parcial).
-async function ensureTables(db: ReturnType<typeof drizzle>): Promise<void> {
+async function ensureTables(db: MySql2Database<Record<string, unknown>>): Promise<void> {
   if (_tablesReady) return;
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS \`document_counters\` (
