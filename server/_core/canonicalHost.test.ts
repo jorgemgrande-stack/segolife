@@ -20,15 +20,42 @@ describe("canonicalRedirectTarget", () => {
     expect(canonicalRedirectTarget("www.segolife.es", "/ie")).toBeNull();
   });
 
-  it("dominio interno de Railway -> nunca se toca (no rompe el propio despliegue/healthcheck)", () => {
+  it("dominio de Railway en /api/* -> nunca se toca (no rompe el propio despliegue/healthcheck ni webhooks externos)", () => {
     expect(canonicalRedirectTarget("segolife-production.up.railway.app", "/api/health")).toBeNull();
+  });
+
+  it("dominio de Railway en cualquier otra ruta /api/* -> tampoco se toca (auth, trpc, webhooks de Redsys/Brevo/GHL/Fourvenues pueden seguir apuntando aquí)", () => {
+    expect(canonicalRedirectTarget("segolife-production.up.railway.app", "/api/auth/login")).toBeNull();
+    expect(canonicalRedirectTarget("segolife-production.up.railway.app", "/api/trpc/config.getPublicSettings")).toBeNull();
+    expect(canonicalRedirectTarget("segolife-production.up.railway.app", "/api/redsys/notification")).toBeNull();
+  });
+
+  // SEC-01 — BUG-A: la URL pública de Railway servía la app de forma
+  // idéntica a www.segolife.es sin redirigir, y sessionCookieOptions
+  // (correctamente) nunca comparte cookie entre ambos hosts (no son el
+  // mismo parent domain) — una misma cuenta iniciaba sesión con éxito en
+  // cada host por separado pero como DOS sesiones no relacionadas. Fix:
+  // toda carga de página real (fuera de /api/*) en el dominio de Railway
+  // redirige al host canónico ANTES de que exista ninguna sesión ahí.
+  it("dominio de Railway en una ruta de app real (fuera de /api/*) -> SÍ redirige al host canónico, preservando path+query (SEC-01, BUG-A)", () => {
+    expect(canonicalRedirectTarget("segolife-production.up.railway.app", "/ie/events/after-party?utm=x")).toBe(
+      "https://www.segolife.es/ie/events/after-party?utm=x"
+    );
+  });
+
+  it("dominio de Railway en la raíz -> redirige preservando '/' (SEC-01, BUG-A)", () => {
+    expect(canonicalRedirectTarget("segolife-production.up.railway.app", "/")).toBe("https://www.segolife.es/");
+  });
+
+  it("dominio de Railway en /login -> redirige (el propio login queda en el host canónico, nunca establece sesión en Railway)", () => {
+    expect(canonicalRedirectTarget("segolife-production.up.railway.app", "/login")).toBe("https://www.segolife.es/login");
   });
 
   it("localhost -> nunca se toca (desarrollo local)", () => {
     expect(canonicalRedirectTarget("localhost", "/")).toBeNull();
   });
 
-  it("un host completamente distinto (preview domain, etc.) -> nunca se toca", () => {
+  it("un host completamente distinto (preview domain, etc.) -> nunca se toca, incluso con el mismo sufijo .up.railway.app (solo el dominio EXACTO de producción se canonicaliza)", () => {
     expect(canonicalRedirectTarget("some-preview.up.railway.app", "/")).toBeNull();
   });
 });
