@@ -217,7 +217,7 @@ function CallModal({ callId, onClose, onLeadCreated, onReviewed }: {
         )}
 
         {/* Datos estructurados */}
-        {call.structuredData && Object.keys(call.structuredData as object).length > 0 && (
+        {Boolean(call.structuredData) && Object.keys(call.structuredData as object).length > 0 && (
           <div className="mt-3">
             <div className="text-xs text-foreground/50 mb-1">Datos estructurados</div>
             <div className="text-sm bg-foreground/5 rounded-lg p-3 border border-border/40 space-y-1">
