@@ -25,6 +25,7 @@ scripts/push-enum-changes.mjs
 # PRE-16.17A — evidencia de QA de navegador contra producción (capturas,
 # trazas, resultados) — nunca a git, ver docs/PRE16_17_BROWSER_QA.md
 artifacts/pre16-17-browser/
+artifacts/mg03b-mg04-visual-qa/
 playwright-report/
 test-results/
 
