@@ -1535,10 +1535,50 @@ export async function createInvitedUser(data: {
   return { success: true, id: Number(result[0].insertId) };
 }
 
+// SEC-01 (BUG-B) — antes esta función solo tocaba users.role (campo
+// legacy). checkRbacOrLegacy() es RBAC-first: si el usuario YA tiene
+// alguna fila en rbac_user_roles, esas gobiernan en exclusiva y el campo
+// legacy se ignora por completo. Cambiar el rol aquí sin sincronizar
+// rbac_user_roles dejaba cuentas mostrando un rol ("Administrador
+// general") que no coincidía con los permisos realmente resueltos (los
+// del rol RBAC anterior, nunca actualizado) — caso real confirmado:
+// herre.casanova@gmail.com pasó a users.role="admin" pero conservó
+// rbac_user_roles="venue_admin", así que seguía resolviendo el bundle de
+// 8 permisos de Venue Admin en vez de los 90 de Admin global.
+//
+// LEGACY_TOGGLE_ROLES son los únicos valores que este selector admin
+// (client/src/components/admin/UsersManager.tsx, "RBAC CONSOLIDATION")
+// trata como perfiles mutuamente excluyentes — al cambiar a uno de ellos,
+// se retira cualquier otro de ESTE MISMO conjunto que el usuario tuviera
+// (evita dejar un rol "fantasma" atrás), y se concede el nuevo. Nunca
+// toca ningún rol RBAC fuera de este conjunto (si existiera alguna
+// asignación más granular por otra vía, se conserva intacta).
+const LEGACY_TOGGLE_ROLES = ["user", "admin", "monitor", "agente", "adminrest", "controler", "venue_admin"] as const;
+
 export async function changeUserRole(userId: number, role: "user" | "admin" | "monitor" | "agente" | "adminrest" | "controler" | "venue_admin") {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(users).set({ role, updatedAt: new Date() }).where(eq(users.id, userId));
+
+  try {
+    const roleResult = await db.execute(sql`SELECT id FROM rbac_roles WHERE \`key\` = ${role} AND is_active = 1`);
+    const roleRow = (roleResult as any[][])[0]?.[0] as { id: number } | undefined;
+    if (roleRow) {
+      await db.execute(sql`INSERT IGNORE INTO rbac_user_roles (user_id, role_id) VALUES (${userId}, ${roleRow.id})`);
+      const otherToggleRoles = LEGACY_TOGGLE_ROLES.filter(r => r !== role);
+      await db.execute(sql`
+        DELETE ur FROM rbac_user_roles ur
+        JOIN rbac_roles rr ON rr.id = ur.role_id
+        WHERE ur.user_id = ${userId} AND rr.\`key\` IN ${otherToggleRoles}
+      `);
+    } else {
+      console.warn(`[changeUserRole] RBAC role not found or inactive: "${role}" — users.role actualizado, rbac_user_roles sin sincronizar`);
+    }
+  } catch (rbacErr) {
+    // Nunca bloquea el cambio de rol legacy ya aplicado por un fallo de sincronización RBAC — pero sí queda en logs para investigar.
+    console.error(`[changeUserRole] Fallo sincronizando rbac_user_roles para user ${userId} -> "${role}":`, rbacErr);
+  }
+
   return { success: true };
 }
 
