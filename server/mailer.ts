@@ -15,7 +15,7 @@
  */
 
 import nodemailer from "nodemailer";
-import { getSystemSettingSync } from "./config";
+import { getSystemSetting } from "./config";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 export interface MailParams {
@@ -30,11 +30,11 @@ export interface MailParams {
 }
 
 // ─── Helper: parsea el SMTP_FROM en nombre + email ───────────────────────────
-function parseSender(raw: string): { name: string; email: string } {
+function parseSender(raw: string, brandName: string): { name: string; email: string } {
   // Formatos: "Nombre <email>" o solo "email"
   const match = raw.match(/^(.+?)\s*<(.+?)>$/);
   if (match) return { name: match[1].trim(), email: match[2].trim() };
-  return { name: getSystemSettingSync("brand_name", "Segolife"), email: raw.trim() };
+  return { name: brandName, email: raw.trim() };
 }
 
 // ─── Modo 1: Brevo HTTP API ───────────────────────────────────────────────────
@@ -45,12 +45,22 @@ async function sendViaBrevoApiTracked(params: MailParams): Promise<SendResult> {
   const apiKey = process.env.BREVO_API_KEY;
   if (!apiKey) return { success: false };
 
-  const noreplyEmail = getSystemSettingSync("email_noreply_sender", "");
-  const brandName = getSystemSettingSync("brand_name", "Segolife");
+  // Antes: getSystemSettingSync leía de una caché en memoria que SOLO se
+  // rellena cuando algo llama a la versión async getSystemSetting() para
+  // esa misma clave — "email_noreply_sender" no tenía ningún llamador async
+  // en todo el repo, así que esta caché nunca se calentaba y este helper
+  // devolvía SIEMPRE el fallback "" (nunca el valor real configurado en
+  // system_settings), cayendo en el remitente placeholder
+  // noreply@example.com — Brevo lo rechaza siempre (dominio reservado de
+  // documentación, nunca verificable), y el email nunca llegaba. await
+  // (esta función ya es async) lee siempre el valor real, con su propia
+  // caché de 60s.
+  const noreplyEmail = await getSystemSetting("email_noreply_sender", "");
+  const brandName = await getSystemSetting("brand_name", "Segolife");
   const fromRaw = params.from
     ?? process.env.SMTP_FROM
     ?? (noreplyEmail ? `${brandName} <${noreplyEmail}>` : `${brandName} <noreply@example.com>`);
-  const sender = parseSender(fromRaw);
+  const sender = parseSender(fromRaw, brandName);
 
   const toList = Array.isArray(params.to)
     ? params.to.map(e => ({ email: e }))
@@ -135,7 +145,7 @@ async function sendViaSMTP(params: MailParams): Promise<boolean> {
   const fromAddress = params.from
     ?? process.env.SMTP_FROM
     ?? process.env.SMTP_USER
-    ?? getSystemSettingSync("email_noreply_sender", "");
+    ?? (await getSystemSetting("email_noreply_sender", ""));
 
   try {
     await transporter.sendMail({

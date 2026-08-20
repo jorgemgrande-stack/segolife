@@ -127,3 +127,44 @@ describe("mailer.ts — remitente real de Brevo (spec §64, request real a la AP
     );
   });
 });
+
+describe("mailer.ts — remitente lee el valor real configurado, nunca se queda pegado en el fallback (bug real corregido)", () => {
+  // Antes: usaba getSystemSettingSync, que lee de una caché en memoria que
+  // SOLO se rellena cuando algo llama a la versión async getSystemSetting()
+  // para esa misma clave — "email_noreply_sender" no tenía NINGÚN llamador
+  // async en todo el repo, así que la caché nunca se calentaba y este
+  // helper devolvía SIEMPRE el fallback "" pase lo que pase en la BD,
+  // cayendo en noreply@example.com — Brevo lo rechaza siempre (dominio
+  // reservado de documentación). Emails reales fallaron así en producción
+  // (herre.casanova@gmail.com, 2026-08-18 y 2026-08-20) pese a tener
+  // email_noreply_sender correctamente configurado en system_settings.
+  it("con email_noreply_sender/brand_name configurados en BD, el sender enviado a Brevo usa esos valores reales, no el placeholder", async () => {
+    vi.doMock("./config", () => ({
+      getSystemSetting: vi.fn(async (key: string, fallback: string) => {
+        if (key === "email_noreply_sender") return "no-reply@segolife.es";
+        if (key === "brand_name") return "Segolife";
+        return fallback;
+      }),
+    }));
+    const fetchMock = mockFetchOnce({ ok: true });
+    const { sendEmailTracked } = await import("./mailer");
+    await sendEmailTracked({ to: "student@example.com", subject: "Asunto", html: "<p>Hola</p>" });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1]!.body as string);
+    expect(body.sender).toEqual({ name: "Segolife", email: "no-reply@segolife.es" });
+    vi.doUnmock("./config");
+  });
+
+  it("sin valor configurado (fallback real), cae al placeholder — comportamiento documentado, no un fallo silencioso nuevo", async () => {
+    vi.doMock("./config", () => ({
+      getSystemSetting: vi.fn(async (_key: string, fallback: string) => fallback),
+    }));
+    const fetchMock = mockFetchOnce({ ok: true });
+    const { sendEmailTracked } = await import("./mailer");
+    await sendEmailTracked({ to: "student@example.com", subject: "Asunto", html: "<p>Hola</p>" });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1]!.body as string);
+    expect(body.sender).toEqual({ name: "Segolife", email: "noreply@example.com" });
+    vi.doUnmock("./config");
+  });
+});
