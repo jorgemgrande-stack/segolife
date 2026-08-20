@@ -325,6 +325,12 @@ async function startServer() {
   // diseño) no coincidía con ninguno de los dos prefijos anteriores — subida
   // de hasta 10MB sin autenticación NI límite de frecuencia (Block J).
   app.use("/api/upload-coupon", uploadRateLimit);
+  // SEGOLIFE MG-03/MG-04 — foto de perfil de Student e imagen de portada de
+  // idea de Community: mismos endpoints de subida (sharp() decode + escritura
+  // a storage), sin límite hasta ahora pese a exigir sesión (closure security
+  // sweep, hallazgo #2/5 — mismo criterio que el resto de subidas de arriba).
+  app.use("/api/students/me/photo", uploadRateLimit);
+  app.use("/api/community/proposal-image", uploadRateLimit);
 
   // Rate limiting en canje de QR de consumición (Fase 3, 20 req/min por IP)
   app.use("/api/trpc/consumptionQr.redeem", qrRedeemRateLimit);

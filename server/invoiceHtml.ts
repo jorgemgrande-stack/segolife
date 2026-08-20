@@ -17,9 +17,20 @@ import { groupTaxBreakdown, totalTaxAmount, type TaxBreakdownLine } from "./taxU
  * (ya un secreto real requerido en este repo) — nunca se expone al
  * cliente, solo el HMAC resultante.
  */
+// Nunca en producción: si JWT_SECRET faltara ahí, este literal (visible en
+// el código fuente) permitiría a cualquiera derivar el HMAC de cualquier
+// invoiceNumber y reabrir la enumeración de facturas que este token existe
+// para impedir — mismo criterio que localAuth.ts::JWT_SECRET_RAW (closure
+// security sweep, hallazgo #3).
+const INVOICE_PREVIEW_SECRET = process.env.JWT_SECRET ?? (() => {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("[invoiceHtml] JWT_SECRET no está configurada en producción — no se puede derivar el token de vista previa de forma segura.");
+  }
+  return "local-dev-secret-change-me";
+})();
+
 export function invoicePreviewToken(invoiceNumber: string): string {
-  const secret = process.env.JWT_SECRET ?? "local-dev-secret-change-me";
-  return createHmac("sha256", secret).update(invoiceNumber).digest("hex").slice(0, 32);
+  return createHmac("sha256", INVOICE_PREVIEW_SECRET).update(invoiceNumber).digest("hex").slice(0, 32);
 }
 
 export function verifyInvoicePreviewToken(invoiceNumber: string, token: string): boolean {
