@@ -203,6 +203,24 @@ function getSessionCookieToken(req: Request): string | undefined {
  * de BD (que seguiría fallando en el reintento y devolviendo null, como
  * antes).
  */
+// Observado en producción tras el primer deploy de SEC-02: cualquier
+// visitante público con una cookie vieja/caducada (normalísimo en una app
+// con tráfico anónimo real — useAuth() llama a auth.me en toda carga de
+// página) generaba una línea "session rejected: expired" por cada uno,
+// varias por minuto de forma sostenida — justo el "flooding de logs por
+// request normal" que esta misma fase pide evitar. La señal sigue siendo
+// útil (saber que está ocurriendo), pero no cada instancia individual —
+// como mucho una vez por minuto.
+const LOG_THROTTLE_MS = 60_000;
+const lastLoggedAt = new Map<string, number>();
+function logThrottled(key: string, message: string): void {
+  const now = Date.now();
+  const last = lastLoggedAt.get(key) ?? 0;
+  if (now - last < LOG_THROTTLE_MS) return;
+  lastLoggedAt.set(key, now);
+  console.log(message);
+}
+
 async function findUserByIdWithRetry(userId: number) {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -236,12 +254,11 @@ export async function getUserFromRequest(req: Request) {
 
   const payload = await verifySessionTokenPayload(token);
   if (!payload) {
-    // Sin userId aún (el token no verificó) — nunca se loguea el token en
-    // sí. Es una señal de observabilidad puntual (sesión expirada/tope
-    // absoluto superado/firma inválida), nunca por request normal — la
-    // inmensa mayoría de requests autenticadas tienen un token válido y no
-    // pasan por aquí.
-    console.log("[auth] session rejected: expired");
+    // Nunca se loguea el token en sí, y nunca sin throttle — un visitante
+    // público cualquiera con una cookie vieja/caducada pasa por aquí en
+    // cada carga de página (useAuth() llama a auth.me siempre), así que sin
+    // limitar la tasa esto inunda los logs (ver logThrottled arriba).
+    logThrottled("expired", "[auth] session rejected: expired");
     return null;
   }
 
@@ -269,7 +286,7 @@ export async function getUserAndMaybeRenewSession(req: Request, res: Response) {
 
   const payload = await verifySessionTokenPayload(token);
   if (!payload) {
-    console.log("[auth] session rejected: expired");
+    logThrottled("expired", "[auth] session rejected: expired");
     return null;
   }
 
