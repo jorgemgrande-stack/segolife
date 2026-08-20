@@ -1,12 +1,17 @@
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { eq, and, or, like, not, isNull, inArray, gte, desc, asc, type SQL } from "drizzle-orm";
+import { eq, and, or, like, not, isNull, inArray, gte, lt, desc, asc, type SQL } from "drizzle-orm";
 import {
   events,
   venues,
   communityEvents,
   communities,
   salesChannels,
+  eventTicketTypes,
+  ticketOrders,
+  eventTickets,
+  eventAttendance,
+  externalEntityMappings,
   type SegolifeEvent,
   type Venue,
   type SalesChannel,
@@ -53,18 +58,29 @@ export const FOURVENUES_SOURCE_TYPE_PREFIX = "integration:fourvenues";
  * lo único que importa es `status` (el toggle admin-curado, siempre
  * respetado) — el estado de publicación de origen deja de ser una cuestión
  * de seguridad.
+ *
+ * FIX-06 — `isHidden` (visibilidad LOCAL de Segolife, ver comentario de
+ * schema.ts) es un cuarto AND, nunca una alternativa: VISIBILIDAD FINAL =
+ * status activo AND (no-Fourvenues O publicado-en-origen-o-pasado) AND
+ * no-oculto. Nunca "no-oculto O publicado" — mostrar ocultar un evento
+ * jamás puede "rescatar" un evento que ya era inválido por otro motivo, ni
+ * al revés. `isHidden` se aplica SIEMPRE (futuro y pasado por igual) — a
+ * diferencia del gate de publicación de Fourvenues, ocultar es una decisión
+ * editorial explícita del Admin, no depende de si el evento ya ocurrió.
  */
 export function isEventStudentVisible(
   event: {
     status: SegolifeEvent["status"];
     sourceType?: string | null;
     sourcePublicationStatus?: SegolifeEvent["sourcePublicationStatus"];
+    isHidden: boolean;
     startsAt: Date | string;
     endsAt?: Date | string | null;
   },
   now: Date = new Date()
 ): boolean {
   if (event.status !== "active") return false;
+  if (event.isHidden) return false;
   const isFourvenuesSourced = typeof event.sourceType === "string" && event.sourceType.startsWith(FOURVENUES_SOURCE_TYPE_PREFIX);
   if (isFourvenuesSourced && event.sourcePublicationStatus !== "published" && !isEventPast(event, now)) return false;
   return true;
@@ -124,6 +140,8 @@ export interface EventListFilters {
   isFeatured?: boolean;
   /** Solo eventos cuyo starts_at sea >= esta fecha (próximos). */
   fromDate?: Date;
+  /** FIX-06 — límite superior EXCLUSIVO (starts_at < toDate). Construir con madridDateRangeToUtcBounds (shared/segolife/eventTiming.ts), nunca un Date crudo del día "hasta" tal cual. */
+  toDate?: Date;
   /** "startsAt" (por defecto, cronológico) o "homeSortOrder" (orden curado a mano en /admin/cms/inicio). */
   orderBy?: "startsAt" | "homeSortOrder";
   /** FIX-04 — superficies PÚBLICAS únicamente: aplica fourvenuesPublicationSafeCondition además de cualquier filtro `status` ya pasado. Nunca usado por el Admin (que debe seguir viendo borradores Fourvenues, solo etiquetados). */
@@ -211,7 +229,17 @@ export async function listEvents(
   if (filters.status) conditions.push(eq(events.status, filters.status));
   if (filters.isFeatured !== undefined) conditions.push(eq(events.isFeatured, filters.isFeatured));
   if (filters.fromDate) conditions.push(gte(events.startsAt, filters.fromDate));
-  if (filters.studentSafe) conditions.push(fourvenuesPublicationSafeCondition());
+  if (filters.toDate) conditions.push(lt(events.startsAt, filters.toDate));
+  if (filters.studentSafe) {
+    conditions.push(fourvenuesPublicationSafeCondition());
+    // FIX-06 — mismo criterio que el gate de publicación de Fourvenues justo
+    // arriba: los callers studentSafe (listActiveEvents/listFeaturedEvents/
+    // listUpcomingEvents) nunca aplican isEventStudentVisible en JS después,
+    // así que el filtro de isHidden tiene que vivir aquí, a nivel SQL, para
+    // esos casos. listEventsByVenue/listEndedEvents (sin studentSafe) quedan
+    // cubiertos por el propio isEventStudentVisible que ya aplican en JS.
+    conditions.push(eq(events.isHidden, false));
+  }
   if (filters.search) {
     const q = `%${filters.search}%`;
     conditions.push(or(like(events.name, q), like(events.description, q))!);
@@ -396,6 +424,70 @@ export async function setEventFeatured(id: number, featured: boolean, db?: DbHan
   await conn.update(events).set({ isFeatured: featured }).where(eq(events.id, id));
   const [updated] = await conn.select().from(events).where(eq(events.id, id)).limit(1);
   return updated ?? null;
+}
+
+/**
+ * FIX-06 — toggle puro, mismo patrón EXACTO que setEventFeatured: nunca
+ * toca `status` ni `sourcePublicationStatus` (dimensiones distintas, ver
+ * comentario de schema.ts/isEventStudentVisible). Nunca dispara
+ * event_updated/event_cancelled — ocultar no es un cambio material de
+ * fecha/venue ni una cancelación, es una decisión de visibilidad editorial.
+ */
+export async function setEventHidden(id: number, hidden: boolean, db?: DbHandle): Promise<SegolifeEvent | null> {
+  const conn = db ?? (await getDb());
+  await conn.update(events).set({ isHidden: hidden }).where(eq(events.id, id));
+  const [updated] = await conn.select().from(events).where(eq(events.id, id)).limit(1);
+  return updated ?? null;
+}
+
+/**
+ * FIX-06 — borrado bloqueado por cualquier huella real (spec §11/§12/§13):
+ * ningún FK real conecta nada a `events.id` en este esquema (auditado antes
+ * de escribir esto — cero `.references(` hacia events.id en todo
+ * schema.ts), así que MySQL permitiría un DELETE físico aunque existieran
+ * miles de filas dependientes, dejándolas huérfanas para siempre. Política
+ * conservadora: si existe CUALQUIER huella de comercio/asistencia/
+ * integración externa, el borrado se bloquea con un motivo legible — el
+ * único borrado físico permitido es el de un evento manual sin ninguna
+ * actividad real (categoría A del spec). Idempotente: borrar un id que ya
+ * no existe es un no-op silencioso, nunca un error.
+ */
+export class EventDeleteBlockedError extends Error {
+  constructor(public reasons: string[]) {
+    super(`No se puede eliminar este evento: ${reasons.join(", ")}. Puedes ocultarlo en su lugar.`);
+    this.name = "EventDeleteBlockedError";
+  }
+}
+
+export async function deleteEvent(id: number, db?: DbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  const [event] = await conn.select().from(events).where(eq(events.id, id)).limit(1);
+  if (!event) return; // ya no existe — idempotente, nunca un error
+
+  const reasons: string[] = [];
+  if (typeof event.sourceType === "string" && event.sourceType.startsWith(FOURVENUES_SOURCE_TYPE_PREFIX)) {
+    reasons.push("proviene de una sincronización externa (Fourvenues)");
+  }
+  const [mapping] = await conn.select({ id: externalEntityMappings.id }).from(externalEntityMappings)
+    .where(and(eq(externalEntityMappings.internalType, "event"), eq(externalEntityMappings.internalId, id))).limit(1);
+  if (mapping) reasons.push("tiene una integración externa vinculada");
+  const [salesChannelRow] = await conn.select({ id: salesChannels.id }).from(salesChannels).where(eq(salesChannels.eventId, id)).limit(1);
+  if (salesChannelRow) reasons.push("tiene canales de venta configurados");
+  const [ticketTypeRow] = await conn.select({ id: eventTicketTypes.id }).from(eventTicketTypes).where(eq(eventTicketTypes.eventId, id)).limit(1);
+  if (ticketTypeRow) reasons.push("tiene tipos de entrada configurados");
+  const [orderRow] = await conn.select({ id: ticketOrders.id }).from(ticketOrders).where(eq(ticketOrders.eventId, id)).limit(1);
+  if (orderRow) reasons.push("tiene pedidos reales");
+  const [ticketRow] = await conn.select({ id: eventTickets.id }).from(eventTickets).where(eq(eventTickets.eventId, id)).limit(1);
+  if (ticketRow) reasons.push("tiene entradas emitidas");
+  const [attendanceRow] = await conn.select({ id: eventAttendance.id }).from(eventAttendance).where(eq(eventAttendance.eventId, id)).limit(1);
+  if (attendanceRow) reasons.push("tiene asistencia registrada");
+
+  if (reasons.length > 0) throw new EventDeleteBlockedError(reasons);
+
+  // Sin ninguna huella real — seguro borrar físicamente. community_events
+  // primero (M2M, sin riesgo — solo vincula, nunca guarda actividad propia).
+  await conn.delete(communityEvents).where(eq(communityEvents.eventId, id));
+  await conn.delete(events).where(eq(events.id, id));
 }
 
 /** Reemplaza el conjunto completo de comunidades vinculadas a un evento (idempotente). */

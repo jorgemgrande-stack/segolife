@@ -10,6 +10,7 @@ import {
   updateEvent,
   setEventActive,
   setEventFeatured,
+  setEventHidden,
   setEventCommunities,
   listActiveEvents,
   listFeaturedEvents,
@@ -18,7 +19,10 @@ import {
   listEndedEvents,
   reorderFeaturedEvents,
   isEventStudentVisible,
+  deleteEvent,
+  EventDeleteBlockedError,
 } from "../db/eventsDb";
+import { madridDateRangeToUtcBounds } from "../../shared/segolife/eventTiming";
 import { computePurchaseAction } from "../segolife/ticketing/purchaseAction";
 import { requireVenueAccess } from "../segolife/benefits/venueStaffAccess";
 import { getVenueEventsView, getEventLiveStats } from "../segolife/venues/venueAppService";
@@ -29,6 +33,9 @@ const eventsViewProcedure = permissionProcedure("events.view", ["admin"]);
 const eventsManageProcedure = permissionProcedure("events.manage", ["admin"]);
 
 const communityFilterInput = z.union([z.number().int().positive(), z.literal("all")]).optional();
+
+/** FIX-06 — día calendario "YYYY-MM-DD" (Europe/Madrid). Nunca z.coerce.date(): un Date crudo del cliente perdería la intención de "día calendario" (ver madridDateRangeToUtcBounds). */
+const calendarDateInput = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();
 
 /** Lanza FORBIDDEN si el alcance del admin no cubre ninguna comunidad del evento. */
 function assertEventAccessible(access: CommunityAccess, eventCommunityIds: number[]) {
@@ -71,14 +78,27 @@ export const eventsRouter = router({
         status: z.enum(["active", "inactive"]).optional(),
         isFeatured: z.boolean().optional(),
         orderBy: z.enum(["startsAt", "homeSortOrder"]).optional(),
+        // FIX-06 — filtro de rango de fechas (Admin Events), día calendario
+        // Europe/Madrid. `fromDate` ya existía a nivel de eventsDb.ts (nunca
+        // expuesto en el router hasta ahora); `toDate` es nuevo del todo.
+        fromDate: calendarDateInput,
+        toDate: calendarDateInput,
         limit: z.number().int().min(1).max(200).default(50),
         offset: z.number().int().min(0).default(0),
       })
     )
     .query(async ({ input, ctx }) => {
+      // Validación de rango ANTES de tocar BD (fail-fast, spec §23: "no
+      // ejecutar una consulta incoherente") — nunca gastar una consulta de
+      // community access solo para rechazar después por un input inválido.
+      if (input.fromDate && input.toDate && input.fromDate > input.toDate) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "La fecha 'Desde' no puede ser posterior a 'Hasta'" });
+      }
       const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
       const communityIds = resolveCommunityFilter(access, input.communityId);
-      return listEvents({ ...input, communityIds });
+      const { fromUtc, toUtc } = madridDateRangeToUtcBounds(input.fromDate, input.toDate);
+      const { fromDate: _fromDate, toDate: _toDate, ...rest } = input;
+      return listEvents({ ...rest, communityIds, fromDate: fromUtc, toDate: toUtc });
     }),
 
   getById: eventsViewProcedure
@@ -135,6 +155,44 @@ export const eventsRouter = router({
       assertEventAccessible(access, detail.communities.map(c => c.id));
       const updated = await setEventFeatured(input.id, input.featured);
       return { success: true, event: updated };
+    }),
+
+  /** FIX-06 — visibilidad LOCAL de discovery (Home/Explore/Venue Detail/Ended Events), nunca `status` ni `sourcePublicationStatus`. Ver isEventStudentVisible/comentario de schema.ts. */
+  setHidden: eventsManageProcedure
+    .input(z.object({ id: z.number().int().positive(), hidden: z.boolean() }))
+    .mutation(async ({ input, ctx }) => {
+      const detail = await getEventById(input.id);
+      if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "Evento no encontrado" });
+      const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
+      assertEventAccessible(access, detail.communities.map(c => c.id));
+      const updated = await setEventHidden(input.id, input.hidden);
+      return { success: true, event: updated };
+    }),
+
+  /**
+   * FIX-06 — borrado bloqueado por integridad real (spec §11-§15): un evento
+   * con cualquier huella de comercio/asistencia/integración externa nunca
+   * se destruye físicamente — deleteEvent() lanza EventDeleteBlockedError,
+   * traducido aquí a un mensaje claro (nunca un error genérico) para que el
+   * cliente lo muestre tal cual. Solo un evento manual sin actividad real
+   * llega a borrarse de verdad.
+   */
+  delete: eventsManageProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const detail = await getEventById(input.id);
+      if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "Evento no encontrado" });
+      const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
+      assertEventAccessible(access, detail.communities.map(c => c.id));
+      try {
+        await deleteEvent(input.id);
+      } catch (err) {
+        if (err instanceof EventDeleteBlockedError) {
+          throw new TRPCError({ code: "CONFLICT", message: err.message });
+        }
+        throw err;
+      }
+      return { success: true };
     }),
 
   setCommunities: eventsManageProcedure

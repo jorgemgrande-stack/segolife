@@ -35,17 +35,38 @@ vi.mock("../segolife/venues/venueAppService", async (importOriginal) => {
 
 // MG-01 — publicUpcoming (pestaña "Upcoming" de la Home). FIX-04 —
 // publicGetBySlug (protección de acceso directo por slug a un borrador).
-const { mockListUpcomingEvents, mockGetEventBySlug } = vi.hoisted(() => ({
+// FIX-06 — getEventById/setEventHidden/deleteEvent mockeados para probar
+// setHidden/delete/list de forma aislada, sin BD real.
+const { mockListUpcomingEvents, mockGetEventBySlug, mockGetEventById, mockSetEventHidden, mockDeleteEvent, mockListEvents } = vi.hoisted(() => ({
   mockListUpcomingEvents: vi.fn(),
   mockGetEventBySlug: vi.fn(),
+  mockGetEventById: vi.fn(),
+  mockSetEventHidden: vi.fn(),
+  mockDeleteEvent: vi.fn(),
+  mockListEvents: vi.fn(),
 }));
 vi.mock("../db/eventsDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../db/eventsDb")>();
-  return { ...actual, listUpcomingEvents: mockListUpcomingEvents, getEventBySlug: mockGetEventBySlug };
+  return {
+    ...actual,
+    listUpcomingEvents: mockListUpcomingEvents,
+    getEventBySlug: mockGetEventBySlug,
+    getEventById: mockGetEventById,
+    setEventHidden: mockSetEventHidden,
+    deleteEvent: mockDeleteEvent,
+    listEvents: mockListEvents,
+  };
 });
 
 const { mockComputePurchaseAction } = vi.hoisted(() => ({ mockComputePurchaseAction: vi.fn() }));
 vi.mock("../segolife/ticketing/purchaseAction", () => ({ computePurchaseAction: mockComputePurchaseAction }));
+
+// FIX-06 — IDOR: comunidad del admin controlada de forma determinista, sin BD real.
+const { mockGetCommunityAccess } = vi.hoisted(() => ({ mockGetCommunityAccess: vi.fn() }));
+vi.mock("../_core/communityAccess", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../_core/communityAccess")>();
+  return { ...actual, getCommunityAccess: mockGetCommunityAccess };
+});
 
 import { eventsRouter } from "./events";
 
@@ -90,6 +111,14 @@ describe("events router — endpoints admin (nunca públicos) rechazan sin sesi�
 
   it("events.setCommunities rechaza sin sesión", async () => {
     await expect(callerWithoutSession().setCommunities({ id: 1, communityIds: [1] })).rejects.toThrow(/please login/i);
+  });
+
+  it("events.setHidden rechaza sin sesión (FIX-06)", async () => {
+    await expect(callerWithoutSession().setHidden({ id: 1, hidden: true })).rejects.toThrow(/please login/i);
+  });
+
+  it("events.delete rechaza sin sesión (FIX-06)", async () => {
+    await expect(callerWithoutSession().delete({ id: 1 })).rejects.toThrow(/please login/i);
   });
 
   it("events.myVenueEvents rechaza sin sesión", async () => {
@@ -254,5 +283,167 @@ describe("events.publicGetBySlug — FIX-04 (borrador de Fourvenues nunca accesi
     mockComputePurchaseAction.mockResolvedValue({ type: "unavailable" });
     const result = await callerWithoutSession().publicGetBySlug({ slug: "welcome-back-bash" });
     expect(result).not.toBeNull();
+  });
+});
+
+function callerAsAdmin(userId = 1) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return eventsRouter.createCaller({ user: { id: userId, role: "admin" } } as any);
+}
+
+describe("events.setHidden — FIX-06 (visibilidad local, mismo patrón que setFeatured)", () => {
+  beforeEach(() => {
+    mockGetCommunityAccess.mockReset();
+    mockGetEventById.mockReset();
+    mockSetEventHidden.mockReset();
+  });
+
+  it("evento inexistente: NOT_FOUND, nunca llega a setEventHidden", async () => {
+    mockGetEventById.mockResolvedValue(null);
+    await expect(callerAsAdmin().setHidden({ id: 999, hidden: true })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mockSetEventHidden).not.toHaveBeenCalled();
+  });
+
+  it("admin con acceso 'all': oculta con éxito", async () => {
+    mockGetCommunityAccess.mockResolvedValue("all");
+    mockGetEventById.mockResolvedValue({ event: { id: 1 }, venue: null, communities: [{ id: 1, name: "Segolife IE", slug: "ie" }] });
+    mockSetEventHidden.mockResolvedValue({ id: 1, isHidden: true });
+    const result = await callerAsAdmin().setHidden({ id: 1, hidden: true });
+    expect(result.success).toBe(true);
+    expect(mockSetEventHidden).toHaveBeenCalledWith(1, true);
+  });
+
+  it("IDOR — admin de comunidad UVA (id=2) NUNCA puede ocultar un evento SOLO de la comunidad IE (id=1)", async () => {
+    mockGetCommunityAccess.mockResolvedValue([2]); // solo UVA
+    mockGetEventById.mockResolvedValue({ event: { id: 1 }, venue: null, communities: [{ id: 1, name: "Segolife IE", slug: "ie" }] });
+    await expect(callerAsAdmin().setHidden({ id: 1, hidden: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockSetEventHidden).not.toHaveBeenCalled();
+  });
+
+  it("admin de comunidad IE SÍ puede ocultar un evento de su propia comunidad", async () => {
+    mockGetCommunityAccess.mockResolvedValue([1]);
+    mockGetEventById.mockResolvedValue({ event: { id: 1 }, venue: null, communities: [{ id: 1, name: "Segolife IE", slug: "ie" }] });
+    mockSetEventHidden.mockResolvedValue({ id: 1, isHidden: false });
+    const result = await callerAsAdmin().setHidden({ id: 1, hidden: false });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("events.delete — FIX-06 (borrado bloqueado por integridad real, spec §11-§15)", () => {
+  beforeEach(() => {
+    mockGetCommunityAccess.mockReset();
+    mockGetEventById.mockReset();
+    mockDeleteEvent.mockReset();
+  });
+
+  it("evento inexistente: NOT_FOUND, nunca llega a deleteEvent", async () => {
+    mockGetEventById.mockResolvedValue(null);
+    await expect(callerAsAdmin().delete({ id: 999 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mockDeleteEvent).not.toHaveBeenCalled();
+  });
+
+  it("evento manual sin actividad real: se elimina con éxito", async () => {
+    mockGetCommunityAccess.mockResolvedValue("all");
+    mockGetEventById.mockResolvedValue({ event: { id: 1 }, venue: null, communities: [] });
+    mockDeleteEvent.mockResolvedValue(undefined);
+    const result = await callerAsAdmin().delete({ id: 1 });
+    expect(result.success).toBe(true);
+  });
+
+  it("evento con actividad real bloqueada (EventDeleteBlockedError) -> CONFLICT con el motivo real, nunca un error genérico", async () => {
+    const { EventDeleteBlockedError } = await import("../db/eventsDb");
+    mockGetCommunityAccess.mockResolvedValue("all");
+    mockGetEventById.mockResolvedValue({ event: { id: 1 }, venue: null, communities: [] });
+    mockDeleteEvent.mockRejectedValue(new EventDeleteBlockedError(["tiene pedidos reales"]));
+    await expect(callerAsAdmin().delete({ id: 1 })).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringContaining("tiene pedidos reales"),
+    });
+  });
+
+  it("un error inesperado (no EventDeleteBlockedError) se propaga tal cual, nunca se enmascara como bloqueo de integridad", async () => {
+    mockGetCommunityAccess.mockResolvedValue("all");
+    mockGetEventById.mockResolvedValue({ event: { id: 1 }, venue: null, communities: [] });
+    mockDeleteEvent.mockRejectedValue(new Error("fallo de conexión inesperado"));
+    await expect(callerAsAdmin().delete({ id: 1 })).rejects.toThrow("fallo de conexión inesperado");
+  });
+
+  it("IDOR — admin de comunidad UVA (id=2) NUNCA puede eliminar un evento SOLO de la comunidad IE (id=1)", async () => {
+    mockGetCommunityAccess.mockResolvedValue([2]);
+    mockGetEventById.mockResolvedValue({ event: { id: 1 }, venue: null, communities: [{ id: 1, name: "Segolife IE", slug: "ie" }] });
+    await expect(callerAsAdmin().delete({ id: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockDeleteEvent).not.toHaveBeenCalled();
+  });
+
+  it("no existe manipulación posible del eventId vía el input — solo acepta un id numérico positivo, cualquier otro valor es rechazado por zod antes de llegar al handler", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await expect(callerAsAdmin().delete({ id: -1 } as any)).rejects.toThrow();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await expect(callerAsAdmin().delete({ id: "1" } as any)).rejects.toThrow();
+    expect(mockDeleteEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("events.list — FIX-06 (rango de fechas Desde/Hasta)", () => {
+  beforeEach(() => {
+    mockGetCommunityAccess.mockReset();
+    mockListEvents.mockReset();
+    mockListEvents.mockResolvedValue({ items: [], total: 0 });
+  });
+
+  it("Desde posterior a Hasta -> BAD_REQUEST, nunca llega a tocar comunidad/BD", async () => {
+    await expect(
+      callerAsAdmin().list({ fromDate: "2026-03-31", toDate: "2026-03-01", limit: 50, offset: 0 })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(mockGetCommunityAccess).not.toHaveBeenCalled();
+    expect(mockListEvents).not.toHaveBeenCalled();
+  });
+
+  it("fromDate/toDate con formato inválido (no YYYY-MM-DD) son rechazados por zod", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await expect(callerAsAdmin().list({ fromDate: "31-03-2026", limit: 50, offset: 0 } as any)).rejects.toThrow();
+  });
+
+  it("mismo día en Desde y Hasta: válido (no es un rango invertido) — se traduce a límites UTC [ese día, día siguiente)", async () => {
+    mockGetCommunityAccess.mockResolvedValue("all");
+    await callerAsAdmin().list({ fromDate: "2026-03-15", toDate: "2026-03-15", limit: 50, offset: 0 });
+    expect(mockListEvents).toHaveBeenCalledWith(expect.objectContaining({
+      fromDate: new Date("2026-03-14T23:00:00.000Z"),
+      toDate: new Date("2026-03-15T23:00:00.000Z"),
+    }));
+  });
+
+  it("solo Desde: fromDate presente, toDate ausente en la llamada a listEvents", async () => {
+    mockGetCommunityAccess.mockResolvedValue("all");
+    await callerAsAdmin().list({ fromDate: "2026-03-01", limit: 50, offset: 0 });
+    expect(mockListEvents).toHaveBeenCalledWith(expect.objectContaining({
+      fromDate: new Date("2026-02-28T23:00:00.000Z"),
+      toDate: undefined,
+    }));
+  });
+
+  it("solo Hasta: toDate presente (límite superior EXCLUSIVO, día siguiente), fromDate ausente", async () => {
+    mockGetCommunityAccess.mockResolvedValue("all");
+    await callerAsAdmin().list({ toDate: "2026-03-31", limit: 50, offset: 0 });
+    expect(mockListEvents).toHaveBeenCalledWith(expect.objectContaining({
+      fromDate: undefined,
+      toDate: new Date("2026-03-31T22:00:00.000Z"),
+    }));
+  });
+
+  it("sin fromDate ni toDate: sin restricción, comportamiento previo intacto", async () => {
+    mockGetCommunityAccess.mockResolvedValue("all");
+    await callerAsAdmin().list({ limit: 50, offset: 0 });
+    expect(mockListEvents).toHaveBeenCalledWith(expect.objectContaining({ fromDate: undefined, toDate: undefined }));
+  });
+
+  it("se combina con el resto de filtros existentes (venue/status/isFeatured) sin desplazarlos", async () => {
+    mockGetCommunityAccess.mockResolvedValue("all");
+    await callerAsAdmin().list({ venueId: 5, status: "active", fromDate: "2026-01-01", toDate: "2026-03-31", limit: 50, offset: 0 });
+    expect(mockListEvents).toHaveBeenCalledWith(expect.objectContaining({
+      venueId: 5, status: "active",
+      fromDate: new Date("2025-12-31T23:00:00.000Z"),
+      toDate: new Date("2026-03-31T22:00:00.000Z"),
+    }));
   });
 });

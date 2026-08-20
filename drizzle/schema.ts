@@ -4032,6 +4032,17 @@ export const events = mysqlTable("events", {
   // porque ya era visible antes (fail-closed, ver isEventStudentVisible en
   // eventsDb.ts).
   sourcePublicationStatus: mysqlEnum("source_publication_status", ["published", "unpublished", "unknown"]),
+  // FIX-06 — visibilidad LOCAL de Segolife, dimensión propia y distinta de
+  // `status` (lifecycle admin-curado) y de `sourcePublicationStatus` (lo que
+  // dice el proveedor externo sobre SU publicación). Ocultar un evento nunca
+  // toca ninguna de esas dos columnas — solo excluye el evento de discovery
+  // público (Home/Explore/Venue Detail/Ended Events), nunca de: el panel
+  // Admin, el acceso ya legítimo de un Student con ticket (getMyTicketById
+  // nunca filtra por esto, ver server/segolife/ticketing/ticketingDb.ts), ni
+  // el histórico de attendance/tickets/orders. Ver isEventStudentVisible en
+  // server/db/eventsDb.ts para la composición real: oculto Y visible según
+  // las reglas canónicas — nunca "oculto O publicado en origen".
+  isHidden:     boolean("is_hidden").notNull().default(false),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });

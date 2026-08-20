@@ -28,7 +28,7 @@ function blankEvent(id: number, overrides: Partial<Record<string, unknown>> = {}
   return {
     id, name: "Fiesta de bienvenida", slug: "fiesta-de-bienvenida", description: null, venueId: null,
     startsAt: new Date("2026-09-15T20:00:00Z"), endsAt: null, capacity: null, imageUrl: null,
-    status: "active" as const, isFeatured: false,
+    status: "active" as const, isFeatured: false, isHidden: false,
     createdAt: new Date("2026-01-01"), updatedAt: new Date("2026-01-01"),
     ...overrides,
   };
@@ -512,6 +512,205 @@ describe("isEventStudentVisible — mapper/transición (spec FIX-04, nunca inven
 
   it("evento Fourvenues pasado pero INACTIVO (status='inactive') → sigue NO visible — el gate temporal nunca anula el status admin-curado", () => {
     expect(isEventStudentVisible({ status: "inactive", sourceType: "integration:fourvenues_integrations", sourcePublicationStatus: null, startsAt: PAST })).toBe(false);
+  });
+
+  // FIX-06 — isHidden es un cuarto AND, nunca una alternativa (spec §9: "VISIBILIDAD FINAL = localNotHidden AND canonicalStudentVisibilityRules, nunca localNotHidden OR providerPublished").
+  it("evento nativo activo pero oculto (isHidden=true) → NUNCA visible, aunque todo lo demás sea correcto", () => {
+    expect(isEventStudentVisible({ status: "active", sourceType: null, sourcePublicationStatus: null, isHidden: true, startsAt: FUTURE })).toBe(false);
+  });
+
+  it("evento nativo activo y NO oculto → visible (comportamiento previo intacto)", () => {
+    expect(isEventStudentVisible({ status: "active", sourceType: null, sourcePublicationStatus: null, isHidden: false, startsAt: FUTURE })).toBe(true);
+  });
+
+  it("ocultar un evento Fourvenues publicado en origen NUNCA lo 'rescata' — oculto sigue ganando", () => {
+    expect(isEventStudentVisible({ status: "active", sourceType: "integration:fourvenues_integrations", sourcePublicationStatus: "published", isHidden: true, startsAt: FUTURE })).toBe(false);
+  });
+
+  it("mostrar (isHidden=false) un evento Fourvenues futuro sin publicar sigue sin ser visible — mostrar nunca salta el gate de publicación de Fourvenues (spec §9)", () => {
+    expect(isEventStudentVisible({ status: "active", sourceType: "integration:fourvenues_integrations", sourcePublicationStatus: "unpublished", isHidden: false, startsAt: FUTURE })).toBe(false);
+  });
+
+  it("evento pasado oculto → sigue NO visible — a diferencia del gate de publicación de Fourvenues, isHidden se aplica también a lo ya pasado", () => {
+    expect(isEventStudentVisible({ status: "active", sourceType: null, sourcePublicationStatus: null, isHidden: true, startsAt: PAST })).toBe(false);
+  });
+});
+
+describe("eventsDb — setEventHidden (FIX-06, mismo patrón que setEventFeatured)", () => {
+  it("setEventHidden(true) oculta un evento visible", async () => {
+    let event = blankEvent(1, { isHidden: false });
+    const db: Record<string, unknown> = {
+      update: () => db,
+      set: (fields: Record<string, unknown>) => { event = { ...event, ...fields }; return db; },
+      where: () => db, select: () => db, from: () => db, limit: () => db,
+      then: (resolve: (v: unknown) => void) => resolve([event]),
+    };
+    const { setEventHidden } = await import("./eventsDb");
+    const updated = await setEventHidden(1, true, db as unknown as Parameters<typeof setEventHidden>[2]);
+    expect(updated?.isHidden).toBe(true);
+  });
+
+  it("setEventHidden(false) vuelve a mostrar un evento oculto", async () => {
+    let event = blankEvent(1, { isHidden: true });
+    const db: Record<string, unknown> = {
+      update: () => db,
+      set: (fields: Record<string, unknown>) => { event = { ...event, ...fields }; return db; },
+      where: () => db, select: () => db, from: () => db, limit: () => db,
+      then: (resolve: (v: unknown) => void) => resolve([event]),
+    };
+    const { setEventHidden } = await import("./eventsDb");
+    const updated = await setEventHidden(1, false, db as unknown as Parameters<typeof setEventHidden>[2]);
+    expect(updated?.isHidden).toBe(false);
+  });
+
+  it("setEventHidden nunca toca status ni sourcePublicationStatus (dimensiones distintas)", async () => {
+    let event = blankEvent(1, { isHidden: false, status: "active", sourcePublicationStatus: "published" });
+    const db: Record<string, unknown> = {
+      update: () => db,
+      set: (fields: Record<string, unknown>) => { event = { ...event, ...fields }; return db; },
+      where: () => db, select: () => db, from: () => db, limit: () => db,
+      then: (resolve: (v: unknown) => void) => resolve([event]),
+    };
+    const { setEventHidden } = await import("./eventsDb");
+    const updated = await setEventHidden(1, true, db as unknown as Parameters<typeof setEventHidden>[2]);
+    expect(updated?.status).toBe("active");
+    expect(updated?.sourcePublicationStatus).toBe("published");
+  });
+});
+
+describe("eventsDb — deleteEvent (FIX-06, política conservadora — spec §11-§13)", () => {
+  /**
+   * Simula deleteEvent(id): 1) SELECT del propio evento, 2) SELECT a
+   * external_entity_mappings, 3-7) SELECT a salesChannels/eventTicketTypes/
+   * ticketOrders/eventTickets/eventAttendance (orden exacto del código
+   * fuente) — `hasRowAtPhase` marca en qué fase (2-7) devolver una fila
+   * real (bloqueo) o ninguna. `deleteCalls` registra cada `.delete(table)`
+   * real ejecutado, para comprobar que un borrado bloqueado NUNCA llega a
+   * ejecutar ningún DELETE físico.
+   */
+  function makeDeleteEventMockDb(event: ReturnType<typeof blankEvent> | null, blockAtPhase: number | null) {
+    let phase = 0;
+    const deleteCalls: unknown[] = [];
+    const db: Record<string, unknown> = {
+      select: () => db, from: (table: unknown) => { db.__lastFrom = table; return db; },
+      where: () => db, limit: () => db,
+      delete: (table: unknown) => { deleteCalls.push(table); return db; },
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve(event ? [event] : []);
+        const blocked = blockAtPhase !== null && phase === blockAtPhase;
+        return resolve(blocked ? [{ id: 999 }] : []);
+      },
+    };
+    return { db: db as unknown as Parameters<typeof import("./eventsDb").deleteEvent>[1], deleteCalls };
+  }
+
+  it("evento inexistente: no-op silencioso, nunca lanza (idempotente)", async () => {
+    const { db, deleteCalls } = makeDeleteEventMockDb(null, null);
+    const { deleteEvent } = await import("./eventsDb");
+    await expect(deleteEvent(999, db)).resolves.toBeUndefined();
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  it("evento manual sin ninguna huella real: se borra físicamente (única categoría permitida, spec §12 categoría A)", async () => {
+    const event = blankEvent(1);
+    const { db, deleteCalls } = makeDeleteEventMockDb(event, null);
+    const { deleteEvent } = await import("./eventsDb");
+    await expect(deleteEvent(1, db)).resolves.toBeUndefined();
+    expect(deleteCalls).toHaveLength(2); // community_events + events
+  });
+
+  it("evento originado en Fourvenues (sourceType): bloqueado, nunca se ejecuta ningún DELETE", async () => {
+    const event = blankEvent(1, { sourceType: "integration:fourvenues_integrations" });
+    const { db, deleteCalls } = makeDeleteEventMockDb(event, null);
+    const { deleteEvent, EventDeleteBlockedError } = await import("./eventsDb");
+    await expect(deleteEvent(1, db)).rejects.toBeInstanceOf(EventDeleteBlockedError);
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  it("evento con integración externa vinculada (external_entity_mappings): bloqueado", async () => {
+    const event = blankEvent(1);
+    const { db, deleteCalls } = makeDeleteEventMockDb(event, 2);
+    const { deleteEvent, EventDeleteBlockedError } = await import("./eventsDb");
+    await expect(deleteEvent(1, db)).rejects.toBeInstanceOf(EventDeleteBlockedError);
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  it("evento con canales de venta configurados (salesChannels): bloqueado", async () => {
+    const event = blankEvent(1);
+    const { db, deleteCalls } = makeDeleteEventMockDb(event, 3);
+    const { deleteEvent, EventDeleteBlockedError } = await import("./eventsDb");
+    await expect(deleteEvent(1, db)).rejects.toBeInstanceOf(EventDeleteBlockedError);
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  it("evento con tipos de entrada configurados (eventTicketTypes): bloqueado", async () => {
+    const event = blankEvent(1);
+    const { db, deleteCalls } = makeDeleteEventMockDb(event, 4);
+    const { deleteEvent, EventDeleteBlockedError } = await import("./eventsDb");
+    await expect(deleteEvent(1, db)).rejects.toBeInstanceOf(EventDeleteBlockedError);
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  it("evento con pedidos reales (ticketOrders): bloqueado — nunca se destruye trazabilidad económica", async () => {
+    const event = blankEvent(1);
+    const { db, deleteCalls } = makeDeleteEventMockDb(event, 5);
+    const { deleteEvent, EventDeleteBlockedError } = await import("./eventsDb");
+    await expect(deleteEvent(1, db)).rejects.toBeInstanceOf(EventDeleteBlockedError);
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  it("evento con entradas emitidas (eventTickets): bloqueado", async () => {
+    const event = blankEvent(1);
+    const { db, deleteCalls } = makeDeleteEventMockDb(event, 6);
+    const { deleteEvent, EventDeleteBlockedError } = await import("./eventsDb");
+    await expect(deleteEvent(1, db)).rejects.toBeInstanceOf(EventDeleteBlockedError);
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  it("evento con asistencia registrada (eventAttendance): bloqueado", async () => {
+    const event = blankEvent(1);
+    const { db, deleteCalls } = makeDeleteEventMockDb(event, 7);
+    const { deleteEvent, EventDeleteBlockedError } = await import("./eventsDb");
+    await expect(deleteEvent(1, db)).rejects.toBeInstanceOf(EventDeleteBlockedError);
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  it("el mensaje del error de bloqueo es legible y sugiere ocultar en su lugar (spec §15)", async () => {
+    const event = blankEvent(1, { sourceType: "integration:fourvenues_integrations" });
+    const { db } = makeDeleteEventMockDb(event, null);
+    const { deleteEvent } = await import("./eventsDb");
+    await expect(deleteEvent(1, db)).rejects.toThrow(/ocultarlo/i);
+  });
+
+  it("un evento oculto (isHidden=true) SIN otra actividad real sigue siendo borrable — ocultar y borrar son ejes independientes", async () => {
+    const event = blankEvent(1, { isHidden: true });
+    const { db, deleteCalls } = makeDeleteEventMockDb(event, null);
+    const { deleteEvent } = await import("./eventsDb");
+    await expect(deleteEvent(1, db)).resolves.toBeUndefined();
+    expect(deleteCalls).toHaveLength(2);
+  });
+});
+
+describe("eventsDb — listEvents con toDate (FIX-06, rango de fechas del Admin)", () => {
+  it("toDate se traduce a una condición SQL adicional (lt) — verificado indirectamente vía el resultado devuelto", async () => {
+    const event = blankEvent(1, { startsAt: new Date("2026-03-15T10:00:00Z") });
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: () => db, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event, venue: null }]);
+        if (phase === 2) return resolve([{ event }]);
+        return resolve([]);
+      },
+    };
+    const { items } = await listEvents(
+      { communityIds: "all", fromDate: new Date("2026-03-01T00:00:00Z"), toDate: new Date("2026-04-01T00:00:00Z") },
+      db as unknown as Parameters<typeof listEvents>[1]
+    );
+    expect(items).toHaveLength(1);
   });
 });
 

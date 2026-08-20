@@ -81,3 +81,57 @@ export function splitUpcomingPast<T extends EventTimingInput>(events: T[], now: 
   }
   return { upcoming: sortByStartAscending(upcoming), past: sortByStartDescending(past) };
 }
+
+/** Lectura de pared (Europe/Madrid) de un instante — mismo Intl.DateTimeFormat que el resto del fichero, sin librería de zonas horarias nueva. */
+function madridWallClockOf(instant: Date): { y: number; mo: number; d: number; h: number; mi: number; s: number } {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Madrid", hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(instant).map(p => [p.type, p.value]));
+  // hour12:false puede devolver "24" para medianoche en algunos motores ICU — normaliza a 0.
+  const hour = parts.hour === "24" ? "0" : parts.hour;
+  return { y: Number(parts.year), mo: Number(parts.month), d: Number(parts.day), h: Number(hour), mi: Number(parts.minute), s: Number(parts.second) };
+}
+
+/**
+ * Instante UTC que corresponde a las 00:00:00 de "YYYY-MM-DD" en
+ * Europe/Madrid — DST-safe (usa una corrección de una iteración leyendo el
+ * offset real vigente para ese instante concreto, nunca una tabla de
+ * offsets propia). Para el filtro de rango de fechas del Admin de Eventos
+ * (FIX-06): "01/03/2026" significa el día calendario en Madrid, nunca en
+ * UTC — `new Date("2026-03-01")` sería incorrecto aquí (interpreta
+ * medianoche UTC, que en invierno es la 01:00 de Madrid del mismo día, pero
+ * en verano ya son las 02:00 — el error se nota exactamente en eventos de
+ * madrugada, el caso real que este helper existe para evitar).
+ */
+export function madridDayStartUtc(dateStr: string): Date {
+  const [y, mo, d] = dateStr.split("-").map(Number);
+  const guess = Date.UTC(y, mo - 1, d, 0, 0, 0);
+  const wall = madridWallClockOf(new Date(guess));
+  const wallAsUtc = Date.UTC(wall.y, wall.mo - 1, wall.d, wall.h, wall.mi, wall.s);
+  const diff = wallAsUtc - guess; // cuánto se "adelantó" el guess al leerse como hora de Madrid
+  return new Date(guess - diff);
+}
+
+/** "YYYY-MM-DD" + 1 día calendario, aritmética pura en UTC (nunca cruza por zona horaria — evita el mismo error de un día que madridDayStartUtc corrige en el otro sentido). */
+function addOneCalendarDay(dateStr: string): string {
+  const [y, mo, d] = dateStr.split("-").map(Number);
+  const next = new Date(Date.UTC(y, mo - 1, d + 1));
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${next.getUTCFullYear()}-${pad(next.getUTCMonth() + 1)}-${pad(next.getUTCDate())}`;
+}
+
+/**
+ * Límites UTC [from, to) para un filtro de rango de fechas "Desde"/"Hasta"
+ * (ambas "YYYY-MM-DD", día calendario Europe/Madrid) — INCLUSIVO en ambos
+ * extremos por diseño: `to` se convierte al inicio del día SIGUIENTE para
+ * usarse como límite superior EXCLUSIVO (`starts_at < toUtc`), evitando el
+ * problema de milisegundos de comparar contra "23:59:59.999" de `to`.
+ */
+export function madridDateRangeToUtcBounds(fromDateStr?: string | null, toDateStr?: string | null): { fromUtc?: Date; toUtc?: Date } {
+  return {
+    fromUtc: fromDateStr ? madridDayStartUtc(fromDateStr) : undefined,
+    toUtc: toDateStr ? madridDayStartUtc(addOneCalendarDay(toDateStr)) : undefined,
+  };
+}

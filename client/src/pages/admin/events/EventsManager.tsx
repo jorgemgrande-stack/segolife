@@ -12,10 +12,11 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Search, CalendarDays, Loader2, Plus, Star, ImageIcon } from "lucide-react";
+import { Search, CalendarDays, Loader2, Plus, Star, ImageIcon, Pencil, Eye, EyeOff, Trash2 } from "lucide-react";
 import { useAdminCommunity } from "@/contexts/AdminCommunityContext";
 import { ADMIN_COMMUNITY_FILTER_ALL } from "@shared/segolife/adminCommunityFilter";
 import { isEventTonight, isEventPast, splitUpcomingPast, sortByStartAscending } from "@shared/segolife/eventTiming";
+import { DeleteEventDialog } from "./DeleteEventDialog";
 
 const ALL = "__all__";
 
@@ -98,8 +99,19 @@ export default function EventsManager() {
   const [featured, setFeatured] = useState<string>(ALL);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
   const [salesFilter, setSalesFilter] = useState<SalesFilter>("all");
+  // FIX-06 — rango de fechas, "YYYY-MM-DD" (día calendario Europe/Madrid,
+  // interpretado server-side vía madridDateRangeToUtcBounds — nunca aquí).
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string; startsAt: Date | string; venueName: string | null } | null>(null);
 
   const { data: venuesData } = trpc.venues.publicActive.useQuery({});
+
+  // Rango inválido (Desde > Hasta) — nunca se manda al servidor (spec §23,
+  // "no ejecutar una consulta incoherente"); se avisa inline en su lugar,
+  // sin reemplazar toda la tabla por un error mientras el admin sigue
+  // escribiendo las fechas.
+  const dateRangeInvalid = Boolean(fromDate && toDate && fromDate > toDate);
 
   const { data, isLoading, error } = trpc.events.list.useQuery({
     communityId: communityFilter === ADMIN_COMMUNITY_FILTER_ALL ? "all" : communityFilter,
@@ -107,12 +119,18 @@ export default function EventsManager() {
     venueId: venueId !== ALL ? Number(venueId) : undefined,
     status: status !== ALL ? (status as "active" | "inactive") : undefined,
     isFeatured: featured !== ALL ? featured === "true" : undefined,
+    fromDate: dateRangeInvalid ? undefined : (fromDate || undefined),
+    toDate: dateRangeInvalid ? undefined : (toDate || undefined),
     limit: 100,
     offset: 0,
   });
 
   const utils = trpc.useUtils();
   const setFeaturedMut = trpc.events.setFeatured.useMutation({
+    onSuccess: () => { utils.events.list.invalidate(); },
+    onError: e => toast.error(e.message),
+  });
+  const setHiddenMut = trpc.events.setHidden.useMutation({
     onSuccess: () => { utils.events.list.invalidate(); },
     onError: e => toast.error(e.message),
   });
@@ -229,7 +247,27 @@ export default function EventsManager() {
               <SelectItem value="none">Sin canal</SelectItem>
             </SelectContent>
           </Select>
+
+          {/* FIX-06 — rango de fechas (Desde/Hasta), inclusivo en ambos extremos, día calendario Europe/Madrid resuelto server-side. */}
+          <div className="flex items-center gap-1.5">
+            <label htmlFor="events-filter-from" className="text-xs text-muted-foreground">Desde</label>
+            <Input id="events-filter-from" type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="w-[150px]" />
+            <label htmlFor="events-filter-to" className="text-xs text-muted-foreground">Hasta</label>
+            <Input id="events-filter-to" type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="w-[150px]" />
+            {(fromDate || toDate) && (
+              <button
+                type="button"
+                onClick={() => { setFromDate(""); setToDate(""); }}
+                className="text-xs text-muted-foreground hover:text-foreground underline"
+              >
+                Limpiar fechas
+              </button>
+            )}
+          </div>
         </div>
+        {dateRangeInvalid && (
+          <p className="text-sm text-destructive -mt-3">La fecha "Desde" no puede ser posterior a "Hasta".</p>
+        )}
 
         {/* ── Tabla ── */}
         <div className="bg-card border border-border rounded-lg overflow-x-auto">
@@ -253,6 +291,7 @@ export default function EventsManager() {
                   <TableHead>Canal de venta</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>Destacado</TableHead>
+                  <TableHead>Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -281,6 +320,8 @@ export default function EventsManager() {
                     <TableCell>{salesModeBadge(e)}</TableCell>
                     <TableCell>
                       <Badge variant={eventStatusBadge(e).variant}>{eventStatusBadge(e).label}</Badge>
+                      {/* FIX-06 — "Oculto" es una dimensión propia, nunca sustituye el badge de lifecycle (spec §10): ambas etiquetas conviven. */}
+                      {e.isHidden && <Badge variant="outline" className="ml-1">Oculto</Badge>}
                       {eventOriginCaption(e) && (
                         <p className="text-[10px] text-muted-foreground mt-0.5">{eventOriginCaption(e)}</p>
                       )}
@@ -294,6 +335,38 @@ export default function EventsManager() {
                         <Star className={`w-4 h-4 ${e.isFeatured ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`} />
                       </button>
                     </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <Link
+                          href={`/admin/events/${e.id}`}
+                          onClick={ev => ev.stopPropagation()}
+                          className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+                          title="Editar evento"
+                          aria-label={`Editar ${e.name}`}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Link>
+                        <button
+                          onClick={ev => { ev.preventDefault(); ev.stopPropagation(); setHiddenMut.mutate({ id: e.id, hidden: !e.isHidden }); }}
+                          className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+                          title={e.isHidden ? "Mostrar evento" : "Ocultar evento"}
+                          aria-label={e.isHidden ? `Mostrar ${e.name}` : `Ocultar ${e.name}`}
+                        >
+                          {e.isHidden ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                        <button
+                          onClick={ev => {
+                            ev.preventDefault(); ev.stopPropagation();
+                            setDeleteTarget({ id: e.id, name: e.name, startsAt: e.startsAt, venueName: e.venue?.name ?? null });
+                          }}
+                          className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                          title="Eliminar evento"
+                          aria-label={`Eliminar ${e.name}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -301,6 +374,12 @@ export default function EventsManager() {
           )}
         </div>
       </div>
+
+      <DeleteEventDialog
+        event={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => utils.events.list.invalidate()}
+      />
     </AdminLayout>
   );
 }

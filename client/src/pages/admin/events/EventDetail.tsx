@@ -12,8 +12,9 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { ArrowLeft, Loader2, CalendarDays, Star, Upload, ImageIcon, Plug } from "lucide-react";
+import { ArrowLeft, Loader2, CalendarDays, Star, Upload, ImageIcon, Plug, Trash2, TriangleAlert } from "lucide-react";
 import { EventTicketingTab } from "./EventTicketingTab";
+import { DeleteEventDialog } from "./DeleteEventDialog";
 import { getEventTemporalStatus, type EventTemporalStatus } from "@shared/segolife/eventTiming";
 
 const NONE = "__none__";
@@ -80,6 +81,20 @@ function EventFourvenuesSourceBlock({ event }: { event: { venueId: number | null
           Este evento está sincronizado desde Fourvenues pero NO está publicado en origen — no es visible ni comprable para el Student, aunque aparezca en este panel de administración.
         </p>
       )}
+      {/* FIX-06 — campos PROVIDER-MANAGED (spec §6): la sincronización de
+          Fourvenues re-escribe Inicio/Fin/estado de publicación en CADA
+          sync (ver eventCatalogSync.ts) — un cambio manual de fecha/hora
+          aquí se pierde en la siguiente sincronización, sin aviso. Nombre/
+          descripción/imagen/venue/comunidades/destacado SÍ son
+          SEGOLIFE-MANAGED — el sync nunca vuelve a tocarlos una vez creado
+          o adoptado el evento. */}
+      <p className="text-xs text-amber-600 dark:text-amber-500 mt-2 flex items-start gap-1.5">
+        <TriangleAlert className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+        <span>
+          <strong>Inicio</strong> y <strong>Fin</strong> los gestiona Fourvenues: cualquier cambio manual aquí se sobrescribirá en la
+          próxima sincronización. Nombre, descripción, imagen, venue, comunidades y destacado son seguros de editar — Fourvenues nunca los toca de nuevo.
+        </span>
+      </p>
     </div>
   );
 }
@@ -232,6 +247,7 @@ export default function EventDetail() {
   const [, navigate] = useLocation();
   const eventId = Number(params.id);
   const utils = trpc.useUtils();
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string; startsAt: Date | string; venueName: string | null } | null>(null);
 
   const { data: detail, isLoading, error } = trpc.events.getById.useQuery({ id: eventId });
   const { data: venuesData } = trpc.venues.publicActive.useQuery({});
@@ -268,6 +284,10 @@ export default function EventDetail() {
   });
   const setFeaturedMut = trpc.events.setFeatured.useMutation({
     onSuccess: () => { toast.success("Destacado actualizado"); utils.events.getById.invalidate({ id: eventId }); utils.events.list.invalidate(); },
+    onError: e => toast.error(e.message),
+  });
+  const setHiddenMut = trpc.events.setHidden.useMutation({
+    onSuccess: () => { toast.success("Visibilidad actualizada"); utils.events.getById.invalidate({ id: eventId }); utils.events.list.invalidate(); },
     onError: e => toast.error(e.message),
   });
   const setCommunitiesMut = trpc.events.setCommunities.useMutation({
@@ -351,6 +371,21 @@ export default function EventDetail() {
                 onCheckedChange={v => setFeaturedMut.mutate({ id: eventId, featured: v })}
               />
             </div>
+            {/* FIX-06 — visibilidad de discovery LOCAL, dimensión propia (nunca status/sourcePublicationStatus). */}
+            <div className="flex flex-col items-end gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground">Oculto</span>
+              <Switch
+                checked={detail.event.isHidden}
+                onCheckedChange={v => setHiddenMut.mutate({ id: eventId, hidden: v })}
+              />
+            </div>
+            <Button
+              variant="outline" size="sm"
+              className="text-destructive hover:text-destructive"
+              onClick={() => setDeleteTarget({ id: eventId, name: detail.event.name, startsAt: detail.event.startsAt, venueName: detail.venue?.name ?? null })}
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Eliminar
+            </Button>
           </div>
         </div>
 
@@ -457,6 +492,12 @@ export default function EventDetail() {
           </TabsContent>
         </Tabs>
       </div>
+
+      <DeleteEventDialog
+        event={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => navigate("/admin/events")}
+      />
     </AdminLayout>
   );
 }

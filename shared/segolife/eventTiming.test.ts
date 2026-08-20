@@ -12,6 +12,8 @@ import {
   isEventUpcomingOrOngoing,
   isEventTonight,
   splitUpcomingPast,
+  madridDayStartUtc,
+  madridDateRangeToUtcBounds,
 } from "./eventTiming";
 
 describe("eventTiming — getEventTemporalStatus / isEventPast", () => {
@@ -99,5 +101,77 @@ describe("eventTiming — splitUpcomingPast", () => {
 
   it("una lista vacía no lanza y devuelve ambos arrays vacíos", () => {
     expect(splitUpcomingPast([], now)).toEqual({ upcoming: [], past: [] });
+  });
+});
+
+describe("eventTiming — madridDayStartUtc / madridDateRangeToUtcBounds (FIX-06, DST-safe)", () => {
+  it("invierno (CET, UTC+1): medianoche de Madrid es la 23:00 UTC del día anterior", () => {
+    expect(madridDayStartUtc("2026-03-01").toISOString()).toBe("2026-02-28T23:00:00.000Z");
+  });
+
+  it("verano (CEST, UTC+2): medianoche de Madrid es la 22:00 UTC del día anterior", () => {
+    expect(madridDayStartUtc("2026-08-15").toISOString()).toBe("2026-08-14T22:00:00.000Z");
+  });
+
+  it("DST — día exacto del cambio a verano en España 2026 (29 de marzo): usa el offset ya vigente ese día calendario", () => {
+    // 2026-03-29 es el domingo del cambio CET→CEST (01:00 UTC). El día
+    // calendario "29 de marzo en Madrid" transcurre mayormente en CEST — el
+    // offset correcto para su medianoche es +1 (CET, el vigente ANTES del
+    // cambio, ya que 00:00 Madrid del día 29 ocurre antes de la 01:00 UTC
+    // en la que salta el reloj).
+    expect(madridDayStartUtc("2026-03-29").toISOString()).toBe("2026-03-28T23:00:00.000Z");
+  });
+
+  it("DST — día siguiente al cambio a verano: ya usa CEST (+2)", () => {
+    expect(madridDayStartUtc("2026-03-30").toISOString()).toBe("2026-03-29T22:00:00.000Z");
+  });
+
+  it("DST — día exacto del cambio a invierno en España 2026 (25 de octubre): usa CEST (+2), el vigente antes del cambio", () => {
+    expect(madridDayStartUtc("2026-10-25").toISOString()).toBe("2026-10-24T22:00:00.000Z");
+  });
+
+  it("DST — día siguiente al cambio a invierno: ya usa CET (+1)", () => {
+    expect(madridDayStartUtc("2026-10-26").toISOString()).toBe("2026-10-25T23:00:00.000Z");
+  });
+
+  it("cruce de mes/año: 31 de diciembre + 1 día calendario es 1 de enero del año siguiente", () => {
+    const { toUtc } = madridDateRangeToUtcBounds(null, "2025-12-31");
+    // Límite superior EXCLUSIVO = inicio del 1 de enero de 2026 en Madrid (CET, +1).
+    expect(toUtc?.toISOString()).toBe("2025-12-31T23:00:00.000Z");
+  });
+
+  it("madridDateRangeToUtcBounds — solo 'desde': fromUtc presente, toUtc undefined", () => {
+    const { fromUtc, toUtc } = madridDateRangeToUtcBounds("2026-03-01", null);
+    expect(fromUtc?.toISOString()).toBe("2026-02-28T23:00:00.000Z");
+    expect(toUtc).toBeUndefined();
+  });
+
+  it("madridDateRangeToUtcBounds — solo 'hasta': toUtc es el inicio del día SIGUIENTE (límite exclusivo), fromUtc undefined", () => {
+    const { fromUtc, toUtc } = madridDateRangeToUtcBounds(null, "2026-03-31");
+    expect(fromUtc).toBeUndefined();
+    // 31 marzo + 1 día = 1 abril, ya en CEST (+2).
+    expect(toUtc?.toISOString()).toBe("2026-03-31T22:00:00.000Z");
+  });
+
+  it("madridDateRangeToUtcBounds — 'desde' y 'hasta' juntos, mismo mes", () => {
+    const { fromUtc, toUtc } = madridDateRangeToUtcBounds("2026-03-01", "2026-03-31");
+    expect(fromUtc?.toISOString()).toBe("2026-02-28T23:00:00.000Z");
+    expect(toUtc?.toISOString()).toBe("2026-03-31T22:00:00.000Z");
+  });
+
+  it("madridDateRangeToUtcBounds — mismo día en 'desde' y 'hasta' cubre exactamente ese único día calendario", () => {
+    const { fromUtc, toUtc } = madridDateRangeToUtcBounds("2026-06-15", "2026-06-15");
+    expect(fromUtc?.toISOString()).toBe("2026-06-14T22:00:00.000Z");
+    expect(toUtc?.toISOString()).toBe("2026-06-15T22:00:00.000Z");
+    // Un evento a las 23:59 Madrid del 15 de junio (21:59 UTC) cae dentro del rango [fromUtc, toUtc).
+    const lateEvent = new Date("2026-06-15T21:59:00.000Z");
+    expect(lateEvent.getTime() >= fromUtc!.getTime() && lateEvent.getTime() < toUtc!.getTime()).toBe(true);
+    // Un evento a las 00:01 Madrid del 16 de junio (22:01 UTC del 15) NO debe entrar (es ya el día siguiente).
+    const nextDayEvent = new Date("2026-06-15T22:01:00.000Z");
+    expect(nextDayEvent.getTime() < toUtc!.getTime()).toBe(false);
+  });
+
+  it("sin fromDate ni toDate, ambos límites son undefined (sin restricción)", () => {
+    expect(madridDateRangeToUtcBounds()).toEqual({ fromUtc: undefined, toUtc: undefined });
   });
 });
