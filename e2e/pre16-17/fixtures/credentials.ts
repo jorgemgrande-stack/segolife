@@ -15,6 +15,12 @@ export const student = {
   community: required("E2E_STUDENT_COMMUNITY"),
 };
 
+/** FINAL ZERO-DEBT (Block B) — cuenta Admin QA dedicada, ver docs/QA_ACCOUNTS.md. Nunca la cuenta personal del usuario. */
+export const admin = {
+  email: required("E2E_ADMIN_EMAIL"),
+  password: required("E2E_ADMIN_PASSWORD"),
+};
+
 export interface VenueAccount {
   key: string;
   name: string;

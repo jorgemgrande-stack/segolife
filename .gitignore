@@ -26,6 +26,7 @@ scripts/push-enum-changes.mjs
 # trazas, resultados) — nunca a git, ver docs/PRE16_17_BROWSER_QA.md
 artifacts/pre16-17-browser/
 artifacts/mg03b-mg04-visual-qa/
+artifacts/final-zero-debt-qa/
 playwright-report/
 test-results/
 
