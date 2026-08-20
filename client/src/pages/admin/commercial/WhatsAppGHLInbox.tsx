@@ -206,11 +206,17 @@ export default function WhatsAppGHLInbox() {
   );
 
   const saveCredsMut = trpc.ghlInbox.saveInboxCredentials.useMutation({
-    onSuccess: () => {
-      toast.success("Credenciales guardadas. Prueba Sincronizar.");
+    onSuccess: (result) => {
+      // FINAL ZERO-DEBT (Block I/J) — sin secreto propio, el servidor genera
+      // uno aleatorio real; el admin necesita VERLO para poder pegarlo en el
+      // panel de GHL (antes esto no hacía falta: el valor "seguro" ya era
+      // adivinable de sobra por estar hardcodeado en el propio código).
+      toast.success(result.webhookSecret ? `Credenciales guardadas. Webhook secret: ${result.webhookSecret}` : "Credenciales guardadas. Prueba Sincronizar.");
       setCredToken("");
       setCredLocation("");
+      setCredSecret("");
       refetchStats();
+      utils.ghlInbox.getInboxCredentials.invalidate();
     },
     onError: e => toast.error(e.message),
   });
@@ -483,11 +489,11 @@ export default function WhatsAppGHLInbox() {
                   />
                 </div>
                 <div>
-                  <Label className="text-xs text-foreground/60">Webhook Secret</Label>
+                  <Label className="text-xs text-foreground/60">Webhook Secret (opcional)</Label>
                   <Input
                     value={credSecret}
                     onChange={e => setCredSecret(e.target.value)}
-                    placeholder={inboxCreds?.webhookSecret || "NAYADE2026_ULTRA"}
+                    placeholder={inboxCreds?.webhookSecret || "Se genera automáticamente si lo dejas en blanco"}
                     className="h-8 text-xs font-mono mt-1"
                   />
                 </div>
@@ -497,7 +503,7 @@ export default function WhatsAppGHLInbox() {
                   onClick={() => saveCredsMut.mutate({
                     token: credToken.trim(),
                     locationId: credLocation.trim(),
-                    webhookSecret: credSecret.trim() || inboxCreds?.webhookSecret || "NAYADE2026_ULTRA",
+                    webhookSecret: credSecret.trim() || undefined,
                   })}
                   className="bg-green-600 hover:bg-green-700 text-white"
                 >

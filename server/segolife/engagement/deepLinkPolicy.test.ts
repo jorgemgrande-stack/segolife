@@ -75,4 +75,23 @@ describe("deepLinkPolicy — sanitizeDeepLink", () => {
   it("literal exacta — nunca un comodín /admin/comunity/.*", () => {
     expect(sanitizeDeepLink("/admin/comunity/otro-panel")).toBeNull();
   });
+
+  // FINAL ZERO-DEBT (Block I) — el patrón de detalle de propuesta de
+  // Student (/:community/comunity/:id) interpretaba "admin" como si fuera
+  // un slug de comunidad real, colando /admin/comunity/<numérico> por una
+  // vía nunca destinada a un Student. No era una puerta de autorización
+  // real (esa ruta admin sigue con su propio RBAC aparte), pero sí una
+  // imprecisión real de la whitelist — regresión explícita.
+  it("NUNCA cuela /admin/comunity/<id numérico> por el patrón de detalle de Student", () => {
+    expect(sanitizeDeepLink("/admin/comunity/5")).toBeNull();
+    expect(sanitizeDeepLink("/admin/comunity/999")).toBeNull();
+  });
+
+  it("una comunidad real cuyo slug EMPIEZA por 'admin' (nunca 'admin' exacto) sigue aceptándose — la exclusión es de la palabra completa, no un prefijo", () => {
+    expect(sanitizeDeepLink("/administracion/comunity/5")).toBe("/administracion/comunity/5");
+  });
+
+  it("el hub de Student /admin/comunity (sin id) también queda excluido por el mismo motivo", () => {
+    expect(sanitizeDeepLink("/admin/comunity")).toBeNull();
+  });
 });

@@ -199,7 +199,7 @@ export const vapiCallsRouter = router({
 
       const { id: leadId } = await createLead({
         name: call.customerName || "Llamada Vapi",
-        email: call.customerEmail || `vapi-${call.vapiCallId}@noreply.nayade`,
+        email: call.customerEmail || `vapi-${call.vapiCallId}@noreply.segolife.es`,
         phone: call.phoneNumber ?? undefined,
         message: notes || "Lead creado desde llamada del Agente IA Vapi",
         source: "Agente IA Vapi",

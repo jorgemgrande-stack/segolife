@@ -4,6 +4,7 @@
  */
 
 import { z } from "zod";
+import { randomBytes } from "crypto";
 import { staffProcedure, router } from "../_core/trpc";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
@@ -247,9 +248,30 @@ export const ghlInboxRouter = router({
     .input(z.object({
       token: z.string().min(1),
       locationId: z.string().min(1),
-      webhookSecret: z.string().default("NAYADE2026_ULTRA"),
+      // FINAL ZERO-DEBT (Block I/J) — antes tenía un default hardcodeado
+      // ("NAYADE2026_ULTRA", literal en este propio código fuente Y en el
+      // placeholder del panel Admin) que se guardaba tal cual como secreto
+      // REAL si el admin dejaba el campo en blanco — cualquiera que hubiera
+      // visto el código o la UI podía forjar eventos de webhook (mensajes
+      // de WhatsApp falsos inyectados en el inbox de staff). Nunca disparado
+      // en producción (verificado: sin fila en site_settings todavía), así
+      // que se corrige antes de que llegue a usarse. Ahora: sin valor
+      // introducido, se genera uno aleatorio criptográfico server-side —
+      // nunca un secreto adivinable, nunca visible en el código fuente.
+      webhookSecret: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
+      // En blanco = conservar el secreto YA guardado (nunca invalidar un
+      // webhook ya configurado en el panel de GHL solo por resubir el
+      // token/locationId) — solo se genera uno nuevo si de verdad no existe
+      // ninguno todavía (alta inicial del módulo).
+      let webhookSecret = input.webhookSecret?.trim();
+      if (!webhookSecret) {
+        const [existingRows]: any = await _pool.execute(
+          "SELECT `value` FROM site_settings WHERE `key` = 'ghlInboxWebhookSecret'"
+        );
+        webhookSecret = (existingRows as any[])[0]?.value || randomBytes(24).toString("hex");
+      }
       await _pool.execute(
         "INSERT INTO site_settings (`key`, `value`, `type`, updatedAt) VALUES (?, ?, 'text', NOW()) ON DUPLICATE KEY UPDATE `value` = VALUES(`value`), updatedAt = NOW()",
         ["ghlInboxToken", input.token]
@@ -260,9 +282,9 @@ export const ghlInboxRouter = router({
       );
       await _pool.execute(
         "INSERT INTO site_settings (`key`, `value`, `type`, updatedAt) VALUES (?, ?, 'text', NOW()) ON DUPLICATE KEY UPDATE `value` = VALUES(`value`), updatedAt = NOW()",
-        ["ghlInboxWebhookSecret", input.webhookSecret]
+        ["ghlInboxWebhookSecret", webhookSecret]
       );
-      return { ok: true };
+      return { ok: true, webhookSecret };
     }),
 
   // ─── Diagnóstico: últimos eventos de webhook ─────────────────────────────

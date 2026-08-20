@@ -19,8 +19,16 @@ const ALLOWED_PATTERNS: RegExp[] = [
   /^\/[a-z0-9-]+\/activity$/,
   /^\/[a-z0-9-]+\/notifications$/,
   // COMUNITY (spec punto 20/45) — hub y detalle de una propuesta.
-  /^\/[a-z0-9-]+\/comunity$/,
-  /^\/[a-z0-9-]+\/comunity\/\d+$/,
+  // FINAL ZERO-DEBT (Block I) — (?!admin\b) excluye el segmento LITERAL
+  // "admin" como si fuera un slug de comunidad real (ningún slug real se
+  // llamará nunca así — es una palabra reservada de la propia app, no una
+  // comunidad concreta hardcodeada: nunca "ie"/"uva", que violaría la regla
+  // arquitectónica de CLAUDE.md). Antes, "/admin/comunity/5" colaba por
+  // este patrón (interpretando "admin" como slug) — nunca fue una puerta de
+  // autorización real (esa ruta admin sigue con su propio RBAC), pero sí
+  // una imprecisión real de qué puede EMBEBER esta whitelist.
+  /^\/(?!admin\b)[a-z0-9-]+\/comunity$/,
+  /^\/(?!admin\b)[a-z0-9-]+\/comunity\/\d+$/,
   // Pre-16.1 — solicitud de pago presencial con SegoTokens (TPV/puerta), el
   // Student confirma/rechaza aquí tras recibir la notificación.
   /^\/[a-z0-9-]+\/payment-requests\/\d+$/,
