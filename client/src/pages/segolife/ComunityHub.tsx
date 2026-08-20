@@ -14,8 +14,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Vote, Coins, Heart, Loader2, Send, Flame, ImagePlus, X } from "lucide-react";
-import { type ComunityQuestionType } from "@/lib/comunity";
+import { Vote, Coins, Heart, Loader2, Send, Flame, ImagePlus, X, Plus } from "lucide-react";
+import { QUESTION_TYPES_WITH_OPTIONS, type ComunityQuestionType } from "@/lib/comunity";
 
 /**
  * Hub de COMUNITY — /:community/comunity (spec puntos 22-23). Secciones
@@ -223,6 +223,20 @@ const URGENCY_OPTIONS: { value: ProposalUrgency; key: string }[] = [
   { value: "urgent", key: "comunity.urgencyUrgent" },
 ];
 
+// MG-05 — Student Proposal Voting Configuration. MISMOS 9 tipos que el
+// motor canónico de Admin (comunity.questionType, ver
+// server/segolife/community/communityQuestionTypeValidation.ts) — nunca un
+// tipo nuevo inventado aquí. "none" es un valor de UI puro (no se envía al
+// servidor) que representa "no quiero proponer nada" — proponer
+// configuración de voto es siempre opcional para el Student.
+const VOTING_TYPE_NONE = "none" as const;
+const ALL_QUESTION_TYPES: ComunityQuestionType[] = [
+  "single_choice", "yes_no", "percentage_scale", "scale_1_5",
+  "multiselect", "ranking", "attendance_intention", "me_apunto", "open_text",
+];
+const MIN_VOTING_OPTIONS = 2;
+const MAX_VOTING_OPTIONS = 20;
+
 function ProponerTab() {
   const { t } = useTranslation();
   const { community } = useCommunity();
@@ -240,8 +254,16 @@ function ProponerTab() {
   const [imageUploading, setImageUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // MG-05 — configuración de voto propuesta (opcional).
+  const [votingType, setVotingType] = useState<ComunityQuestionType | typeof VOTING_TYPE_NONE>(VOTING_TYPE_NONE);
+  const [votingOptions, setVotingOptions] = useState<string[]>(["", ""]);
+  const votingNeedsOptions = votingType !== VOTING_TYPE_NONE && QUESTION_TYPES_WITH_OPTIONS.includes(votingType);
+  const cleanVotingOptions = votingOptions.map(o => o.trim()).filter(Boolean);
+  const votingOptionsValid = !votingNeedsOptions || cleanVotingOptions.length >= MIN_VOTING_OPTIONS;
+
   function resetForm() {
     setTitle(""); setDescription(""); setVenueId(""); setSuggestedDate(""); setUrgency(""); setCoverImageUrl("");
+    setVotingType(VOTING_TYPE_NONE); setVotingOptions(["", ""]);
   }
 
   async function handleImageSelected(e: React.ChangeEvent<HTMLInputElement>) {
@@ -369,6 +391,60 @@ function ProponerTab() {
           </div>
         </div>
 
+        {/* MG-05 — configuración de voto propuesta (opcional). El Student PROPONE, el Admin decide. */}
+        <div>
+          <Label className="mb-1.5 block">{t("comunity.votingLabel")}</Label>
+          <p className="mb-1.5 text-xs text-muted-foreground">{t("comunity.votingHint")}</p>
+          <Select
+            value={votingType}
+            onValueChange={v => { setVotingType(v as ComunityQuestionType | typeof VOTING_TYPE_NONE); setVotingOptions(["", ""]); }}
+          >
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={VOTING_TYPE_NONE}>{t("comunity.votingNone")}</SelectItem>
+              {ALL_QUESTION_TYPES.map(type => (
+                <SelectItem key={type} value={type}>{questionTypeLabel(t, type)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {votingNeedsOptions && (
+            <div className="mt-2">
+              <Label className="mb-1.5 block text-xs">
+                {t(votingType === "percentage_scale" ? "comunity.votingOptionsLabelScale" : "comunity.votingOptionsLabel")}
+              </Label>
+              <div className="space-y-2">
+                {votingOptions.map((opt, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input
+                      value={opt}
+                      onChange={e => setVotingOptions(o => o.map((x, j) => j === i ? e.target.value : x))}
+                      placeholder={t("comunity.votingOptionPlaceholder", { n: i + 1 })}
+                      maxLength={256}
+                    />
+                    {votingOptions.length > MIN_VOTING_OPTIONS && (
+                      <button
+                        type="button"
+                        onClick={() => setVotingOptions(o => o.filter((_, j) => j !== i))}
+                        aria-label={t("comunity.votingRemoveOption", { n: i + 1 })}
+                        className="p-1.5 text-muted-foreground hover:text-destructive"
+                      >
+                        <X className="size-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {votingOptions.length < MAX_VOTING_OPTIONS && (
+                <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => setVotingOptions(o => [...o, ""])}>
+                  <Plus className="size-3.5 mr-1" /> {t("comunity.votingAddOption")}
+                </Button>
+              )}
+              {!votingOptionsValid && <p className="mt-1.5 text-xs text-destructive">{t("comunity.votingMinOptionsError")}</p>}
+            </div>
+          )}
+        </div>
+
         {approvedReward > 0 && (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Coins className="size-3.5 shrink-0 text-primary" /> {t("comunity.approvedRewardHint", { amount: approvedReward })}
@@ -376,7 +452,7 @@ function ProponerTab() {
         )}
         <Button
           className="w-full"
-          disabled={!title.trim() || !community?.id || submitMut.isPending || imageUploading}
+          disabled={!title.trim() || !community?.id || submitMut.isPending || imageUploading || !votingOptionsValid}
           onClick={() => community?.id && submitMut.mutate({
             communityId: community.id,
             title: title.trim(),
@@ -385,6 +461,8 @@ function ProponerTab() {
             suggestedDate: suggestedDate || null,
             coverImageUrl: coverImageUrl || null,
             urgency: urgency || null,
+            proposedQuestionType: votingType === VOTING_TYPE_NONE ? undefined : votingType,
+            proposedOptions: votingNeedsOptions ? cleanVotingOptions : undefined,
           })}
         >
           {submitMut.isPending ? <Loader2 className="size-4 animate-spin mr-1.5" /> : <Send className="size-4 mr-1.5" />} {t("comunity.submitIdea")}
@@ -407,7 +485,11 @@ function ProponerTab() {
             {myProposals.map(idea => (
               <div key={idea.id} className="rounded-xl border border-border bg-card px-4 py-3">
                 <p className="text-sm font-medium text-foreground">{idea.title}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">{ideaStatusLabel(t, idea.status)} · {t("comunity.supportCount", { count: idea.supportCount })}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {ideaStatusLabel(t, idea.status)} · {t("comunity.supportCount", { count: idea.supportCount })}
+                  {/* MG-05 §18 — claridad ante todo: solo la línea de resumen, nunca la lista completa de opciones en la tarjeta compacta. */}
+                  {idea.proposedQuestionType && <> · {t("comunity.votingSummary", { type: questionTypeLabel(t, idea.proposedQuestionType as ComunityQuestionType) })}</>}
+                </p>
               </div>
             ))}
           </div>

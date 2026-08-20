@@ -4,6 +4,16 @@ import userEvent from "@testing-library/user-event";
 import { Route } from "wouter";
 import i18n from "@/lib/i18n";
 
+// MG-05 — jsdom no implementa estos métodos de puntero/scroll que usa
+// internamente @radix-ui/react-select (selector de tipo de voto, nuevo en
+// esta fase) — mismo polyfill ya establecido en Register.test.tsx.
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}
+
 /**
  * ComunityHub.test.tsx — Fase 16 (auditoría). Antes de este fix, esta página
  * estaba enteramente en español hardcodeado (sin useTranslation en
@@ -14,10 +24,11 @@ import i18n from "@/lib/i18n";
  * este bug real (no solo "el texto existe", sino "el texto responde al
  * idioma").
  */
-const { mockMyActive, mockSubmitProposal, mockVenuesPublicActive, noopQuery, noopMutation } = vi.hoisted(() => ({
+const { mockMyActive, mockSubmitProposal, mockVenuesPublicActive, mockMyProposals, noopQuery, noopMutation } = vi.hoisted(() => ({
   mockMyActive: vi.fn(),
   mockSubmitProposal: vi.fn(),
   mockVenuesPublicActive: vi.fn(),
+  mockMyProposals: vi.fn(),
   noopQuery: () => ({ data: undefined, isLoading: false }),
   noopMutation: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -27,7 +38,7 @@ vi.mock("@/lib/trpc", () => ({
     community: {
       myActive: { useQuery: mockMyActive },
       myResponded: { useQuery: noopQuery },
-      myProposals: { useQuery: noopQuery },
+      myProposals: { useQuery: mockMyProposals },
       trending: { useQuery: noopQuery },
       respond: { useMutation: noopMutation },
       submitProposal: { useMutation: mockSubmitProposal },
@@ -83,6 +94,7 @@ beforeEach(() => {
   mockMyActive.mockReturnValue({ data: [], isLoading: false });
   mockVenuesPublicActive.mockReturnValue({ data: [{ id: 5, name: "Casanova" }, { id: 6, name: "Tía Felisa" }], isLoading: false });
   mockSubmitProposal.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockMyProposals.mockReturnValue({ data: undefined, isLoading: false });
   vi.stubGlobal("fetch", vi.fn());
 });
 
@@ -347,5 +359,213 @@ describe("ComunityHub — ProponerTab MG-04: urgencia del Student (spec §16)", 
     expect(payload).not.toHaveProperty("priority");
     expect(payload).not.toHaveProperty("segoTokens");
     expect(payload.communityId).toBe(1);
+  });
+});
+
+describe("ComunityHub — ProponerTab MG-05: configuración de voto propuesta", () => {
+  async function openProposeTab() {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /^propose$|^proponer$/i }));
+    return user;
+  }
+  async function fillTitleAndSubmit(user: ReturnType<typeof userEvent.setup>, title: string) {
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), title);
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+  }
+
+  it("por defecto (sin tocar el selector), no se propone ningún tipo de voto — proponerlo es siempre opcional", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+    await fillTitleAndSubmit(user, "Sin config de voto");
+    const payload = mockMutate.mock.calls[0][0];
+    expect(payload.proposedQuestionType).toBeUndefined();
+    expect(payload.proposedOptions).toBeUndefined();
+  });
+
+  it("Sí/No: no requiere configuración manual, se envía tal cual", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+    await user.click(screen.getByText(/how should the community respond/i).closest("div")!.querySelector("[role=combobox]")!);
+    await user.click(await screen.findByRole("option", { name: /^yes \/ no$/i }));
+    await fillTitleAndSubmit(user, "Yes/No idea");
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ proposedQuestionType: "yes_no", proposedOptions: undefined }));
+  });
+
+  it("Elección única: exige al menos 2 opciones — el botón queda deshabilitado con menos", async () => {
+    await i18n.changeLanguage("en");
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Single choice idea");
+    await user.click(screen.getByText(/how should the community respond/i).closest("div")!.querySelector("[role=combobox]")!);
+    await user.click(await screen.findByRole("option", { name: /^single choice$/i }));
+
+    const submitBtn = screen.getByRole("button", { name: /submit idea/i });
+    expect(submitBtn).toBeDisabled();
+
+    const optionInputs = screen.getAllByPlaceholderText(/^option \d/i);
+    await user.type(optionInputs[0], "Thursday");
+    expect(submitBtn).toBeDisabled(); // solo 1 opción rellena todavía
+
+    await user.type(optionInputs[1], "Friday");
+    expect(submitBtn).not.toBeDisabled();
+  });
+
+  it("Elección única: añadir opción crea un input extra, y las opciones se envían recortadas", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Con 3 opciones");
+    await user.click(screen.getByText(/how should the community respond/i).closest("div")!.querySelector("[role=combobox]")!);
+    await user.click(await screen.findByRole("option", { name: /^single choice$/i }));
+
+    await user.click(screen.getByRole("button", { name: /add option/i }));
+    const optionInputs = screen.getAllByPlaceholderText(/^option \d/i);
+    expect(optionInputs).toHaveLength(3);
+    await user.type(optionInputs[0], "  Thursday  ");
+    await user.type(optionInputs[1], "Friday");
+    await user.type(optionInputs[2], "Saturday");
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({
+      proposedQuestionType: "single_choice",
+      proposedOptions: ["Thursday", "Friday", "Saturday"],
+    }));
+  });
+
+  it("Escala 0-100: acepta criterios válidos (misma UI de opciones, etiqueta distinta)", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Escala idea");
+    await user.click(screen.getByText(/how should the community respond/i).closest("div")!.querySelector("[role=combobox]")!);
+    await user.click(await screen.findByRole("option", { name: /0-100 scale/i }));
+    expect(screen.getByText(/criteria to score/i)).toBeInTheDocument();
+
+    const optionInputs = screen.getAllByPlaceholderText(/^option \d/i);
+    await user.type(optionInputs[0], "Ambience");
+    await user.type(optionInputs[1], "Price");
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({
+      proposedQuestionType: "percentage_scale",
+      proposedOptions: ["Ambience", "Price"],
+    }));
+  });
+
+  it("Escala 1-5, Intención de asistencia, Me apunto y Texto abierto: ninguno pide opciones, todos se envían tal cual", async () => {
+    await i18n.changeLanguage("en");
+    for (const [optionName, expectedType] of [
+      [/^1-5 scale$/i, "scale_1_5"],
+      [/attendance intention/i, "attendance_intention"],
+      [/^i'm in$/i, "me_apunto"],
+      [/^open text$/i, "open_text"],
+    ] as const) {
+      cleanup();
+      const mockMutate = vi.fn();
+      mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+      renderAt("/ie/comunity");
+      const user = await openProposeTab();
+      await user.type(screen.getByPlaceholderText(/padel tournament/i), `Idea ${expectedType}`);
+      await user.click(screen.getByText(/how should the community respond/i).closest("div")!.querySelector("[role=combobox]")!);
+      await user.click(await screen.findByRole("option", { name: optionName }));
+      expect(screen.queryByPlaceholderText(/^option \d/i)).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /submit idea/i }));
+      expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ proposedQuestionType: expectedType, proposedOptions: undefined }));
+    }
+  });
+
+  it("Selección múltiple y Ranking: ambos usan la misma UI de opciones que Elección única", async () => {
+    await i18n.changeLanguage("en");
+    for (const [optionName, expectedType] of [
+      [/multiple choice/i, "multiselect"],
+      [/^ranking$/i, "ranking"],
+    ] as const) {
+      cleanup();
+      const mockMutate = vi.fn();
+      mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+      renderAt("/ie/comunity");
+      const user = await openProposeTab();
+      await user.type(screen.getByPlaceholderText(/padel tournament/i), `Idea ${expectedType}`);
+      await user.click(screen.getByText(/how should the community respond/i).closest("div")!.querySelector("[role=combobox]")!);
+      await user.click(await screen.findByRole("option", { name: optionName }));
+      const optionInputs = screen.getAllByPlaceholderText(/^option \d/i);
+      await user.type(optionInputs[0], "A");
+      await user.type(optionInputs[1], "B");
+      await user.click(screen.getByRole("button", { name: /submit idea/i }));
+      expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ proposedQuestionType: expectedType, proposedOptions: ["A", "B"] }));
+    }
+  });
+
+  it("cambiar de un tipo con opciones a Sí/No limpia la configuración incompatible (nunca envía opciones huérfanas)", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Cambio de tipo");
+    const combobox = screen.getByText(/how should the community respond/i).closest("div")!.querySelector("[role=combobox]")!;
+    await user.click(combobox);
+    await user.click(await screen.findByRole("option", { name: /^single choice$/i }));
+    const optionInputs = screen.getAllByPlaceholderText(/^option \d/i);
+    await user.type(optionInputs[0], "Thursday");
+    await user.type(optionInputs[1], "Friday");
+
+    await user.click(combobox);
+    await user.click(await screen.findByRole("option", { name: /^yes \/ no$/i }));
+    expect(screen.queryByPlaceholderText(/^option \d/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ proposedQuestionType: "yes_no", proposedOptions: undefined }));
+  });
+
+  it("'No proponer' vuelve a dejar la propuesta sin configuración de voto", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Cambio a ninguno");
+    const combobox = screen.getByText(/how should the community respond/i).closest("div")!.querySelector("[role=combobox]")!;
+    await user.click(combobox);
+    await user.click(await screen.findByRole("option", { name: /^yes \/ no$/i }));
+    await user.click(combobox);
+    await user.click(await screen.findByRole("option", { name: /don't propose/i }));
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ proposedQuestionType: undefined, proposedOptions: undefined }));
+  });
+
+  it("seleccionar/configurar el tipo de voto nunca dispara ninguna llamada de red por sí solo (no otorga ST, no es una actividad aparte)", async () => {
+    await i18n.changeLanguage("en");
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+    (global.fetch as ReturnType<typeof vi.fn>).mockClear();
+    const combobox = screen.getByText(/how should the community respond/i).closest("div")!.querySelector("[role=combobox]")!;
+    await user.click(combobox);
+    await user.click(await screen.findByRole("option", { name: /^single choice$/i }));
+    const optionInputs = screen.getAllByPlaceholderText(/^option \d/i);
+    await user.type(optionInputs[0], "A");
+    await user.click(screen.getByRole("button", { name: /add option/i }));
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("las ideas propias con voto propuesto muestran un resumen compacto en 'Your ideas'", async () => {
+    await i18n.changeLanguage("en");
+    mockMyProposals.mockReturnValue({
+      data: [{ id: 9, title: "Beach party", status: "pending_moderation", supportCount: 2, proposedQuestionType: "yes_no" }],
+      isLoading: false,
+    });
+    renderAt("/ie/comunity");
+    await openProposeTab();
+    expect(await screen.findByText(/voting: yes \/ no/i)).toBeInTheDocument();
   });
 });
