@@ -9,16 +9,14 @@
 
 ## A. DEUDA TÉCNICA ACCIONABLE (código, sin decisión de negocio pendiente)
 
-### A1. VapiAgente.tsx:189 — 1 error de TypeScript sin localizar
-- **Severidad**: Baja (cero impacto en runtime, el componente funciona).
-- **Descripción**: TS2322 "unknown no asignable a ReactNode". El
-  diagnóstico apunta a un comentario JSX vacío, que no puede producir el
-  error — confirmado con 4 métodos de lectura distintos. 2 hipótesis
-  descartadas mediante fix dirigido + recompilación (no cambiaron el
-  conteo).
-- **Próxima acción**: sesión de bisección manual (comentar bloques del
-  JSX de `CallModal` y recompilar hasta aislar la expresión exacta).
-- **Bloqueante**: No.
+### A1. ~~VapiAgente.tsx:189 — 1 error de TypeScript sin localizar~~ — RESUELTO
+Localizado por bisección real (comentar bloques del JSX de `CallModal` y
+recompilar hasta aislar la expresión exacta). Causa: `structuredData` es
+`unknown` (columna JSON sin `.$type<>()`); `unknown && X` no se estrecha
+por veracidad como sí ocurre con `any`, filtrando `unknown` al tipo de la
+expresión JSX. Corregido con `Boolean(call.structuredData) && ...` — mismo
+comportamiento en runtime. **`npx tsc --noEmit` → 0 errores** (partía de
+118 al inicio de esta fase).
 
 ### A2. `server/regression.recalculate.test.ts` — reimplementación con drift de fidelidad frente a producción
 - **Severidad**: Baja.

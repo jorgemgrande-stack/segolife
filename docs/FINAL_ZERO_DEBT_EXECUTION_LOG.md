@@ -151,24 +151,25 @@ Triage completo (agente dedicado, lectura directa de cada sitio de error,
     está desactivado en producción (módulo heredado de Náyade), así que
     ninguno de los dos flujos es alcanzable actualmente — quedan
     corregidos para cuando el módulo se reactive.
-- **1 error sin resolver, documentado**: `VapiAgente.tsx:189` — TS2322
-  "unknown no asignable a ReactNode". El diagnóstico de TypeScript
-  atribuye el error a un comentario JSX vacío (`{/* Grabación */}`), que
-  no puede producir ese error por sí mismo — confirmado con 4 métodos de
-  lectura distintos que la posición reportada es literalmente ese
-  comentario. Se intentaron 2 correcciones dirigidas (tipado explícito de
-  `displayName`/`displayEmail` en dos sitios distintos del componente, el
-  candidato más probable dado que las columnas JSON `structuredData`/
-  `rawPayload` del schema son `unknown` sin `.$type<>()`) — ninguna cambió
-  el conteo de errores para este caso concreto, descartando esa hipótesis.
-  Pendiente de una sesión de bisección manual real (comentar bloques del
-  JSX devuelto por `CallModal` y volver a compilar hasta aislar la
-  expresión exacta) — no es un one-liner seguro sin esa localización
-  previa. Impacto real: cero (el componente funciona correctamente en
-  runtime; es un error de tipos, no de comportamiento).
+- **El último error, resuelto por bisección real** (commit `f4a8032`,
+  posterior a la primera pasada de este bloque): `VapiAgente.tsx:189` —
+  TS2322 "unknown no asignable a ReactNode". El diagnóstico de TypeScript
+  atribuía el error a una línea/comentario vecino sin relación real —
+  confirmado con 4 métodos de lectura distintos, y 2 correcciones
+  dirigidas previas que no cambiaron el conteo. Se resolvió con
+  bisección mecánica real: comentar bloques del JSX devuelto por
+  `CallModal` y recompilar tras cada paso hasta aislar la expresión
+  exacta. Causa real:
+  `{call.structuredData && Object.keys(...).length > 0 && (...)}` —
+  `structuredData` es `unknown` (columna JSON sin `.$type<>()`).
+  TypeScript no puede estrechar `unknown` por veracidad como sí hace con
+  `any`, así que `unknown && X` sigue siendo parcialmente `unknown`, y ese
+  `unknown` se filtraba al tipo de la expresión JSX completa. Corregido
+  con `Boolean(call.structuredData) && ...` — mismo comportamiento exacto
+  en runtime, solo cambia lo que TypeScript puede probar.
 
-**Resultado final**: `npx tsc --noEmit` → **1 error** (de 118 iniciales).
-`pnpm build` verificado tras cada commit — sin regresiones.
+**Resultado final**: `npx tsc --noEmit` → **0 errores** (de 118
+iniciales). `pnpm build` verificado tras cada commit — sin regresiones.
 
 ---
 
