@@ -6108,6 +6108,20 @@ export const communityStudentProposals = mysqlTable("community_student_proposals
   // community_proposals/urgencyType, tabla distinta, sin relación). Solo 3
   // niveles simples, nunca inventa una escala mayor (spec MG-04 §13).
   urgency:                  mysqlEnum("urgency", ["no_rush", "soon", "urgent"]),
+  // MG-05 — Student Proposal Voting Configuration. El Student puede
+  // PROPONER (nunca imponer) el mismo tipo de pregunta que ya usa el motor
+  // canónico de Admin — mismo enum EXACTO que communityProposals.questionType,
+  // nunca un segundo tipo paralelo. Ambas columnas NULL por defecto
+  // (aditivo, backward-compatible): una idea nunca está obligada a proponer
+  // configuración de voto, y las ideas anteriores a esta fase simplemente
+  // no la tienen. proposedOptions solo tiene sentido para los tipos con
+  // opciones discretas (single_choice/multiselect/ranking/percentage_scale
+  // — igual que community_options); el resto de tipos nunca la usan.
+  proposedQuestionType:     mysqlEnum("proposed_question_type", [
+    "single_choice", "yes_no", "percentage_scale", "scale_1_5",
+    "multiselect", "ranking", "attendance_intention", "me_apunto", "open_text",
+  ]),
+  proposedOptions:          json("proposed_options").$type<string[]>(),
   status:                   mysqlEnum("status", [
     "pending_moderation", "approved", "rejected", "scheduled", "active", "closed", "converted",
   ]).notNull().default("pending_moderation"),
