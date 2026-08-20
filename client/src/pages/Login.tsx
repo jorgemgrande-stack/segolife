@@ -103,6 +103,20 @@ export default function Login() {
     document.title = t("login.meta.title");
   }, [t]);
 
+  // SEC-02: main.tsx redirige aquí con ?reason=expired cuando confirma (en
+  // fresco, no por un 401 aislado) que la sesión anterior ya no es válida —
+  // mostrar un mensaje claro en vez de dejar que el usuario llegue a un
+  // formulario de login vacío sin saber por qué se le echó. Nunca se
+  // documentan aquí detalles internos (JWT, cookies) — solo lenguaje de cara
+  // al usuario.
+  useEffect(() => {
+    const reason = new URLSearchParams(window.location.search).get("reason");
+    if (reason === "expired") {
+      setError(t("login.errors.sessionExpired"));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);

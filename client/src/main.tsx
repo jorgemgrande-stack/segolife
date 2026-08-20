@@ -6,11 +6,17 @@ import { createRoot } from "react-dom/client";
 import superjson from "superjson";
 import App from "./App";
 import { CartProvider } from "./contexts/CartContext";
-import { getLoginUrl } from "./const";
+import { handleUnauthorized } from "./authRedirect";
 import "./index.css";
 
 const queryClient = new QueryClient();
 
+/**
+ * SEC-02: un único 401 aislado (un poll de fondo, una query no relacionada
+ * que falla mientras el resto de la app sigue funcionando) NO es prueba
+ * suficiente de que la sesión ha muerto de verdad — ver authRedirect.ts
+ * para la lógica completa (confirmación en fresco + returnTo + dedupe).
+ */
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;
   if (typeof window === "undefined") return;
@@ -19,7 +25,7 @@ const redirectToLoginIfUnauthorized = (error: unknown) => {
 
   if (!isUnauthorized) return;
 
-  window.location.href = getLoginUrl();
+  void handleUnauthorized();
 };
 
 queryClient.getQueryCache().subscribe(event => {

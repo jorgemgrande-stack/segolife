@@ -19,7 +19,8 @@
     "localAuthNote": "Local authentication mode active",
     "errors": {
       "invalidCredentials": "Incorrect credentials. Please try again.",
-      "network": "Connection error. Check that the server is running."
+      "network": "Connection error. Check that the server is running.",
+      "sessionExpired": "Your session has expired. Please log in again to continue."
     }
   },
   "publicHome": {

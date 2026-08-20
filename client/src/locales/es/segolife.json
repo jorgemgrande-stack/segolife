@@ -19,7 +19,8 @@
     "localAuthNote": "Modo de autenticación local activo",
     "errors": {
       "invalidCredentials": "Credenciales incorrectas. Inténtalo de nuevo.",
-      "network": "Error de conexión. Comprueba que el servidor está en marcha."
+      "network": "Error de conexión. Comprueba que el servidor está en marcha.",
+      "sessionExpired": "Tu sesión ha caducado. Vuelve a iniciar sesión para continuar."
     }
   },
   "publicHome": {
