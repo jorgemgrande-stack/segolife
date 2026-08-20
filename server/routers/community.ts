@@ -567,7 +567,25 @@ export const communityRouter = router({
 
   trending: protectedProcedure
     .input(z.object({ communityId: z.number().int().positive().optional() }))
-    .query(async ({ input }) => listTrendingStudentProposals(input.communityId ? [input.communityId] : "all")),
+    .query(async ({ input, ctx }) => {
+      const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
+      if (access === "all") {
+        return listTrendingStudentProposals(input.communityId ? [input.communityId] : "all");
+      }
+      // No es admin global — el alcance real de un Student es su propia
+      // membresía (getUserCommunities), nunca "all": sin este chequeo,
+      // cualquier Student autenticado podía omitir communityId (o pasar el
+      // de otra comunidad) y recibir los nombres/ideas pendientes de
+      // moderación de estudiantes de otras comunidades.
+      if (!input.communityId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "communityId requerido" });
+      }
+      const memberships = await getUserCommunities(ctx.user.id);
+      if (!memberships.some(m => m.communityId === input.communityId)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No perteneces a esa comunidad" });
+      }
+      return listTrendingStudentProposals([input.communityId]);
+    }),
 
   support: protectedProcedure
     .input(z.object({ studentProposalId: z.number().int().positive() }))

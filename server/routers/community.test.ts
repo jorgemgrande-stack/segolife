@@ -16,6 +16,7 @@ const {
   mockGetUserCommunities, mockSubmitStudentProposal, mockNotifyStudentProposalSubmitted,
   mockApproveStudentProposal, mockRejectStudentProposal,
   mockNotifyStudentProposalApproved, mockNotifyStudentProposalRejected,
+  mockGetCommunityAccess, mockListTrendingStudentProposals,
 } = vi.hoisted(() => ({
   mockGetUserCommunities: vi.fn(),
   mockSubmitStudentProposal: vi.fn(),
@@ -24,10 +25,16 @@ const {
   mockRejectStudentProposal: vi.fn(),
   mockNotifyStudentProposalApproved: vi.fn().mockResolvedValue(undefined),
   mockNotifyStudentProposalRejected: vi.fn().mockResolvedValue(undefined),
+  mockGetCommunityAccess: vi.fn(),
+  mockListTrendingStudentProposals: vi.fn(),
 }));
 vi.mock("../db/communitiesDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../db/communitiesDb")>();
   return { ...actual, getUserCommunities: mockGetUserCommunities };
+});
+vi.mock("../_core/communityAccess", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../_core/communityAccess")>();
+  return { ...actual, getCommunityAccess: mockGetCommunityAccess };
 });
 vi.mock("../segolife/community/communityStudentProposalDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/community/communityStudentProposalDb")>();
@@ -36,6 +43,7 @@ vi.mock("../segolife/community/communityStudentProposalDb", async (importOrigina
     submitStudentProposal: mockSubmitStudentProposal,
     approveStudentProposal: mockApproveStudentProposal,
     rejectStudentProposal: mockRejectStudentProposal,
+    listTrendingStudentProposals: mockListTrendingStudentProposals,
   };
 });
 // Community Proposals (backlog, spec §15.B) / FINAL ZERO-DEBT Block D — se
@@ -190,6 +198,48 @@ describe("community router — submitProposal: la comunidad SIEMPRE se deriva de
     mockNotifyStudentProposalSubmitted.mockRejectedValue(new Error("boom"));
     const result = await callerAs(7).submitProposal({ communityId: 1, title: "x" });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("community router — trending: un Student NUNCA ve ideas/nombres de otra comunidad (closure security sweep, hallazgo #7)", () => {
+  beforeEach(() => {
+    mockGetCommunityAccess.mockReset();
+    mockGetUserCommunities.mockReset();
+    mockListTrendingStudentProposals.mockReset().mockResolvedValue([{ id: 1 }]);
+  });
+
+  it("REGRESIÓN — un Student SIN communityId ya no recibe 'all' (antes filtraba nombres de otras comunidades)", async () => {
+    mockGetCommunityAccess.mockResolvedValue([]); // no es admin global
+    await expect(callerAs(7).trending({})).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(mockListTrendingStudentProposals).not.toHaveBeenCalled();
+  });
+
+  it("REGRESIÓN — un Student de la comunidad 1 no puede pedir trending de la comunidad 2", async () => {
+    mockGetCommunityAccess.mockResolvedValue([]);
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    await expect(callerAs(7).trending({ communityId: 2 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockListTrendingStudentProposals).not.toHaveBeenCalled();
+  });
+
+  it("un Student SÍ ve el trending de su propia comunidad real", async () => {
+    mockGetCommunityAccess.mockResolvedValue([]);
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    const result = await callerAs(7).trending({ communityId: 1 });
+    expect(result).toEqual([{ id: 1 }]);
+    expect(mockListTrendingStudentProposals).toHaveBeenCalledWith([1]);
+  });
+
+  it("un admin global SÍ conserva el comportamiento previo: sin communityId ve el trending de TODAS las comunidades (ComunityManager.tsx)", async () => {
+    mockGetCommunityAccess.mockResolvedValue("all");
+    await callerAsAdmin(1).trending({});
+    expect(mockListTrendingStudentProposals).toHaveBeenCalledWith("all");
+    expect(mockGetUserCommunities).not.toHaveBeenCalled();
+  });
+
+  it("un admin global pidiendo una comunidad concreta la recibe filtrada, sin necesitar ser miembro", async () => {
+    mockGetCommunityAccess.mockResolvedValue("all");
+    await callerAsAdmin(1).trending({ communityId: 3 });
+    expect(mockListTrendingStudentProposals).toHaveBeenCalledWith([3]);
   });
 });
 
