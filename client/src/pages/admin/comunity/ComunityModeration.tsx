@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Loader2, ShieldQuestion, Check, X, Sparkles, Heart, Plus, Trash2 } from "lucide-react";
 import { useAdminCommunity } from "@/contexts/AdminCommunityContext";
 import { ADMIN_COMMUNITY_FILTER_ALL } from "@shared/segolife/adminCommunityFilter";
-import { QUESTION_TYPE_LABEL, fmtDateTime, type ComunityQuestionType } from "@/lib/comunity";
+import { QUESTION_TYPE_LABEL, QUESTION_TYPES_WITH_OPTIONS, fmtDateTime, type ComunityQuestionType } from "@/lib/comunity";
 
 const ALL = "__all__";
 type IdeaStatus = "pending_moderation" | "approved" | "rejected" | "scheduled" | "active" | "closed" | "converted";
@@ -24,8 +24,6 @@ const URGENCY_LABEL: Record<"no_rush" | "soon" | "urgent", { label: string; clas
   soon: { label: "Pronto", className: "bg-accent/10 text-accent" },
   urgent: { label: "Urgente", className: "bg-destructive/10 text-destructive" },
 };
-
-const TYPES_WITH_OPTIONS: ComunityQuestionType[] = ["single_choice", "multiselect", "ranking", "percentage_scale"];
 
 /**
  * Cola de moderación de ideas de estudiante — /admin/comunity/moderacion
@@ -67,7 +65,19 @@ export default function ComunityModeration() {
   });
 
   const items = data?.items ?? [];
-  const needsOptions = TYPES_WITH_OPTIONS.includes(convertType);
+  const needsOptions = QUESTION_TYPES_WITH_OPTIONS.includes(convertType);
+
+  /** MG-05 §12 — abre el diálogo de conversión PRE-LLENADO con lo que el Student propuso, si propuso algo; el Admin sigue pudiendo cambiarlo todo antes de convertir. */
+  function openConvertDialog(idea: (typeof items)[number]) {
+    setConvertTarget(idea.id);
+    if (idea.proposedQuestionType) {
+      setConvertType(idea.proposedQuestionType);
+      setConvertOptions(idea.proposedOptions?.length ? idea.proposedOptions : ["", ""]);
+    } else {
+      setConvertType("yes_no");
+      setConvertOptions(["", ""]);
+    }
+  }
 
   return (
     <AdminLayout title="Moderación COMUNITY">
@@ -121,6 +131,17 @@ export default function ComunityModeration() {
                         {URGENCY_LABEL[idea.urgency].label}
                       </Badge>
                     )}
+                    {/* MG-05 §11 — configuración de voto propuesta por el Student, legible sin que el Admin tenga que reconstruirla a mano. */}
+                    {idea.proposedQuestionType && (
+                      <div className="mt-2 rounded-md bg-muted/40 px-3 py-2 text-xs">
+                        <p className="font-medium text-foreground">Tipo de respuesta propuesto: {QUESTION_TYPE_LABEL[idea.proposedQuestionType]}</p>
+                        {!!idea.proposedOptions?.length && (
+                          <ul className="mt-1 list-disc pl-4 text-muted-foreground">
+                            {idea.proposedOptions.map((opt, i) => <li key={i}>{opt}</li>)}
+                          </ul>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <Badge variant="secondary" className="flex items-center gap-1 shrink-0"><Heart className="size-3" /> {idea.supportCount}</Badge>
                 </div>
@@ -136,7 +157,7 @@ export default function ComunityModeration() {
                     </>
                   )}
                   {status === "approved" && (
-                    <Button size="sm" onClick={() => { setConvertTarget(idea.id); setConvertType("yes_no"); setConvertOptions(["", ""]); }}>
+                    <Button size="sm" onClick={() => openConvertDialog(idea)}>
                       <Sparkles className="size-3.5 mr-1" /> Convertir en propuesta formal
                     </Button>
                   )}
