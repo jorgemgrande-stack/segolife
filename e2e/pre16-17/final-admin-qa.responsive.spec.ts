@@ -22,8 +22,16 @@ const ARTIFACTS_DIR = "artifacts/final-zero-debt-qa";
 fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
 
 async function dismissCookies(page: import("@playwright/test").Page) {
+  // locator.isVisible() no reintenta — es una comprobación puntual, no una
+  // espera real (a diferencia de otros specs de esta sesión que llamaban a
+  // esto justo tras networkidle, donde el banner ya llevaba tiempo montado,
+  // aquí se usa domcontentloaded — más rápido pero el banner de cookies
+  // (montado por un efecto de cliente con su propio retraso) puede no
+  // existir todavía en el DOM). waitFor({state:"visible"}) sí reintenta de
+  // verdad durante el timeout — real fix, no solo un sleep más largo.
   const btn = page.getByRole("button", { name: /accept all|aceptar todas/i });
-  if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) await btn.click();
+  await btn.waitFor({ state: "visible", timeout: 4000 }).catch(() => {});
+  if (await btn.isVisible().catch(() => false)) await btn.click();
 }
 
 function hasHorizontalOverflow(page: import("@playwright/test").Page) {
@@ -70,6 +78,7 @@ test.describe("FINAL ZERO-DEBT — FIX-06 visual QA contra producción real (Blo
     await loginViaUI(page, admin.email, admin.password);
     await page.goto("/admin/events");
     await page.waitForLoadState("domcontentloaded");
+    await dismissCookies(page);
 
     const firstRow = page.locator("table tbody tr").first();
     await expect(firstRow).toBeVisible({ timeout: 15000 });
