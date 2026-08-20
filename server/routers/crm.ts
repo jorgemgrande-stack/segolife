@@ -3500,6 +3500,92 @@ export const crmRouter = router({
           redsysForm,
         };
       }),
+
+    // --- Aplicar código de descuento / bono a un presupuesto -----------------
+    // El descuento se registra en quotes.discount, se recalcula el total,
+    // y se marca el código como usado (sincronizando el bono si origin=voucher).
+    // Nota: vivía por error dentro de `timeline` — el frontend siempre llamó
+    // a crm.quotes.applyDiscountCode (CRMDashboard.tsx), que nunca existió
+    // ahí; movido a `quotes`, su ubicación real.
+    applyDiscountCode: staff
+      .input(z.object({
+        id: z.number(),
+        code: z.string().min(1),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const normalizedCode = input.code.toUpperCase().trim();
+
+        // 1. Cargar el presupuesto
+        const [quote] = await db.select().from(quotes).where(eq(quotes.id, input.id));
+        if (!quote) throw new TRPCError({ code: "NOT_FOUND", message: "Presupuesto no encontrado" });
+        if (quote.status === "pagado" || quote.status === "facturado" || quote.status === "convertido_reserva") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "No se puede aplicar un descuento a un presupuesto ya pagado o convertido" });
+        }
+        if (quote.discount && Number(quote.discount) > 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Este presupuesto ya tiene un descuento aplicado" });
+        }
+
+        // 2. Validar el código
+        const [dc] = await db.select().from(discountCodes)
+          .where(eq(discountCodes.code, normalizedCode))
+          .limit(1);
+
+        if (!dc) throw new TRPCError({ code: "NOT_FOUND", message: "Código no encontrado" });
+        if (dc.status === "inactive") throw new TRPCError({ code: "BAD_REQUEST", message: "El código está inactivo" });
+        if (dc.expiresAt && new Date(dc.expiresAt) < new Date()) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "El código ha caducado" });
+        }
+        if (dc.maxUses !== null && dc.currentUses >= dc.maxUses) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "El código ya ha alcanzado el límite de usos" });
+        }
+
+        // 3. Calcular importe del descuento
+        const subtotalEur = Number(quote.subtotal);
+        let discountEur: number;
+        if (dc.discountType === "fixed") {
+          discountEur = Math.min(Number(dc.discountAmount ?? 0), subtotalEur);
+        } else {
+          discountEur = (subtotalEur * Number(dc.discountPercent)) / 100;
+        }
+        discountEur = Math.round(discountEur * 100) / 100;
+
+        // 4. Recalcular total: subtotal - descuento + IVA sobre base descontada
+        const taxRate = quote.tax && subtotalEur > 0 ? Number(quote.tax) / subtotalEur : 0;
+        const newTaxBase = subtotalEur - discountEur;
+        const newTax = Math.round(newTaxBase * taxRate * 100) / 100;
+        const newTotal = Math.max(0, newTaxBase + newTax);
+
+        // 5. Actualizar presupuesto
+        await db.update(quotes).set({
+          discount: String(discountEur.toFixed(2)),
+          tax: String(newTax.toFixed(2)),
+          total: String(newTotal.toFixed(2)),
+          updatedAt: new Date(),
+        }).where(eq(quotes.id, input.id));
+
+        // 6. Registrar uso del código (también sincroniza el bono si origin=voucher)
+        await recordDiscountUse({
+          discountCodeId: dc.id,
+          code: dc.code,
+          discountPercent: Number(dc.discountPercent),
+          discountAmount: discountEur,
+          originalAmount: subtotalEur,
+          finalAmount: Math.max(0, subtotalEur - discountEur),
+          channel: "crm",
+          appliedByUserId: String(ctx.user.id),
+        });
+
+        // 7. Log de actividad
+        await logActivity("quote", input.id, "discount_applied", ctx.user.id, ctx.user.name, {
+          code: dc.code,
+          name: dc.name,
+          discountType: dc.discountType,
+          discountEur,
+          newTotal,
+        });
+
+        return { success: true, discountEur, newTotal, code: dc.code, name: dc.name };
+      }),
   }),
 
   // --- PLANES DE PAGO FRACCIONADO ----------------------------------------------
@@ -4037,88 +4123,6 @@ export const crmRouter = router({
       };
     }),
 
-    // --- Aplicar código de descuento / bono a un presupuesto -----------------
-    // El descuento se registra en quotes.discount, se recalcula el total,
-    // y se marca el código como usado (sincronizando el bono si origin=voucher).
-    applyDiscountCode: staff
-      .input(z.object({
-        id: z.number(),
-        code: z.string().min(1),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const normalizedCode = input.code.toUpperCase().trim();
-
-        // 1. Cargar el presupuesto
-        const [quote] = await db.select().from(quotes).where(eq(quotes.id, input.id));
-        if (!quote) throw new TRPCError({ code: "NOT_FOUND", message: "Presupuesto no encontrado" });
-        if (quote.status === "pagado" || quote.status === "facturado" || quote.status === "convertido_reserva") {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "No se puede aplicar un descuento a un presupuesto ya pagado o convertido" });
-        }
-        if (quote.discount && Number(quote.discount) > 0) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Este presupuesto ya tiene un descuento aplicado" });
-        }
-
-        // 2. Validar el código
-        const [dc] = await db.select().from(discountCodes)
-          .where(eq(discountCodes.code, normalizedCode))
-          .limit(1);
-
-        if (!dc) throw new TRPCError({ code: "NOT_FOUND", message: "Código no encontrado" });
-        if (dc.status === "inactive") throw new TRPCError({ code: "BAD_REQUEST", message: "El código está inactivo" });
-        if (dc.expiresAt && new Date(dc.expiresAt) < new Date()) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "El código ha caducado" });
-        }
-        if (dc.maxUses !== null && dc.currentUses >= dc.maxUses) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "El código ya ha alcanzado el límite de usos" });
-        }
-
-        // 3. Calcular importe del descuento
-        const subtotalEur = Number(quote.subtotal);
-        let discountEur: number;
-        if (dc.discountType === "fixed") {
-          discountEur = Math.min(Number(dc.discountAmount ?? 0), subtotalEur);
-        } else {
-          discountEur = (subtotalEur * Number(dc.discountPercent)) / 100;
-        }
-        discountEur = Math.round(discountEur * 100) / 100;
-
-        // 4. Recalcular total: subtotal - descuento + IVA sobre base descontada
-        const taxRate = quote.tax && subtotalEur > 0 ? Number(quote.tax) / subtotalEur : 0;
-        const newTaxBase = subtotalEur - discountEur;
-        const newTax = Math.round(newTaxBase * taxRate * 100) / 100;
-        const newTotal = Math.max(0, newTaxBase + newTax);
-
-        // 5. Actualizar presupuesto
-        await db.update(quotes).set({
-          discount: String(discountEur.toFixed(2)),
-          tax: String(newTax.toFixed(2)),
-          total: String(newTotal.toFixed(2)),
-          updatedAt: new Date(),
-        }).where(eq(quotes.id, input.id));
-
-        // 6. Registrar uso del código (también sincroniza el bono si origin=voucher)
-        await recordDiscountUse({
-          discountCodeId: dc.id,
-          code: dc.code,
-          discountPercent: Number(dc.discountPercent),
-          discountAmount: discountEur,
-          originalAmount: subtotalEur,
-          finalAmount: Math.max(0, subtotalEur - discountEur),
-          channel: "crm",
-          appliedByUserId: String(ctx.user.id),
-        });
-
-        // 7. Log de actividad
-        await logActivity("quote", input.id, "discount_applied", ctx.user.id, ctx.user.name, {
-          code: dc.code,
-          name: dc.name,
-          discountType: dc.discountType,
-          discountEur,
-          newTotal,
-        });
-
-        return { success: true, discountEur, newTotal, code: dc.code, name: dc.name };
-      }),
   }),
 
   // --- RESERVATIONSS ----------------------------------------------------------
@@ -5058,7 +5062,7 @@ export const crmRouter = router({
           // Económico
           amountTotal: z.number().min(0),    // en euros
           amountPaid: z.number().min(0),     // en euros
-          paymentMethod: z.enum(["efectivo", "transferencia", "redsys", "otro"]).default("efectivo"),
+          paymentMethod: z.enum(["efectivo", "transferencia", "redsys", "otro", "tarjeta_fisica", "tarjeta_redsys"]).default("efectivo"),
           // Opcionales
           notes: z.string().optional(),
           channel: z.enum(["VENTA_DELEGADA", "TELEFONO", "EMAIL", "MANUAL"]).default("VENTA_DELEGADA"),
