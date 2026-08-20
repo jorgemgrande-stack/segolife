@@ -23,10 +23,10 @@ operativo real. EXTERNAL = dependencia externa a la plataforma.
 | SEGOTOKENS (ganar/gastar) | 🟢 GREEN | Motor de ganancia activo globalmente (9 reglas); política de canje global activa desde 2026-08-15 (100 ST = €1, hasta 100% de la compra, pago 100% ST permitido) |
 | BENEFITS | 🔴 RED | Ver hallazgo urgente abajo — un Beneficio real ya comprado por Students queda sin definición de qué otorga, y su ventana de compra ya caducó |
 | FOURVENUES | 🟢 GREEN | 3/3 integraciones configuradas operativas (Casanova, Limoncello, Tía Felisa) |
-| BREVO | 🟠 AMBER | Infraestructura y capacidad de test seguro confirmadas listas; falta el envío de prueba real end-to-end (requiere sesión de Administrador, no fabricada en esta auditoría) |
+| BREVO | 🟢 GREEN | **Actualizado 2026-08-20** — envío de prueba real end-to-end confirmado con la cuenta Admin QA dedicada (`docs/QA_ACCOUNTS.md`): Brevo aceptó el envío (messageId real de `smtp-relay.mailin.fr`), webhook `/api/engagement/brevo-webhook/health` → `configured:true`. Entrega final en bandeja no verificable desde este entorno (sin acceso a inbox) — EXTERNAL VERIFICATION REQUIRED solo para ese último tramo, nunca para la integración en sí |
 | PAYMENT PROVIDER | ⚪ EXTERNAL | Sin proveedor real conectado — bloquea únicamente el tramo en dinero real de una compra; el 100% SegoTokens funciona hoy sin él (ver `PAYMENT_PROVIDER_ACTIVATION_CHECKLIST.md`) |
 | EMPLOYEE/HR | 🟢 GREEN | Portal y flujo completos, documentados en Fase 17 |
-| ADMIN | 🟢 GREEN | Funcional por código y por los 185 tests de servidor del Command Center; verificación visual sigue limitada por no haber credenciales de Admin en el entorno de QA (no es un bloqueo de producto) |
+| ADMIN | 🟢 GREEN | Funcional por código y por los tests de servidor del Command Center. **Actualizado 2026-08-20** — verificación visual real ya realizada con Chromium (Command Center, Events, Community Moderation, Communication Center, Employee/HR, Venues) usando la nueva cuenta Admin QA dedicada; 1 bug real encontrado y corregido (overflow horizontal del header en móvil, afectaba a todas las páginas Admin) |
 | COMMAND CENTER | 🟢 GREEN | Read-model cubierto por batería de tests de servidor, sin regresión |
 
 ## ⚠️ Hallazgo urgente — Benefits (id=1, "Bienvenida nuevo estudiante")

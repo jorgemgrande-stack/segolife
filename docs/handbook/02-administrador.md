@@ -56,6 +56,33 @@ externo o nativo, tipos de entrada, fechas). Es la capa de
 **configuración**; lo que realmente ocurrió se consulta en Ventas y
 Operaciones.
 
+Cada fila del listado tiene una columna **Acciones** con tres controles:
+
+- **✏ Editar** — abre la ficha completa del evento (mismo destino que pulsar
+  el nombre). En un evento sincronizado desde Fourvenues, la ficha avisa
+  qué campos son seguros de editar (nombre, descripción, imagen, venue,
+  comunidades, destacado) y cuáles los sobrescribe la próxima
+  sincronización (Inicio y Fin) — editarlos ahí es inofensivo, pero el
+  cambio no se conserva.
+- **👁 Ocultar / Mostrar** — retira el evento de los sitios donde un Student
+  lo descubriría (Home, Explorar, ficha del local, Eventos finalizados) sin
+  borrarlo ni afectar a sus entradas, pedidos o asistencia ya existentes.
+  Un Student que ya compró una entrada sigue viéndola con normalidad en
+  "Mis entradas" aunque el evento esté oculto. Se distingue con un badge
+  **Oculto** junto al estado habitual (Activo/Finalizado/Inactivo) — son
+  dos informaciones independientes, un evento puede estar Finalizado y
+  Oculto a la vez.
+- **🗑 Eliminar** — borrado real y permanente, pide confirmación explícita.
+  Solo es posible en un evento manual sin ninguna entrada, pedido,
+  asistencia ni integración externa vinculada — si el evento tiene
+  cualquier actividad real, el sistema lo bloquea y sugiere ocultarlo en su
+  lugar.
+
+**Filtro de fechas** — encima del listado, "Desde"/"Hasta" acotan los
+eventos por su fecha de inicio (ambos límites incluidos). Se combinan con
+el resto de filtros (venue, estado, destacado, canal de venta, Próximos/
+Esta noche/Pasados). "Limpiar fechas" quita la restricción.
+
 ## 7. Ventas y Operaciones
 
 `/admin/sales` — visibilidad comercial real: qué se ha vendido, dónde y

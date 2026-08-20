@@ -97,6 +97,9 @@ de pádel entre comunidades"):
 Al enviar, la idea queda **pendiente de revisión** — nunca se publica
 directamente. El Student ve la confirmación al instante y el equipo de
 Segolife recibe una alerta para moderarla desde el panel de administración.
+Cuando el equipo decide (aprobarla o no), el Student recibe una
+notificación con el resultado — si se rechaza, solo se muestra el motivo
+que el equipo haya decidido compartir, nunca notas internas de moderación.
 Una idea siempre pertenece a la comunidad real del Student que la propuso
 (IE o UVA, según su cuenta) — el formulario nunca pregunta ni permite elegir
 otra comunidad.
