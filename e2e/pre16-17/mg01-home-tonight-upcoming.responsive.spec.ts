@@ -90,8 +90,12 @@ test.describe("MG-01 — Home: selector Tonight/Upcoming", () => {
       expect(firstHref).toMatch(new RegExp(`^/${student.community}/events/`));
     } else {
       // CTA "Explore all" sigue disponible y sigue apuntando al Explore real
-      // (spec §8/§10) aunque Upcoming esté vacío.
-      const exploreCta = page.getByRole("link", { name: /explore all|explorar todo/i });
+      // (spec §8/§10) aunque Upcoming esté vacío. Con Upcoming vacío, la
+      // sección Tonight (con su propio "Explore all") sigue montada a la
+      // vez — hay legítimamente DOS links con el mismo nombre accesible en
+      // la página, .first() basta (el objetivo es solo confirmar que el CTA
+      // apunta al Explore real, no que exista un único link).
+      const exploreCta = page.getByRole("link", { name: /explore all|explorar todo/i }).first();
       await expect(exploreCta).toHaveAttribute("href", `/${student.community}/explore`);
     }
   });
