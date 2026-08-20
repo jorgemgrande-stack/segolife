@@ -156,8 +156,8 @@ function CallModal({ callId, onClose, onLeadCreated, onReviewed }: {
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-2">
           {(() => {
             const sd: any = call.structuredData ?? {};
-            const displayName = call.customerName || sd.name || sd.customerName || sd.nombre || sd.fullName || "—";
-            const displayEmail = call.customerEmail || sd.email || sd.customerEmail || sd.correo || sd.emailAddress || "—";
+            const displayName: string = call.customerName || sd.name || sd.customerName || sd.nombre || sd.fullName || "—";
+            const displayEmail: string = call.customerEmail || sd.email || sd.customerEmail || sd.correo || sd.emailAddress || "—";
             return [
               { label: "Teléfono", value: fmtPhone(call.phoneNumber) },
               { label: "Nombre", value: displayName },
@@ -557,10 +557,10 @@ export default function VapiAgente() {
                       {fmtDateTime(call.startedAt)}
                     </td>
                     <td className="px-4 py-2.5 text-foreground/80 max-w-[140px] truncate">
-                      {(() => { const sd: any = call.structuredData ?? {}; return call.customerName || sd.name || sd.customerName || sd.nombre || sd.fullName || "—"; })()}
+                      {(() => { const sd: any = call.structuredData ?? {}; const displayName: string = call.customerName || sd.name || sd.customerName || sd.nombre || sd.fullName || "—"; return displayName; })()}
                     </td>
                     <td className="px-4 py-2.5 text-xs text-foreground/60 max-w-[160px] truncate">
-                      {(() => { const sd: any = call.structuredData ?? {}; return call.customerEmail || sd.email || sd.customerEmail || sd.correo || sd.emailAddress || "—"; })()}
+                      {(() => { const sd: any = call.structuredData ?? {}; const displayEmail: string = call.customerEmail || sd.email || sd.customerEmail || sd.correo || sd.emailAddress || "—"; return displayEmail; })()}
                     </td>
                     <td className="px-4 py-2.5 font-medium whitespace-nowrap">
                       {fmtPhone(call.phoneNumber)}

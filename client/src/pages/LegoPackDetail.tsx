@@ -79,6 +79,7 @@ export default function LegoPackDetail() {
       groupLabel?: string | null;
       isOptional: boolean;
       isClientVisible: boolean;
+      isQuantityEditable: boolean;
       isActiveInOperation: boolean;
       quantity: number;
       basePrice: number;

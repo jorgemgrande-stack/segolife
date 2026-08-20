@@ -21,6 +21,7 @@ import { createLead } from "./db";
 import { generateDocumentNumber } from "./documentNumbers";
 import { extractFromTranscript } from "./routers/vapiCalls";
 import { getSystemSettingSync } from "./config";
+import { canonicalBaseUrl } from "./_core/canonicalHost";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
 const _db = drizzle(_pool);
@@ -250,9 +251,9 @@ vapiWebhookRouter.post("/api/vapi/webhook", express.json({ limit: "1mb" }), asyn
 
   try {
     // 4. Crear lead (source=vapi_llamada → no se reenvía a GHL)
-    const leadId = await createLead({
+    const { id: leadId } = await createLead({
       name,
-      email: email || `vapi-${Date.now()}@noreply.nayade`,
+      email: email || `vapi-${Date.now()}@noreply.segolife.es`,
       phone,
       company,
       message,
@@ -262,7 +263,7 @@ vapiWebhookRouter.post("/api/vapi/webhook", express.json({ limit: "1mb" }), asyn
 
     // 4b. Auto-crear cliente si no existe (para que aparezca en /admin/crm/clientes)
     try {
-      const effectiveEmail = email || `vapi-${leadId}@noreply.nayade`;
+      const effectiveEmail = email || `vapi-${leadId}@noreply.segolife.es`;
       await _pool.execute(
         `INSERT IGNORE INTO clients (leadId, source, name, email, phone, isConverted, totalBookings, totalSpent, createdAt, updatedAt)
          VALUES (?, 'lead', ?, ?, ?, 0, 0, '0', NOW(), NOW())`,
@@ -273,11 +274,7 @@ vapiWebhookRouter.post("/api/vapi/webhook", express.json({ limit: "1mb" }), asyn
     // 5. Generar presupuesto borrador con URL pública
     const quoteNumber = await generateDocumentNumber("presupuesto", "vapi:quote", "system");
     const token = randomBytes(32).toString("hex");
-    const origin = (
-      process.env.APP_URL ??
-      (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "https://www.skicenter.es")
-    ).replace(/\/+$/, "");
-    const presupuestoUrl = `${origin}/presupuesto/${token}`;
+    const presupuestoUrl = `${canonicalBaseUrl()}/presupuesto/${token}`;
 
     const validUntil = new Date();
     validUntil.setDate(validUntil.getDate() + 15);

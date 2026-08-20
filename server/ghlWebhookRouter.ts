@@ -181,7 +181,7 @@ ghlWebhookRouter.post("/api/ghl/webhook", express.json({ limit: "1mb" }), async 
 
     await createLead({
       name,
-      email: email || `ghl-${contactId}@noreply.nayade`,
+      email: email || `ghl-${contactId}@noreply.segolife.es`,
       phone,
       company,
       message,
