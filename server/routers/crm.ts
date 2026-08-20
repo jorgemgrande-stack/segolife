@@ -68,7 +68,7 @@ import {
   buildBudgetRequestUserHtml,
   buildBudgetRequestAdminHtml,
 } from "../emailTemplates";
-import { buildInvoiceHtml, getLegalCompanySettings } from "../invoiceHtml";
+import { buildInvoiceHtml, getLegalCompanySettings, invoicePreviewUrl } from "../invoiceHtml";
 import { syncLeadUrlsToGHL, createGHLContact, getGHLTagsFromSource, triggerGHLWorkflow } from "../ghl";
 import { getSystemSettingSync, getBusinessEmail } from "../config";
 import { groupTaxBreakdown, totalTaxAmount } from "../taxUtils";
@@ -122,8 +122,7 @@ async function generateInvoicePdf(invoice: {
 }): Promise<{ url: string; key: string }> {
   // Sin almacenamiento externo (S3/Forge) ? URL on-demand desde BD, sin archivos temporales
   if (!hasExternalStorage()) {
-    const url = `/api/invoices/preview?n=${encodeURIComponent(invoice.invoiceNumber)}`;
-    return { url, key: "" };
+    return { url: invoicePreviewUrl(invoice.invoiceNumber), key: "" };
   }
 
   const html = await buildInvoiceHtml(invoice);
@@ -134,8 +133,7 @@ async function generateInvoicePdf(invoice: {
     return { url, key };
   } catch (pdfErr) {
     console.error("[PDF] Error generando factura PDF, usando vista on-demand:", pdfErr);
-    const url = `/api/invoices/preview?n=${encodeURIComponent(invoice.invoiceNumber)}`;
-    return { url, key: "" };
+    return { url: invoicePreviewUrl(invoice.invoiceNumber), key: "" };
   }
 }
 
@@ -6265,12 +6263,24 @@ export const crmRouter = router({
         return true;
       });
 
+      // pdfUrl almacenado puede ser el endpoint on-demand heredado, sin
+      // token (facturas creadas antes de este fix, o creadas sin
+      // almacenamiento externo) — se re-firma aquí siempre que apunte a
+      // ese endpoint, nunca se confía en el valor guardado tal cual. Si
+      // apunta a almacenamiento externo real (S3/CDN), se deja intacto.
+      const invoicesWithSignedUrls = dedupedInvoices.map((inv) => ({
+        ...inv,
+        pdfUrl: (!inv.pdfUrl || inv.pdfUrl.startsWith("/api/invoices/preview"))
+          ? invoicePreviewUrl(inv.invoiceNumber)
+          : inv.pdfUrl,
+      }));
+
       return {
         client,
         lead,
         quotes: clientQuotes,
         reservations: clientReservations,
-        invoices: dedupedInvoices,
+        invoices: invoicesWithSignedUrls,
         cancellations: clientCancellations,
         discountUses: clientDiscountUses,
         activityLog,

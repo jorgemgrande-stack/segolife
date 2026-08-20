@@ -25,7 +25,17 @@ import { recordStudentLogin } from "./segolife/students/studentLoginEventsDb";
 // forma independiente; nada garantizaba que se mantuvieran sincronizados si
 // alguno cambiaba. Fuente única de verdad ahora.
 export const COOKIE_NAME = "nayade_session";
-const JWT_SECRET_RAW = process.env.JWT_SECRET ?? "local-dev-secret-change-me";
+// Nunca en producción: si JWT_SECRET faltara ahí, este literal (visible en
+// el código fuente) permitiría a cualquiera forjar un token de sesión válido
+// para cualquier usuario, incluido admin — falla alto en vez de firmar
+// sesiones reales con un secreto público. Fuera de producción (dev/test) sí
+// se permite, por conveniencia de desarrollo local sin .env configurado.
+const JWT_SECRET_RAW = process.env.JWT_SECRET ?? (() => {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("[localAuth] JWT_SECRET no está configurada en producción — no se pueden firmar sesiones de forma segura.");
+  }
+  return "local-dev-secret-change-me";
+})();
 const JWT_ALGO = "HS256" as const;
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 días en segundos
 // Fase 15 (spec §34, "auth/cookie safety"): auditoría confirmó que la cookie

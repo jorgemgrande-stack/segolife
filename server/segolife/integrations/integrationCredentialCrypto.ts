@@ -24,10 +24,16 @@ const IV_LEN = 12;
 const TAG_LEN = 16;
 
 function getKey(): Buffer {
-  const raw =
-    process.env.INTEGRATION_ENCRYPTION_KEY ||
-    process.env.DATABASE_URL ||
-    "segolife-integrations-key-please-set-env";
+  // Nunca cae a un literal público (mismo fallo ya corregido en
+  // ghlInbox.ts): un secreto conocido por cualquiera con acceso al código
+  // fuente no protege nada — falla alto en vez de cifrar en silencio con
+  // una clave que un atacante también conoce. DATABASE_URL es un secreto
+  // real (nunca vacío — el servidor no arranca sin él), válido como
+  // fallback si INTEGRATION_ENCRYPTION_KEY no está configurada.
+  const raw = process.env.INTEGRATION_ENCRYPTION_KEY || process.env.DATABASE_URL;
+  if (!raw) {
+    throw new Error("[integrationCredentialCrypto] Ni INTEGRATION_ENCRYPTION_KEY ni DATABASE_URL están configuradas — no se puede cifrar/descifrar de forma segura.");
+  }
   return scryptSync(raw, "segolife-integrations-salt-v1", KEY_LEN) as Buffer;
 }
 

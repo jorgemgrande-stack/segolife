@@ -3,8 +3,35 @@
  * Usado por generateInvoicePdf (crm.ts) y por el endpoint de vista previa.
  */
 
+import { createHmac, timingSafeEqual } from "crypto";
 import { getSystemSetting, getSystemSettingSync } from "./config";
 import { groupTaxBreakdown, totalTaxAmount, type TaxBreakdownLine } from "./taxUtils";
+
+/**
+ * Token de acceso a /api/invoices/preview — el endpoint es público (a
+ * propósito: el cliente accede a su factura desde el enlace del email, sin
+ * necesitar sesión), pero invoiceNumber es correlativo y adivinable
+ * (obligatorio por normativa fiscal, no se puede aleatorizar). Sin este
+ * token, cualquiera podía enumerar FAC-2026-0001, 0002... y volcar
+ * nombre/email/teléfono/NIF de cada factura real. Derivado de JWT_SECRET
+ * (ya un secreto real requerido en este repo) — nunca se expone al
+ * cliente, solo el HMAC resultante.
+ */
+export function invoicePreviewToken(invoiceNumber: string): string {
+  const secret = process.env.JWT_SECRET ?? "local-dev-secret-change-me";
+  return createHmac("sha256", secret).update(invoiceNumber).digest("hex").slice(0, 32);
+}
+
+export function verifyInvoicePreviewToken(invoiceNumber: string, token: string): boolean {
+  const expected = Buffer.from(invoicePreviewToken(invoiceNumber));
+  const provided = Buffer.from(String(token ?? ""));
+  if (expected.length !== provided.length) return false;
+  return timingSafeEqual(expected, provided);
+}
+
+export function invoicePreviewUrl(invoiceNumber: string): string {
+  return `/api/invoices/preview?n=${encodeURIComponent(invoiceNumber)}&t=${invoicePreviewToken(invoiceNumber)}`;
+}
 
 export interface InvoiceHtmlParams {
   invoiceNumber: string;

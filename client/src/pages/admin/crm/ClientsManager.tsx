@@ -672,7 +672,7 @@ function ClientHistoryModal({ client, onClose, onStartWhatsApp }: { client: Clie
                     </div>
                     <div className="divide-y divide-white/5">
                       {data.invoices.map((inv) => {
-                        const viewUrl = inv.pdfUrl ?? `/api/invoices/preview?n=${encodeURIComponent(inv.invoiceNumber)}`;
+                        const viewUrl = inv.pdfUrl;
                         return (
                           <div key={inv.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.02]">
                             <div className="flex-1 min-w-0">

@@ -5,6 +5,7 @@
  * Solo se actualiza el estado tras validar la firma aquí.
  */
 import express from "express";
+import { timingSafeEqual } from "crypto";
 import { validateRedsysNotification } from "./redsys";
 import { sendCapiEvent } from "./metaCapiRoute";
 import { updateReservationPayment, getReservationByMerchantOrder, getAllReservationsByMerchantOrder, createReavExpedient, attachReavDocument, upsertClientFromReservation, postConfirmOperation, createVentaPerdidaLead, getGHLCredentials } from "./db";
@@ -879,7 +880,15 @@ redsysRouter.post("/api/redsys/restaurant-notification", express.urlencoded({ ex
 
 function requireRecoveryToken(req: express.Request, res: express.Response): boolean {
   const RECOVERY_TOKEN = process.env.RECOVERY_TOKEN;
-  if (!RECOVERY_TOKEN || req.query.token !== RECOVERY_TOKEN) {
+  const provided = String(req.query.token ?? "");
+  // timingSafeEqual (no !==) — estos endpoints devuelven PII real de
+  // clientes y pueden forzar cambios de estado de reserva; una comparación
+  // directa de string filtra el token real carácter a carácter por tiempo
+  // de respuesta.
+  const expected = Buffer.from(RECOVERY_TOKEN ?? "");
+  const providedBuf = Buffer.from(provided);
+  const matches = !!RECOVERY_TOKEN && expected.length === providedBuf.length && timingSafeEqual(expected, providedBuf);
+  if (!matches) {
     res.status(401).json({ error: "Unauthorized — falta o el token es incorrecto" });
     return false;
   }

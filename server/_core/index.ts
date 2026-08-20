@@ -321,6 +321,10 @@ async function startServer() {
   // Rate limiting en endpoint de subida de archivos (20 req/min por IP)
   app.use("/api/upload", uploadRateLimit);
   app.use("/api/upload-media", uploadRateLimit);
+  // /api/upload-coupon (canje anónimo de cupón Groupon, sin sesión por
+  // diseño) no coincidía con ninguno de los dos prefijos anteriores — subida
+  // de hasta 10MB sin autenticación NI límite de frecuencia (Block J).
+  app.use("/api/upload-coupon", uploadRateLimit);
 
   // Rate limiting en canje de QR de consumición (Fase 3, 20 req/min por IP)
   app.use("/api/trpc/consumptionQr.redeem", qrRedeemRateLimit);

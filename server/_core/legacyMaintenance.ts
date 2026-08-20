@@ -1107,17 +1107,24 @@ export async function ensureExpenseEmailIngestionSchema() {
 export async function fixBrokenInvoicePdfUrls() {
   try {
     const { drizzle } = await import("drizzle-orm/mysql2");
-    const { sql } = await import("drizzle-orm");
+    const { sql, eq } = await import("drizzle-orm");
+    const { invoicePreviewUrl } = await import("../invoiceHtml");
+    const { invoices } = await import("../../drizzle/schema");
     const conn = await mysql.createConnection(process.env.DATABASE_URL!);
     const db = drizzle(conn);
-    const result = await db.execute(sql`
-      UPDATE invoices
-      SET \`pdfUrl\` = CONCAT('/api/invoices/preview?n=', \`invoiceNumber\`),
-          \`pdfKey\` = ''
-      WHERE \`pdfUrl\` LIKE '/local-storage/%'
+    // El endpoint on-demand exige un token firmado desde esta fase (ver
+    // invoicePreviewRouter.ts) — no puede construirse con un CONCAT SQL
+    // (requiere HMAC con JWT_SECRET), así que se recorre fila a fila.
+    const broken = await db.execute(sql`
+      SELECT \`id\`, \`invoiceNumber\` FROM invoices WHERE \`pdfUrl\` LIKE '/local-storage/%'
     `);
-    const affected = (result[0] as any).affectedRows ?? 0;
-    if (affected > 0) console.log(`[Migrate] Corregidas ${affected} facturas con URL /local-storage/ rota -> on-demand`);
+    const rows = (broken[0] as unknown as Array<{ id: number; invoiceNumber: string }>);
+    for (const row of rows) {
+      await db.update(invoices)
+        .set({ pdfUrl: invoicePreviewUrl(row.invoiceNumber), pdfKey: "" })
+        .where(eq(invoices.id, row.id));
+    }
+    if (rows.length > 0) console.log(`[Migrate] Corregidas ${rows.length} facturas con URL /local-storage/ rota -> on-demand (firmada)`);
     await conn.end();
   } catch (e) {
     console.error("[Migrate] Error corrigiendo URLs de facturas:", e);

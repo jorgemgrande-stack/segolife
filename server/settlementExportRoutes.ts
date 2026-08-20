@@ -20,8 +20,9 @@ import {
   settlementLines,
   suppliers,
 } from "../drizzle/schema";
-import { verifySessionToken, COOKIE_NAME } from "./localAuth";
+import { getUserFromRequest } from "./localAuth";
 import { getFeatureFlag } from "./config";
+import { getLegalCompanySettings } from "./invoiceHtml";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
 const db = drizzle(_pool);
@@ -29,23 +30,20 @@ const db = drizzle(_pool);
 const settlementExportRouter = Router();
 
 // --- Auth middleware ----------------------------------------------------------
+// PRE-16.16B (Block J, seguridad final): solo comprobaba que la sesión fuera
+// válida, sin rol — cualquier usuario autenticado (estudiante, empleado,
+// monitor...) podía descargar la liquidación de CUALQUIER proveedor
+// (IBAN/NIF/dirección fiscal/totales reales) iterando el id, mientras que
+// la procedure tRPC equivalente (suppliers.ts `adminProc`) sí exige
+// role === "admin". Alineado aquí al mismo criterio.
 async function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const raw = req.headers.cookie ?? "";
-  const cookies = Object.fromEntries(
-    raw.split(";").map(c => {
-      const idx = c.indexOf("=");
-      if (idx === -1) return [c.trim(), ""];
-      return [c.slice(0, idx).trim(), decodeURIComponent(c.slice(idx + 1).trim())];
-    })
-  );
-  const token = cookies[COOKIE_NAME];
-  if (!token) {
+  const user = await getUserFromRequest(req);
+  if (!user) {
     res.status(401).json({ error: "No autenticado" });
     return;
   }
-  const userId = await verifySessionToken(token);
-  if (!userId) {
-    res.status(401).json({ error: "Sesión inválida o expirada" });
+  if (user.role !== "admin") {
+    res.status(403).json({ error: "Acceso restringido a administradores" });
     return;
   }
   next();
@@ -169,12 +167,14 @@ settlementExportRouter.get(
       .from(settlementLines)
       .where(eq(settlementLines.settlementId, id));
 
+    const legalCompany = await getLegalCompanySettings();
+
     // -- Build workbook -------------------------------------------------------
     const wb = XLSX.utils.book_new();
 
     // -- Sheet 1: Cabecera ----------------------------------------------------
     const headerRows: XLSX.CellObject[][] = [
-      [mkCell("LIQUIDACIÓN DE PROVEEDOR — NÁYADE EXPERIENCES", S_TITLE), mkCell(""), mkCell(""), mkCell("")],
+      [mkCell(`LIQUIDACIÓN DE PROVEEDOR — ${legalCompany.name.toUpperCase()}`, S_TITLE), mkCell(""), mkCell(""), mkCell("")],
       [mkCell(""), mkCell(""), mkCell(""), mkCell("")],
       [mkCell("Número de liquidación", S_LABEL), mkCell(settlement.settlementNumber), mkCell(""), mkCell("")],
       [mkCell("Estado", S_LABEL), mkCell(settlement.status ?? "—"), mkCell(""), mkCell("")],
@@ -198,7 +198,7 @@ settlementExportRouter.get(
       [mkCell(""), mkCell(""), mkCell(""), mkCell("")],
       [mkCell("Notas internas", S_LABEL), mkCell(settlement.internalNotes ?? "—"), mkCell(""), mkCell("")],
       [mkCell(""), mkCell(""), mkCell(""), mkCell("")],
-      [mkCell("Emisor", S_LABEL), mkCell("Náyade Experiences S.L."), mkCell(""), mkCell("")],
+      [mkCell("Emisor", S_LABEL), mkCell(legalCompany.name), mkCell(""), mkCell("")],
       [mkCell("Generado el", S_LABEL), mkCell(fmtDate(new Date())), mkCell(""), mkCell("")],
     ];
 

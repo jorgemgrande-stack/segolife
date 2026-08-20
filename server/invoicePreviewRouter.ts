@@ -11,7 +11,7 @@ import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { eq } from "drizzle-orm";
 import { invoices } from "../drizzle/schema";
-import { buildInvoiceHtml } from "./invoiceHtml";
+import { buildInvoiceHtml, verifyInvoicePreviewToken } from "./invoiceHtml";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 1 });
 const db = drizzle(_pool);
@@ -22,6 +22,14 @@ invoicePreviewRouter.get("/api/invoices/preview", async (req, res) => {
   const n = (req.query.n as string | undefined)?.trim();
   if (!n) {
     res.status(400).send("Parámetro 'n' (número de factura) requerido.");
+    return;
+  }
+  // invoiceNumber es correlativo (obligatorio por normativa fiscal) — sin
+  // este token, el número de factura por sí solo es enumerable y expone
+  // nombre/email/teléfono/NIF real de cualquier cliente.
+  const t = (req.query.t as string | undefined) ?? "";
+  if (!verifyInvoicePreviewToken(n, t)) {
+    res.status(403).send("Enlace no válido.");
     return;
   }
 
