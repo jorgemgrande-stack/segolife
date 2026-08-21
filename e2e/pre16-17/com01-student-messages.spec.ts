@@ -37,7 +37,7 @@ test.describe("COM-01 — conversación bidireccional real Admin <-> Student (pr
 
     // ── 1. Admin abre Student, pulsa Comunicar, envía el primer mensaje ──────
     await loginViaUI(adminPage, admin.email, admin.password);
-    await adminPage.waitForLoadState("networkidle");
+    await adminPage.waitForLoadState("domcontentloaded");
     await dismissCookies(adminPage);
 
     await adminPage.goto("/admin/students");
@@ -46,10 +46,15 @@ test.describe("COM-01 — conversación bidireccional real Admin <-> Student (pr
       // Si el listado muestra el nombre, no el email, como texto del link — clic en la primera fila.
       await adminPage.locator("table tbody tr").first().locator("a").first().click();
     });
-    await adminPage.waitForLoadState("networkidle");
+    await adminPage.waitForLoadState("domcontentloaded");
 
-    const engagementTab = adminPage.getByRole("tab", { name: /engagement/i });
-    if (await engagementTab.isVisible({ timeout: 5000 }).catch(() => false)) await engagementTab.click();
+    // La pestaña Engagement siempre existe en la ficha del Student — click
+    // directo (Playwright hace scroll-into-view automático) en vez de un
+    // isVisible() condicional, que fallaba silenciosamente por overflow
+    // horizontal en una tablist de 11 pestañas y dejaba la pestaña activa
+    // en "Resumen", nunca lanzando error hasta el timeout final.
+    await adminPage.getByRole("tab", { name: /engagement/i }).click();
+    await expect(adminPage.getByRole("tab", { name: /engagement/i })).toHaveAttribute("aria-selected", "true");
 
     await adminPage.getByRole("button", { name: /^comunicar$/i }).click();
     await adminPage.getByPlaceholder(/asunto de la conversaci[oó]n/i).fill(QA_SUBJECT);
@@ -89,11 +94,11 @@ test.describe("COM-01 — conversación bidireccional real Admin <-> Student (pr
 
     // ── 3. Admin ve la respuesta pendiente y responde ────────────────────────
     await adminPage.goto("/admin/students/messages");
-    await adminPage.waitForLoadState("networkidle");
+    await adminPage.waitForLoadState("domcontentloaded");
     await expect(adminPage.getByText(QA_SUBJECT)).toBeVisible();
 
     await adminPage.goto(conversationUrl);
-    await adminPage.waitForLoadState("networkidle");
+    await adminPage.waitForLoadState("domcontentloaded");
     await expect(adminPage.getByText(STUDENT_REPLY)).toBeVisible();
 
     await adminPage.getByPlaceholder(/escribe tu respuesta/i).fill(ADMIN_SECOND_MESSAGE);
