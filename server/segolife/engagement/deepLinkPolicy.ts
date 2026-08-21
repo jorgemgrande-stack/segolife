@@ -47,6 +47,11 @@ const ALLOWED_PATTERNS: RegExp[] = [
   // (destinatario SIEMPRE un admin, ver communityProposalNotifier.ts).
   // Mismo criterio que la ruta anterior: literal exacta, nunca un comodín.
   /^\/admin\/comunity\/moderacion$/,
+  // COM-01 — Bidirectional Student Communication Center. El aviso de un
+  // mensaje nuevo enlaza directamente a la conversación (nunca solo a la
+  // lista) para que el Student llegue en un tap, no dos.
+  /^\/[a-z0-9-]+\/messages$/,
+  /^\/[a-z0-9-]+\/messages\/\d+$/,
 ];
 
 export function sanitizeDeepLink(raw: string | null | undefined): string | null {

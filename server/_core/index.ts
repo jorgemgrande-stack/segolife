@@ -227,6 +227,24 @@ const communitySupportRateLimit = rateLimit({
   message: { error: "Demasiados apoyos. Espera 1 minuto.", code: "RATE_LIMIT_EXCEEDED" },
 });
 
+/** COM-01 — respuesta de Student en una conversación: generoso (una conversación real puede tener varios mensajes seguidos) pero acotado, nunca spam de cientos/segundo. */
+const studentMessagesReplyRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados mensajes enviados. Espera 1 minuto.", code: "RATE_LIMIT_EXCEEDED" },
+});
+
+/** COM-01 — Admin inicia/responde una conversación: mismo criterio, alcance de uso administrativo normal. */
+const studentMessagesAdminSendRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados mensajes enviados. Espera 1 minuto.", code: "RATE_LIMIT_EXCEEDED" },
+});
+
 // Modo de autenticación: LOCAL_AUTH=true usa email+password local en lugar de Manus OAuth
 const USE_LOCAL_AUTH = process.env.LOCAL_AUTH === "true";
 
@@ -352,6 +370,11 @@ async function startServer() {
   app.use("/api/trpc/community.respond", communityRespondRateLimit);
   app.use("/api/trpc/community.submitProposal", communitySubmitProposalRateLimit);
   app.use("/api/trpc/community.support", communitySupportRateLimit);
+
+  // Rate limiting en COM-01 (Student Messages) — envío de mensajes Student/Admin.
+  app.use("/api/trpc/studentMessages.reply", studentMessagesReplyRateLimit);
+  app.use("/api/trpc/studentMessages.adminCreateConversation", studentMessagesAdminSendRateLimit);
+  app.use("/api/trpc/studentMessages.adminReply", studentMessagesAdminSendRateLimit);
 
   // Middleware de protección: bloquea rutas /api/trpc de procedimientos protegidos
   // si no hay sesión válida. Funciona en ambos modos (local y Manus OAuth).
