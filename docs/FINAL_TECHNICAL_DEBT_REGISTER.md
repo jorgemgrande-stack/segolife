@@ -505,3 +505,100 @@ Tests: 271→277 archivos (+95 tests backend/frontend nuevos), todos verdes
 fallos transitorios de scheduling bajo carga completa en archivos
 distintos y no tocados por esta fase, ambos limpios en aislamiento).
 TypeScript 0. Build PASS. Desplegado y verificado (SHA `4a22bf4`).
+
+## L. STU-01 — Student Admin Controls (Editar / Ocultar / Borrar) — 2026-08-21 — DONE
+
+Auditoría previa confirmó que ~60-70% de lo pedido ya existía y solo
+necesitaba superficie/relabeling: **Ocultar/Mostrar** reutiliza el
+`student_profiles.status` active/inactive ya existente (mismo mecanismo
+que `StatusChangeControl`, motivo obligatorio, auditado vía
+`student_admin_actions` desde antes de esta fase) — deliberadamente
+NUNCA se añadió un `isHidden` nuevo, y sigue sin relación alguna con
+`users.isActive` (login), confirmado de nuevo. Lo genuinamente nuevo:
+**Editar** (`updateStudentAdminProfile`, `studentsDb.ts`) y **Borrar**
+(`evaluateStudentDeletionEligibility`/`deleteStudent`,
+`studentLifecycleService.ts`, nuevo).
+
+**Borrado guardado** (mismo patrón EXACTO que `EventDeleteBlockedError`/
+`deleteEvent` de FIX-06 — comprobaciones `SELECT 1 ... LIMIT 1` baratas,
+nunca un `COUNT`): bloquea si el Student tiene CUALQUIER huella real en
+SegoTokens (ledger, reservas de gasto), tickets/pedidos/asistencia,
+consumo (TPV/QR/intentos de canje), Benefits, conversaciones (COM-01),
+Comunity (ideas/respuestas/apoyos), referidos, visitas a venue,
+reembolsos, o documentos/snapshots fiscales (retención legal). Nunca
+bloquea por metadatos puramente administrativos (login events, notas,
+etiquetas, acciones de admin previas, preferencias/entregas de
+notificaciones) — bloquear ahí habría hecho el borrado imposible para
+toda cuenta real, contradiciendo el propio objetivo del feature.
+Elegibilidad se **revalida dentro de la propia transacción de borrado**
+(nunca "check → esperar → DELETE ciego"); un segundo intento sobre un
+Student ya borrado es un no-op limpio (`{deleted:false}` → `NOT_FOUND`
+en el router), nunca un 500. El registro de auditoría del propio borrado
+(`student_admin_actions`, con snapshot de email/nombre) se escribe
+ANTES de borrar la fila y es la ÚNICA tabla que la cascada nunca toca —
+sobrevive como referencia histórica aunque `studentProfileId` quede sin
+fila detrás (sin FK real que lo impida en todo este proyecto, ver nota
+de auditoría de esquema más abajo).
+
+**Protecciones server-side explícitas** (nunca solo "el botón no
+aparece"): un Admin nunca puede borrarse a sí mismo desde este panel, y
+la operación verifica que el target sea realmente `role="user"` antes
+de tocar nada — defensa en profundidad para un flujo pensado solo para
+Students.
+
+**Editar**: campos de `student_profiles` reutilizando
+`updateStudentProfile`/`EditableProfileFields` ya existente, más
+`users.email`/`users.phone` (nuevo — normalización, unicidad
+verificada antes de escribir + fallback ante condición de carrera real
+vía errno 1062). `users.name` se resincroniza cuando cambia
+firstName/lastName (se concatenan una única vez en
+`registrationService.ts`; sin este paso el nombre mostrado en
+listados/CRM/identidad POS quedaría obsoleto tras la primera edición).
+Auditoría (`student_admin_actions`, acción `profile_edited`) registra
+SOLO los campos que de verdad cambiaron de valor, nunca el conjunto
+completo enviado por el formulario. **Fuera de alcance, decisión
+explícita**: edición de comunidad/universidad como relación — no existe
+hoy una función segura de "quitar" membresía de `user_communities` sin
+arriesgar el invariante multi-comunidad real (`unique(userId,
+communityId)` confirma que sí se soporta pertenencia múltiple), así que
+se deja de solo lectura en este pase.
+
+**Hallazgo de auditoría de esquema, más allá de este feature**: la BD
+de este proyecto tiene exactamente 2 FK reales en total (ninguna sobre
+`users`) — toda la integridad referencial de esta plataforma es de
+aplicación, nunca de MySQL. Confirma que la comprobación de bloqueos de
+esta fase no es una capa extra de seguridad "por si acaso": es la ÚNICA
+que existirá jamás para este borrado.
+
+**RBAC**: `students.manage` (ya existente) cubre las tres operaciones —
+no se creó granularidad artificial (`students.edit`/`.hide`/`.delete`)
+al no haber motivo real para separarlas. `venue_admin` confirmado sin
+acceso (RBAC-first: sin fila en `rbac_role_permissions`; fallback
+legacy: `["admin"].includes("venue_admin")` = false). Comunicar sigue
+dependiendo de `student_messages.manage` (COM-01), sin cambios.
+
+**UI**: `StudentLifecycleDialogs.tsx` (Edit/Hide/Delete) compartido
+entre `StudentsManager` (columna Acciones, iconos Pencil/Eye-EyeOff/
+Trash2, mismo patrón que `EventsManager`) y `StudentDetail` (cabecera)
+— ambas superficies llaman exactamente los mismos procedures, nunca
+divergen. `StudentsManager` cambia su filtro de estado por defecto de
+"cualquiera" a "Activo" para que un estudiante oculto deje de aparecer
+por defecto, conservando el desplegable para verlo explícitamente.
+
+**Drift de esquema local pre-existente, corregido durante esta fase**
+(no introducido por STU-01): la BD local llevaba varias fases sin
+sincronizar (`student_profiles.referral_code` y las tablas completas de
+`referrals`, `venue_visits`, `commerce_refunds`,
+`fiscal_transaction_snapshots`, `fiscal_documents`, `billing_profiles`,
+`token_spend_reservations`, `student_photo_events` no existían en
+`localhost:3307`) — corregido vía `drizzle-kit push` local (nunca
+producción), necesario para poder correr los tests reales de esta fase
+contra BD real.
+
+Tests: 2 archivos nuevos (`studentLifecycleService.test.ts` contra BD
+real — 13 tests: elegibilidad, bloqueo, auto-borrado, cuenta
+privilegiada, borrado real con cascada verificada, idempotencia,
+revalidación de concurrencia, edición con conflicto de email y audit
+log selectivo; `students.test.ts` ampliado — 16 tests nuevos de RBAC/
+IDOR/mapeo de errores). TypeScript 0. Build PASS. Desplegado y
+verificado (SHA `ba956da`).
