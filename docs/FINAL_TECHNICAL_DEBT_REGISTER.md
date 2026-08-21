@@ -417,3 +417,91 @@ D1 Benefit Bienvenida, D2 legal, D3/D4 branding profundo), deuda
 arquitectónica de baja severidad y no explotable hoy (I3 RBAC nav), y una
 mejora de fidelidad de test opcional (A2). Ninguna requiere una acción de
 código para poder operar con seguridad en Maintenance Mode.
+
+---
+
+## J. FIX-07 / FIX-07B — Community en la navegación móvil + recentrado — 2026-08-21 — DONE
+
+**FIX-07** (regresión reportada por cliente): `SegolifeBottomNav.tsx`
+(mobile y tablet, <1200px) nunca incluyó Comunity en su array de items,
+aunque `SegolifeSidebar.tsx` (desktop) ya lo tenía — inaccesible desde la
+navegación en cualquier viewport por debajo del breakpoint `xl:`,
+incluida la tablet de 1024×768. La ruta en sí nunca estuvo rota. Añadido
+al bottom nav, mismo icono/label que el sidebar.
+
+**FIX-07B** (descuadre visual introducido por FIX-07): insertar Comunity
+ANTES del hueco central de Scan dejó 3 items a la izquierda y 2 a la
+derecha en un grid de 6 columnas — sin columna central real, el botón
+Scan quedaba descuadrado. Corregido: Profile se retira SOLO del bottom
+nav (sigue accesible desde el icono de perfil de `SegolifeHeader.tsx`,
+nunca tocado) y Comunity pasa a ir DESPUÉS del hueco central — layout
+final `Home | Explore | [Scan] | Comunity | Rewards`, 2+hueco+2, centrado
+real verificado geométricamente en producción (delta 0.0px).
+
+Hallazgo colateral, documentado, no corregido en esta pasada (explícitamente
+fuera de alcance, permanece como FIX-08 pendiente): `CookieBanner.tsx` es
+un card `fixed`/`max-w-md`/centrado que se superpone visualmente a TODO
+el bottom nav mientras no se descarta — afecta a cualquier item por
+igual, no solo a Comunity.
+
+Tests: 267→271 archivos, todos verdes. TypeScript 0. Build PASS.
+Desplegado y verificado (SHA `45ee69f`).
+
+---
+
+## K. COM-01 — Bidirectional Student Communication Center — 2026-08-21 — DONE
+
+Infraestructura canónica NUEVA de conversación persistente Admin↔Student
+— explícitamente NO una segunda notificación (`notifications` sigue
+siendo solo el aviso; el cuerpo real vive en `conversations`/
+`conversation_messages`, histórico inmutable, sin edición ni borrado por
+diseño). Coexiste con `engagement.sendManualMessage` (SendMessageDialog),
+que sigue siendo un aviso unidireccional sin hilo — ninguno sustituye al
+otro.
+
+**Modelo**: `conversations` (pertenece al Student, nunca a un Admin fijo;
+`waitingFor` resuelve de quién es el turno sin un enum explosivo;
+`studentLastReadAt`/`adminLastReadAt` resuelven read/unread sin tabla de
+participantes, ya que "Admin" es un rol compartido, no un usuario fijo;
+`type`/`contextType`/`contextId` son VARCHAR, no ENUM, a propósito —
+permiten que Lost Items reutilice esta misma tabla sin una migración de
+ENUM) + `conversation_messages` (inmutable, `visibility` public/internal
+para notas solo-Admin). Migración `0164`, aditiva, aplicada en local y
+producción.
+
+**2 bugs reales encontrados y corregidos por los tests de esta misma
+fase, antes de desplegar** (`studentMessagesDb.test.ts`, contra BD real
+local — no un mock de cadena, precisamente porque las transacciones/joins/
+recálculo de waitingFor no se verifican de verdad con un mock): (1) la
+fórmula de `unread` tenía una condición extra (`waitingFor !== "student"`)
+que invertía la lógica y rompía el caso más básico (el primer mensaje de
+Admin aparecía como ya leído para el Student); (2) `TIMESTAMP` sin
+fracción de segundo empataba mensajes reales del mismo intercambio
+rápido, haciendo no determinista la búsqueda del "último mensaje" de
+`reopenConversation` — corregido con `TIMESTAMP(3)` + orden por `id` en
+vez de `createdAt` donde corresponde.
+
+**RBAC**: `student_messages.view`/`student_messages.manage`, solo
+`admin` (nunca `venue_admin`, confirmado sin acceso genérico a datos de
+Student hoy). **IDOR**: verificado con BD real — un Student jamás accede
+ni responde la conversación de otro (`NOT_FOUND`, nunca `FORBIDDEN`, para
+no confirmar su existencia).
+
+**Verificado en producción real** (no solo en tests): flujo bidireccional
+completo con las cuentas QA reales (Admin inicia → Student recibe/abre/
+responde → Admin ve pendiente/responde → Student ve la respuesta → Admin
+cierra → Student ya no puede responder), vía Playwright E2E real. La
+conversación QA creada (`[QA COM-01] ...`) quedó **cerrada** al terminar
+(nunca borrada — COM-01 no implementa DELETE por diseño), estado limpio
+y trazable.
+
+**Preparación explícita para fases futuras** (documentado aquí, NO
+implementado):
+- **Lost Items (LNF-01)**: `create lost_item` → `createConversation({type:'lost_item', contextType:'lost_item', contextId:<lostItemId>, ...})` → mensaje inicial de sistema/Admin → notificación al Student → hilo de respuesta real, reutilizando exactamente esta misma infraestructura, sin segundo sistema de mensajería.
+- **STU-01**: el botón "Comunicar" en `StudentDetail.tsx` (ficha del Student, pestaña Engagement) ya está funcional y desplegado. Editar/Ocultar/Borrar Student siguen sin implementar, tal como se pidió.
+
+Tests: 271→277 archivos (+95 tests backend/frontend nuevos), todos verdes
+(dos ejecuciones completas de la suite, sin relación con COM-01: 2
+fallos transitorios de scheduling bajo carga completa en archivos
+distintos y no tocados por esta fase, ambos limpios en aislamiento).
+TypeScript 0. Build PASS. Desplegado y verificado (SHA `4a22bf4`).
