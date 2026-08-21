@@ -777,3 +777,189 @@ producción, spec E2E Playwright de producción (§35), y verificación
 visual mobile/tablet/desktop (§36) — ver informe final LNF-01 para el
 detalle exacto de qué quedó verificado y qué queda como bloqueo externo
 o dato QA pendiente de limpieza.
+
+**Actualización — ver sección N**: migración aplicada en producción,
+E2E (18/18) y QA visual (12/12) completados, y los 4 casos QA residuales
+de esa verificación ya limpiados de forma auditada.
+
+---
+
+## N. SUPERPROMPT FINAL REMAINING ACTIONS, DATA HYGIENE & MAINTENANCE CLOSURE — 2026-08-21 — DONE
+
+Segunda pasada de cierre (la primera fue la sección I, 2026-08-21, antes de
+LNF-01). Cubre: limpieza de datos QA de LNF-01, verificación responsive de
+STU-01/STU-02, smoke de auth/sesión/RBAC/IDOR, auditoría de branding
+ampliada, y reconciliación de deuda. Disciplina: solo se toca código
+cuando hay un problema real identificable; el resto se documenta.
+
+### N1. LNF-01 — limpieza de datos QA en producción — HECHO
+Auditados los 4 casos `[QA LNF-01]` (reports 1-4, conversaciones 3-6,
+mensajes, notificaciones `source_type='conversation'`/`source_id` de esas
+4, y las 4 fotos en `/tmp/local-storage/private/lost-found/{1,2,3,4}`).
+Confirmado inequívocamente antes de borrar: los 4 pertenecen al Student QA
+`qa.pre1617.ie@` (id 14) y al Admin QA `qa.admin@` (id 16); las 4
+conversaciones tienen `context_type='lost_found'` con `context_id`
+exactamente igual al id de su report (aislamiento 1:1, nunca tocó la
+conversación general de STU-02 del mismo Student, `id=1`); las
+notificaciones a borrar apuntaban solo a esas 4 conversaciones (nunca a
+las de bienvenida/Benefit/conversación general del mismo usuario); las 4
+fotos en disco eran exactamente las referenciadas por `image_storage_key`,
+sin ningún directorio adicional huérfano. Borrado ejecutado en una única
+transacción real (commit/rollback), script auditado ad-hoc (no un
+mecanismo permanente nuevo — Lost & Found no tiene ni necesita un
+"cleanup service", ver N2). Verificación final: `[QA LNF-01]` = 0 filas,
+0 conversaciones huérfanas, 0 notificaciones huérfanas, 0 ficheros
+huérfanos, `token_wallets` sin cambios (5 wallets, balance total 140 ST,
+idéntico antes/después).
+
+### N2. LNF-01 — retención de PII/fotos — BUSINESS DECISION REQUIRED (sin cambios)
+Auditado el proyecto completo: no existe ningún scheduler/TTL/soft-delete/
+anonymization para Lost & Found ni, de forma más general, para fotos/PII
+de Student en ningún otro módulo (los 10 schedulers activos hoy —
+Abandoned Checkout, Installment Overdue, Cancellation Stale, Email
+Ingestion, Card Terminal Matching/Relink, Email Automation, Tax Reminder,
+Fourvenues, Token Clawback Reconciliation, Engagement— son todos de
+negocio/operativos, ninguno de retención de datos personales).
+Clasificación: `LOST_FOUND_RETENTION_POLICY = BUSINESS DECISION REQUIRED`.
+Arquitectura futura propuesta, NO activada: `retentionDays`/
+`photoRetentionDays`/`resolvedCaseRetentionDays` configurables (misma
+tabla `system_settings` ya usada para otras políticas), un scheduler
+idempotente con modo `dry-run` explícito antes de borrar nada de verdad,
+y un audit log de cada purga (reutilizando `lost_found_case_actions` o
+un log dedicado). No se ha fijado ningún número de días arbitrario.
+
+### N3. Fourvenues — nombre real del venue en Integrations — YA IMPLEMENTADO (NEXT-01, sin drift)
+Verificado que este trabajo YA se hizo y está en `main`
+(`e2d19e4`, 2026-08-20, previa a esta sesión): `IntegrationsManager.tsx`
+resuelve `venueNameById` dinámicamente contra `trpc.venues.list` (nunca un
+mapa hardcodeado), con fallback `venue #${id}` si el venue no aparece
+todavía. Confirmado en vivo contra producción (RBAC/IDOR smoke, N6): la
+fila de Casanova se muestra por nombre real, no por id. Sin cambios de
+código — ya cumple exactamente lo pedido.
+
+### N4. La Finca Club — el estado real YA es producción activa (OPS-01), no sandbox — DOCUMENTADO
+La premisa de este superprompt ("La Finca sigue en `environment=sandbox`/
+`enabled=false`") está desactualizada: `OPS-01` (commit `1107d0d`,
+2026-08-21, previo a esta sesión) ya activó la integración tras confirmar
+de forma inequívoca (solo lectura) que las credenciales guardadas eran de
+producción real. Verificado ahora mismo en vivo: las 4 integraciones
+(Casanova/Limoncello/Tía Felisa/La Finca Club) están
+`environment=production`/`enabled=1`/`sync_enabled=1`/`status=connected`;
+`loyalty_enabled` de La Finca sigue deliberadamente en `false` (activación
+gradual, mismo patrón que las otras 3 en su momento). **No se ha tocado
+nada** — ni para activar (ya estaba activo) ni para revertir (no hay
+justificación real para hacerlo). Si se decide activar `loyalty_enabled`
+para La Finca, es una decisión de negocio explícita pendiente, no un bug.
+
+### N5. STU-01/STU-02 — QA visual real desktop/tablet/mobile — HECHO, sin hallazgos reales
+Pendiente explícito de ambos cierres (solo habían verificado desktop +
+specs funcionales). Ejecutado con Chromium/Playwright contra producción,
+3 viewports, sin mutaciones: listado `/admin/students` (búsqueda, columna
+Acciones), ficha `/admin/students/:id` (cabecera, Comunicarse/Editar/
+Borrar), y el modal Editar. 9/9. Dos candidatos a bug fueron investigados
+y descartados: (1) la tabla de estudiantes no muestra la columna Acciones
+sin scroll horizontal en 390px — es `overflow-x-auto` intencionado, el
+mismo patrón de cualquier tabla ancha de Admin, no un defecto; (2) la
+pestaña "Consumo" del detalle aparece cortada en mobile — es una
+`TabsList` con scroll horizontal propio (`flex-nowrap w-max min-w-full`
+dentro de `overflow-x-auto`), también intencionado. Ambos ALREADY
+CORRECT, cero cambios de código.
+
+### N6. Smoke de auth/sesión/RBAC/IDOR contra producción — HECHO, sin regresión
+Sin reabrir SEC-01/SEC-02/STU-01/STU-02/LNF-01 (cada uno ya tiene su
+propia cobertura dedicada) — solo confirmación en vivo tras el último
+despliegue: dominio Railway (`segolife-production.up.railway.app`)
+redirige 301 correctamente al canónico `www.segolife.es` (comportamiento
+esperado, no una regresión); login/navegación/reload mantienen la sesión
+tanto para Student como para Admin; Student nunca ve contenido real de
+`/admin` (pantalla "Sin permisos" real, tabla nunca presente en el DOM);
+`venue_admin` (cuenta QA real `casanova@segolife.es`) aterriza en la Venue
+App sin sidebar global y sin poder abrir `/admin/lost-found`; Global Admin
+conserva acceso completo a Estudiantes/Lost & Found/Integrations.
+
+### N7. Auditoría de branding ampliada (Náyade/Skicenter) — 2 hallazgos reales corregidos, resto documentado sin tocar
+Auditoría exhaustiva (agente en background) más allá de lo ya cerrado en
+A3/A4/D2/D3/D4/I1. Corregidos 2 hallazgos reales, ambos de blast radius
+mínimo y en rutas de código genuinamente activas de Segolife:
+- **`notifyOwner()`** (`server/adapters/notification.ts`) enviaba emails
+  internos reales (Redsys/restaurantes/Benefits/alertas de sistema) con
+  asunto `[Nayade] ...` — corregido a `[Segolife] ...`. Verificado con la
+  suite de `reservationEmails.test.ts` (9/9).
+- (El resto de hallazgos de branding NO se ha tocado — ver clasificación
+  abajo.)
+
+**NO corregido, con justificación explícita**:
+- **`GET /kb`/`/kb.json`** (`server/kbRoute.ts`): endpoint público sin
+  autenticación, literal `"NAYADE EXPERIENCES — BASE DE CONOCIMIENTO"` en
+  el cuerpo de la respuesta. Investigado a fondo antes de decidir: NO es
+  un caso de "marca equivocada en un endpoint por lo demás correcto" — el
+  endpoint entero describe experiencias/hotel/SPA/restaurantes/packs, un
+  modelo de datos que no tiene ningún equivalente en el Segolife real
+  (Students/Eventos/Venues/SegoTokens). Renombrar solo el título dejaría
+  un endpoint "SEGOLIFE" describiendo habitaciones de hotel y tratamientos
+  de SPA — más confuso, no menos. Clasificado **BUSINESS DECISION
+  REQUIRED**: retirar el endpoint (recomendado, no hay modelo Segolife
+  equivalente) o encargar una reconstrucción específica si se quiere un
+  endpoint de IA/KB real para Segolife.
+- **~20 páginas públicas legacy** (`/experiencias`, `/hotel`, `/spa`,
+  `/restaurantes`, `/colegios`, `/galeria`, `/contacto`, `/lego-packs*`,
+  `/ubicaciones*`, etc., más `PublicNav`/`PublicFooter`/
+  `WhatsAppFloatingButton`, el Portal de Partners y el Portal de
+  Proveedores — este último ya documentado en A3): siguen técnicamente
+  enrutadas (devuelven 200 real hoy) pero **confirmado que ningún
+  componente de navegación real de Segolife enlaza a ellas**
+  (`SegolifeHeader`/`SegolifeSidebar`/`SegolifeBottomNav`/`PublicHome.tsx`
+  — 0 coincidencias). Mismo perfil de riesgo que A3 (huérfanas, no
+  descubribles desde el producto real) pero sin flag de módulo que las
+  bloquee del todo — alguien con un enlace antiguo o un resultado de
+  buscador todavía puede llegar y ver contenido de otro negocio. Corregir
+  esto de verdad implica reescribir contenido en ~20 archivos + 3
+  componentes compartidos — desproporcionado para "cambio pequeño y
+  seguro". **Recomendación real**: decisión de negocio sobre si estas
+  páginas deben seguir existiendo (retirarlas/redirigirlas a Segolife
+  sería más simple y más correcto que rebrandearlas una por una).
+- **`ghl.ts`** (`source: "Nayade Web"`, campo `nayade_invoice_url`):
+  confirmado que `crm_module_enabled=0` en producción hoy — el mismo
+  perfil de "módulo legacy inactivo" que B8/B9 ya documentaron para el
+  CRM. No tocado.
+- **`coupon_email_config.internalAlertEmail`** (default de schema
+  `reservas@nayadeexperiences.es`): confirmado que la tabla está
+  **vacía** en producción (0 filas) — el default nunca se ha aplicado a
+  ningún envío real, hallazgo inerte hoy. No tocado (mismo criterio que
+  B14: no forzar una escritura de producción sin necesidad real).
+- Legal (`D2`), `restaurantLinks.ts` (`D3`), `organizations` (`D4`),
+  Partners/Proveedores (`A3`): sin cambios, re-confirmados exactamente
+  como ya documentado — no hay drift.
+
+### N8. `regression.recalculate.test.ts` (A2) y RBAC nav legacy (I3) — sin cambios, re-confirmados
+Ninguno de los dos justifica una acción nueva: A2 sigue siendo una mejora
+de fidelidad de test opcional (el código real no filtra por canal, el
+test sí — reescribirlo exige tocar la lógica de negocio de `suppliers.ts`,
+no solo el test); I3 sigue siendo deuda arquitectónica de baja severidad,
+no explotable hoy. Ambos siguen exactamente igual que en la sección I.
+
+### N9. Regresión y despliegue
+36 tests nuevos de E2E (Playwright, 4 specs, 100% contra producción real,
+0 mutaciones fuera de las ya limpiadas en N1). Suite unitaria/integración:
+267-269/274 archivos según se ejecute con o sin `DATABASE_URL` (mismo
+patrón de siempre — los 5 que requieren BD real pasan 100% al ejecutarlos
+aparte); 2 fallos adicionales observados en una única ejecución completa
+(`mailer.test.ts`, `vapiWebhookRouter.test.ts`) resultaron ser ruido de
+paralelismo del test runner bajo carga — ambos, más `ComunityHub.test.tsx`
+(que también mostró un fallo transitorio en esa misma ejecución), pasan
+limpios al ejecutarlos de nuevo en aislamiento (44/44). TypeScript 0. Build
+PASS. Desplegado y verificado (SHA `a91a5af`, health/ready 200, logs
+limpios, `token_wallets` sin cambios).
+
+### CLASIFICACIÓN FINAL — MAINTENANCE MODE
+**B — MAINTENANCE READY / BUSINESS DECISIONS ONLY.** Cero deuda técnica
+accionable de severidad CRÍTICA/ALTA/MEDIA sin resolver que bloquee operar
+con seguridad. Lo que queda abierto es, en su totalidad: decisiones de
+negocio/legales explícitas (D1 Benefit Bienvenida — sigue empeorando
+activamente, prioridad más alta de todas; D2 legal; N2 retención Lost &
+Found; N7 `/kb` y páginas públicas legacy huérfanas; G5 Payment Provider),
+deuda arquitectónica de baja severidad no explotable hoy (I3), y una
+mejora de test opcional (A2). Ninguna requiere una acción de código para
+poder operar con seguridad en Maintenance Mode.
+
+---
