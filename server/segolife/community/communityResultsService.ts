@@ -4,11 +4,11 @@
  * Una forma de resultado distinta por tipo de pregunta — mismo criterio que
  * community_response_values (equilibrio entre JSON y N tablas, spec 66).
  */
-import { eq, and, sql, desc } from "drizzle-orm";
+import { eq, and, sql, desc, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import {
-  communityOptions, communityResponses, communityResponseValues,
+  communityOptions, communityResponses, communityResponseValues, users,
 } from "../../../drizzle/schema";
 import { getProposalById, type AnyDbHandle } from "./communityDb";
 import { ATTENDANCE_INTENTION_VALUES, ATTENDANCE_INTENTION_WEIGHTS, attendanceIntentionFromCode } from "./communityIntentService";
@@ -199,4 +199,63 @@ export async function getProposalResults(proposalId: number, includeHidden = fal
   }
 
   return base;
+}
+
+export interface ProposalRespondent {
+  userId: number;
+  name: string | null;
+  hasAvatar: boolean;
+}
+
+export interface ProposalRespondentsPage {
+  total: number;
+  items: ProposalRespondent[];
+}
+
+/**
+ * Lista de estudiantes que respondieron — petición del cliente (2026-08-22,
+ * captura): mostrar hasta 5 nombres/avatares y un "+N" clicable al estilo
+ * Instagram. NUNCA se llama sin comprobar antes, en el router
+ * (community.ts::getRespondents), que quien pregunta pertenece a la
+ * audiencia de esta propuesta Y que sus resultados son visibles
+ * (computeResultsVisible) — esta función en sí no reautoriza nada.
+ *
+ * `hasAvatar` en vez de una URL directa: la foto real se sirve por una ruta
+ * REST dedicada y auditada aparte (communityRespondentPhotoRoutes.ts) que
+ * revalida la misma pertenencia a la audiencia en cada petición — nunca la
+ * ruta genérica /api/students/:userId/photo (esa es deliberadamente
+ * self/admin-only, spec §10 de studentPhotoRoutes.ts, y no se toca aquí).
+ */
+export async function getProposalRespondents(proposalId: number, opts: { limit: number; offset: number }, db?: AnyDbHandle): Promise<ProposalRespondentsPage> {
+  const conn = (db ?? (await getDb())) as DbHandle;
+
+  const [totalRow] = await conn.select({ count: sql<number>`COUNT(*)` }).from(communityResponses).where(eq(communityResponses.proposalId, proposalId));
+  const total = Number(totalRow?.count ?? 0);
+  if (total === 0) return { total: 0, items: [] };
+
+  const rows = await conn.select({ userId: communityResponses.userId })
+    .from(communityResponses)
+    .where(eq(communityResponses.proposalId, proposalId))
+    .orderBy(desc(communityResponses.respondedAt))
+    .limit(opts.limit).offset(opts.offset);
+  if (rows.length === 0) return { total, items: [] };
+
+  const userIds = rows.map(r => r.userId);
+  const userRows = await conn.select({ id: users.id, name: users.name, avatarStorageKey: users.avatarStorageKey })
+    .from(users).where(inArray(users.id, userIds));
+  const byId = new Map(userRows.map(u => [u.id, u]));
+
+  const items: ProposalRespondent[] = rows.map(r => {
+    const u = byId.get(r.userId);
+    return { userId: r.userId, name: u?.name ?? null, hasAvatar: !!u?.avatarStorageKey };
+  });
+  return { total, items };
+}
+
+/** true si userId está entre quienes ya respondieron a esta propuesta — usado por la ruta de foto para no exponer la foto de un estudiante que ni siquiera respondió. */
+export async function isProposalRespondent(proposalId: number, userId: number, db?: AnyDbHandle): Promise<boolean> {
+  const conn = (db ?? (await getDb())) as DbHandle;
+  const [row] = await conn.select({ id: communityResponses.id }).from(communityResponses)
+    .where(and(eq(communityResponses.proposalId, proposalId), eq(communityResponses.userId, userId))).limit(1);
+  return !!row;
 }

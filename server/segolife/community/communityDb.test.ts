@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isProposalOpenForResponses, getVenueName } from "./communityDb";
+import { isProposalOpenForResponses, getVenueName, isInProposalAudience, computeResultsVisible } from "./communityDb";
 import type { CommunityProposal } from "../../../drizzle/schema";
 
 const NOW = new Date("2026-08-12T12:00:00.000Z");
@@ -86,5 +86,48 @@ describe("getVenueName — resolución de ubicación (spec: exponer al Student, 
     const db = fakeDb([]);
     const result = await getVenueName(999, db);
     expect(result).toBeNull();
+  });
+});
+
+// Avatar-stack de respondientes (petición del cliente, 2026-08-22): la
+// autorización real de "quién puede ver quién respondió" descansa en estas
+// dos funciones puras — probadas aquí sin re-probar la delegación del router
+// (eso ya lo cubre community.test.ts, describe "getPublicRespondents").
+describe("isInProposalAudience — gate de autorización real del avatar-stack de respondientes", () => {
+  function fakeDb(hasRow: boolean) {
+    return {
+      select: () => ({ from: () => ({ where: () => ({ limit: async () => (hasRow ? [{ id: 1 }] : []) }) }) }),
+    } as never;
+  }
+
+  it("true si existe una fila community_proposal_audiences para ese (proposalId, userId)", async () => {
+    expect(await isInProposalAudience(10, 4, fakeDb(true))).toBe(true);
+  });
+
+  it("false si el userId no está en la audiencia snapshoteada de esa propuesta", async () => {
+    expect(await isInProposalAudience(10, 999, fakeDb(false))).toBe(false);
+  });
+});
+
+describe("computeResultsVisible — MISMA política para getPublicById y getPublicRespondents, nunca una copia que pueda divergir", () => {
+  it("immediate: siempre visible, haya respondido o no", () => {
+    expect(computeResultsVisible(proposal({ resultsVisibility: "immediate" }), false, NOW)).toBe(true);
+    expect(computeResultsVisible(proposal({ resultsVisibility: "immediate" }), true, NOW)).toBe(true);
+  });
+
+  it("after_vote: solo visible si el propio usuario ya respondió", () => {
+    expect(computeResultsVisible(proposal({ resultsVisibility: "after_vote" }), false, NOW)).toBe(false);
+    expect(computeResultsVisible(proposal({ resultsVisibility: "after_vote" }), true, NOW)).toBe(true);
+  });
+
+  it("after_close: solo visible si la propuesta está cerrada o su ventana ya venció", () => {
+    expect(computeResultsVisible(proposal({ resultsVisibility: "after_close", status: "active", endsAt: null }), true, NOW)).toBe(false);
+    expect(computeResultsVisible(proposal({ resultsVisibility: "after_close", status: "closed" }), false, NOW)).toBe(true);
+    const past = new Date(NOW.getTime() - 1000);
+    expect(computeResultsVisible(proposal({ resultsVisibility: "after_close", status: "active", endsAt: past }), false, NOW)).toBe(true);
+  });
+
+  it("never: nunca visible bajo ningún criterio", () => {
+    expect(computeResultsVisible(proposal({ resultsVisibility: "never", status: "closed" }), true, NOW)).toBe(false);
   });
 });

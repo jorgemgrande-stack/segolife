@@ -509,6 +509,10 @@
     "average": "Media:",
     "countJoining": "{{count}} se apunta",
     "countJoining_other": "{{count}} se apuntan",
+    "respondentsAndMore": "{{names}} y {{count}} más",
+    "respondentsAndMore_other": "{{names}} y {{count}} más",
+    "someone": "Alguien",
+    "loadMore": "Ver más",
     "questionType": {
       "single_choice": "Elección única",
       "yes_no": "Sí / No",

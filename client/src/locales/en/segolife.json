@@ -509,6 +509,10 @@
     "average": "Average:",
     "countJoining": "{{count}} joining",
     "countJoining_other": "{{count}} joining",
+    "respondentsAndMore": "{{names}} and {{count}} more",
+    "respondentsAndMore_other": "{{names}} and {{count}} more",
+    "someone": "Someone",
+    "loadMore": "Load more",
     "questionType": {
       "single_choice": "Single choice",
       "yes_no": "Yes / No",

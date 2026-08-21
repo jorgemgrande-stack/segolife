@@ -148,6 +148,19 @@ export async function getVenueName(venueId: number | null, db?: AnyDbHandle): Pr
   return row?.name ?? null;
 }
 
+/**
+ * ¿Pertenece userId a la audiencia snapshoteada de esta propuesta? — mismo
+ * criterio de autorización que ya usa myActive() en community.ts, extraído
+ * aquí para que getRespondents (petición del cliente, "quién respondió",
+ * 2026-08-22) y su ruta de foto dedicada lo reutilicen sin duplicar la query.
+ */
+export async function isInProposalAudience(proposalId: number, userId: number, db?: AnyDbHandle): Promise<boolean> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select({ id: communityProposalAudiences.id }).from(communityProposalAudiences)
+    .where(and(eq(communityProposalAudiences.proposalId, proposalId), eq(communityProposalAudiences.userId, userId))).limit(1);
+  return !!row;
+}
+
 export interface ProposalListItem extends CommunityProposal {
   venueName: string | null;
   communities: { id: number; name: string }[];
@@ -236,6 +249,21 @@ export function isProposalOpenForResponses(proposal: CommunityProposal, now: Dat
   if (proposal.startsAt && proposal.startsAt.getTime() > now.getTime()) return false;
   if (proposal.endsAt && proposal.endsAt.getTime() < now.getTime()) return false;
   return true;
+}
+
+/**
+ * Política ÚNICA de "¿puede este Student ver los resultados/respondientes de
+ * esta propuesta?" — antes solo vivía inline dentro de getPublicById
+ * (community.ts); extraída aquí para que getRespondents (lista de quién
+ * respondió, spec del cliente 2026-08-22) use EXACTAMENTE el mismo criterio,
+ * nunca una segunda copia que pueda divergir.
+ */
+export function computeResultsVisible(proposal: CommunityProposal, hasResponded: boolean, now: Date): boolean {
+  return (
+    proposal.resultsVisibility === "immediate" ||
+    (proposal.resultsVisibility === "after_vote" && hasResponded) ||
+    (proposal.resultsVisibility === "after_close" && (proposal.status === "closed" || (proposal.endsAt != null && proposal.endsAt.getTime() < now.getTime())))
+  );
 }
 
 /** Propuestas activas cuya ventana ya venció — para cierre (con scheduler ON) o para query pública que las trata como cerradas aunque status siga "active" en BD. */

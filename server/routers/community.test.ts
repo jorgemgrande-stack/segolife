@@ -17,6 +17,8 @@ const {
   mockApproveStudentProposal, mockRejectStudentProposal,
   mockNotifyStudentProposalApproved, mockNotifyStudentProposalRejected,
   mockGetCommunityAccess, mockListTrendingStudentProposals,
+  mockGetProposalById, mockIsInProposalAudience, mockComputeResultsVisible,
+  mockGetUserResponse, mockGetProposalRespondents,
 } = vi.hoisted(() => ({
   mockGetUserCommunities: vi.fn(),
   mockSubmitStudentProposal: vi.fn(),
@@ -27,6 +29,11 @@ const {
   mockNotifyStudentProposalRejected: vi.fn().mockResolvedValue(undefined),
   mockGetCommunityAccess: vi.fn(),
   mockListTrendingStudentProposals: vi.fn(),
+  mockGetProposalById: vi.fn(),
+  mockIsInProposalAudience: vi.fn(),
+  mockComputeResultsVisible: vi.fn(),
+  mockGetUserResponse: vi.fn(),
+  mockGetProposalRespondents: vi.fn(),
 }));
 vi.mock("../db/communitiesDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../db/communitiesDb")>();
@@ -55,6 +62,23 @@ vi.mock("../segolife/community/communityProposalNotifier", () => ({
   notifyStudentProposalApproved: mockNotifyStudentProposalApproved,
   notifyStudentProposalRejected: mockNotifyStudentProposalRejected,
 }));
+// getPublicRespondents (avatar-stack de respondientes, petición del cliente
+// 2026-08-22) — a diferencia de getPublicById/myActive (que resuelven su
+// conexión con un import() dinámico dentro del propio resolver), este
+// procedure usa exclusivamente las dependencias YA importadas estáticamente
+// arriba en community.ts, así que sí se puede aislar de BD real mockeándolas.
+vi.mock("../segolife/community/communityDb", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/community/communityDb")>();
+  return { ...actual, getProposalById: mockGetProposalById, isInProposalAudience: mockIsInProposalAudience, computeResultsVisible: mockComputeResultsVisible };
+});
+vi.mock("../segolife/community/communityResponseService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/community/communityResponseService")>();
+  return { ...actual, getUserResponse: mockGetUserResponse };
+});
+vi.mock("../segolife/community/communityResultsService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/community/communityResultsService")>();
+  return { ...actual, getProposalRespondents: mockGetProposalRespondents };
+});
 
 import { communityRouter } from "./community";
 
@@ -127,6 +151,10 @@ describe("community router — autoservicio del estudiante tampoco es público (
 
   it("getPublicById rechaza sin sesión — nunca expone una pregunta ni sus resultados a un anónimo", async () => {
     await expect(callerWithoutSession().getPublicById({ id: 1 })).rejects.toThrow(/please login/i);
+  });
+
+  it("getPublicRespondents rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().getPublicRespondents({ proposalId: 1 })).rejects.toThrow(/please login/i);
   });
 
   it("respond rechaza sin sesión", async () => {
@@ -366,5 +394,45 @@ describe("community router — approveStudentProposal/rejectStudentProposal: not
     mockNotifyStudentProposalRejected.mockRejectedValue(new Error("boom"));
     const result = await callerAsAdmin(1).rejectStudentProposal({ id: 903, reasonInternal: "motivo" });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("getPublicRespondents — avatar-stack de respondientes (petición del cliente, 2026-08-22): nunca sin re-autorizar", () => {
+  beforeEach(() => {
+    mockGetProposalById.mockReset().mockResolvedValue({ id: 10, resultsVisibility: "immediate", status: "active" });
+    mockIsInProposalAudience.mockReset().mockResolvedValue(true);
+    mockGetUserResponse.mockReset().mockResolvedValue(null);
+    mockComputeResultsVisible.mockReset().mockReturnValue(true);
+    mockGetProposalRespondents.mockReset().mockResolvedValue({ total: 2, items: [{ userId: 4, name: "Ana", hasAvatar: true }] });
+  });
+
+  it("propuesta inexistente -> NOT_FOUND, nunca llega a comprobar audiencia", async () => {
+    mockGetProposalById.mockResolvedValue(null);
+    await expect(callerAs(42).getPublicRespondents({ proposalId: 999 })).rejects.toThrow(/no encontrada/i);
+    expect(mockIsInProposalAudience).not.toHaveBeenCalled();
+  });
+
+  it("quien pregunta NO pertenece a la audiencia de la propuesta -> FORBIDDEN, nunca llega a resolver nombres", async () => {
+    mockIsInProposalAudience.mockResolvedValue(false);
+    await expect(callerAs(42).getPublicRespondents({ proposalId: 10 })).rejects.toThrow(/no tienes acceso/i);
+    expect(mockGetProposalRespondents).not.toHaveBeenCalled();
+  });
+
+  it("en audiencia pero resultsVisibility todavía no visible (p.ej. after_vote sin haber respondido) -> FORBIDDEN", async () => {
+    mockComputeResultsVisible.mockReturnValue(false);
+    await expect(callerAs(42).getPublicRespondents({ proposalId: 10 })).rejects.toThrow(/todavía no son visibles/i);
+    expect(mockGetProposalRespondents).not.toHaveBeenCalled();
+  });
+
+  it("en audiencia + resultados visibles -> delega en getProposalRespondents con paginación real", async () => {
+    const result = await callerAs(42).getPublicRespondents({ proposalId: 10, limit: 5, offset: 0 });
+    expect(result.total).toBe(2);
+    expect(mockGetProposalRespondents).toHaveBeenCalledWith(10, { limit: 5, offset: 0 });
+  });
+
+  it("computeResultsVisible se llama con el mismo criterio que getPublicById (hasResponded real del usuario)", async () => {
+    mockGetUserResponse.mockResolvedValue({ response: { id: 1 }, values: [] });
+    await callerAs(42).getPublicRespondents({ proposalId: 10 });
+    expect(mockComputeResultsVisible).toHaveBeenCalledWith(expect.objectContaining({ id: 10 }), true, expect.any(Date));
   });
 });

@@ -11,11 +11,11 @@ import { getCommunityAccess, resolveCommunityFilter, type CommunityAccess } from
 import {
   createProposal, updateProposal, setProposalStatus, getProposalById, listProposals,
   setProposalOptions, listProposalOptions, getProposalCommunityIds, setProposalCommunities,
-  isProposalOpenForResponses, getVenueName,
+  isProposalOpenForResponses, getVenueName, computeResultsVisible, isInProposalAudience,
 } from "../segolife/community/communityDb";
 import { previewProposalAudience, publishProposal, CommunityPublishError } from "../segolife/community/communityAudienceService";
 import { submitResponse, getUserResponse, CommunityResponseError, type ResponsePayload } from "../segolife/community/communityResponseService";
-import { getProposalResults } from "../segolife/community/communityResultsService";
+import { getProposalResults, getProposalRespondents } from "../segolife/community/communityResultsService";
 import { computeCommunityScore } from "../segolife/community/communityScoreService";
 import { isPositiveRespondent, isPositiveAttendanceIntention, attendanceIntentionFromCode } from "../segolife/community/communityIntentService";
 import { convertProposalToEventDraft, notifyInterestedRespondents, CommunityConversionError } from "../segolife/community/communityEventConversionService";
@@ -496,10 +496,7 @@ export const communityRouter = router({
       const myResponse = await getUserResponse(input.id, ctx.user.id);
 
       const now = new Date();
-      const showResults =
-        proposal.resultsVisibility === "immediate" ||
-        (proposal.resultsVisibility === "after_vote" && !!myResponse) ||
-        (proposal.resultsVisibility === "after_close" && (proposal.status === "closed" || (proposal.endsAt != null && proposal.endsAt.getTime() < now.getTime())));
+      const showResults = computeResultsVisible(proposal, !!myResponse, now);
 
       // Hallazgo real (2026-08-22, captura del cliente): la ubicación de una
       // propuesta nunca se resolvía/mostraba al Student (solo existía para
@@ -513,6 +510,32 @@ export const communityRouter = router({
         results: showResults ? await getProposalResults(input.id, false) : null,
         isOpen: isProposalOpenForResponses(proposal, now),
       };
+    }),
+
+  /**
+   * Estudiantes que respondieron — petición del cliente (2026-08-22,
+   * captura): avatar-stack estilo Instagram ("X, Y y +230 más asistirán").
+   * Autorización propia (nunca confiar solo en protectedProcedure): quien
+   * pregunta debe pertenecer a la MISMA audiencia snapshoteada de la
+   * propuesta (isInProposalAudience — mismo criterio que myActive) Y sus
+   * resultados deben estar visibles (computeResultsVisible, misma política
+   * que getPublicById) — nunca una lista de nombres de una propuesta que ni
+   * siquiera podrías ver tú mismo.
+   */
+  getPublicRespondents: protectedProcedure
+    .input(z.object({ proposalId: z.number().int().positive(), limit: z.number().int().min(1).max(50).default(20), offset: z.number().int().min(0).default(0) }))
+    .query(async ({ input, ctx }) => {
+      const proposal = await getProposalById(input.proposalId);
+      if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Propuesta no encontrada" });
+
+      const inAudience = await isInProposalAudience(input.proposalId, ctx.user.id);
+      if (!inAudience) throw new TRPCError({ code: "FORBIDDEN", message: "No tienes acceso a esta propuesta" });
+
+      const myResponse = await getUserResponse(input.proposalId, ctx.user.id);
+      const showResults = computeResultsVisible(proposal, !!myResponse, new Date());
+      if (!showResults) throw new TRPCError({ code: "FORBIDDEN", message: "Los resultados de esta propuesta todavía no son visibles" });
+
+      return getProposalRespondents(input.proposalId, { limit: input.limit, offset: input.offset });
     }),
 
   respond: protectedProcedure

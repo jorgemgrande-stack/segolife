@@ -16,6 +16,7 @@ import studentPhotoRouter from "../segolife/students/studentPhotoRoutes";
 import lostFoundReportRouter from "../segolife/lostFound/lostFoundReportRoutes";
 import studentMessageImageRouter from "../segolife/messaging/studentMessageImageRoutes";
 import communityProposalImageRouter from "../segolife/community/communityProposalImageRoutes";
+import communityRespondentPhotoRouter from "../segolife/community/communityRespondentPhotoRoutes";
 import redsysRouter from "../redsysRoutes";
 import ticketPaymentWebhookRouter from "../ticketPaymentWebhookRoutes";
 import brevoWebhookRouter from "../brevoWebhookRoutes";
@@ -405,6 +406,8 @@ async function startServer() {
   app.use(studentMessageImageRouter);
   // SEGOLIFE MG-04 — Community Proposals 2.0: imagen de portada pública de una idea de Student
   app.use(communityProposalImageRouter);
+  // Avatar-stack de respondientes de una propuesta COMUNITY (petición del cliente, 2026-08-22)
+  app.use(communityRespondentPhotoRouter);
 
   // Redsys IPN notification endpoint
   app.use(redsysRouter);

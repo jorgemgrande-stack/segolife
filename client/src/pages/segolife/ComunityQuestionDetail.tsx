@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { ArrowUp, ArrowDown, Loader2, CheckCircle2, Coins, MapPin } from "lucide-react";
 
@@ -130,7 +132,7 @@ export default function ComunityQuestionDetail() {
         {results && (
           <div className="rounded-2xl border border-border bg-card p-4">
             <p className="text-sm font-semibold text-foreground mb-3">{t("comunity.results")}{results.totalResponses > 0 ? ` (${results.totalResponses})` : ""}</p>
-            <PublicResults qType={qType} results={results} />
+            <PublicResults qType={qType} results={results} proposalId={proposalId} />
           </div>
         )}
 
@@ -316,7 +318,7 @@ function VoteForm({ qType, options, existing, pending, onSubmit }: {
 
 // ─── Resultados (vista estudiante — sin acciones de moderación) ────────────
 
-function PublicResults({ qType, results }: { qType: QuestionType; results: any }) {
+function PublicResults({ qType, results, proposalId }: { qType: QuestionType; results: any; proposalId: number }) {
   const { t } = useTranslation();
   if (results.totalResponses === 0) return <p className="text-sm text-muted-foreground">{t("comunity.noResponsesYet")}</p>;
 
@@ -382,7 +384,12 @@ function PublicResults({ qType, results }: { qType: QuestionType; results: any }
   }
 
   if (results.meApunto) {
-    return <p className="text-lg font-semibold text-foreground">{t("comunity.countJoining", { count: results.meApunto.count })}</p>;
+    return (
+      <div className="space-y-2">
+        <p className="text-lg font-semibold text-foreground">{t("comunity.countJoining", { count: results.meApunto.count })}</p>
+        <RespondentAvatarStack proposalId={proposalId} total={results.meApunto.count} />
+      </div>
+    );
   }
 
   if (results.openText) {
@@ -396,4 +403,95 @@ function PublicResults({ qType, results }: { qType: QuestionType; results: any }
   }
 
   return null;
+}
+
+// ─── Avatar-stack de respondientes (petición del cliente, 2026-08-22) ──────
+// "Ana, Bea, Carla y otros 227 más" con avatares superpuestos estilo
+// Instagram — hasta 5 directamente en la card, más allá de eso se colapsa en
+// un "+N" clicable que abre el listado completo (AllRespondentsDialog).
+// Decisión de producto EXPLÍCITA del cliente (confirmada tras plantearle el
+// trade-off): se muestra la foto real de otros estudiantes, algo que antes
+// de esta feature nunca ocurría (studentPhotoRoutes.ts es deliberadamente
+// self/admin-only) — aquí se sirve por una ruta REST nueva y aparte
+// (communityRespondentPhotoRoutes.ts) que revalida en cada petición que
+// quien mira comparte audiencia con esa propuesta y que sus resultados son
+// visibles ahora mismo, nunca la ruta genérica de foto de perfil.
+
+const AVATAR_STACK_LIMIT = 5;
+
+function initials(name: string | null): string {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/);
+  return (parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "");
+}
+
+function RespondentAvatar({ proposalId, userId, name, hasAvatar, className }: { proposalId: number; userId: number; name: string | null; hasAvatar: boolean; className?: string }) {
+  return (
+    <Avatar className={className ?? "size-8 border-2 border-card"}>
+      {hasAvatar && <img src={`/api/community/proposals/${proposalId}/respondents/${userId}/photo`} alt="" className="size-full object-cover" />}
+      <AvatarFallback className="text-xs">{initials(name)}</AvatarFallback>
+    </Avatar>
+  );
+}
+
+function RespondentAvatarStack({ proposalId, total }: { proposalId: number; total: number }) {
+  const { t } = useTranslation();
+  const [showAll, setShowAll] = useState(false);
+  const { data } = trpc.community.getPublicRespondents.useQuery({ proposalId, limit: AVATAR_STACK_LIMIT, offset: 0 });
+  const items = data?.items ?? [];
+  if (items.length === 0) return null;
+
+  const extra = total - items.length;
+  const names = items.map(r => r.name?.split(" ")[0] ?? t("comunity.someone")).join(", ");
+
+  return (
+    <>
+      <button type="button" onClick={() => setShowAll(true)} className="flex items-center gap-2 text-left">
+        <div className="flex -space-x-2">
+          {items.map(r => <RespondentAvatar key={r.userId} proposalId={proposalId} userId={r.userId} name={r.name} hasAvatar={r.hasAvatar} />)}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {extra > 0 ? t("comunity.respondentsAndMore", { names, count: extra }) : names}
+        </p>
+      </button>
+      <AllRespondentsDialog proposalId={proposalId} total={total} open={showAll} onOpenChange={setShowAll} />
+    </>
+  );
+}
+
+const RESPONDENTS_PAGE_SIZE = 30;
+
+function AllRespondentsDialog({ proposalId, total, open, onOpenChange }: { proposalId: number; total: number; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { t } = useTranslation();
+  const [loadedPages, setLoadedPages] = useState(1);
+  const { data, isLoading } = trpc.community.getPublicRespondents.useQuery(
+    { proposalId, limit: RESPONDENTS_PAGE_SIZE * loadedPages, offset: 0 },
+    { enabled: open }
+  );
+  const items = data?.items ?? [];
+
+  return (
+    <Dialog open={open} onOpenChange={v => { onOpenChange(v); if (!v) setLoadedPages(1); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle>{t("comunity.countJoining", { count: total })}</DialogTitle></DialogHeader>
+        {isLoading ? (
+          <div className="flex justify-center py-6"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
+        ) : (
+          <div className="max-h-96 space-y-1 overflow-y-auto">
+            {items.map(r => (
+              <div key={r.userId} className="flex items-center gap-3 rounded-xl px-2 py-1.5">
+                <RespondentAvatar proposalId={proposalId} userId={r.userId} name={r.name} hasAvatar={r.hasAvatar} className="size-9" />
+                <p className="text-sm text-foreground">{r.name ?? t("comunity.someone")}</p>
+              </div>
+            ))}
+            {items.length < total && (
+              <Button variant="ghost" size="sm" className="w-full" onClick={() => setLoadedPages(p => p + 1)}>
+                {t("comunity.loadMore")}
+              </Button>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
 }
