@@ -102,7 +102,24 @@ export async function publishProposal(proposalId: number, publishedByUserId: num
     throw new CommunityPublishError("MISSING_AUDIENCE", "La propuesta necesita una audiencia definida antes de publicarse");
   }
 
-  const userIds = await resolveAudience(proposal.audienceDefinition as AudienceDefinition, conn as DbHandle);
+  const userIdSet = new Set(await resolveAudience(proposal.audienceDefinition as AudienceDefinition, conn as DbHandle));
+
+  // El autor de la idea original SIEMPRE debe poder ver/responder la
+  // propuesta que salió de su propia sugerencia — independientemente de si
+  // encaja o no en los criterios de audiencia elegidos por el admin
+  // (comunidad/SegoTokens/etc.). Hallazgo real (2026-08-22, reportado por el
+  // cliente): rewardStudentProposalApproved() concede el reward DESPUÉS de
+  // resolver esta audiencia (más abajo) — un estudiante sin SegoTokens
+  // previos, con una audiencia que exige tokensBalanceMin, quedaba fuera del
+  // snapshot por el orden de ejecución (resuelto ANTES de recibir su propio
+  // reward), y nunca volvía a incluirse — el snapshot es fijo (spec: "quién
+  // podía responder queda fijado en ese momento").
+  if (proposal.sourceStudentProposalId != null) {
+    const idea = await getStudentProposalById(proposal.sourceStudentProposalId, conn);
+    if (idea) userIdSet.add(idea.studentUserId);
+  }
+
+  const userIds = Array.from(userIdSet);
   if (userIds.length === 0) {
     throw new CommunityPublishError("EMPTY_AUDIENCE", "La audiencia resuelta está vacía — nadie podría responder");
   }

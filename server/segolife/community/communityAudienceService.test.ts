@@ -122,3 +122,50 @@ describe("publishProposal — COMMUNITY_PROPOSAL_APPROVED (SEGOLIFE — COMMUNIT
     expect(mockEarnTokens).not.toHaveBeenCalled();
   });
 });
+
+describe("publishProposal — el autor de la idea original SIEMPRE queda en la audiencia (hallazgo real, 2026-08-22)", () => {
+  /** Igual que fakeDb pero registra qué userIds se insertaron realmente en community_proposal_audiences. */
+  function fakeDbTrackingInserts() {
+    const insertedUserIds: number[] = [];
+    return {
+      delete: () => ({ where: () => Promise.resolve() }),
+      insert: () => ({
+        values: (v: { userId: number }) => { insertedUserIds.push(v.userId); return Promise.resolve([{ insertId: 1 }]); },
+      }),
+      select: () => ({ from: () => ({ innerJoin: () => ({ where: () => Promise.resolve([]) }) }) }),
+      __insertedUserIds: insertedUserIds,
+    } as never;
+  }
+
+  it("el estudiante que propuso la idea queda en la audiencia aunque resolveAudience() no lo incluya (p.ej. no cumplía tokensBalanceMin en el momento de resolver, ANTES de recibir su propio reward)", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ sourceStudentProposalId: 3, audienceDefinition: { allStudents: true, tokensBalanceMin: 2 } }));
+    mockGetStudentProposalById.mockResolvedValue(studentProposalFixture({ id: 3, studentUserId: 77 }));
+    mockResolveAudience.mockResolvedValue([42, 43]); // 77 NO está aquí — no cumplía el umbral en ese instante
+
+    const db = fakeDbTrackingInserts();
+    await publishProposal(10, 1, db);
+
+    expect((db as unknown as { __insertedUserIds: number[] }).__insertedUserIds).toEqual(expect.arrayContaining([42, 43, 77]));
+  });
+
+  it("sin sourceStudentProposalId, la audiencia insertada es exactamente la resuelta — no añade nada de más", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ sourceStudentProposalId: null }));
+    mockResolveAudience.mockResolvedValue([42, 43]);
+
+    const db = fakeDbTrackingInserts();
+    await publishProposal(10, 1, db);
+
+    expect((db as unknown as { __insertedUserIds: number[] }).__insertedUserIds.sort()).toEqual([42, 43]);
+    expect(mockGetStudentProposalById).not.toHaveBeenCalled();
+  });
+
+  it("audiencia resuelta vacía + idea de estudiante real → publica igualmente (el autor por sí solo ya es audiencia válida), nunca EMPTY_AUDIENCE", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ sourceStudentProposalId: 3, audienceDefinition: { allStudents: true, tokensBalanceMin: 999999 } }));
+    mockGetStudentProposalById.mockResolvedValue(studentProposalFixture({ id: 3, studentUserId: 77 }));
+    mockResolveAudience.mockResolvedValue([]);
+
+    const db = fakeDbTrackingInserts();
+    await expect(publishProposal(10, 1, db)).resolves.toBeUndefined();
+    expect((db as unknown as { __insertedUserIds: number[] }).__insertedUserIds).toEqual([77]);
+  });
+});
