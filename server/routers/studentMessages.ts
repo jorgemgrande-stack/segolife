@@ -44,7 +44,8 @@ function mapError(e: unknown): never {
  * (caso límite, no debería ocurrir en la práctica) se omite el deep link en
  * vez de fallar la notificación entera.
  */
-async function notifyStudentNewMessage(studentUserId: number, conversationId: number, subject: string): Promise<void> {
+/** Exportada para LNF-01: reutiliza el mismo aviso in-app de COM-01, nunca un segundo mecanismo de notificación para mensajes de un caso Lost & Found. */
+export async function notifyStudentNewMessage(studentUserId: number, conversationId: number, subject: string): Promise<void> {
   try {
     const memberships = await getUserCommunitiesWithDetails(studentUserId);
     const primary = memberships[0];

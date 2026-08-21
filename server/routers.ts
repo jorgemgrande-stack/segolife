@@ -193,6 +193,7 @@ import { commerceRouter } from "./routers/commerce";
 import { tokenPaymentRequestsRouter } from "./routers/tokenPaymentRequests";
 import { studentNotificationsRouter } from "./routers/studentNotifications";
 import { studentMessagesRouter } from "./routers/studentMessages";
+import { lostFoundRouter } from "./routers/lostFound";
 import { engagementRouter } from "./routers/engagement";
 import { dashboardRouter } from "./routers/dashboard";
 import { ticketPurchaseRouter } from "./routers/ticketPurchase";
@@ -2227,6 +2228,7 @@ export const appRouter = router({
   tokenPaymentRequests: tokenPaymentRequestsRouter,
   studentNotifications: studentNotificationsRouter,
   studentMessages: studentMessagesRouter,
+  lostFound: lostFoundRouter,
   engagement: engagementRouter,
   dashboard: dashboardRouter,
   ticketPurchase: ticketPurchaseRouter,

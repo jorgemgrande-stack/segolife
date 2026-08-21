@@ -13,6 +13,7 @@ import { createPasswordResetRouter } from "../passwordReset";
 import { createAuthGuardMiddleware } from "../authGuard";
 import uploadRouter from "../uploadRoutes";
 import studentPhotoRouter from "../segolife/students/studentPhotoRoutes";
+import lostFoundReportRouter from "../segolife/lostFound/lostFoundReportRoutes";
 import communityProposalImageRouter from "../segolife/community/communityProposalImageRoutes";
 import redsysRouter from "../redsysRoutes";
 import ticketPaymentWebhookRouter from "../ticketPaymentWebhookRoutes";
@@ -348,6 +349,7 @@ async function startServer() {
   // a storage), sin límite hasta ahora pese a exigir sesión (closure security
   // sweep, hallazgo #2/5 — mismo criterio que el resto de subidas de arriba).
   app.use("/api/students/me/photo", uploadRateLimit);
+  app.use("/api/lost-found", uploadRateLimit);
   app.use("/api/community/proposal-image", uploadRateLimit);
 
   // Rate limiting en canje de QR de consumición (Fase 3, 20 req/min por IP)
@@ -396,6 +398,7 @@ async function startServer() {
   app.use(uploadRouter);
   // SEGOLIFE MG-03 — Student Profile Photo (subida propia + servido autenticado)
   app.use(studentPhotoRouter);
+  app.use(lostFoundReportRouter);
   // SEGOLIFE MG-04 — Community Proposals 2.0: imagen de portada pública de una idea de Student
   app.use(communityProposalImageRouter);
 

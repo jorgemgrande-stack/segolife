@@ -46,13 +46,14 @@ export class StudentPhotoValidationError extends Error {
 /**
  * Valida MIME declarado + tamaño + que sea una imagen real y procesable
  * (sharp() falla si no lo es — cubre "ejecutable/HTML/script renombrado
- * como .jpg", spec §4) y normaliza: auto-orienta por EXIF, recorta al
- * centro a cuadrado, redimensiona, reencoda como JPEG sin metadatos (sharp
- * NUNCA copia EXIF al output salvo que se llame a .withMetadata(), que
- * aquí deliberadamente no se llama — así se elimina geolocalización y
- * cualquier otro metadato innecesario, spec §5/§I).
+ * como .jpg", spec §4). Extraída de validateAndNormalizeImage (LNF-01) para
+ * que otro dominio (Lost & Found: foto de un OBJETO, no de una cara) pueda
+ * reutilizar la MISMA validación real sin heredar también el recorte a
+ * cuadrado 512×512 pensado específicamente para identificación visual de
+ * persona — recortar a cuadrado un objeto real le cortaría partes
+ * arbitrarias, nunca es lo correcto ahí.
  */
-export async function validateAndNormalizeImage(buffer: Buffer, declaredMimeType: string): Promise<Buffer> {
+export async function validateImageBuffer(buffer: Buffer, declaredMimeType: string): Promise<Metadata> {
   if (!ALLOWED_MIME_TYPES.has(declaredMimeType.toLowerCase())) {
     throw new StudentPhotoValidationError("INVALID_MIME", `Tipo de archivo no permitido: ${declaredMimeType}`);
   }
@@ -74,7 +75,19 @@ export async function validateAndNormalizeImage(buffer: Buffer, declaredMimeType
   if (!width || !height || width < MIN_DIMENSION || height < MIN_DIMENSION || width > MAX_DIMENSION || height > MAX_DIMENSION) {
     throw new StudentPhotoValidationError("DIMENSIONS_OUT_OF_RANGE", `Dimensiones de imagen fuera de rango: ${width}x${height}`);
   }
+  return metadata;
+}
 
+/**
+ * Valida (ver validateImageBuffer) y normaliza para foto de PERFIL: auto-
+ * orienta por EXIF, recorta al centro a cuadrado, redimensiona, reencoda
+ * como JPEG sin metadatos (sharp NUNCA copia EXIF al output salvo que se
+ * llame a .withMetadata(), que aquí deliberadamente no se llama — así se
+ * elimina geolocalización y cualquier otro metadato innecesario, spec
+ * §5/§I).
+ */
+export async function validateAndNormalizeImage(buffer: Buffer, declaredMimeType: string): Promise<Buffer> {
+  await validateImageBuffer(buffer, declaredMimeType);
   return sharp(buffer)
     .rotate() // auto-orienta según EXIF antes de recortar — nunca al revés
     .resize(OUTPUT_SIZE, OUTPUT_SIZE, { fit: "cover", position: "centre" })

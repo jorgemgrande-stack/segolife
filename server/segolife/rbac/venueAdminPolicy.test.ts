@@ -16,9 +16,9 @@ describe("VENUE_ADMIN_PERMISSION_BUNDLE — invariantes de seguridad (spec §22/
     }
   });
 
-  it("el bundle es exactamente el sembrado en producción (Fase 4/8/9 + Fase 10: stock/caja)", () => {
+  it("el bundle es exactamente el sembrado en producción (Fase 4/8/9 + Fase 10: stock/caja + LNF-01: lost & found)", () => {
     expect([...VENUE_ADMIN_PERMISSION_BUNDLE].sort()).toEqual(
-      ["attendance.redeem", "benefits.redeem", "cash.operate", "cash.view", "commerce.record", "commerce.view", "stock.adjust", "stock.view"]
+      ["attendance.redeem", "benefits.redeem", "cash.operate", "cash.view", "commerce.record", "commerce.view", "lost_found.process", "lost_found.view", "stock.adjust", "stock.view"]
     );
   });
 
@@ -50,6 +50,11 @@ describe("VENUE_ADMIN_PERMISSION_BUNDLE — invariantes de seguridad (spec §22/
       expect(isGlobalScopePermission("commerce.view")).toBe(false);
       expect(isGlobalScopePermission("commerce.record")).toBe(false);
     });
+    it("LNF-01: lost_found.manage es global; lost_found.view/.process no lo son", () => {
+      expect(isGlobalScopePermission("lost_found.manage")).toBe(true);
+      expect(isGlobalScopePermission("lost_found.view")).toBe(false);
+      expect(isGlobalScopePermission("lost_found.process")).toBe(false);
+    });
   });
 
   describe("isForbiddenModule — dominios fuera de alcance de Venue Admin", () => {
@@ -65,6 +70,10 @@ describe("VENUE_ADMIN_PERMISSION_BUNDLE — invariantes de seguridad (spec §22/
       expect(isForbiddenModule("benefits.redeem")).toBe(false);
       expect(isForbiddenModule("commerce.view")).toBe(false);
       expect(isForbiddenModule("attendance.redeem")).toBe(false);
+    });
+    it("LNF-01: lost_found NO está prohibido — es operativa real de venue_admin (procesa los casos de su venue)", () => {
+      expect(isForbiddenModule("lost_found.view")).toBe(false);
+      expect(isForbiddenModule("lost_found.process")).toBe(false);
     });
   });
 });

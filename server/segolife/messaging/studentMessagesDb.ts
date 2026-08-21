@@ -26,7 +26,7 @@ const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit
 const _db = drizzle(_pool);
 
 type DbHandle = typeof _db;
-type TxHandle = Parameters<Parameters<DbHandle["transaction"]>[0]>[0];
+export type TxHandle = Parameters<Parameters<DbHandle["transaction"]>[0]>[0];
 type AnyDbHandle = DbHandle | TxHandle;
 
 async function getDb(): Promise<DbHandle> {
@@ -65,14 +65,33 @@ export interface CreateConversationInput {
   type?: string;
   contextType?: string | null;
   contextId?: number | null;
+  /**
+   * LNF-01 — quién escribe el mensaje inicial. COM-01 siempre fue
+   * "Admin inicia" (default, preserva el comportamiento existente sin
+   * tocar ningún llamador anterior); Lost & Found es el primer caso real
+   * de "Student inicia" (su propia descripción del objeto perdido ES el
+   * primer mensaje) — invierte quién ya "leyó" el mensaje y de quién es
+   * el turno (`waitingFor`), nunca deja el mensaje del Student marcado
+   * como si lo hubiera escrito/leído un Admin.
+   */
+  initialSenderRole?: "admin" | "student";
 }
 
-async function insertConversationAndFirstMessage(input: CreateConversationInput, tx: TxHandle): Promise<{ conversation: Conversation; message: ConversationMessage }> {
+/**
+ * Exportada para LNF-01: crear un caso Lost & Found necesita insertar la
+ * fila del caso Y su conversación inicial (la propia descripción del
+ * Student) en UNA sola transacción atómica — createConversationForStudentContext
+ * no sirve ahí porque abre su PROPIA transacción (drizzle-orm/mysql2 no
+ * soporta anidar `tx.transaction()` dentro de otra `tx`), así que el
+ * llamador necesita el paso interno directo, ya recibiendo un `tx` propio.
+ */
+export async function insertConversationAndFirstMessage(input: CreateConversationInput, tx: TxHandle): Promise<{ conversation: Conversation; message: ConversationMessage }> {
   const subject = input.subject.trim();
   if (!subject) throw new StudentMessagesError("VALIDATION", "El asunto no puede estar vacío");
   if (subject.length > SUBJECT_MAX_LENGTH) throw new StudentMessagesError("VALIDATION", `El asunto supera el máximo de ${SUBJECT_MAX_LENGTH} caracteres`);
   const body = assertValidBody(input.body);
   const now = new Date();
+  const senderRole = input.initialSenderRole ?? "admin";
 
   const [convResult] = await tx.insert(conversations).values({
     studentUserId: input.studentUserId,
@@ -81,18 +100,20 @@ async function insertConversationAndFirstMessage(input: CreateConversationInput,
     contextId: input.contextId ?? null,
     subject,
     status: "open",
-    waitingFor: "student",
+    waitingFor: senderRole === "admin" ? "student" : "admin",
     createdByUserId: input.createdByUserId,
     lastMessageAt: now,
     lastMessagePreview: preview(body),
-    adminLastReadAt: now, // el propio Admin que escribe ya "ha leído" su propio mensaje inicial
+    // Cada parte "ya ha leído" su propio mensaje inicial — nunca ambas ni ninguna.
+    adminLastReadAt: senderRole === "admin" ? now : null,
+    studentLastReadAt: senderRole === "student" ? now : null,
   });
   const conversationId = (convResult as unknown as { insertId: number }).insertId;
 
   const [msgResult] = await tx.insert(conversationMessages).values({
     conversationId,
     senderUserId: input.createdByUserId,
-    senderRole: "admin",
+    senderRole,
     visibility: "public",
     body,
   });
@@ -109,42 +130,71 @@ export async function createConversation(input: CreateConversationInput, db?: Db
 }
 
 /**
- * STU-02 — localiza LA conversación general de un Student (contextType
- * null: nunca ligada a un contexto futuro como Lost Items, que tendrá su
- * propio contextType real y por tanto su propia conversación, sin colisión
- * con esta). La más reciente por actividad, en CUALQUIER estado — el caso
- * "cerrada" lo resuelve la UI (reabrir), nunca se crea una segunda
- * conversación general para esquivarlo.
+ * STU-02/LNF-01 — localiza LA conversación de un Student para un contexto
+ * dado (contextType/contextId — `null`/`null` es "la conversación general",
+ * el caso de STU-02; un contextType real como "lost_found" con su propio
+ * contextId nunca colisiona con la general ni con la de otro caso). La más
+ * reciente por actividad, en CUALQUIER estado — el caso "cerrada" lo
+ * resuelve la UI (reabrir), nunca se crea una segunda conversación del
+ * mismo contexto para esquivarlo.
  */
-export async function findGeneralConversationForStudent(studentUserId: number, db?: AnyDbHandle): Promise<Conversation | null> {
+export async function findConversationForStudentContext(
+  studentUserId: number,
+  contextType: string | null,
+  contextId: number | null,
+  db?: AnyDbHandle
+): Promise<Conversation | null> {
   const conn = db ?? (await getDb());
   const [conversation] = await conn.select().from(conversations)
-    .where(and(eq(conversations.studentUserId, studentUserId), isNull(conversations.contextType)))
+    .where(and(
+      eq(conversations.studentUserId, studentUserId),
+      contextType === null ? isNull(conversations.contextType) : eq(conversations.contextType, contextType),
+      contextId === null ? isNull(conversations.contextId) : eq(conversations.contextId, contextId),
+    ))
     .orderBy(desc(conversations.lastMessageAt), desc(conversations.id))
     .limit(1);
   return conversation ?? null;
 }
 
 /**
- * STU-02 — crea la conversación general de un Student SOLO si de verdad no
- * existe una todavía, revalidado DENTRO de la misma transacción (mismo
- * criterio que STU-01/FIX-06: nunca "check → esperar → INSERT ciego"). Si
- * dos peticiones casi simultáneas llegan aquí (p.ej. dos admins pulsando
- * "Comunicarse" sobre el mismo Student en la misma ventana de tiempo), la
- * segunda encuentra la fila que acaba de crear la primera y la devuelve tal
- * cual — nunca una segunda conversación general para el mismo Student.
+ * STU-02 — la conversación general de un Student es el caso contextType/
+ * contextId = null/null. Wrapper fino sobre findConversationForStudentContext
+ * para no tocar el nombre que ya usan studentMessages.ts/sus tests.
  */
-export async function createGeneralConversationForStudent(
+export async function findGeneralConversationForStudent(studentUserId: number, db?: AnyDbHandle): Promise<Conversation | null> {
+  return findConversationForStudentContext(studentUserId, null, null, db);
+}
+
+/**
+ * STU-02/LNF-01 — crea la conversación de un Student para un contexto dado
+ * SOLO si de verdad no existe una todavía, revalidado DENTRO de la misma
+ * transacción (mismo criterio que STU-01/FIX-06: nunca "check → esperar →
+ * INSERT ciego"). Si dos peticiones casi simultáneas llegan aquí, la
+ * segunda encuentra la fila que acaba de crear la primera y la devuelve tal
+ * cual — nunca una segunda conversación del mismo contexto para el mismo
+ * Student.
+ */
+export async function createConversationForStudentContext(
   input: CreateConversationInput,
+  contextType: string | null,
+  contextId: number | null,
   db?: DbHandle
 ): Promise<{ conversation: Conversation; message: ConversationMessage | null; alreadyExisted: boolean }> {
   const conn = db ?? (await getDb());
   return conn.transaction(async (tx) => {
-    const existing = await findGeneralConversationForStudent(input.studentUserId, tx);
+    const existing = await findConversationForStudentContext(input.studentUserId, contextType, contextId, tx);
     if (existing) return { conversation: existing, message: null, alreadyExisted: true };
-    const { conversation, message } = await insertConversationAndFirstMessage({ ...input, contextType: null, contextId: null }, tx);
+    const { conversation, message } = await insertConversationAndFirstMessage({ ...input, contextType, contextId }, tx);
     return { conversation, message, alreadyExisted: false };
   });
+}
+
+/** STU-02 — wrapper fino: la conversación general es contextType/contextId = null/null. */
+export async function createGeneralConversationForStudent(
+  input: CreateConversationInput,
+  db?: DbHandle
+): Promise<{ conversation: Conversation; message: ConversationMessage | null; alreadyExisted: boolean }> {
+  return createConversationForStudentContext(input, null, null, db);
 }
 
 async function fetchOwnedConversation(conversationId: number, studentUserId: number, conn: AnyDbHandle): Promise<Conversation> {

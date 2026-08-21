@@ -220,6 +220,16 @@ const STUDENT_MESSAGES_PERMISSIONS: Array<[string, string, string, string]> = [
   ["student_messages.manage", "student_messages", "manage", "Iniciar conversaciones, responder, cerrar y reabrir mensajes con estudiantes"],
 ];
 
+// LNF-01 — lost_found.view/.process SÍ entran en VENUE_ADMIN_PERMISSION_BUNDLE
+// (procesan casos DE SU VENUE); lost_found.manage es exclusivamente el
+// marcador de alcance GLOBAL para getVenueStaffAccess, nunca concedido a
+// venue_admin (ver venueAdminPolicy.ts).
+const LOST_FOUND_PERMISSIONS: Array<[string, string, string, string]> = [
+  ["lost_found.view",    "lost_found", "view",    "Ver casos de objetos perdidos"],
+  ["lost_found.process", "lost_found", "process", "Procesar casos (marcar encontrado/cerrado, reabrir, comunicarse con el Student)"],
+  ["lost_found.manage",  "lost_found", "manage",  "Acceso global a objetos perdidos de cualquier venue (marcador de alcance, exclusivo de admin)"],
+];
+
 export async function seedRbacIfNeeded(): Promise<{
   rolesEnsured: string[];
   permissionsAdded: string[];
@@ -245,7 +255,7 @@ export async function seedRbacIfNeeded(): Promise<{
     // 2. Permisos students.view / students.manage / venues.* / events.* /
     //    tokens.* / qr.* / benefits.* / integrations.* / ticketing.* /
     //    commerce.* / attendance.* — no sembrados en ninguna migración histórica.
-    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS, ...COMMUNITY_PERMISSIONS, ...REFERRALS_PERMISSIONS, ...SALES_PERMISSIONS, ...FISCAL_PERMISSIONS, ...STOCK_PERMISSIONS, ...CASH_PERMISSIONS, ...SETTLEMENTS_PERMISSIONS, ...STUDENT_MESSAGES_PERMISSIONS]) {
+    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS, ...COMMUNITY_PERMISSIONS, ...REFERRALS_PERMISSIONS, ...SALES_PERMISSIONS, ...FISCAL_PERMISSIONS, ...STOCK_PERMISSIONS, ...CASH_PERMISSIONS, ...SETTLEMENTS_PERMISSIONS, ...STUDENT_MESSAGES_PERMISSIONS, ...LOST_FOUND_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_permissions (\`key\`, module, action, description) VALUES (?, ?, ?, ?)`,
         [key, module, action, description]
@@ -258,7 +268,7 @@ export async function seedRbacIfNeeded(): Promise<{
     //    attendance.* al rol admin (idempotente, no asume que el CROSS JOIN
     //    histórico de 0070/0077 se haya vuelto a ejecutar para estos permisos
     //    nuevos).
-    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS, ...COMMUNITY_PERMISSIONS, ...REFERRALS_PERMISSIONS, ...SALES_PERMISSIONS, ...FISCAL_PERMISSIONS, ...STOCK_PERMISSIONS, ...CASH_PERMISSIONS, ...SETTLEMENTS_PERMISSIONS, ...STUDENT_MESSAGES_PERMISSIONS]) {
+    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS, ...COMMUNITY_PERMISSIONS, ...REFERRALS_PERMISSIONS, ...SALES_PERMISSIONS, ...FISCAL_PERMISSIONS, ...STOCK_PERMISSIONS, ...CASH_PERMISSIONS, ...SETTLEMENTS_PERMISSIONS, ...STUDENT_MESSAGES_PERMISSIONS, ...LOST_FOUND_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
          SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p

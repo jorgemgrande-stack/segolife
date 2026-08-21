@@ -25,6 +25,14 @@ export const VENUE_ADMIN_PERMISSION_BUNDLE = [
   "stock.adjust",
   "cash.view",
   "cash.operate",
+  // LNF-01 (Lost & Found): un Venue Admin procesa los casos DE SU VENUE
+  // (ver, marcar encontrado/cerrado, reabrir, comunicarse) — nunca
+  // "lost_found.manage" (esa clave es exclusivamente el marcador de
+  // alcance GLOBAL que usa getVenueStaffAccess, mismo criterio que
+  // commerce.manage/benefits.manage de arriba: si venue_admin la tuviera,
+  // vería TODOS los casos de TODOS los venues, no solo el suyo).
+  "lost_found.view",
+  "lost_found.process",
 ] as const;
 
 /** Cualquier permiso cuya action sea "manage" es, por diseño de esta plataforma, un permiso de alcance GLOBAL — nunca debe concederse a venue_admin. */
