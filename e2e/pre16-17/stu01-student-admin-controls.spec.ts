@@ -37,6 +37,15 @@ async function searchFor(page: import("@playwright/test").Page, email: string) {
   await expect(studentRow(page, email)).toBeVisible({ timeout: 10000 });
 }
 
+/** El filtro de Estado por defecto es "Activo" (STU-01) — un estudiante recién ocultado deja de verse ahí; hace falta "Cualquier estado" para volver a encontrarlo y revertir. */
+async function searchForAnyStatus(page: import("@playwright/test").Page, email: string) {
+  await page.goto("/admin/students");
+  await page.getByPlaceholder(/buscar por nombre o email/i).fill(email);
+  await page.getByRole("combobox").filter({ hasText: /^(activo|inactivo|cualquier estado)$/i }).click();
+  await page.getByRole("option", { name: /cualquier estado/i }).click();
+  await expect(studentRow(page, email)).toBeVisible({ timeout: 10000 });
+}
+
 const QA_DELETE_EMAIL = `qa-stu01-delete-${Date.now()}@segolife.es`;
 
 test.describe.serial("STU-01 — Editar/Ocultar/Borrar contra producción (datos QA)", () => {
@@ -116,8 +125,12 @@ test.describe.serial("STU-01 — Editar/Ocultar/Borrar contra producción (datos
     await page.waitForLoadState("domcontentloaded");
     await dismissCookies(page);
 
+    // El aria-label incluye el nombre real del estudiante (p.ej. "Ocultar
+    // QA PRE1617"), nunca la palabra literal "estudiante" — se localiza por
+    // el atributo `title` (genérico, "Ocultar estudiante"/"Mostrar
+    // estudiante"), no por accessible name.
     await searchFor(page, student.email);
-    const toggleBtn = studentRow(page, student.email).getByRole("button", { name: /^(ocultar|mostrar) estudiante$/i });
+    const toggleBtn = studentRow(page, student.email).locator('button[title="Ocultar estudiante"], button[title="Mostrar estudiante"]');
     const initialTitle = await toggleBtn.getAttribute("title");
 
     await toggleBtn.click();
@@ -127,9 +140,14 @@ test.describe.serial("STU-01 — Editar/Ocultar/Borrar contra producción (datos
     await expect(page.getByText(/estado actualizado/i)).toBeVisible({ timeout: 10000 });
 
     // Revierte exactamente al estado original — nunca deja la cuenta QA en un estado distinto del que tenía.
-    await searchFor(page, student.email);
-    const revertBtn = studentRow(page, student.email).getByRole("button", { name: /^(ocultar|mostrar) estudiante$/i });
-    await expect(revertBtn).toHaveAttribute("title", initialTitle ?? /.*/);
+    // Con "Cualquier estado": tras el toggle de arriba la fila puede haber
+    // quedado fuera del filtro "Activo" por defecto (STU-01).
+    await searchForAnyStatus(page, student.email);
+    const revertBtn = studentRow(page, student.email).locator('button[title="Ocultar estudiante"], button[title="Mostrar estudiante"]');
+    // El título debe haberse invertido — prueba de que el toggle anterior
+    // cambió de verdad el estado, no un no-op.
+    const flippedTitle = await revertBtn.getAttribute("title");
+    expect(flippedTitle).not.toBe(initialTitle);
     await revertBtn.click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.getByLabel(/^motivo$/i).fill("STU-01 — revertir a estado original");
