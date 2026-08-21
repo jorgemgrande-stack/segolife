@@ -6,7 +6,7 @@ import {
   Bell, Search, User, BedDouble, Sparkles, UtensilsCrossed, AlertCircle,
   UserPlus, FileCheck, ChevronRight, Receipt, Truck, Monitor, Tag, Ticket,
   Sun, Moon, ExternalLink, Building2,
-  Briefcase, GraduationCap, Store, CalendarDays, Coins, QrCode, Gift, Vote, Plug, ShoppingBag, Wallet,
+  Briefcase, GraduationCap, Store, CalendarDays, Coins, QrCode, Gift, Vote, Plug, ShoppingBag, Wallet, PackageSearch,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -82,6 +82,15 @@ const navItems = [
     label: "Venues",
     href: "/admin/venues",
     icon: Store,
+    roles: ["admin"],
+  },
+  {
+    // LNF-01 — alcance completo (getVenueStaffAccess="all"), nunca visible
+    // para venue_admin: sus propios casos se gestionan desde la pestaña
+    // "Perdidos" de la Venue App (spec §14, mismo criterio que "Mi local").
+    label: "Objetos perdidos",
+    href: "/admin/lost-found",
+    icon: PackageSearch,
     roles: ["admin"],
   },
   {
@@ -518,6 +527,15 @@ function AdminLayoutInner({ children, title }: AdminLayoutProps) {
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
   });
+  // LNF-01 — mismo criterio que arriba: casos abiertos o con respuesta del
+  // Student sin leer (spec §13/§14). Solo Global Admin ve este ítem de nav
+  // (venue_admin gestiona sus propios casos desde la Venue App, sin este
+  // sidebar) — ver navItems más abajo.
+  const { data: pendingLostFound } = trpc.lostFound.adminPendingCount.useQuery(undefined, {
+    enabled: isAuthenticated && userRole === "admin",
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+  });
   // Para mantener compat con badges del menú lateral (sidebar) que usan
   // estas dos variables para mostrar el punto rojo en CRM.
   const newLeads = feed?.sections.find(s => s.kind === "lead")?.total ?? 0;
@@ -723,7 +741,15 @@ function AdminLayoutInner({ children, title }: AdminLayoutProps) {
                         ? "bg-sidebar-primary text-sidebar-primary-foreground"
                         : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
                     )}>
-                      <item.icon className="w-4 h-4 shrink-0" />
+                      <div className="relative shrink-0">
+                        <item.icon className="w-4 h-4" />
+                        {/* LNF-01 — casos abiertos o con respuesta del Student sin leer */}
+                        {item.href === "/admin/lost-found" && !!pendingLostFound && pendingLostFound > 0 && (
+                          <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center px-0.5 leading-none">
+                            {pendingLostFound > 99 ? "99+" : pendingLostFound}
+                          </span>
+                        )}
+                      </div>
                       {sidebarOpen && <span className="flex-1">{item.label}</span>}
                     </div>
                   </Link>
