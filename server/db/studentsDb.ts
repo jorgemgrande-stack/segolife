@@ -17,6 +17,7 @@ import {
   type University,
 } from "../../drizzle/schema";
 import { evaluateReferralConversionBestEffort } from "../segolife/referrals/referralService";
+import { recordStudentAdminAction } from "../segolife/students/studentAdminActionsDb";
 
 // Pool persistente top-level — mismo patrón que server/hotelDb.ts,
 // server/db/reviewsDb.ts y server/db/communitiesDb.ts.
@@ -351,6 +352,125 @@ export async function updateStudentAdminFields(
   await conn.update(studentProfiles).set(fields).where(eq(studentProfiles.id, studentProfileId));
   const [updated] = await conn.select().from(studentProfiles).where(eq(studentProfiles.id, studentProfileId)).limit(1);
   return updated ?? null;
+}
+
+export class StudentEmailConflictError extends Error {
+  constructor() {
+    super("Este email ya está siendo utilizado por otra cuenta.");
+    this.name = "StudentEmailConflictError";
+  }
+}
+
+/**
+ * STU-01 — edición de un Student por un Admin. A diferencia de
+ * updateStudentProfile (autoservicio, solo studentProfiles), esta función
+ * orquesta DOS tablas (studentProfiles + users.email/phone) porque un Admin
+ * SÍ puede tocar el email/teléfono de contacto, algo que el propio
+ * estudiante no gestiona desde este flujo. Comunidad/universidad se
+ * resuelven vía universityId (ya cubierto por EditableProfileFields) — la
+ * pertenencia a comunidades (user_communities) queda deliberadamente FUERA
+ * de esta función: no existe hoy una función segura de "quitar" membresía
+ * sin arriesgar el invariante multi-comunidad, así que se mantiene de solo
+ * lectura en este pase (ver STU-01 FINAL REPORT, sección de Community change
+ * policy).
+ *
+ * Solo registra en el audit log (student_admin_actions) los campos que
+ * REALMENTE cambiaron de valor — nunca el conjunto completo de campos
+ * enviados por el formulario, ni secretos (passwordHash nunca es parte de
+ * AdminEditableStudentFields).
+ */
+export interface AdminEditableStudentFields extends EditableProfileFields {
+  email?: string | null;
+  phone?: string | null;
+}
+
+export async function updateStudentAdminProfile(
+  studentProfileId: number,
+  fields: AdminEditableStudentFields,
+  actorUserId: number,
+  db?: DbHandle
+): Promise<StudentDetail | null> {
+  const conn = db ?? (await getDb());
+  const { email, phone, ...profileFields } = fields;
+
+  const found = await conn.transaction(async (tx) => {
+    const [profile] = await tx.select().from(studentProfiles).where(eq(studentProfiles.id, studentProfileId)).limit(1);
+    if (!profile) return false;
+    const [userRow] = await tx.select().from(users).where(eq(users.id, profile.userId)).limit(1);
+    if (!userRow) return false;
+
+    const changedFields: string[] = [];
+
+    const profileUpdates: Partial<EditableProfileFields> = {};
+    for (const key of Object.keys(profileFields) as (keyof EditableProfileFields)[]) {
+      const value = profileFields[key];
+      if (value === undefined) continue;
+      const currentValue = (profile as unknown as Record<string, unknown>)[key];
+      if (currentValue !== value) {
+        (profileUpdates as Record<string, unknown>)[key] = value;
+        changedFields.push(key);
+      }
+    }
+    if (Object.keys(profileUpdates).length > 0) {
+      await updateStudentProfile(profile.userId, profileUpdates, tx);
+    }
+
+    // users.name se concatena UNA VEZ en registrationService.ts
+    // (`${firstName} ${lastName}`) — si el Admin cambia el nombre aquí y no
+    // se sincroniza, el nombre mostrado en listados/CRM/identidad POS queda
+    // obsoleto para siempre.
+    if ("firstName" in profileUpdates || "lastName" in profileUpdates) {
+      const nextFirstName = profileUpdates.firstName ?? profile.firstName ?? "";
+      const nextLastName = profileUpdates.lastName ?? profile.lastName ?? "";
+      const nextName = `${nextFirstName} ${nextLastName}`.trim();
+      if (nextName && nextName !== userRow.name) {
+        await tx.update(users).set({ name: nextName, updatedAt: new Date() }).where(eq(users.id, profile.userId));
+      }
+    }
+
+    const contactUpdates: Partial<{ email: string | null; phone: string | null }> = {};
+    if (email !== undefined) {
+      const normalizedEmail = email ? email.trim().toLowerCase() : null;
+      if (normalizedEmail !== (userRow.email ?? null)) {
+        if (normalizedEmail) {
+          const [existing] = await tx.select({ id: users.id }).from(users).where(eq(users.email, normalizedEmail)).limit(1);
+          if (existing && existing.id !== profile.userId) throw new StudentEmailConflictError();
+        }
+        contactUpdates.email = normalizedEmail;
+        changedFields.push("email");
+      }
+    }
+    if (phone !== undefined) {
+      const normalizedPhone = phone ? phone.trim() : null;
+      if (normalizedPhone !== (userRow.phone ?? null)) {
+        contactUpdates.phone = normalizedPhone;
+        changedFields.push("phone");
+      }
+    }
+    if (Object.keys(contactUpdates).length > 0) {
+      try {
+        await tx.update(users).set({ ...contactUpdates, updatedAt: new Date() }).where(eq(users.id, profile.userId));
+      } catch (err) {
+        const errno = (err && typeof err === "object" && "errno" in err) ? (err as { errno?: number }).errno : undefined;
+        if (errno === 1062) throw new StudentEmailConflictError();
+        throw err;
+      }
+    }
+
+    if (changedFields.length > 0) {
+      await recordStudentAdminAction({
+        studentProfileId,
+        actorUserId,
+        action: "profile_edited",
+        metadata: { changedFields },
+      }, tx);
+    }
+
+    return true;
+  });
+
+  if (!found) return null;
+  return getStudentById(studentProfileId, conn);
 }
 
 // ─── NOTAS INTERNAS ─────────────────────────────────────────────────────────

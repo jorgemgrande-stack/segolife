@@ -9,6 +9,8 @@ import {
   ensureStudentProfile,
   updateStudentProfile,
   updateStudentAdminFields,
+  updateStudentAdminProfile,
+  StudentEmailConflictError,
   listStudentNotes,
   addStudentNote,
   updateStudentNote,
@@ -18,6 +20,12 @@ import {
   unassignStudentTag,
 } from "../db/studentsDb";
 import { recordStudentAdminAction } from "../segolife/students/studentAdminActionsDb";
+import {
+  evaluateStudentDeletionEligibility,
+  deleteStudent,
+  StudentDeleteBlockedError,
+  StudentDeleteForbiddenError,
+} from "../segolife/students/studentLifecycleService";
 import { listStudentsBySegment } from "../segolife/students/studentSegmentFilterService";
 import { removeMyPhoto } from "../segolife/students/studentPhotoService";
 import { listPhotoEventsByUserId } from "../segolife/students/studentPhotoEventsDb";
@@ -45,6 +53,15 @@ const editableProfileSchema = z.object({
   addressLine: z.string().max(256).nullish(),
   postalCode: z.string().max(16).nullish(),
   city: z.string().max(128).nullish(),
+});
+
+// STU-01 — edición administrativa: mismos campos de studentProfiles que el
+// autoservicio (editableProfileSchema) + email/phone (users), que el propio
+// estudiante no gestiona desde este flujo. Comunidad/rol/wallet/tickets/
+// auth quedan deliberadamente fuera — nunca editables por esta vía.
+const adminEditableStudentSchema = editableProfileSchema.extend({
+  email: z.string().email().max(320).nullish(),
+  phone: z.string().max(32).nullish(),
 });
 
 /** Lanza FORBIDDEN si el alcance del admin no cubre ninguna comunidad del estudiante. */
@@ -168,6 +185,61 @@ export const studentsRouter = router({
         });
       }
       return { success: true, profile: updated };
+    }),
+
+  /** STU-01 — Editar. Mismo backend que llame la lista o la ficha (nunca diverge por superficie). */
+  adminUpdateProfile: studentsManageProcedure
+    .input(adminEditableStudentSchema.extend({ studentProfileId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const { studentProfileId, ...fields } = input;
+      const detail = await getStudentById(studentProfileId);
+      if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "El estudiante ya no existe." });
+      const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
+      assertStudentAccessible(access, detail.communities.map(c => c.id));
+      try {
+        const updated = await updateStudentAdminProfile(studentProfileId, fields, ctx.user.id);
+        if (!updated) throw new TRPCError({ code: "NOT_FOUND", message: "El estudiante ya no existe." });
+        return { success: true, student: updated };
+      } catch (err) {
+        if (err instanceof StudentEmailConflictError) {
+          throw new TRPCError({ code: "CONFLICT", message: err.message });
+        }
+        throw err;
+      }
+    }),
+
+  /** STU-01 — Borrar: elegibilidad. Consulta cara solo bajo demanda (nunca por fila del listado). */
+  deleteEligibility: studentsManageProcedure
+    .input(z.object({ studentProfileId: z.number().int().positive() }))
+    .query(async ({ input, ctx }) => {
+      const detail = await getStudentById(input.studentProfileId);
+      if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "El estudiante ya no existe." });
+      const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
+      assertStudentAccessible(access, detail.communities.map(c => c.id));
+      return evaluateStudentDeletionEligibility(detail.profile.userId);
+    }),
+
+  /** STU-01 — Borrar. Revalida elegibilidad dentro de la propia transacción (nunca confía en un check previo). */
+  delete: studentsManageProcedure
+    .input(z.object({ studentProfileId: z.number().int().positive(), reason: z.string().min(1).max(512) }))
+    .mutation(async ({ input, ctx }) => {
+      const detail = await getStudentById(input.studentProfileId);
+      if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "El estudiante ya no existe." });
+      const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
+      assertStudentAccessible(access, detail.communities.map(c => c.id));
+      try {
+        const result = await deleteStudent(input.studentProfileId, ctx.user.id, input.reason);
+        if (!result.deleted) throw new TRPCError({ code: "NOT_FOUND", message: "El estudiante ya no existe." });
+        return { success: true };
+      } catch (err) {
+        if (err instanceof StudentDeleteBlockedError) {
+          throw new TRPCError({ code: "CONFLICT", message: err.message });
+        }
+        if (err instanceof StudentDeleteForbiddenError) {
+          throw new TRPCError({ code: "FORBIDDEN", message: err.message });
+        }
+        throw err;
+      }
     }),
 
   addNote: studentsManageProcedure

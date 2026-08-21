@@ -20,6 +20,11 @@ const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit
 const _db = drizzle(_pool);
 
 type DbHandle = typeof _db;
+// Acepta también el handle de una transacción en curso (p.ej.
+// studentLifecycleService.ts registrando el borrado de un Student ANTES
+// de eliminar sus filas, dentro de la misma transacción — spec STU-01 §31/36).
+type TxHandle = Parameters<Parameters<DbHandle["transaction"]>[0]>[0];
+type AnyDbHandle = DbHandle | TxHandle;
 
 async function getDb(): Promise<DbHandle> {
   return _db;
@@ -35,7 +40,7 @@ export interface RecordStudentAdminActionInput {
   metadata?: Record<string, unknown> | null;
 }
 
-export async function recordStudentAdminAction(input: RecordStudentAdminActionInput, db?: DbHandle): Promise<void> {
+export async function recordStudentAdminAction(input: RecordStudentAdminActionInput, db?: AnyDbHandle): Promise<void> {
   const conn = db ?? (await getDb());
   await conn.insert(studentAdminActions).values({
     studentProfileId: input.studentProfileId,
@@ -48,7 +53,7 @@ export async function recordStudentAdminAction(input: RecordStudentAdminActionIn
   });
 }
 
-export async function listAdminActionsByStudentProfileId(studentProfileId: number, limit = 50, db?: DbHandle): Promise<StudentAdminAction[]> {
+export async function listAdminActionsByStudentProfileId(studentProfileId: number, limit = 50, db?: AnyDbHandle): Promise<StudentAdminAction[]> {
   const conn = db ?? (await getDb());
   return conn.select().from(studentAdminActions)
     .where(eq(studentAdminActions.studentProfileId, studentProfileId))
