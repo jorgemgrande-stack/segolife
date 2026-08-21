@@ -530,6 +530,16 @@ bloquea por metadatos puramente administrativos (login events, notas,
 etiquetas, acciones de admin previas, preferencias/entregas de
 notificaciones) — bloquear ahí habría hecho el borrado imposible para
 toda cuenta real, contradiciendo el propio objetivo del feature.
+
+**Hallazgo real durante la verificación en producción**: `registerStudent()`
+concede automáticamente un Benefit `registration_welcome` a TODA cuenta
+nueva, sin excepción — confirmado registrando dos cuentas QA vacías reales,
+ambas bloqueadas de inmediato por esa única fila sin usar. Bloquear por
+CUALQUIER fila de `user_benefits` habría hecho `canDelete=true` inalcanzable
+para cualquier Student real, el mismo problema que ya se evita con los
+login events o un wallet vacío — corregido para que solo cuente como
+bloqueo real un Benefit que NO sea ese welcome automático, o que sí llegó a
+usarse; el welcome sin usar se limpia en la propia cascada del borrado.
 Elegibilidad se **revalida dentro de la propia transacción de borrado**
 (nunca "check → esperar → DELETE ciego"); un segundo intento sobre un
 Student ya borrado es un no-op limpio (`{deleted:false}` → `NOT_FOUND`
@@ -596,9 +606,15 @@ producción), necesario para poder correr los tests reales de esta fase
 contra BD real.
 
 Tests: 2 archivos nuevos (`studentLifecycleService.test.ts` contra BD
-real — 13 tests: elegibilidad, bloqueo, auto-borrado, cuenta
-privilegiada, borrado real con cascada verificada, idempotencia,
-revalidación de concurrencia, edición con conflicto de email y audit
-log selectivo; `students.test.ts` ampliado — 16 tests nuevos de RBAC/
-IDOR/mapeo de errores). TypeScript 0. Build PASS. Desplegado y
-verificado (SHA `ba956da`).
+real — 15 tests: elegibilidad, bloqueo, auto-borrado, cuenta
+privilegiada, borrado real con cascada verificada (incluido el Benefit
+de bienvenida sin usar), idempotencia, revalidación de concurrencia,
+edición con conflicto de email, audit log selectivo, y los 2 tests del
+hallazgo del welcome Benefit; `students.test.ts` ampliado — 16 tests
+nuevos de RBAC/IDOR/mapeo de errores) + 1 spec E2E real de producción
+nuevo (`stu01-student-admin-controls.spec.ts`: registra una cuenta QA
+vacía real, la edita, la borra de verdad y confirma que desaparece;
+confirma que Borrar sobre la cuenta QA con histórico de COM-01 se
+bloquea sin ofrecer una confirmación falsa; ejercita Ocultar/Mostrar
+sobre esa misma cuenta y la revierte a su estado original). TypeScript
+0. Build PASS. Desplegado y verificado (SHA `939da72`).
