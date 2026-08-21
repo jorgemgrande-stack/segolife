@@ -94,4 +94,14 @@ describe("deepLinkPolicy — sanitizeDeepLink", () => {
   it("el hub de Student /admin/comunity (sin id) también queda excluido por el mismo motivo", () => {
     expect(sanitizeDeepLink("/admin/comunity")).toBeNull();
   });
+
+  // COM-01 — aviso de mensaje nuevo, enlaza directo a la conversación.
+  it("acepta /:slug/messages y /:slug/messages/:id (COM-01)", () => {
+    expect(sanitizeDeepLink("/ie/messages")).toBe("/ie/messages");
+    expect(sanitizeDeepLink("/uva/messages/42")).toBe("/uva/messages/42");
+  });
+
+  it("rechaza /:slug/messages/:id con id no numérico", () => {
+    expect(sanitizeDeepLink("/ie/messages/not-a-number")).toBeNull();
+  });
 });
