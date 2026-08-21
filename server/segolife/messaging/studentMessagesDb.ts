@@ -14,7 +14,7 @@
  * confía en que el router ya lo validó. Un Student jamás ve una conversación
  * ajena ni un mensaje `visibility='internal'`.
  */
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import {
@@ -67,42 +67,83 @@ export interface CreateConversationInput {
   contextId?: number | null;
 }
 
-export async function createConversation(input: CreateConversationInput, db?: DbHandle): Promise<{ conversation: Conversation; message: ConversationMessage }> {
-  const conn = db ?? (await getDb());
+async function insertConversationAndFirstMessage(input: CreateConversationInput, tx: TxHandle): Promise<{ conversation: Conversation; message: ConversationMessage }> {
   const subject = input.subject.trim();
   if (!subject) throw new StudentMessagesError("VALIDATION", "El asunto no puede estar vacío");
   if (subject.length > SUBJECT_MAX_LENGTH) throw new StudentMessagesError("VALIDATION", `El asunto supera el máximo de ${SUBJECT_MAX_LENGTH} caracteres`);
   const body = assertValidBody(input.body);
   const now = new Date();
 
+  const [convResult] = await tx.insert(conversations).values({
+    studentUserId: input.studentUserId,
+    type: input.type ?? "general",
+    contextType: input.contextType ?? null,
+    contextId: input.contextId ?? null,
+    subject,
+    status: "open",
+    waitingFor: "student",
+    createdByUserId: input.createdByUserId,
+    lastMessageAt: now,
+    lastMessagePreview: preview(body),
+    adminLastReadAt: now, // el propio Admin que escribe ya "ha leído" su propio mensaje inicial
+  });
+  const conversationId = (convResult as unknown as { insertId: number }).insertId;
+
+  const [msgResult] = await tx.insert(conversationMessages).values({
+    conversationId,
+    senderUserId: input.createdByUserId,
+    senderRole: "admin",
+    visibility: "public",
+    body,
+  });
+  const messageId = (msgResult as unknown as { insertId: number }).insertId;
+
+  const [conversation] = await tx.select().from(conversations).where(eq(conversations.id, conversationId)).limit(1);
+  const [message] = await tx.select().from(conversationMessages).where(eq(conversationMessages.id, messageId)).limit(1);
+  return { conversation, message };
+}
+
+export async function createConversation(input: CreateConversationInput, db?: DbHandle): Promise<{ conversation: Conversation; message: ConversationMessage }> {
+  const conn = db ?? (await getDb());
+  return conn.transaction((tx) => insertConversationAndFirstMessage(input, tx));
+}
+
+/**
+ * STU-02 — localiza LA conversación general de un Student (contextType
+ * null: nunca ligada a un contexto futuro como Lost Items, que tendrá su
+ * propio contextType real y por tanto su propia conversación, sin colisión
+ * con esta). La más reciente por actividad, en CUALQUIER estado — el caso
+ * "cerrada" lo resuelve la UI (reabrir), nunca se crea una segunda
+ * conversación general para esquivarlo.
+ */
+export async function findGeneralConversationForStudent(studentUserId: number, db?: AnyDbHandle): Promise<Conversation | null> {
+  const conn = db ?? (await getDb());
+  const [conversation] = await conn.select().from(conversations)
+    .where(and(eq(conversations.studentUserId, studentUserId), isNull(conversations.contextType)))
+    .orderBy(desc(conversations.lastMessageAt), desc(conversations.id))
+    .limit(1);
+  return conversation ?? null;
+}
+
+/**
+ * STU-02 — crea la conversación general de un Student SOLO si de verdad no
+ * existe una todavía, revalidado DENTRO de la misma transacción (mismo
+ * criterio que STU-01/FIX-06: nunca "check → esperar → INSERT ciego"). Si
+ * dos peticiones casi simultáneas llegan aquí (p.ej. dos admins pulsando
+ * "Comunicarse" sobre el mismo Student en la misma ventana de tiempo), la
+ * segunda encuentra la fila que acaba de crear la primera y la devuelve tal
+ * cual — nunca una segunda conversación general para el mismo Student.
+ */
+export async function createGeneralConversationForStudent(
+  input: CreateConversationInput,
+  db?: DbHandle
+): Promise<{ conversation: Conversation; message: ConversationMessage | null; alreadyExisted: boolean }> {
+  const conn = db ?? (await getDb());
   return conn.transaction(async (tx) => {
-    const [convResult] = await tx.insert(conversations).values({
-      studentUserId: input.studentUserId,
-      type: input.type ?? "general",
-      contextType: input.contextType ?? null,
-      contextId: input.contextId ?? null,
-      subject,
-      status: "open",
-      waitingFor: "student",
-      createdByUserId: input.createdByUserId,
-      lastMessageAt: now,
-      lastMessagePreview: preview(body),
-      adminLastReadAt: now, // el propio Admin que escribe ya "ha leído" su propio mensaje inicial
-    });
-    const conversationId = (convResult as unknown as { insertId: number }).insertId;
-
-    const [msgResult] = await tx.insert(conversationMessages).values({
-      conversationId,
-      senderUserId: input.createdByUserId,
-      senderRole: "admin",
-      visibility: "public",
-      body,
-    });
-    const messageId = (msgResult as unknown as { insertId: number }).insertId;
-
-    const [conversation] = await tx.select().from(conversations).where(eq(conversations.id, conversationId)).limit(1);
-    const [message] = await tx.select().from(conversationMessages).where(eq(conversationMessages.id, messageId)).limit(1);
-    return { conversation, message };
+    const existing = await findGeneralConversationForStudent(input.studentUserId, tx);
+    if (existing) return { conversation: existing, message: null, alreadyExisted: true };
+    const { conversation, message } = await insertConversationAndFirstMessage({ ...input, contextType: null, contextId: null }, tx);
+    return { conversation, message, alreadyExisted: false };
   });
 }
 

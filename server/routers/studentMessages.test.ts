@@ -8,14 +8,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
-  mockCreateConversation, mockReplyAsStudent, mockReplyAsAdmin,
+  mockCreateGeneralConversationForStudent, mockFindGeneralConversationForStudent,
+  mockReplyAsStudent, mockReplyAsAdmin,
   mockGetConversationForStudent, mockGetConversationForAdmin,
   mockListConversationsForStudent, mockListConversationsForAdmin,
   mockCountAwaitingAdmin, mockCloseConversation, mockReopenConversation,
   mockMarkReadByStudent, mockMarkReadByAdmin,
   mockGetStudentByUserId, mockGetUserCommunitiesWithDetails, mockCreateNotification,
 } = vi.hoisted(() => ({
-  mockCreateConversation: vi.fn(),
+  mockCreateGeneralConversationForStudent: vi.fn(),
+  mockFindGeneralConversationForStudent: vi.fn(),
   mockReplyAsStudent: vi.fn(),
   mockReplyAsAdmin: vi.fn(),
   mockGetConversationForStudent: vi.fn(),
@@ -36,7 +38,8 @@ vi.mock("../segolife/messaging/studentMessagesDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/messaging/studentMessagesDb")>();
   return {
     ...actual,
-    createConversation: mockCreateConversation,
+    createGeneralConversationForStudent: mockCreateGeneralConversationForStudent,
+    findGeneralConversationForStudent: mockFindGeneralConversationForStudent,
     replyAsStudent: mockReplyAsStudent,
     replyAsAdmin: mockReplyAsAdmin,
     getConversationForStudent: mockGetConversationForStudent,
@@ -88,6 +91,7 @@ describe("studentMessages — ningún procedure es accesible sin sesión", () =>
     await expect(callerWithoutSession().adminList({})).rejects.toThrow(/please login/i);
     await expect(callerWithoutSession().adminPendingCount()).rejects.toThrow(/please login/i);
     await expect(callerWithoutSession().adminGetConversation({ id: 1 })).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().adminFindGeneralConversation({ studentUserId: 1 })).rejects.toThrow(/please login/i);
     await expect(callerWithoutSession().adminCreateConversation({ studentUserId: 1, subject: "s", body: "b" })).rejects.toThrow(/please login/i);
     await expect(callerWithoutSession().adminReply({ conversationId: 1, body: "b" })).rejects.toThrow(/please login/i);
     await expect(callerWithoutSession().adminClose({ conversationId: 1 })).rejects.toThrow(/please login/i);
@@ -96,15 +100,17 @@ describe("studentMessages — ningún procedure es accesible sin sesión", () =>
 });
 
 describe("studentMessages — RBAC: un Student (role=user) nunca accede a los procedures Admin", () => {
-  it("adminList/adminPendingCount/adminGetConversation/adminCreateConversation/adminReply/adminClose/adminReopen: FORBIDDEN para un Student", async () => {
+  it("adminList/adminPendingCount/adminGetConversation/adminFindGeneralConversation/adminCreateConversation/adminReply/adminClose/adminReopen: FORBIDDEN para un Student", async () => {
     await expect(callerAs(7).adminList({})).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(callerAs(7).adminPendingCount()).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(callerAs(7).adminGetConversation({ id: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(callerAs(7).adminFindGeneralConversation({ studentUserId: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(callerAs(7).adminCreateConversation({ studentUserId: 1, subject: "s", body: "b" })).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(callerAs(7).adminReply({ conversationId: 1, body: "b" })).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(callerAs(7).adminClose({ conversationId: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(callerAs(7).adminReopen({ conversationId: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(mockCreateConversation).not.toHaveBeenCalled();
+    expect(mockCreateGeneralConversationForStudent).not.toHaveBeenCalled();
+    expect(mockFindGeneralConversationForStudent).not.toHaveBeenCalled();
     expect(mockReplyAsAdmin).not.toHaveBeenCalled();
   });
 });
@@ -159,21 +165,29 @@ describe("studentMessages — Admin: creación de conversación + notificación"
   it("Student inexistente: NOT_FOUND, nunca crea la conversación", async () => {
     mockGetStudentByUserId.mockResolvedValue(null);
     await expect(callerAsAdmin(1).adminCreateConversation({ studentUserId: 999, subject: "s", body: "b" })).rejects.toMatchObject({ code: "NOT_FOUND" });
-    expect(mockCreateConversation).not.toHaveBeenCalled();
+    expect(mockCreateGeneralConversationForStudent).not.toHaveBeenCalled();
   });
 
   it("creación exitosa: crea la conversación con ctx.user.id como createdByUserId y dispara la notificación al Student", async () => {
     mockGetStudentByUserId.mockResolvedValue({ id: 1, userId: 42 });
-    mockCreateConversation.mockResolvedValue({ conversation: { id: 5, studentUserId: 42, subject: "Asunto QA" }, message: { id: 1 } });
+    mockCreateGeneralConversationForStudent.mockResolvedValue({ conversation: { id: 5, studentUserId: 42, subject: "Asunto QA" }, message: { id: 1 }, alreadyExisted: false });
     await callerAsAdmin(1).adminCreateConversation({ studentUserId: 42, subject: "Asunto QA", body: "Hola" });
-    expect(mockCreateConversation).toHaveBeenCalledWith({ studentUserId: 42, createdByUserId: 1, subject: "Asunto QA", body: "Hola" });
+    expect(mockCreateGeneralConversationForStudent).toHaveBeenCalledWith({ studentUserId: 42, createdByUserId: 1, subject: "Asunto QA", body: "Hola" });
     expect(mockCreateNotification).toHaveBeenCalledTimes(1);
     expect(mockCreateNotification.mock.calls[0][0]).toMatchObject({ userId: 42, category: "messages", audienceType: "transactional" });
   });
 
+  it("STU-02 — idempotencia: si ya existía una conversación general (alreadyExisted=true), NUNCA notifica un mensaje nuevo que no se envió", async () => {
+    mockGetStudentByUserId.mockResolvedValue({ id: 1, userId: 42 });
+    mockCreateGeneralConversationForStudent.mockResolvedValue({ conversation: { id: 5, studentUserId: 42, subject: "Ya existente" }, message: null, alreadyExisted: true });
+    const result = await callerAsAdmin(1).adminCreateConversation({ studentUserId: 42, subject: "Otro asunto", body: "Otro mensaje" });
+    expect(result.conversation.id).toBe(5);
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
   it("si no se encuentra ninguna comunidad real del Student (caso límite), la notificación se omite sin lanzar y la conversación sigue creada", async () => {
     mockGetStudentByUserId.mockResolvedValue({ id: 1, userId: 42 });
-    mockCreateConversation.mockResolvedValue({ conversation: { id: 5, studentUserId: 42, subject: "s" }, message: { id: 1 } });
+    mockCreateGeneralConversationForStudent.mockResolvedValue({ conversation: { id: 5, studentUserId: 42, subject: "s" }, message: { id: 1 }, alreadyExisted: false });
     mockGetUserCommunitiesWithDetails.mockResolvedValue([]);
     const result = await callerAsAdmin(1).adminCreateConversation({ studentUserId: 42, subject: "s", body: "b" });
     expect(result.conversation.id).toBe(5);
@@ -181,10 +195,33 @@ describe("studentMessages — Admin: creación de conversación + notificación"
 
   it("si createNotification falla, la conversación ya creada NUNCA desaparece (best-effort, spec §29)", async () => {
     mockGetStudentByUserId.mockResolvedValue({ id: 1, userId: 42 });
-    mockCreateConversation.mockResolvedValue({ conversation: { id: 5, studentUserId: 42, subject: "s" }, message: { id: 1 } });
+    mockCreateGeneralConversationForStudent.mockResolvedValue({ conversation: { id: 5, studentUserId: 42, subject: "s" }, message: { id: 1 }, alreadyExisted: false });
     mockCreateNotification.mockRejectedValue(new Error("boom"));
     const result = await callerAsAdmin(1).adminCreateConversation({ studentUserId: 42, subject: "s", body: "b" });
     expect(result.conversation.id).toBe(5);
+  });
+});
+
+describe("studentMessages — STU-02: adminFindGeneralConversation (localizar sin crear)", () => {
+  it("devuelve el conversationId cuando ya existe una conversación general", async () => {
+    mockFindGeneralConversationForStudent.mockResolvedValue({ id: 7, studentUserId: 42 });
+    const result = await callerAsAdmin(1).adminFindGeneralConversation({ studentUserId: 42 });
+    expect(result).toEqual({ conversationId: 7 });
+    expect(mockFindGeneralConversationForStudent).toHaveBeenCalledWith(42);
+  });
+
+  it("devuelve conversationId=null cuando no existe ninguna — nunca crea nada", async () => {
+    mockFindGeneralConversationForStudent.mockResolvedValue(null);
+    const result = await callerAsAdmin(1).adminFindGeneralConversation({ studentUserId: 42 });
+    expect(result).toEqual({ conversationId: null });
+    expect(mockCreateGeneralConversationForStudent).not.toHaveBeenCalled();
+  });
+
+  it("venue_admin: FORBIDDEN — misma política que el resto de procedures Admin de COM-01", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const callerAsVenueAdmin = studentMessagesRouter.createCaller({ user: { id: 9, role: "venue_admin" } } as any);
+    await expect(callerAsVenueAdmin.adminFindGeneralConversation({ studentUserId: 42 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockFindGeneralConversationForStudent).not.toHaveBeenCalled();
   });
 });
 

@@ -14,11 +14,12 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, permissionProcedure } from "../_core/trpc";
 import {
-  createConversation, replyAsStudent, replyAsAdmin,
+  replyAsStudent, replyAsAdmin,
   getConversationForStudent, getConversationForAdmin,
   listConversationsForStudent, listConversationsForAdmin,
   countAwaitingAdmin, closeConversation, reopenConversation,
   markReadByStudent, markReadByAdmin,
+  findGeneralConversationForStudent, createGeneralConversationForStudent,
   StudentMessagesError, MESSAGE_BODY_MAX_LENGTH, SUBJECT_MAX_LENGTH,
 } from "../segolife/messaging/studentMessagesDb";
 import { getStudentByUserId } from "../db/studentsDb";
@@ -125,6 +126,20 @@ export const studentMessagesRouter = router({
       } catch (e) { mapError(e); }
     }),
 
+  /**
+   * STU-02 — localiza la conversación general (contextType null) de un
+   * Student, si existe alguna, sin crear nada. El botón "Comunicarse" llama
+   * a esto primero: si hay conversationId, navega directo al hilo existente
+   * (abierto o cerrado); si es null, recién entonces abre el formulario que
+   * llama a adminCreateConversation.
+   */
+  adminFindGeneralConversation: studentMessagesManageProcedure
+    .input(z.object({ studentUserId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const conversation = await findGeneralConversationForStudent(input.studentUserId);
+      return { conversationId: conversation?.id ?? null };
+    }),
+
   adminCreateConversation: studentMessagesManageProcedure
     .input(z.object({
       studentUserId: z.number().int().positive(),
@@ -137,7 +152,12 @@ export const studentMessagesRouter = router({
 
       let result;
       try {
-        result = await createConversation({
+        // STU-02 — idempotente de verdad: revalida existencia DENTRO de la
+        // transacción (nunca solo confía en el check previo del frontend).
+        // Si ya existía (p.ej. una petición concurrente ganó la carrera),
+        // nunca se envía un aviso de "mensaje nuevo" por un mensaje que
+        // nunca se creó.
+        result = await createGeneralConversationForStudent({
           studentUserId: input.studentUserId,
           createdByUserId: ctx.user.id,
           subject: input.subject,
@@ -145,7 +165,9 @@ export const studentMessagesRouter = router({
         });
       } catch (e) { mapError(e); }
 
-      await notifyStudentNewMessage(input.studentUserId, result.conversation.id, result.conversation.subject);
+      if (!result.alreadyExisted) {
+        await notifyStudentNewMessage(input.studentUserId, result.conversation.id, result.conversation.subject);
+      }
       return result;
     }),
 

@@ -22,6 +22,7 @@ import {
   countAwaitingAdmin, closeConversation, reopenConversation,
   markReadByStudent, markReadByAdmin, StudentMessagesError,
   assertValidBody, preview, MESSAGE_BODY_MAX_LENGTH,
+  findGeneralConversationForStudent, createGeneralConversationForStudent,
 } from "./studentMessagesDb";
 
 const pool = mysql.createPool({ uri: process.env.DATABASE_URL });
@@ -86,6 +87,80 @@ describe("createConversation — Admin inicia (COM-01, ciclo de vida completo)",
   it("rechaza asunto vacío y cuerpo vacío sin tocar la BD", async () => {
     await expect(createConversation({ studentUserId: studentId, createdByUserId: adminId, subject: "", body: "x" }, db)).rejects.toThrow(StudentMessagesError);
     await expect(createConversation({ studentUserId: studentId, createdByUserId: adminId, subject: "x", body: "" }, db)).rejects.toThrow(StudentMessagesError);
+  });
+});
+
+describe("findGeneralConversationForStudent / createGeneralConversationForStudent — STU-02, idempotencia real", () => {
+  it("findGeneralConversationForStudent: null cuando el Student no tiene ninguna conversación todavía", async () => {
+    const [s] = await db.insert(users).values({ openId: "test-com01-stu02-empty", name: "QA STU02 Empty", role: "user" });
+    const freshStudentId = (s as unknown as { insertId: number }).insertId;
+    const found = await findGeneralConversationForStudent(freshStudentId, db);
+    expect(found).toBeNull();
+  });
+
+  it("createGeneralConversationForStudent: crea de verdad la primera vez (alreadyExisted=false)", async () => {
+    const [s] = await db.insert(users).values({ openId: "test-com01-stu02-first", name: "QA STU02 First", role: "user" });
+    const freshStudentId = (s as unknown as { insertId: number }).insertId;
+
+    const result = await createGeneralConversationForStudent({
+      studentUserId: freshStudentId, createdByUserId: adminId, subject: "[QA STU-02] Primer contacto", body: "Hola",
+    }, db);
+    expect(result.alreadyExisted).toBe(false);
+    expect(result.message).not.toBeNull();
+    expect(result.conversation.contextType).toBeNull();
+
+    const found = await findGeneralConversationForStudent(freshStudentId, db);
+    expect(found?.id).toBe(result.conversation.id);
+  });
+
+  it("REGRESIÓN de idempotencia (spec §5) — pulsar 'Comunicarse' varias veces nunca crea una segunda conversación general", async () => {
+    const [s] = await db.insert(users).values({ openId: "test-com01-stu02-repeat", name: "QA STU02 Repeat", role: "user" });
+    const freshStudentId = (s as unknown as { insertId: number }).insertId;
+
+    const first = await createGeneralConversationForStudent({
+      studentUserId: freshStudentId, createdByUserId: adminId, subject: "[QA STU-02] Intento 1", body: "Primer intento",
+    }, db);
+    expect(first.alreadyExisted).toBe(false);
+
+    // 4 intentos más, simulando 5 clics reales sobre "Comunicarse" — ninguno
+    // debe crear una fila nueva en `conversations`.
+    for (let i = 0; i < 4; i++) {
+      const repeated = await createGeneralConversationForStudent({
+        studentUserId: freshStudentId, createdByUserId: adminId, subject: `[QA STU-02] Intento ${i + 2}`, body: `Intento ${i + 2}`,
+      }, db);
+      expect(repeated.alreadyExisted).toBe(true);
+      expect(repeated.conversation.id).toBe(first.conversation.id);
+      expect(repeated.message).toBeNull();
+    }
+
+    const allConvs = await db.select().from(conversations).where(eq(conversations.studentUserId, freshStudentId));
+    expect(allConvs).toHaveLength(1);
+    // El asunto/primer mensaje reales son los del primer intento — los
+    // intentos repetidos nunca los sobrescriben.
+    expect(allConvs[0].subject).toBe("[QA STU-02] Intento 1");
+  });
+
+  it("una conversación general CERRADA sigue siendo 'la' conversación — nunca se crea una segunda para esquivar el cierre", async () => {
+    const [s] = await db.insert(users).values({ openId: "test-com01-stu02-closed", name: "QA STU02 Closed", role: "user" });
+    const freshStudentId = (s as unknown as { insertId: number }).insertId;
+
+    const created = await createGeneralConversationForStudent({
+      studentUserId: freshStudentId, createdByUserId: adminId, subject: "[QA STU-02] Se cerrará", body: "Hola",
+    }, db);
+    await closeConversation(created.conversation.id, adminId, db);
+
+    const found = await findGeneralConversationForStudent(freshStudentId, db);
+    expect(found?.id).toBe(created.conversation.id);
+    expect(found?.status).toBe("closed");
+
+    const again = await createGeneralConversationForStudent({
+      studentUserId: freshStudentId, createdByUserId: adminId, subject: "[QA STU-02] Intento de esquivar el cierre", body: "x",
+    }, db);
+    expect(again.alreadyExisted).toBe(true);
+    expect(again.conversation.id).toBe(created.conversation.id);
+
+    const allConvs = await db.select().from(conversations).where(eq(conversations.studentUserId, freshStudentId));
+    expect(allConvs).toHaveLength(1);
   });
 });
 
