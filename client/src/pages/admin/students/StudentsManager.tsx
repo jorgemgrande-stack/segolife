@@ -254,8 +254,6 @@ export default function StudentsManager() {
                   <TableHead>Email</TableHead>
                   <TableHead>Universidad</TableHead>
                   <TableHead>Comunidad</TableHead>
-                  <TableHead>Nacionalidad</TableHead>
-                  <TableHead>Programa</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>SegoTokens</TableHead>
                   <SortableHead label="Alta" column="createdAt" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
@@ -280,7 +278,12 @@ export default function StudentsManager() {
                       </Link>
                     </TableCell>
                     <TableCell className="text-muted-foreground">{s.email ?? "—"}</TableCell>
-                    <TableCell>{s.university?.name ?? "—"}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span>{s.university?.name ?? "—"}</span>
+                        {s.degreeProgram && <span className="text-xs text-muted-foreground">{s.degreeProgram}</span>}
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
                         {s.communities.length === 0
@@ -288,8 +291,6 @@ export default function StudentsManager() {
                           : s.communities.map(c => <Badge key={c.id} variant="secondary">{c.name}</Badge>)}
                       </div>
                     </TableCell>
-                    <TableCell>{s.nationality ?? "—"}</TableCell>
-                    <TableCell>{s.degreeProgram ?? "—"}</TableCell>
                     <TableCell>
                       <Badge variant={s.status === "active" ? "default" : "outline"}>
                         {s.status === "active" ? "Activo" : "Inactivo"}
