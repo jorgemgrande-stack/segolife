@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import AdminLayout from "@/components/AdminLayout";
 import { trpc } from "@/lib/trpc";
 import { Badge } from "@/components/ui/badge";
@@ -7,11 +7,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import { Loader2, ArrowLeft, CalendarDays, Ticket, CheckCircle2, Euro, Link2, Unlink } from "lucide-react";
+import { Loader2, ArrowLeft, CalendarDays, Ticket, CheckCircle2, Euro, Link2, Unlink, UserPlus, ExternalLink, Pencil, EyeOff, Trash2, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
+import { EditStudentDialog, HideStudentDialog, DeleteStudentDialog, ComunicarDialog, useCommunicateAction } from "./StudentLifecycleDialogs";
 
 const STATUS_LABEL: Record<string, string> = {
   UNREGISTERED: "No registrado en Segolife",
@@ -133,11 +138,132 @@ function UnclaimDialog({ identityKey, open, onOpenChange }: { identityKey: strin
   );
 }
 
+/**
+ * Convertir en estudiante real (petición del cliente, 2026-08-21): crea la
+ * cuenta real desde cero (esta identidad no tiene ninguna todavía —
+ * distinto de "Vincular", que asocia el historial a una cuenta que YA
+ * existe) y envía el email de bienvenida con el enlace para configurar el
+ * acceso. Solo tiene sentido para status="UNREGISTERED" — con un email ya
+ * coincidente (POSSIBLE_MATCH/AUTO_MATCH_CANDIDATE) la vía correcta sigue
+ * siendo "Vincular a estudiante", nunca una segunda cuenta con el mismo email.
+ */
+function ConvertToStudentDialog({ identityKey, hasEmail, open, onOpenChange }: { identityKey: string; hasEmail: boolean; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const utils = trpc.useUtils();
+  const [, navigate] = useLocation();
+  const [communityId, setCommunityId] = useState<string>("");
+  const [universityId, setUniversityId] = useState<string>("");
+
+  const { data: communities } = trpc.communities.list.useQuery();
+  const { data: universities } = trpc.communities.listUniversities.useQuery();
+
+  const convertMut = trpc.historicalIdentities.convertToStudent.useMutation({
+    onSuccess: (result) => {
+      toast.success(
+        result.welcomeEmailSent
+          ? "Cuenta creada y email de bienvenida enviado."
+          : "Cuenta creada — el email de bienvenida no se pudo enviar, contacta al estudiante desde \"Comunicarse\"."
+      );
+      utils.historicalIdentities.detail.invalidate({ identityKey });
+      utils.historicalIdentities.list.invalidate();
+      onOpenChange(false);
+      navigate(`/admin/students/historical/${encodeURIComponent(identityKey)}`);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle className="flex items-center gap-2"><UserPlus className="w-4 h-4" />Convertir en estudiante real</DialogTitle></DialogHeader>
+        {!hasEmail ? (
+          <p className="text-sm text-destructive">Esta identidad no tiene email — no se puede crear ni notificar una cuenta sin uno.</p>
+        ) : (
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-muted-foreground">
+              Se crea una cuenta real con su nombre, email y teléfono históricos, se vincula todo su historial (igual que "Vincular") y se le envía un email de bienvenida con el enlace para configurar su contraseña de acceso.
+            </p>
+            <div>
+              <Label>Comunidad</Label>
+              <Select value={communityId} onValueChange={setCommunityId}>
+                <SelectTrigger><SelectValue placeholder="Elige una comunidad…" /></SelectTrigger>
+                <SelectContent>
+                  {(communities ?? []).map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Universidad</Label>
+              <Select value={universityId} onValueChange={setUniversityId}>
+                <SelectTrigger><SelectValue placeholder="Elige una universidad…" /></SelectTrigger>
+                <SelectContent>
+                  {(universities ?? []).map(u => <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          {hasEmail && (
+            <Button
+              disabled={!communityId || !universityId || convertMut.isPending}
+              onClick={() => convertMut.mutate({ identityKey, communityId: Number(communityId), universityId: Number(universityId) })}
+            >
+              {convertMut.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UserPlus className="w-4 h-4 mr-2" />}
+              Crear cuenta y enviar bienvenida
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Cuando la identidad ya está LINKED, "los mismos modales que ya pusimos a
+ * estudiantes reales" (Editar/Ocultar/Borrar/Comunicarse —
+ * StudentLifecycleDialogs.tsx, STU-01/STU-02) — MISMOS componentes, nunca
+ * una segunda implementación — disponibles directamente aquí, resolviendo
+ * el studentProfileId real a partir del linkedUserId (esta página solo
+ * conoce el userId de la identidad histórica).
+ */
+function LinkedStudentActions({ userId }: { userId: number }) {
+  const { data } = trpc.historicalIdentities.resolveLinkedStudent.useQuery({ userId });
+  const studentProfileId = data?.studentProfileId ?? null;
+  const [editOpen, setEditOpen] = useState(false);
+  const [hideOpen, setHideOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const { communicate, checking, dialogOpen, setDialogOpen } = useCommunicateAction(userId);
+
+  if (!studentProfileId) return null;
+
+  return (
+    <>
+      <Link href={`/admin/students/${studentProfileId}`}>
+        <Button variant="outline" size="sm"><ExternalLink className="w-4 h-4 mr-1" />Ver ficha completa</Button>
+      </Link>
+      <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}><Pencil className="w-4 h-4 mr-1" />Editar</Button>
+      <Button variant="outline" size="sm" onClick={() => setHideOpen(true)}><EyeOff className="w-4 h-4 mr-1" />Ocultar/Mostrar</Button>
+      <Button variant="outline" size="sm" onClick={communicate} disabled={checking}>
+        {checking ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <MessageCircle className="w-4 h-4 mr-1" />}
+        Comunicarse
+      </Button>
+      <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteOpen(true)}><Trash2 className="w-4 h-4 mr-1" />Borrar</Button>
+
+      <EditStudentDialog studentProfileId={editOpen ? studentProfileId : null} onClose={() => setEditOpen(false)} />
+      <HideStudentDialog studentProfileId={hideOpen ? studentProfileId : null} onClose={() => setHideOpen(false)} />
+      <DeleteStudentDialog studentProfileId={deleteOpen ? studentProfileId : null} onClose={() => setDeleteOpen(false)} />
+      <ComunicarDialog studentUserId={userId} open={dialogOpen} onOpenChange={setDialogOpen} />
+    </>
+  );
+}
+
 export default function HistoricalIdentityDetail() {
   const params = useParams<{ identityKey: string }>();
   const identityKey = decodeURIComponent(params.identityKey ?? "");
   const [claimOpen, setClaimOpen] = useState(false);
   const [unclaimOpen, setUnclaimOpen] = useState(false);
+  const [convertOpen, setConvertOpen] = useState(false);
 
   const { data, isLoading, error } = trpc.historicalIdentities.detail.useQuery({ identityKey }, { enabled: !!identityKey });
 
@@ -162,12 +288,20 @@ export default function HistoricalIdentityDetail() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Badge variant={STATUS_VARIANT[data.status]}>{STATUS_LABEL[data.status]}</Badge>
-            {data.status === "LINKED" ? (
-              <Button variant="outline" size="sm" onClick={() => setUnclaimOpen(true)}><Unlink className="w-4 h-4 mr-1" />Retirar vínculo</Button>
+            {data.status === "LINKED" && data.linkedUserId != null ? (
+              <>
+                <LinkedStudentActions userId={data.linkedUserId} />
+                <Button variant="outline" size="sm" onClick={() => setUnclaimOpen(true)}><Unlink className="w-4 h-4 mr-1" />Retirar vínculo</Button>
+              </>
             ) : data.status !== "CONFLICT" ? (
-              <Button size="sm" onClick={() => setClaimOpen(true)}><Link2 className="w-4 h-4 mr-1" />Vincular a estudiante</Button>
+              <>
+                <Button size="sm" onClick={() => setClaimOpen(true)}><Link2 className="w-4 h-4 mr-1" />Vincular a estudiante</Button>
+                {data.status === "UNREGISTERED" && (
+                  <Button variant="outline" size="sm" onClick={() => setConvertOpen(true)}><UserPlus className="w-4 h-4 mr-1" />Convertir en estudiante real</Button>
+                )}
+              </>
             ) : null}
           </div>
         </div>
@@ -220,6 +354,7 @@ export default function HistoricalIdentityDetail() {
 
         <ClaimDialog identityKey={identityKey} open={claimOpen} onOpenChange={setClaimOpen} />
         <UnclaimDialog identityKey={identityKey} open={unclaimOpen} onOpenChange={setUnclaimOpen} />
+        <ConvertToStudentDialog identityKey={identityKey} hasEmail={!!data.email} open={convertOpen} onOpenChange={setConvertOpen} />
       </div>
     </AdminLayout>
   );
