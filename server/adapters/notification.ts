@@ -31,7 +31,7 @@ export async function notifyOwner(payload: NotificationPayload): Promise<boolean
   try {
     await sendEmail({
       to: notifyEmail,
-      subject: `[Nayade] ${title}`,
+      subject: `[Segolife] ${title}`,
       html: `<h2>${title}</h2><pre style="font-family:sans-serif;white-space:pre-wrap">${content}</pre>`,
       text: content,
     });
