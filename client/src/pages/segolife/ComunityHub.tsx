@@ -485,11 +485,15 @@ function ProponerTab() {
             {myProposals.map(idea => (
               <div key={idea.id} className="rounded-xl border border-border bg-card px-4 py-3">
                 <p className="text-sm font-medium text-foreground">{idea.title}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {ideaStatusLabel(t, idea.status)} · {t("comunity.supportCount", { count: idea.supportCount })}
+                <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+                  {/* Antes solo texto plano — una idea aprobada se veía igual que una en revisión, fácil de leer como "sigue sin resolver". */}
+                  <span className={`rounded-full px-1.5 py-0.5 font-medium ${ideaStatusStyle(idea.status)}`}>
+                    {ideaStatusLabel(t, idea.status)}
+                  </span>
+                  <span>· {t("comunity.supportCount", { count: idea.supportCount })}</span>
                   {/* MG-05 §18 — claridad ante todo: solo la línea de resumen, nunca la lista completa de opciones en la tarjeta compacta. */}
-                  {idea.proposedQuestionType && <> · {t("comunity.votingSummary", { type: questionTypeLabel(t, idea.proposedQuestionType as ComunityQuestionType) })}</>}
-                </p>
+                  {idea.proposedQuestionType && <span>· {t("comunity.votingSummary", { type: questionTypeLabel(t, idea.proposedQuestionType as ComunityQuestionType) })}</span>}
+                </div>
               </div>
             ))}
           </div>
@@ -525,4 +529,22 @@ function TrendingIdeaRow({ idea }: { idea: { id: number; title: string; supportC
 function ideaStatusLabel(t: TFunction, status: string): string {
   const known = ["pending_moderation", "approved", "rejected", "scheduled", "active", "closed", "converted"];
   return known.includes(status) ? t(`comunity.ideaStatus.${status}`) : status;
+}
+
+/** Color por status — antes toda idea (aprobada, rechazada, en revisión...) llevaba el mismo texto gris plano, indistinguible a simple vista. */
+function ideaStatusStyle(status: string): string {
+  switch (status) {
+    case "rejected":
+      return "bg-destructive/10 text-destructive";
+    case "pending_moderation":
+    case "closed":
+      return "bg-secondary text-muted-foreground";
+    case "converted":
+      return "bg-accent/15 text-accent";
+    case "approved":
+    case "scheduled":
+    case "active":
+    default:
+      return "bg-primary/15 text-primary";
+  }
 }
