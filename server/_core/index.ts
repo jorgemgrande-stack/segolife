@@ -14,6 +14,7 @@ import { createAuthGuardMiddleware } from "../authGuard";
 import uploadRouter from "../uploadRoutes";
 import studentPhotoRouter from "../segolife/students/studentPhotoRoutes";
 import lostFoundReportRouter from "../segolife/lostFound/lostFoundReportRoutes";
+import studentMessageImageRouter from "../segolife/messaging/studentMessageImageRoutes";
 import communityProposalImageRouter from "../segolife/community/communityProposalImageRoutes";
 import redsysRouter from "../redsysRoutes";
 import ticketPaymentWebhookRouter from "../ticketPaymentWebhookRoutes";
@@ -377,6 +378,8 @@ async function startServer() {
   app.use("/api/trpc/studentMessages.reply", studentMessagesReplyRateLimit);
   app.use("/api/trpc/studentMessages.adminCreateConversation", studentMessagesAdminSendRateLimit);
   app.use("/api/trpc/studentMessages.adminReply", studentMessagesAdminSendRateLimit);
+  // Imagen adjunta en el chat (REST, mismo límite que el envío admin de siempre).
+  app.use("/api/student-messages", studentMessagesAdminSendRateLimit);
 
   // Middleware de protección: bloquea rutas /api/trpc de procedimientos protegidos
   // si no hay sesión válida. Funciona en ambos modos (local y Manus OAuth).
@@ -399,6 +402,7 @@ async function startServer() {
   // SEGOLIFE MG-03 — Student Profile Photo (subida propia + servido autenticado)
   app.use(studentPhotoRouter);
   app.use(lostFoundReportRouter);
+  app.use(studentMessageImageRouter);
   // SEGOLIFE MG-04 — Community Proposals 2.0: imagen de portada pública de una idea de Student
   app.use(communityProposalImageRouter);
 

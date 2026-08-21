@@ -57,6 +57,19 @@ export function assertValidBody(body: string): string {
   return trimmed;
 }
 
+/**
+ * Igual que assertValidBody, pero un mensaje con imagen adjunta puede ir
+ * sin texto (la imagen ES el contenido) — usado solo por el envío Admin con
+ * imagen; `replyAsStudent`/`replyAsAdmin` sin imagen siguen exigiendo texto
+ * real, sin cambio de comportamiento para ningún llamador existente.
+ */
+export function assertValidBodyOrImage(body: string, hasImage: boolean): string {
+  const trimmed = body.trim();
+  if (!trimmed && !hasImage) throw new StudentMessagesError("VALIDATION", "El mensaje no puede estar vacío");
+  if (trimmed.length > MESSAGE_BODY_MAX_LENGTH) throw new StudentMessagesError("VALIDATION", `El mensaje supera el máximo de ${MESSAGE_BODY_MAX_LENGTH} caracteres`);
+  return trimmed;
+}
+
 export interface CreateConversationInput {
   studentUserId: number;
   createdByUserId: number;
@@ -197,6 +210,17 @@ export async function createGeneralConversationForStudent(
   return createConversationForStudentContext(input, null, null, db);
 }
 
+/** Imagen adjunta (spec chat Admin→Student) — resuelve la conversación real de un mensaje, para autorizar la descarga de su imagen sin traer el resto del histórico. */
+export async function getMessageConversationId(messageId: number, db?: DbHandle): Promise<{ conversationId: number; studentUserId: number; imageStorageKey: string | null } | null> {
+  const conn = db ?? (await getDb());
+  const [message] = await conn.select({ conversationId: conversationMessages.conversationId, imageStorageKey: conversationMessages.imageStorageKey })
+    .from(conversationMessages).where(eq(conversationMessages.id, messageId)).limit(1);
+  if (!message) return null;
+  const [conversation] = await conn.select({ studentUserId: conversations.studentUserId }).from(conversations).where(eq(conversations.id, message.conversationId)).limit(1);
+  if (!conversation) return null;
+  return { conversationId: message.conversationId, studentUserId: conversation.studentUserId, imageStorageKey: message.imageStorageKey };
+}
+
 async function fetchOwnedConversation(conversationId: number, studentUserId: number, conn: AnyDbHandle): Promise<Conversation> {
   const [conversation] = await conn.select().from(conversations).where(eq(conversations.id, conversationId)).limit(1);
   if (!conversation || conversation.studentUserId !== studentUserId) {
@@ -242,9 +266,9 @@ export async function replyAsStudent(input: { conversationId: number; studentUse
   });
 }
 
-export async function replyAsAdmin(input: { conversationId: number; adminUserId: number; body: string; visibility?: "public" | "internal" }, db?: DbHandle): Promise<{ conversation: Conversation; message: ConversationMessage }> {
+export async function replyAsAdmin(input: { conversationId: number; adminUserId: number; body: string; visibility?: "public" | "internal"; imageStorageKey?: string | null }, db?: DbHandle): Promise<{ conversation: Conversation; message: ConversationMessage }> {
   const conn = db ?? (await getDb());
-  const body = assertValidBody(input.body);
+  const body = assertValidBodyOrImage(input.body, !!input.imageStorageKey);
   const visibility = input.visibility ?? "public";
 
   return conn.transaction(async (tx) => {
@@ -258,6 +282,7 @@ export async function replyAsAdmin(input: { conversationId: number; adminUserId:
       senderRole: "admin",
       visibility,
       body,
+      imageStorageKey: input.imageStorageKey ?? null,
     });
     const messageId = (msgResult as unknown as { insertId: number }).insertId;
 
@@ -269,7 +294,7 @@ export async function replyAsAdmin(input: { conversationId: number; adminUserId:
     await tx.update(conversations).set({
       waitingFor: visibility === "public" ? "student" : "admin",
       lastMessageAt: now,
-      lastMessagePreview: preview(body),
+      lastMessagePreview: body ? preview(body) : "📷 Imagen",
       adminLastReadAt: now,
     }).where(eq(conversations.id, conversation.id));
 

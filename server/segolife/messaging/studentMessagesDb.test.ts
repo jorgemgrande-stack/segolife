@@ -21,8 +21,9 @@ import {
   listConversationsForStudent, listConversationsForAdmin,
   countAwaitingAdmin, closeConversation, reopenConversation,
   markReadByStudent, markReadByAdmin, StudentMessagesError,
-  assertValidBody, preview, MESSAGE_BODY_MAX_LENGTH,
+  assertValidBody, assertValidBodyOrImage, preview, MESSAGE_BODY_MAX_LENGTH,
   findGeneralConversationForStudent, createGeneralConversationForStudent,
+  getMessageConversationId,
 } from "./studentMessagesDb";
 
 const pool = mysql.createPool({ uri: process.env.DATABASE_URL });
@@ -69,6 +70,15 @@ describe("preview / assertValidBody — funciones puras", () => {
     expect(() => assertValidBody("   ")).toThrow(StudentMessagesError);
     expect(() => assertValidBody("a".repeat(MESSAGE_BODY_MAX_LENGTH + 1))).toThrow(StudentMessagesError);
     expect(assertValidBody("  hola  ")).toBe("hola");
+  });
+
+  it("assertValidBodyOrImage: vacío con imagen SÍ se acepta (la imagen ES el contenido); vacío sin imagen se rechaza igual que assertValidBody", () => {
+    expect(assertValidBodyOrImage("", true)).toBe("");
+    expect(assertValidBodyOrImage("   ", true)).toBe("");
+    expect(() => assertValidBodyOrImage("", false)).toThrow(StudentMessagesError);
+    expect(() => assertValidBodyOrImage("   ", false)).toThrow(StudentMessagesError);
+    expect(() => assertValidBodyOrImage("a".repeat(MESSAGE_BODY_MAX_LENGTH + 1), true)).toThrow(StudentMessagesError);
+    expect(assertValidBodyOrImage("  hola  ", true)).toBe("hola");
   });
 });
 
@@ -194,6 +204,38 @@ describe("replyAsStudent / replyAsAdmin — waitingFor, IDOR, cerrada", () => {
     const { conversation: created } = await createConversation({ studentUserId: studentId, createdByUserId: adminId, subject: "[QA COM-01] nota interna", body: "hola" }, db);
     const { conversation } = await replyAsAdmin({ conversationId: created.id, adminUserId: adminId, body: "nota solo staff", visibility: "internal" }, db);
     expect(conversation.waitingFor).toBe("admin");
+  });
+});
+
+describe("replyAsAdmin — imagen adjunta (chat con imagen)", () => {
+  it("con imageStorageKey y body vacío: crea el mensaje solo-imagen, preview cae a '📷 Imagen'", async () => {
+    const { conversation: created } = await createConversation({ studentUserId: studentId, createdByUserId: adminId, subject: "[QA COM-01] imagen", body: "hola" }, db);
+    const { conversation, message } = await replyAsAdmin({ conversationId: created.id, adminUserId: adminId, body: "", imageStorageKey: "chat/999/fake-uuid.jpg" }, db);
+    expect(message.imageStorageKey).toBe("chat/999/fake-uuid.jpg");
+    expect(message.body).toBe("");
+    expect(conversation.lastMessagePreview).toBe("📷 Imagen");
+  });
+
+  it("con imageStorageKey Y texto: guarda ambos, preview usa el texto real", async () => {
+    const { conversation: created } = await createConversation({ studentUserId: studentId, createdByUserId: adminId, subject: "[QA COM-01] imagen+texto", body: "hola" }, db);
+    const { conversation, message } = await replyAsAdmin({ conversationId: created.id, adminUserId: adminId, body: "mira esta captura", imageStorageKey: "chat/999/otra-uuid.jpg" }, db);
+    expect(message.imageStorageKey).toBe("chat/999/otra-uuid.jpg");
+    expect(message.body).toBe("mira esta captura");
+    expect(conversation.lastMessagePreview).toBe("mira esta captura");
+  });
+
+  it("sin imagen ni texto: sigue rechazado igual que antes (nunca un mensaje totalmente vacío)", async () => {
+    const { conversation: created } = await createConversation({ studentUserId: studentId, createdByUserId: adminId, subject: "[QA COM-01] vacío", body: "hola" }, db);
+    await expect(replyAsAdmin({ conversationId: created.id, adminUserId: adminId, body: "" }, db)).rejects.toThrow(StudentMessagesError);
+    await expect(replyAsAdmin({ conversationId: created.id, adminUserId: adminId, body: "  ", imageStorageKey: null }, db)).rejects.toThrow(StudentMessagesError);
+  });
+
+  it("getMessageConversationId: resuelve conversationId/studentUserId/imageStorageKey reales; null si el mensaje no existe", async () => {
+    const { conversation: created } = await createConversation({ studentUserId: studentId, createdByUserId: adminId, subject: "[QA COM-01] lookup", body: "hola" }, db);
+    const { message } = await replyAsAdmin({ conversationId: created.id, adminUserId: adminId, body: "", imageStorageKey: "chat/999/lookup-uuid.jpg" }, db);
+    const info = await getMessageConversationId(message.id, db);
+    expect(info).toMatchObject({ conversationId: created.id, studentUserId: studentId, imageStorageKey: "chat/999/lookup-uuid.jpg" });
+    expect(await getMessageConversationId(999999999, db)).toBeNull();
   });
 });
 

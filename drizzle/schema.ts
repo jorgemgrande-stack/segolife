@@ -6221,6 +6221,10 @@ export const conversationMessages = mysqlTable("conversation_messages", {
   senderRole:      mysqlEnum("sender_role", ["student", "admin"]).notNull(),
   visibility:      mysqlEnum("visibility", ["public", "internal"]).notNull().default("public"),
   body:            text("body").notNull(),
+  // Imagen adjunta opcional (Admin→Student, chat COM-01) — `body` sigue
+  // NOT NULL (se guarda "" cuando el mensaje es solo-imagen) en vez de
+  // volverse nullable, para no tocar ningún lector existente de `body`.
+  imageStorageKey: varchar("image_storage_key", { length: 512 }),
   createdAt:       timestamp("created_at", { fsp: 3 }).defaultNow().notNull(),
 }, (table) => ({
   conversationIdx: index("conversation_messages_conversation_id_idx").on(table.conversationId),
