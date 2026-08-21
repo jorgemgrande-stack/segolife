@@ -12,8 +12,10 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Search, History, Loader2, ArrowUp, ArrowDown } from "lucide-react";
+import { Search, History, Loader2, ArrowUp, ArrowDown, Link2, UserPlus, Pencil, EyeOff, Trash2, MessageCircle } from "lucide-react";
 import { useUrlParam } from "@/hooks/useUrlParam";
+import { EditStudentDialog, HideStudentDialog, DeleteStudentDialog, ComunicarDialog, useCommunicateAction } from "./StudentLifecycleDialogs";
+import { ClaimDialog, ConvertToStudentDialog } from "./HistoricalIdentityDialogs";
 
 const ALL = "__all__";
 const PAGE_SIZE = 25;
@@ -70,6 +72,107 @@ function SortableHead({ label, column, sortBy, sortDir, onSort }: { label: strin
 }
 
 const VALID_STATUS = new Set(["UNREGISTERED", "POSSIBLE_MATCH", "AUTO_MATCH_CANDIDATE", "LINKED", "CONFLICT"]);
+
+/** Icon-only, mismo estilo que StudentsManager.tsx (CommunicateRowButton + Editar/Ocultar/Borrar) — para un estudiante YA vinculado, resolviendo el studentProfileId real a partir del linkedUserId. */
+function LinkedRowActions({ userId, name }: { userId: number; name: string | null }) {
+  const { data } = trpc.historicalIdentities.resolveLinkedStudent.useQuery({ userId });
+  const studentProfileId = data?.studentProfileId ?? null;
+  const [editOpen, setEditOpen] = useState(false);
+  const [hideOpen, setHideOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const { communicate, checking, dialogOpen, setDialogOpen } = useCommunicateAction(userId);
+
+  if (!studentProfileId) return null;
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        onClick={ev => { ev.preventDefault(); ev.stopPropagation(); communicate(); }}
+        disabled={checking}
+        className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground disabled:opacity-50"
+        title="Comunicarse"
+        aria-label={`Comunicarse con ${name ?? "estudiante"}`}
+      >
+        {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageCircle className="w-4 h-4" />}
+      </button>
+      <button
+        onClick={ev => { ev.preventDefault(); ev.stopPropagation(); setEditOpen(true); }}
+        className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+        title="Editar estudiante"
+        aria-label={`Editar ${name ?? "estudiante"}`}
+      >
+        <Pencil className="w-4 h-4" />
+      </button>
+      <button
+        onClick={ev => { ev.preventDefault(); ev.stopPropagation(); setHideOpen(true); }}
+        className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+        title="Ocultar/Mostrar estudiante"
+        aria-label={`Ocultar/Mostrar ${name ?? "estudiante"}`}
+      >
+        <EyeOff className="w-4 h-4" />
+      </button>
+      <button
+        onClick={ev => { ev.preventDefault(); ev.stopPropagation(); setDeleteOpen(true); }}
+        className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+        title="Eliminar estudiante"
+        aria-label={`Eliminar ${name ?? "estudiante"}`}
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+
+      <ComunicarDialog studentUserId={userId} open={dialogOpen} onOpenChange={setDialogOpen} />
+      <EditStudentDialog studentProfileId={editOpen ? studentProfileId : null} onClose={() => setEditOpen(false)} />
+      <HideStudentDialog studentProfileId={hideOpen ? studentProfileId : null} onClose={() => setHideOpen(false)} />
+      <DeleteStudentDialog studentProfileId={deleteOpen ? studentProfileId : null} onClose={() => setDeleteOpen(false)} />
+    </div>
+  );
+}
+
+/**
+ * Columna "Acciones" del listado (petición del cliente, 2026-08-21): mismo
+ * criterio icon-only que /admin/students — qué icono se ofrece depende del
+ * status real de la fila (nunca los 4 iconos de Student real para una
+ * identidad que todavía no tiene cuenta, spec ya establecida en
+ * HistoricalIdentityDetail.tsx). CONFLICT no ofrece ninguna acción rápida
+ * aquí — requiere revisión manual en la ficha.
+ */
+function HistoricalRowActions({ item }: { item: { identityKey: string; name: string | null; email: string | null; status: string; linkedUserId: number | null } }) {
+  const [claimOpen, setClaimOpen] = useState(false);
+  const [convertOpen, setConvertOpen] = useState(false);
+
+  if (item.status === "LINKED" && item.linkedUserId != null) {
+    return <LinkedRowActions userId={item.linkedUserId} name={item.name} />;
+  }
+
+  if (item.status === "CONFLICT") return null;
+
+  return (
+    <div className="flex items-center gap-1">
+      {item.status === "UNREGISTERED" ? (
+        <button
+          onClick={ev => { ev.preventDefault(); ev.stopPropagation(); setConvertOpen(true); }}
+          className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+          title="Convertir en estudiante real"
+          aria-label={`Convertir en estudiante real a ${item.name ?? "identidad histórica"}`}
+        >
+          <UserPlus className="w-4 h-4" />
+        </button>
+      ) : (
+        <button
+          onClick={ev => { ev.preventDefault(); ev.stopPropagation(); setClaimOpen(true); }}
+          className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+          title="Vincular a estudiante"
+          aria-label={`Vincular a estudiante a ${item.name ?? "identidad histórica"}`}
+        >
+          <Link2 className="w-4 h-4" />
+        </button>
+      )}
+
+      <ClaimDialog identityKey={item.identityKey} open={claimOpen} onOpenChange={setClaimOpen} />
+      <ConvertToStudentDialog identityKey={item.identityKey} hasEmail={!!item.email} open={convertOpen} onOpenChange={setConvertOpen} />
+    </div>
+  );
+}
 
 export default function HistoricalIdentities() {
   const [searchInput, setSearchInput] = useState("");
@@ -184,6 +287,7 @@ export default function HistoricalIdentities() {
                   <TableHead className="text-right">Asistencias</TableHead>
                   <SortableHead label="Gasto histórico" column="historicalSpendCents" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                   <SortableHead label="Última actividad" column="lastActivity" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                  <TableHead>Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -213,6 +317,7 @@ export default function HistoricalIdentities() {
                     <TableCell className="text-right">{item.attendanceCount}</TableCell>
                     <TableCell className="text-right">{fmtSpend(item.historicalSpendCents)}</TableCell>
                     <TableCell className="text-right text-muted-foreground">{fmtDate(item.lastActivity)}</TableCell>
+                    <TableCell><HistoricalRowActions item={item} /></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
