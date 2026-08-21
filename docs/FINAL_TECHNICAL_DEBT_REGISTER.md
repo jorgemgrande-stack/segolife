@@ -612,9 +612,22 @@ de bienvenida sin usar), idempotencia, revalidación de concurrencia,
 edición con conflicto de email, audit log selectivo, y los 2 tests del
 hallazgo del welcome Benefit; `students.test.ts` ampliado — 16 tests
 nuevos de RBAC/IDOR/mapeo de errores) + 1 spec E2E real de producción
-nuevo (`stu01-student-admin-controls.spec.ts`: registra una cuenta QA
-vacía real, la edita, la borra de verdad y confirma que desaparece;
-confirma que Borrar sobre la cuenta QA con histórico de COM-01 se
-bloquea sin ofrecer una confirmación falsa; ejercita Ocultar/Mostrar
-sobre esa misma cuenta y la revierte a su estado original). TypeScript
-0. Build PASS. Desplegado y verificado (SHA `939da72`).
+nuevo (`stu01-student-admin-controls.spec.ts`, verificado en producción
+real contra las cuentas QA: registra una cuenta QA vacía real, la
+edita, la borra de verdad y confirma que desaparece; confirma que
+Borrar sobre la cuenta QA con histórico de COM-01 se bloquea sin
+ofrecer una confirmación falsa; ejercita Ocultar/Mostrar sobre esa
+misma cuenta y la revierte a su estado original — las 5 pruebas pasan
+juntas en una sola ejecución, sin reintentos). TypeScript 0. Build
+PASS. Desplegado y verificado (SHA `ce9b1bd`).
+
+**Nota de disciplina QA real, no solo teórica**: verificar contra
+producción real detectó (y corrigió, nunca oculta) 2 bugs reales del
+propio spec, no de la app — accessible name del botón Ocultar/Mostrar
+incluye el nombre real del estudiante, nunca la palabra "estudiante", y
+el filtro de estado por defecto (ahora "Activo") oculta la fila justo
+después de ocultar al estudiante, así que revertir necesita
+"Cualquier estado" — ambos dejaron la cuenta QA `qa.pre1617.ie@` en
+"inactive" durante la depuración; revertida cada vez vía la propia
+mutación auditada de la app (nunca un UPDATE silencioso), y confirmada
+"active" al cierre.
