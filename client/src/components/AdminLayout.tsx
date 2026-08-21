@@ -73,6 +73,7 @@ const navItems = [
     roles: ["admin"],
     children: [
       { label: "Listado", href: "/admin/students" },
+      { label: "Mensajes", href: "/admin/students/messages" },
       { label: "Estudiantes históricos", href: "/admin/students/historical" },
       { label: "Referrals", href: "/admin/students/referrals" },
     ],
@@ -506,6 +507,17 @@ function AdminLayoutInner({ children, title }: AdminLayoutProps) {
   });
 
   const totalAlerts = feed?.totalAlerts ?? 0;
+
+  // COM-01 — conteo de conversaciones esperando respuesta de Admin. Aparte
+  // del feed unificado de arriba (leads/quotes/CRM heredado) a propósito —
+  // mezclar conceptos de negocio no relacionados en un mismo agregador
+  // degrada la claridad de ambos (spec §12: "no mezclar conceptualmente
+  // campañas con conversaciones 1:1").
+  const { data: pendingStudentMessages } = trpc.studentMessages.adminPendingCount.useQuery(undefined, {
+    enabled: isAuthenticated && userRole === "admin",
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+  });
   // Para mantener compat con badges del menú lateral (sidebar) que usan
   // estas dos variables para mostrar el punto rojo en CRM.
   const newLeads = feed?.sections.find(s => s.kind === "lead")?.total ?? 0;
@@ -685,12 +697,18 @@ function AdminLayoutInner({ children, title }: AdminLayoutProps) {
                         {item.children.filter(child => isFlagVisible((child as any).flagKey)).map((child) => (
                           <Link key={(child as any).key ?? child.href} href={child.href}>
                             <div className={cn(
-                              "block px-3 py-2 rounded-lg text-xs font-medium transition-all",
+                              "flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all",
                               isChildActive(child.href)
                                 ? "bg-sidebar-accent text-amber-400"
                                 : "text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground"
                             )}>
-                              {child.label}
+                              <span>{child.label}</span>
+                              {/* COM-01 — conversaciones esperando respuesta de Admin */}
+                              {child.href === "/admin/students/messages" && !!pendingStudentMessages && pendingStudentMessages > 0 && (
+                                <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] rounded-full bg-red-500 text-white text-[9px] font-bold px-1">
+                                  {pendingStudentMessages > 99 ? "99+" : pendingStudentMessages}
+                                </span>
+                              )}
                             </div>
                           </Link>
                         ))}
