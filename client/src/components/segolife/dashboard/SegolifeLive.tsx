@@ -29,7 +29,7 @@ export function SegolifeLive({ filters }: { filters: DashboardQueryInput }) {
         <DashboardEmptyState kind="zero-real" title="Sin actividad registrada en este rango" detail="No hay compras, asistencias, consumos ni interacciones de Comunity todavía." />
       )}
       {data && data.length > 0 && (
-        <div className="space-y-1 max-h-[420px] overflow-y-auto">
+        <div className="space-y-1">
           {data.map((item, i) => (
             <div key={i} className="flex items-center justify-between gap-2 py-1.5 border-b border-border/20 last:border-0 text-xs">
               <div className="flex items-center gap-2 min-w-0">
