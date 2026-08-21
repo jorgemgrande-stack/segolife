@@ -14,10 +14,11 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Search, GraduationCap, Loader2, ArrowUp, ArrowDown, Coins, X } from "lucide-react";
+import { Search, GraduationCap, Loader2, ArrowUp, ArrowDown, Coins, X, Pencil, Eye, EyeOff, Trash2 } from "lucide-react";
 import { useAdminCommunity } from "@/contexts/AdminCommunityContext";
 import { ADMIN_COMMUNITY_FILTER_ALL } from "@shared/segolife/adminCommunityFilter";
 import { useUrlParam } from "@/hooks/useUrlParam";
+import { EditStudentDialog, HideStudentDialog, DeleteStudentDialog } from "./StudentLifecycleDialogs";
 
 const SEGMENT_LABEL: Record<string, string> = {
   new: "Nuevos", active: "Activos", highly_engaged: "Muy comprometidos",
@@ -78,11 +79,19 @@ export default function StudentsManager() {
   const search = useDebouncedValue(searchInput, 300);
   const [universityId, setUniversityId] = useState<string>(ALL);
   const [nationality, setNationality] = useState("");
-  const [status, setStatus] = useState<string>(ALL);
+  // STU-01 — por defecto solo Activos (antes ALL): un estudiante Oculto
+  // (status=inactive) debe dejar de aparecer en el listado normal salvo que
+  // el Admin pida explícitamente "Inactivo" o "Cualquier estado" — nunca un
+  // usuario perdido sin forma de encontrarlo, el filtro sigue disponible.
+  const [status, setStatus] = useState<string>("active");
   const [profileCompleted, setProfileCompleted] = useState<string>(ALL);
   const [page, setPage] = useState(0);
   const [sortBy, setSortBy] = useState<SortBy>("createdAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const [editTarget, setEditTarget] = useState<number | null>(null);
+  const [hideTarget, setHideTarget] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
 
   // Cualquier cambio de filtro/orden vuelve a la primera página — evita
   // quedarse en un offset que ya no tiene sentido con el nuevo filtro.
@@ -231,6 +240,7 @@ export default function StudentsManager() {
                   <TableHead>Estado</TableHead>
                   <TableHead>SegoTokens</TableHead>
                   <SortableHead label="Alta" column="createdAt" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                  <TableHead>Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -272,6 +282,34 @@ export default function StudentsManager() {
                       </span>
                     </TableCell>
                     <TableCell className="text-muted-foreground">{fmtDate(s.createdAt)}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={ev => { ev.preventDefault(); ev.stopPropagation(); setEditTarget(s.studentProfileId); }}
+                          className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+                          title="Editar estudiante"
+                          aria-label={`Editar ${s.name ?? s.email ?? "estudiante"}`}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={ev => { ev.preventDefault(); ev.stopPropagation(); setHideTarget(s.studentProfileId); }}
+                          className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+                          title={s.status === "active" ? "Ocultar estudiante" : "Mostrar estudiante"}
+                          aria-label={s.status === "active" ? `Ocultar ${s.name ?? "estudiante"}` : `Mostrar ${s.name ?? "estudiante"}`}
+                        >
+                          {s.status === "active" ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                        </button>
+                        <button
+                          onClick={ev => { ev.preventDefault(); ev.stopPropagation(); setDeleteTarget(s.studentProfileId); }}
+                          className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                          title="Eliminar estudiante"
+                          aria-label={`Eliminar ${s.name ?? "estudiante"}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -292,6 +330,10 @@ export default function StudentsManager() {
           </div>
         )}
       </div>
+
+      <EditStudentDialog studentProfileId={editTarget} onClose={() => setEditTarget(null)} />
+      <HideStudentDialog studentProfileId={hideTarget} onClose={() => setHideTarget(null)} />
+      <DeleteStudentDialog studentProfileId={deleteTarget} onClose={() => setDeleteTarget(null)} />
     </AdminLayout>
   );
 }

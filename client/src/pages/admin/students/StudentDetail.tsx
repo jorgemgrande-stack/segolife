@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import type { TimelineEventDTO, TimelineEventType, TimelineCursor } from "@shared/segolife/student360";
 import type { StudentDetail as StudentDetailData } from "../../../../../server/db/studentsDb";
+import { EditStudentDialog, DeleteStudentDialog } from "./StudentLifecycleDialogs";
 
 // ─── Helpers de presentación ────────────────────────────────────────────────
 
@@ -1024,6 +1025,8 @@ export default function StudentDetail() {
   const [, navigate] = useLocation();
   const studentProfileId = Number(params.id);
   const [tab, setTab] = useState("resumen");
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const { data: student, isLoading, error } = trpc.students.getById.useQuery({ id: studentProfileId });
   const { data: allTags } = trpc.students.listTags.useQuery();
@@ -1074,8 +1077,21 @@ export default function StudentDetail() {
               Alta: {fmtDate(student.profile.createdAt)} · Último acceso: {student.user.lastSignedIn ? fmtDateTime(student.user.lastSignedIn) : "—"}
             </p>
           </div>
-          <StatusChangeControl studentProfileId={studentProfileId} currentStatus={student.profile.status} />
+          <div className="flex items-start gap-3">
+            <div className="flex gap-1">
+              <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}><Pencil className="w-4 h-4 mr-1.5" />Editar</Button>
+              <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteOpen(true)}><Trash2 className="w-4 h-4 mr-1.5" />Borrar</Button>
+            </div>
+            <StatusChangeControl studentProfileId={studentProfileId} currentStatus={student.profile.status} />
+          </div>
         </div>
+
+        <EditStudentDialog studentProfileId={editOpen ? studentProfileId : null} onClose={() => setEditOpen(false)} />
+        <DeleteStudentDialog
+          studentProfileId={deleteOpen ? studentProfileId : null}
+          onClose={() => setDeleteOpen(false)}
+          onSuccess={() => navigate("/admin/students")}
+        />
 
         <Tabs value={tab} onValueChange={setTab}>
           <div className="overflow-x-auto -mx-1 px-1">
