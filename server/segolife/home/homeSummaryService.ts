@@ -18,7 +18,7 @@
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { eq, and, gte, desc } from "drizzle-orm";
-import { tokenRules, tokenLedger, type TokenRule } from "../../../drizzle/schema";
+import { tokenRules, tokenLedger, conversations, type TokenRule } from "../../../drizzle/schema";
 import { getWalletByUserId, type AnyDbHandle } from "../tokens/tokenLedgerService";
 import { countRecentEarnEvents, countDistinctVenuesVisited } from "../tokens/tokenLedgerService";
 import { calculateBaseTokens, findApplicableCampaign } from "../tokens/tokenRuleEngine";
@@ -91,7 +91,7 @@ export interface HomeTicket {
   event: HomeTicketEvent | null;
 }
 
-export type HomeActivityType = "earned" | "spent" | "benefitUnlocked" | "benefitUsed";
+export type HomeActivityType = "earned" | "spent" | "benefitUnlocked" | "benefitUsed" | "message";
 
 export interface HomeActivityEntry {
   id: string;
@@ -258,10 +258,23 @@ export function pickTicketToday(tickets: MyTicketWithEvent[], at: Date): HomeTic
  * para la Home.
  */
 async function computeRecentActivity(userId: number, userBenefits: UserBenefitListItemWithDefinition[], conn: AnyDbHandle, limit = 3): Promise<HomeActivityEntry[]> {
-  const ledgerRows = await conn.select().from(tokenLedger)
-    .where(eq(tokenLedger.userId, userId))
-    .orderBy(desc(tokenLedger.createdAt))
-    .limit(limit + 5);
+  const [ledgerRows, conversationRows] = await Promise.all([
+    conn.select().from(tokenLedger)
+      .where(eq(tokenLedger.userId, userId))
+      .orderBy(desc(tokenLedger.createdAt))
+      .limit(limit + 5),
+    // COM-01 — actividad de mensajería (spec: "el intercambio con un Admin
+    // debería reflejarse en Recent Activity", hallazgo real reportado con
+    // captura). Una entrada por CONVERSACIÓN (su lastMessageAt real), nunca
+    // por mensaje individual — evita N+1 y sigue el mismo criterio "sin
+    // mega-endpoint" ya documentado arriba; el asunto de la conversación ya
+    // identifica de qué trata sin necesitar el cuerpo del mensaje aquí.
+    conn.select({ id: conversations.id, subject: conversations.subject, lastMessageAt: conversations.lastMessageAt })
+      .from(conversations)
+      .where(eq(conversations.studentUserId, userId))
+      .orderBy(desc(conversations.lastMessageAt))
+      .limit(limit),
+  ]);
 
   const entries: HomeActivityEntry[] = ledgerRows.map((r: typeof tokenLedger.$inferSelect) => ({
     id: `ledger-${r.id}`,
@@ -274,6 +287,10 @@ async function computeRecentActivity(userId: number, userBenefits: UserBenefitLi
   for (const b of userBenefits.slice(0, limit)) {
     entries.push({ id: `benefit-granted-${b.id}`, type: "benefitUnlocked", label: b.definition.name, at: b.grantedAt });
     if (b.usedAt) entries.push({ id: `benefit-used-${b.id}`, type: "benefitUsed", label: b.definition.name, at: b.usedAt });
+  }
+
+  for (const c of conversationRows) {
+    if (c.lastMessageAt) entries.push({ id: `message-${c.id}`, type: "message", label: c.subject, at: c.lastMessageAt });
   }
 
   return entries.sort((a, b) => b.at.getTime() - a.at.getTime()).slice(0, limit);

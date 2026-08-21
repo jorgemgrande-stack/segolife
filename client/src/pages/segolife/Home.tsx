@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
-import { Coins, Gift, ChevronRight, Flame, Sparkles, PartyPopper, Vote, Ticket, Compass, UserRound, Clock3, CheckCircle2, Loader2, CalendarDays } from "lucide-react";
+import { Coins, Gift, ChevronRight, Flame, Sparkles, PartyPopper, Vote, Ticket, Compass, UserRound, Clock3, CheckCircle2, Loader2, CalendarDays, MessageCircle } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { formatCardRewardBadge } from "@/lib/rewardPreview";
 import { useCommunity } from "@/contexts/CommunityContext";
@@ -64,6 +64,7 @@ const ACTIVITY_ICON: Record<string, typeof Coins> = {
   spent: Coins,
   benefitUnlocked: Gift,
   benefitUsed: CheckCircle2,
+  message: MessageCircle,
 };
 
 const ACTIVITY_KICKER_KEY: Record<string, string> = {
@@ -71,6 +72,7 @@ const ACTIVITY_KICKER_KEY: Record<string, string> = {
   spent: "activity.typeSpent",
   benefitUnlocked: "activity.typeBenefitUnlocked",
   benefitUsed: "activity.typeBenefitUsed",
+  message: "activity.typeMessage",
 };
 
 /**

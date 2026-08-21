@@ -609,7 +609,7 @@
   "activity": {
     "title": "Activity",
     "empty": "No activity yet",
-    "emptyDescription": "Your SegoTokens and benefits history will show up here.",
+    "emptyDescription": "Your SegoTokens, benefits and messages history will show up here.",
     "typeEarned": "SegoTokens earned",
     "typeSpent": "SegoTokens spent",
     "typeClawback": "SegoTokens reversed (refund)",
@@ -618,7 +618,8 @@
     "photoUpdated": "Profile photo updated",
     "photoRemoved": "Profile photo removed",
     "typeBenefitUnlocked": "Benefit unlocked",
-    "typeBenefitUsed": "Benefit used"
+    "typeBenefitUsed": "Benefit used",
+    "typeMessage": "Message"
   },
   "rewardPreview": {
     "cardBadgeUpTo": "Up to +{{amount}} ST",

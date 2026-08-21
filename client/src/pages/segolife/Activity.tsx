@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, Coins, Gift, CheckCircle2, Camera } from "lucide-react";
+import { ChevronLeft, Coins, Gift, CheckCircle2, Camera, MessageCircle } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
@@ -10,7 +10,7 @@ import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
 import { SegolifeRowSkeleton } from "@/components/segolife/SegolifeSkeletons";
 import { Button } from "@/components/ui/button";
 
-type ActivityEntryType = "earned" | "spent" | "clawback" | "benefitUnlocked" | "benefitUsed" | "photoAdded" | "photoUpdated" | "photoRemoved";
+type ActivityEntryType = "earned" | "spent" | "clawback" | "benefitUnlocked" | "benefitUsed" | "photoAdded" | "photoUpdated" | "photoRemoved" | "message";
 
 interface ActivityEntry {
   id: string;
@@ -35,6 +35,7 @@ const KICKER_KEY: Record<ActivityEntryType, string> = {
   photoAdded: "activity.typePhoto",
   photoUpdated: "activity.typePhoto",
   photoRemoved: "activity.typePhoto",
+  message: "activity.typeMessage",
 };
 
 const PHOTO_LABEL_KEY: Record<"photoAdded" | "photoUpdated" | "photoRemoved", string> = {
@@ -58,22 +59,25 @@ const ICON_STYLES: Record<ActivityEntryType, string> = {
   photoAdded: "bg-secondary text-muted-foreground",
   photoUpdated: "bg-secondary text-muted-foreground",
   photoRemoved: "bg-secondary text-muted-foreground",
+  message: "bg-secondary text-muted-foreground",
 };
 
 function ActivityIcon({ type }: { type: ActivityEntryType }) {
   if (type === "benefitUnlocked") return <Gift className="size-5" aria-hidden="true" />;
   if (type === "benefitUsed") return <CheckCircle2 className="size-5" aria-hidden="true" />;
   if (type === "photoAdded" || type === "photoUpdated" || type === "photoRemoved") return <Camera className="size-5" aria-hidden="true" />;
+  if (type === "message") return <MessageCircle className="size-5" aria-hidden="true" />;
   return <Coins className="size-5" aria-hidden="true" />;
 }
 
 /**
  * Historial personal de actividad — /:community/activity (Fase 6). No es un
- * módulo de backend nuevo: compone en cliente tres queries ya existentes
- * (ledger de SegoTokens + beneficios del estudiante) en una única timeline
- * ordenada por fecha, sin inventar datos ni levantar un mega-endpoint (spec,
- * "no crear mega-endpoint si no hace falta"). myRedemptions se consulta para
- * participar del estado de carga combinado, pero no se cruza con el ledger
+ * módulo de backend nuevo: compone en cliente varias queries ya existentes
+ * (ledger de SegoTokens, beneficios del estudiante, fotos de perfil y
+ * conversaciones de COM-01) en una única timeline ordenada por fecha, sin
+ * inventar datos ni levantar un mega-endpoint (spec, "no crear mega-endpoint
+ * si no hace falta"). myRedemptions se consulta para participar del estado
+ * de carga combinado, pero no se cruza con el ledger
  * para enriquecer entradas — el `reason` del propio movimiento ya es
  * suficiente y evitamos un matching frágil por ledgerId.
  */
@@ -86,8 +90,12 @@ export default function Activity() {
   const { isLoading: redemptionsLoading } = trpc.consumptionQr.myRedemptions.useQuery({ limit: 20 });
   const { data: benefits, isLoading: benefitsLoading } = trpc.benefits.myBenefits.useQuery();
   const { data: photoEvents, isLoading: photoEventsLoading } = trpc.students.myPhotoActivity.useQuery();
+  // COM-01 — reutiliza la misma query ya usada en Profile.tsx/Messages.tsx
+  // (nunca un endpoint nuevo) para que el intercambio con un Admin también
+  // aparezca en esta timeline (hallazgo real reportado con captura).
+  const { data: conversationsData, isLoading: conversationsLoading } = trpc.studentMessages.myConversations.useQuery({ limit: 50 });
 
-  const isLoading = ledgerLoading || redemptionsLoading || benefitsLoading || photoEventsLoading;
+  const isLoading = ledgerLoading || redemptionsLoading || benefitsLoading || photoEventsLoading || conversationsLoading;
 
   const entries = useMemo<ActivityEntry[]>(() => {
     const items: ActivityEntry[] = [];
@@ -141,8 +149,17 @@ export default function Activity() {
       });
     }
 
+    // Una entrada por conversación (su lastMessageAt real), nunca por
+    // mensaje individual — mismo criterio "sin mega-endpoint" que el resto
+    // de esta página; el asunto ya identifica de qué trata.
+    for (const conv of conversationsData?.items ?? []) {
+      if (conv.lastMessageAt) {
+        items.push({ id: `message-${conv.id}`, type: "message", label: conv.subject, at: new Date(conv.lastMessageAt) });
+      }
+    }
+
     return items.sort((a, b) => b.at.getTime() - a.at.getTime());
-  }, [ledger, benefits, photoEvents, i18n.language, t]);
+  }, [ledger, benefits, photoEvents, conversationsData, i18n.language, t]);
 
   return (
     <SegolifeAppShell requireAuth hideNav title={t("activity.title")}>

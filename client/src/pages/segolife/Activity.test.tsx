@@ -13,7 +13,7 @@ import i18n from "@/lib/i18n";
  * ver Activity.tsx, y el Student se habría quedado sin saber cuántos
  * SegoTokens le retiraron).
  */
-const { mockAuthMe, mockHomeSummary, mockStudentsMe, mockUseCommunity, mockListMyLedger, mockMyRedemptions, mockMyBenefits, mockMyPhotoActivity, noopQuery } = vi.hoisted(() => ({
+const { mockAuthMe, mockHomeSummary, mockStudentsMe, mockUseCommunity, mockListMyLedger, mockMyRedemptions, mockMyBenefits, mockMyPhotoActivity, mockMyConversations, noopQuery } = vi.hoisted(() => ({
   mockAuthMe: vi.fn(),
   mockHomeSummary: vi.fn(),
   mockStudentsMe: vi.fn(),
@@ -22,6 +22,7 @@ const { mockAuthMe, mockHomeSummary, mockStudentsMe, mockUseCommunity, mockListM
   mockMyRedemptions: vi.fn(),
   mockMyBenefits: vi.fn(),
   mockMyPhotoActivity: vi.fn(),
+  mockMyConversations: vi.fn(),
   noopQuery: () => ({ data: undefined, isLoading: false }),
 }));
 
@@ -33,6 +34,7 @@ vi.mock("@/lib/trpc", () => ({
     },
     home: { getSummary: { useQuery: mockHomeSummary } },
     students: { me: { useQuery: mockStudentsMe }, myPhotoActivity: { useQuery: mockMyPhotoActivity } },
+    studentMessages: { myConversations: { useQuery: mockMyConversations } },
     studentNotifications: { unreadCount: { useQuery: noopQuery } },
     communities: { list: { useQuery: noopQuery }, myMemberships: { useQuery: noopQuery } },
     config: { getPublicSettings: { useQuery: noopQuery } },
@@ -90,6 +92,7 @@ beforeEach(() => {
   mockMyRedemptions.mockReturnValue({ data: [], isLoading: false });
   mockMyBenefits.mockReturnValue({ data: [], isLoading: false });
   mockMyPhotoActivity.mockReturnValue({ data: [], isLoading: false });
+  mockMyConversations.mockReturnValue({ data: { items: [], total: 0 }, isLoading: false });
 });
 
 afterEach(() => {
@@ -196,5 +199,37 @@ describe("Activity — MG-03B: Profile Photo Activity (added/updated/removed, si
     const rows = screen.getAllByText(/Profile photo added|Compra/);
     // El evento de foto (20 ago) es más reciente que la compra (10 ago) — debe aparecer PRIMERO.
     expect(rows[0]).toHaveTextContent("Profile photo added");
+  });
+});
+
+describe("Activity — COM-01: conversaciones (hallazgo real reportado con captura — el intercambio con un Admin no aparecía aquí)", () => {
+  function conversation(id: number, subject: string, lastMessageAt: string) {
+    return { id, subject, lastMessageAt: new Date(lastMessageAt) };
+  }
+
+  it("una conversación con lastMessageAt real se renderiza con su asunto como etiqueta", async () => {
+    await i18n.changeLanguage("en");
+    mockMyConversations.mockReturnValue({ data: { items: [conversation(1, "Fallo en la Matrix", "2026-08-21T21:02:00Z")], total: 1 }, isLoading: false });
+    renderAt("/ie/activity");
+    expect(screen.getByText("Fallo en la Matrix")).toBeInTheDocument();
+    expect(screen.getByText(/^message$/i)).toBeInTheDocument();
+  });
+
+  it("sin lastMessageAt (conversación sin ningún mensaje todavía): no genera ninguna entrada", async () => {
+    mockMyConversations.mockReturnValue({ data: { items: [{ id: 2, subject: "Sin mensajes", lastMessageAt: null }], total: 1 }, isLoading: false });
+    renderAt("/ie/activity");
+    expect(screen.queryByText("Sin mensajes")).not.toBeInTheDocument();
+  });
+
+  it("orden temporal correcto: la conversación se intercala con el ledger por fecha real", async () => {
+    await i18n.changeLanguage("en");
+    mockListMyLedger.mockReturnValue({
+      data: [{ id: 1, direction: "credit", amount: 50, reason: "Compra", sourceType: "ticket", createdAt: new Date("2026-08-10T10:00:00Z") }],
+      isLoading: false,
+    });
+    mockMyConversations.mockReturnValue({ data: { items: [conversation(3, "Fallo en la Matrix", "2026-08-20T10:00:00Z")], total: 1 }, isLoading: false });
+    renderAt("/ie/activity");
+    const rows = screen.getAllByText(/Fallo en la Matrix|Compra/);
+    expect(rows[0]).toHaveTextContent("Fallo en la Matrix");
   });
 });
