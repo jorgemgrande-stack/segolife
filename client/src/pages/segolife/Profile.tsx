@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { toast } from "sonner";
-import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell, Ticket, IdCard, Archive, UserPlus, Camera, Trash2, MessageCircle } from "lucide-react";
+import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell, Ticket, IdCard, Archive, UserPlus, Camera, Trash2, MessageCircle, PackageSearch } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -322,6 +322,10 @@ export default function Profile() {
   // mantener un segundo camino solo para el número del badge.
   const { data: myMessages } = trpc.studentMessages.myConversations.useQuery({ limit: 50 });
   const unreadMessagesCount = (myMessages?.items ?? []).filter(c => c.unread).length;
+  // LNF-01 — mismo criterio que arriba: reutiliza la lista real en vez de un
+  // endpoint de conteo aparte (el volumen de casos de UN Student es pequeño).
+  const { data: myLostItems } = trpc.lostFound.myReports.useQuery({ limit: 50 });
+  const unreadLostItemsCount = (myLostItems?.items ?? []).filter(r => r.unread).length;
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
 
@@ -443,6 +447,16 @@ export default function Profile() {
             <span className="flex items-center gap-2 text-sm font-medium">
               <MessageCircle className="size-4" aria-hidden="true" />
               {unreadMessagesCount > 0 ? t("messages.profileEntryUnread", { count: unreadMessagesCount }) : t("messages.profileEntry")}
+            </span>
+            <ChevronRight className="size-4" aria-hidden="true" />
+          </Link>
+          <Link
+            href={`/${slug}/lost-items`}
+            className="flex items-center justify-between rounded-2xl bg-secondary px-4 py-3 text-secondary-foreground"
+          >
+            <span className="flex items-center gap-2 text-sm font-medium">
+              <PackageSearch className="size-4" aria-hidden="true" />
+              {unreadLostItemsCount > 0 ? t("lostFound.myLostItemsUnread", { count: unreadLostItemsCount }) : t("lostFound.myLostItems")}
             </span>
             <ChevronRight className="size-4" aria-hidden="true" />
           </Link>

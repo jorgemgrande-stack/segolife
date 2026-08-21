@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, ChevronRight, MapPin, MapPinOff, CalendarDays, Instagram, Share2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, MapPin, MapPinOff, CalendarDays, Instagram, Share2, X, PackageSearch } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
@@ -136,7 +136,15 @@ export default function VenueDetail() {
           />
 
           <div className={cn(CONTAINER, "relative z-10", hasIdentityMedia ? "-mt-14 sm:-mt-16 xl:-mt-20" : "mt-6")}>
-            <VenueIdentityCard venue={venue} category={category} subtitle={subtitle} hasUpcoming={upcomingEvents.length > 0} />
+            <VenueIdentityCard
+              venue={venue}
+              category={category}
+              subtitle={subtitle}
+              hasUpcoming={upcomingEvents.length > 0}
+              communitySlug={communitySlug!}
+              venueSlug={venueSlug}
+              isAuthenticated={isAuthenticated}
+            />
           </div>
 
           <div className={cn(CONTAINER, "mt-8 space-y-12 md:mt-12 md:space-y-16")}>
@@ -253,14 +261,30 @@ function VenueIdentityCard({
   category,
   subtitle,
   hasUpcoming,
+  communitySlug,
+  venueSlug,
+  isAuthenticated,
 }: {
   venue: { name: string; imageUrl: string | null; coverImageUrl: string | null; instagramUrl: string | null; address: string | null };
   category: { name: string } | null;
   subtitle: string;
   hasUpcoming: boolean;
+  communitySlug: string;
+  venueSlug: string;
+  isAuthenticated: boolean;
 }) {
   const { t } = useTranslation();
+  const [, navigate] = useLocation();
   const [copied, setCopied] = useState(false);
+
+  // LNF-01 — el Student NO logado va a login conservando returnTo (mismo
+  // mecanismo ya usado por Login.tsx/Register.tsx, spec §18); nunca se
+  // permite crear un caso sin sesión.
+  const lostItemPath = `/${communitySlug}/venues/${venueSlug}/lost-item`;
+  const handleLostItem = () => {
+    if (isAuthenticated) navigate(lostItemPath);
+    else navigate(`/login?returnTo=${encodeURIComponent(lostItemPath)}`);
+  };
 
   const handleShare = async () => {
     const url = window.location.href;
@@ -305,9 +329,19 @@ function VenueIdentityCard({
         </div>
       </div>
 
-      {(venue.instagramUrl || mapsHref || hasUpcoming) && (
-        <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border/60 pt-4">
-          {hasUpcoming && (
+      {/* Lost Item/Objeto perdido: SIEMPRE visible en toda ficha de Venue
+          (spec LNF-01 §1/§17) — a diferencia del resto de esta fila, que
+          depende de datos opcionales del venue, así que la condición de
+          arriba ya no puede ocultar la fila entera. */}
+      <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border/60 pt-4">
+        <button
+          type="button"
+          onClick={handleLostItem}
+          className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-4 py-2 text-xs font-semibold text-secondary-foreground transition-colors hover:bg-secondary/70"
+        >
+          <PackageSearch className="size-3.5" aria-hidden="true" /> {t("lostFound.ctaLabel")}
+        </button>
+        {hasUpcoming && (
             <a
               href="#upcoming"
               className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90"
@@ -342,9 +376,8 @@ function VenueIdentityCard({
             className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-4 py-2 text-xs font-semibold text-secondary-foreground transition-colors hover:bg-secondary/70"
           >
             <Share2 className="size-3.5" aria-hidden="true" /> {copied ? t("venueDetail.shareCopied") : t("venueDetail.shareLabel")}
-          </button>
-        </div>
-      )}
+        </button>
+      </div>
     </div>
   );
 }

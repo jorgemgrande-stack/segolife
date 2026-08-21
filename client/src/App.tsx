@@ -34,6 +34,11 @@ const NotificationPreferences = lazy(() => import("./pages/segolife/Notification
 // COM-01 — Bidirectional Student Communication Center.
 const SegolifeMessages = lazy(() => import("./pages/segolife/Messages"));
 const SegolifeMessageDetail = lazy(() => import("./pages/segolife/MessageDetail"));
+// LNF-01 — Lost & Found / Objetos perdidos: formulario de Student + "Mis
+// objetos perdidos" (acceso secundario desde Profile, spec §16).
+const LostItemForm = lazy(() => import("./pages/segolife/LostItemForm"));
+const MyLostItems = lazy(() => import("./pages/segolife/MyLostItems"));
+const LostItemDetail = lazy(() => import("./pages/segolife/LostItemDetail"));
 // SEGOLIFE PRE-16.1 — Presential SegoTokens Payments: confirmación/rechazo
 // del Student ante una solicitud de pago con SegoTokens en persona.
 const PaymentRequestConfirm = lazy(() => import("./pages/segolife/PaymentRequestConfirm"));
@@ -179,6 +184,9 @@ const StudentDetail = lazy(() => import("./pages/admin/students/StudentDetail"))
 // COM-01 — Bidirectional Student Communication Center (Admin).
 const StudentMessagesInbox = lazy(() => import("./pages/admin/students/StudentMessagesInbox"));
 const StudentMessageDetail = lazy(() => import("./pages/admin/students/StudentMessageDetail"));
+// LNF-01 — Lost & Found / Objetos perdidos (Global Admin, alcance completo).
+const LostFoundManager = lazy(() => import("./pages/admin/lostFound/LostFoundManager"));
+const LostFoundDetail = lazy(() => import("./pages/admin/lostFound/LostFoundDetail"));
 
 // Segolife: Historical Fourvenues Identity Claim
 const HistoricalIdentities = lazy(() => import("./pages/admin/students/HistoricalIdentities"));
@@ -522,6 +530,8 @@ function Router() {
       <Route path="/admin/students/historical">{() => <Suspense fallback={<AdminLoadingFallback />}><HistoricalIdentities /></Suspense>}</Route>
       <Route path="/admin/students/referrals">{() => <Suspense fallback={<AdminLoadingFallback />}><ReferralsAdmin /></Suspense>}</Route>
       <Route path="/admin/students/messages/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><StudentMessageDetail /></Suspense>}</Route>
+      <Route path="/admin/lost-found/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><LostFoundDetail /></Suspense>}</Route>
+      <Route path="/admin/lost-found">{() => <Suspense fallback={<AdminLoadingFallback />}><LostFoundManager /></Suspense>}</Route>
       <Route path="/admin/students/messages">{() => <Suspense fallback={<AdminLoadingFallback />}><StudentMessagesInbox /></Suspense>}</Route>
       <Route path="/admin/sales">{() => <Suspense fallback={<AdminLoadingFallback />}><SalesOperationsAdmin /></Suspense>}</Route>
       <Route path="/admin/finance">{() => <Suspense fallback={<AdminLoadingFallback />}><FinanceAdmin /></Suspense>}</Route>
@@ -571,6 +581,7 @@ function Router() {
           en producción (/ie/scan, /ie/benefits, etc. siguen funcionando
           exactamente igual, ahora servidas por el mismo patrón dinámico). */}
       <Route path="/:community/events/:slug">{() => <Suspense fallback={null}><SegolifeEventDetail /></Suspense>}</Route>
+      <Route path="/:community/venues/:slug/lost-item">{() => <Suspense fallback={null}><LostItemForm /></Suspense>}</Route>
       <Route path="/:community/venues/:slug">{() => <Suspense fallback={null}><SegolifeVenueDetail /></Suspense>}</Route>
       <Route path="/:community/explore">{() => <Suspense fallback={null}><Explore /></Suspense>}</Route>
       <Route path="/:community/scan">{() => <Suspense fallback={null}><StudentScan /></Suspense>}</Route>
@@ -583,6 +594,8 @@ function Router() {
       <Route path="/:community/notifications">{() => <Suspense fallback={null}><SegolifeNotifications /></Suspense>}</Route>
       <Route path="/:community/messages/:id">{() => <Suspense fallback={null}><SegolifeMessageDetail /></Suspense>}</Route>
       <Route path="/:community/messages">{() => <Suspense fallback={null}><SegolifeMessages /></Suspense>}</Route>
+      <Route path="/:community/lost-items/:id">{() => <Suspense fallback={null}><LostItemDetail /></Suspense>}</Route>
+      <Route path="/:community/lost-items">{() => <Suspense fallback={null}><MyLostItems /></Suspense>}</Route>
       <Route path="/:community/payment-requests/:requestId">{() => <Suspense fallback={null}><PaymentRequestConfirm /></Suspense>}</Route>
       <Route path="/:community/checkout/:orderId">{() => <Suspense fallback={null}><TicketCheckout /></Suspense>}</Route>
       <Route path="/:community/tickets/:id">{() => <Suspense fallback={null}><TicketDetail /></Suspense>}</Route>

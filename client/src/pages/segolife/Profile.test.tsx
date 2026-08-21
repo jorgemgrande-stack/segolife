@@ -71,6 +71,7 @@ vi.mock("@/lib/trpc", () => ({
     home: { getSummary: { useQuery: mockHomeSummary } },
     studentNotifications: { unreadCount: { useQuery: noopQuery } },
     studentMessages: { myConversations: { useQuery: noopQuery } },
+    lostFound: { myReports: { useQuery: noopQuery } },
     config: { getPublicSettings: { useQuery: noopQuery } },
     ticketPurchase: {
       myIdentityToken: { useQuery: noopQuery },

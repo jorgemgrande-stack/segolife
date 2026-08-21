@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { Route } from "wouter";
 import "@/lib/i18n";
 
@@ -251,12 +251,13 @@ describe("VenueDetail — Logo y cover fallback", () => {
 });
 
 describe("VenueDetail — Quick actions adaptativas", () => {
-  it("sin instagramUrl/address/eventos: no muestra la barra de acciones (nunca inventar acciones)", () => {
+  it("sin instagramUrl/address/eventos: la barra sigue mostrándose (Lost Item es fijo), pero sin inventar el resto de acciones", () => {
     mockDetail({ instagramUrl: null, address: null });
     mockEvents([]);
     renderAt("/ie/venues/casanova");
     expect(screen.queryByText(/get directions|cómo llegar/i)).not.toBeInTheDocument();
     expect(screen.queryByText("Instagram")).not.toBeInTheDocument();
+    expect(screen.getByText(/lost item|objeto perdido/i)).toBeInTheDocument();
   });
 
   it("con instagramUrl real: muestra el link de Instagram apuntando a esa URL exacta", () => {
@@ -270,6 +271,32 @@ describe("VenueDetail — Quick actions adaptativas", () => {
     renderAt("/ie/venues/casanova");
     const link = screen.getByText(/get directions|cómo llegar/i).closest("a");
     expect(link?.getAttribute("href")).toContain(encodeURIComponent("Calle Real 12"));
+  });
+});
+
+describe("VenueDetail — Lost Item / Objeto perdido (LNF-01 §1/§17)", () => {
+  it("el botón siempre está visible, sin importar instagramUrl/address/eventos", () => {
+    mockDetail({ instagramUrl: null, address: null });
+    mockEvents([]);
+    renderAt("/ie/venues/casanova");
+    expect(screen.getByRole("button", { name: /lost item|objeto perdido/i })).toBeInTheDocument();
+  });
+
+  it("con sesión: navega a /{comunidad}/venues/{slug}/lost-item (nunca hardcodea el venue ni la comunidad)", () => {
+    mockAuthenticated();
+    mockDetail();
+    renderAt("/ie/venues/casanova");
+    fireEvent.click(screen.getByRole("button", { name: /lost item|objeto perdido/i }));
+    expect(window.location.pathname).toBe("/ie/venues/casanova/lost-item");
+  });
+
+  it("sin sesión: redirige a /login con returnTo apuntando de vuelta al flujo de Lost Item (mismo mecanismo que Login/Register)", () => {
+    mockAnonymous();
+    mockDetail();
+    renderAt("/ie/venues/casanova");
+    fireEvent.click(screen.getByRole("button", { name: /lost item|objeto perdido/i }));
+    expect(window.location.pathname).toBe("/login");
+    expect(window.location.search).toBe(`?returnTo=${encodeURIComponent("/ie/venues/casanova/lost-item")}`);
   });
 });
 
