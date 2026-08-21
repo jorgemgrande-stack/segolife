@@ -5720,7 +5720,10 @@ export const notifications = mysqlTable("notifications", {
   userId:           int("user_id").notNull(),
   communityId:      int("community_id"),
   type:             varchar("type", { length: 64 }).notNull(),
-  category:         mysqlEnum("category", ["events", "rewards", "benefits", "promotions", "account"]).notNull(),
+  // COM-01 — "messages" añadido para el aviso de un nuevo mensaje de una
+  // conversation bidireccional Admin↔Student (nunca reutiliza "account":
+  // ese valor es para ciclo de vida de cuenta/seguridad, no para mensajería).
+  category:         mysqlEnum("category", ["events", "rewards", "benefits", "promotions", "account", "messages"]).notNull(),
   audienceType:     mysqlEnum("audience_type", ["transactional", "marketing"]).notNull(),
   titleEn:          varchar("title_en", { length: 256 }).notNull(),
   titleEs:          varchar("title_es", { length: 256 }).notNull(),
@@ -5808,7 +5811,7 @@ export type InsertEmailSuppression = typeof emailSuppressions.$inferInsert;
 export const notificationPreferences = mysqlTable("notification_preferences", {
   id:         int("id").autoincrement().primaryKey(),
   userId:     int("user_id").notNull(),
-  category:   mysqlEnum("category", ["events", "rewards", "benefits", "promotions", "account"]).notNull(),
+  category:   mysqlEnum("category", ["events", "rewards", "benefits", "promotions", "account", "messages"]).notNull(),
   channel:    mysqlEnum("channel", ["in_app", "email", "push", "whatsapp"]).notNull(),
   enabled:    boolean("enabled").notNull(),
   updatedAt:  timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
@@ -6139,6 +6142,92 @@ export const communityStudentProposals = mysqlTable("community_student_proposals
 }));
 export type CommunityStudentProposal = typeof communityStudentProposals.$inferSelect;
 export type InsertCommunityStudentProposal = typeof communityStudentProposals.$inferInsert;
+
+// ─── SEGOLIFE: CONVERSATIONS / CONVERSATION_MESSAGES (COM-01) ──────────────────
+// Infraestructura canónica de comunicación bidireccional Admin↔Student — NUNCA
+// un segundo sistema paralelo al `sendManualMessage` de engagement.ts (ese
+// sigue existiendo, fire-and-forget, sin hilo; este es el sistema con
+// histórico persistente y respuesta real). NOTIFICACIONES ≠ MENSAJERÍA: la
+// fila de `notifications` (arriba) es solo el AVISO ("tienes un mensaje
+// nuevo"); el cuerpo real y su histórico viven aquí, de forma persistente y
+// auditable.
+//
+// `conversation` pertenece al STUDENT (studentUserId), nunca a un admin fijo
+// — cualquier admin con permiso `student_messages.manage` puede continuar el
+// hilo (spec §17, multi-admin). `type`/`contextType`/`contextId` son VARCHAR,
+// no ENUM, a propósito (mismo criterio que notifications.sourceType/sourceId
+// arriba): permiten que Lost Items/incidencias futuras reutilicen esta misma
+// tabla (`type='lost_item'`, `contextType='lost_item'`, `contextId=<id>`) sin
+// una migración de ENUM — en COM-01 solo se usa `type='general'`,
+// contextType/contextId quedan NULL.
+//
+// `waitingFor` expresa de quién es el turno de responder — evita un enum
+// explosivo de estados (new/read/responded/pending...). `studentLastReadAt`/
+// `adminLastReadAt` (NO una tabla conversation_participants — solo hay 2
+// lados posibles aquí, Student y "cualquier Admin", spec §6: "no diseñar un
+// sistema de chat multiusuario genérico") resuelven read/unread sin
+// necesitar readAt por mensaje ni por usuario individual — "admin" es un
+// ROL compartido, no un usuario fijo, así que un read-receipt por admin
+// individual no tendría sentido aquí.
+//
+// `lastMessagePreview`/`lastMessageAt` son denormalizados a propósito (spec
+// §59, "no N+1"): el listado de Admin/Student nunca necesita JOIN ni
+// subquery contra conversation_messages para mostrar la última actividad.
+
+export const conversations = mysqlTable("conversations", {
+  id:                   int("id").autoincrement().primaryKey(),
+  studentUserId:        int("student_user_id").notNull(),
+  type:                 varchar("type", { length: 32 }).notNull().default("general"),
+  contextType:          varchar("context_type", { length: 64 }),
+  contextId:            int("context_id"),
+  subject:              varchar("subject", { length: 256 }).notNull(),
+  status:               mysqlEnum("status", ["open", "closed"]).notNull().default("open"),
+  waitingFor:           mysqlEnum("waiting_for", ["student", "admin", "none"]).notNull().default("student"),
+  createdByUserId:      int("created_by_user_id").notNull(),
+  // fsp:3 (milisegundos) — no el TIMESTAMP por defecto (1 segundo): estas 3
+  // columnas se COMPARAN entre sí (lastMessageAt > studentLastReadAt/
+  // adminLastReadAt) para derivar unread, y un intercambio rápido real
+  // (marcar leído y responder en el mismo segundo) empataría con precisión
+  // de segundo, dejando una conversación recién respondida marcada como ya
+  // leída — bug real encontrado por los tests de esta misma fase.
+  lastMessageAt:         timestamp("last_message_at", { fsp: 3 }),
+  lastMessagePreview:    varchar("last_message_preview", { length: 160 }),
+  closedAt:             timestamp("closed_at"),
+  closedByUserId:       int("closed_by_user_id"),
+  studentLastReadAt:    timestamp("student_last_read_at", { fsp: 3 }),
+  adminLastReadAt:      timestamp("admin_last_read_at", { fsp: 3 }),
+  createdAt:            timestamp("created_at").defaultNow().notNull(),
+  updatedAt:            timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  studentUserIdx:   index("conversations_student_user_id_idx").on(table.studentUserId),
+  statusIdx:        index("conversations_status_idx").on(table.status),
+  waitingForIdx:    index("conversations_waiting_for_idx").on(table.waitingFor),
+  lastMessageAtIdx: index("conversations_last_message_at_idx").on(table.lastMessageAt),
+}));
+export type Conversation = typeof conversations.$inferSelect;
+export type InsertConversation = typeof conversations.$inferInsert;
+
+// Histórico INMUTABLE (spec §3/§30): sin editedAt/deletedAt — nunca se edita
+// ni se borra un mensaje ya enviado en COM-01. `visibility='internal'` es
+// una NOTA solo-Admin (nunca visible para el Student, nunca creable por un
+// Student — se aplica en el router, nunca confiando en un flag enviado por
+// el cliente). `senderRole` es un snapshot (spec §3, "senderRoleSnapshot si
+// tiene sentido") — evita tener que resolver el rol actual de senderUserId
+// (que puede cambiar) solo para renderizar quién envió cada mensaje.
+export const conversationMessages = mysqlTable("conversation_messages", {
+  id:              int("id").autoincrement().primaryKey(),
+  conversationId:  int("conversation_id").notNull(),
+  senderUserId:    int("sender_user_id").notNull(),
+  senderRole:      mysqlEnum("sender_role", ["student", "admin"]).notNull(),
+  visibility:      mysqlEnum("visibility", ["public", "internal"]).notNull().default("public"),
+  body:            text("body").notNull(),
+  createdAt:       timestamp("created_at", { fsp: 3 }).defaultNow().notNull(),
+}, (table) => ({
+  conversationIdx: index("conversation_messages_conversation_id_idx").on(table.conversationId),
+  createdAtIdx:    index("conversation_messages_created_at_idx").on(table.createdAt),
+}));
+export type ConversationMessage = typeof conversationMessages.$inferSelect;
+export type InsertConversationMessage = typeof conversationMessages.$inferInsert;
 
 // ─── COMMUNITY_SUPPORTS ─────────────────────────────────────────────────────
 // "Apoyar" una idea de estudiante pendiente/aprobada — detecta demanda antes

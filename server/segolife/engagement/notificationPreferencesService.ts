@@ -32,7 +32,7 @@ async function getDb(): Promise<DbHandle> {
   return _db;
 }
 
-export type NotificationCategory = "events" | "rewards" | "benefits" | "promotions" | "account";
+export type NotificationCategory = "events" | "rewards" | "benefits" | "promotions" | "account" | "messages";
 export type NotificationChannel = "in_app" | "email" | "push" | "whatsapp";
 
 export async function isChannelAllowed(

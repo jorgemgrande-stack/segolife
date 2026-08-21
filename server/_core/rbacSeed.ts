@@ -210,6 +210,16 @@ const SETTLEMENTS_PERMISSIONS: Array<[string, string, string, string]> = [
   ["settlements.manage", "settlements", "manage", "Configurar acuerdos comerciales, calcular/aprobar/marcar pagadas liquidaciones"],
 ];
 
+// COM-01 — Bidirectional Student Communication Center. GLOBAL_ADMIN
+// exclusivamente (nunca venue_admin — ver venueAdminPolicy.ts,
+// VENUE_ADMIN_FORBIDDEN_MODULES ya incluye "students360"/Student 360, mismo
+// criterio se aplica aquí: conversaciones generales Admin↔Student no son
+// operativa de venue).
+const STUDENT_MESSAGES_PERMISSIONS: Array<[string, string, string, string]> = [
+  ["student_messages.view",   "student_messages", "view",   "Ver conversaciones y mensajes bidireccionales con estudiantes"],
+  ["student_messages.manage", "student_messages", "manage", "Iniciar conversaciones, responder, cerrar y reabrir mensajes con estudiantes"],
+];
+
 export async function seedRbacIfNeeded(): Promise<{
   rolesEnsured: string[];
   permissionsAdded: string[];
@@ -235,7 +245,7 @@ export async function seedRbacIfNeeded(): Promise<{
     // 2. Permisos students.view / students.manage / venues.* / events.* /
     //    tokens.* / qr.* / benefits.* / integrations.* / ticketing.* /
     //    commerce.* / attendance.* — no sembrados en ninguna migración histórica.
-    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS, ...COMMUNITY_PERMISSIONS, ...REFERRALS_PERMISSIONS, ...SALES_PERMISSIONS, ...FISCAL_PERMISSIONS, ...STOCK_PERMISSIONS, ...CASH_PERMISSIONS, ...SETTLEMENTS_PERMISSIONS]) {
+    for (const [key, module, action, description] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS, ...COMMUNITY_PERMISSIONS, ...REFERRALS_PERMISSIONS, ...SALES_PERMISSIONS, ...FISCAL_PERMISSIONS, ...STOCK_PERMISSIONS, ...CASH_PERMISSIONS, ...SETTLEMENTS_PERMISSIONS, ...STUDENT_MESSAGES_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_permissions (\`key\`, module, action, description) VALUES (?, ?, ?, ?)`,
         [key, module, action, description]
@@ -248,7 +258,7 @@ export async function seedRbacIfNeeded(): Promise<{
     //    attendance.* al rol admin (idempotente, no asume que el CROSS JOIN
     //    histórico de 0070/0077 se haya vuelto a ejecutar para estos permisos
     //    nuevos).
-    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS, ...COMMUNITY_PERMISSIONS, ...REFERRALS_PERMISSIONS, ...SALES_PERMISSIONS, ...FISCAL_PERMISSIONS, ...STOCK_PERMISSIONS, ...CASH_PERMISSIONS, ...SETTLEMENTS_PERMISSIONS]) {
+    for (const [key] of [...STUDENTS_PERMISSIONS, ...VENUES_EVENTS_PERMISSIONS, ...TOKENS_PERMISSIONS, ...QR_PERMISSIONS, ...BENEFITS_PERMISSIONS, ...INTEGRATIONS_PERMISSIONS, ...EVENT_TICKETING_PERMISSIONS, ...COMMERCE_PERMISSIONS, ...ATTENDANCE_PERMISSIONS, ...ENGAGEMENT_PERMISSIONS, ...TICKETING_COMMERCE_STAFF_PERMISSIONS, ...COMMUNITY_PERMISSIONS, ...REFERRALS_PERMISSIONS, ...SALES_PERMISSIONS, ...FISCAL_PERMISSIONS, ...STOCK_PERMISSIONS, ...CASH_PERMISSIONS, ...SETTLEMENTS_PERMISSIONS, ...STUDENT_MESSAGES_PERMISSIONS]) {
       const [result] = await conn.execute(
         `INSERT IGNORE INTO rbac_role_permissions (role_id, permission_id)
          SELECT r.id, p.id FROM rbac_roles r, rbac_permissions p

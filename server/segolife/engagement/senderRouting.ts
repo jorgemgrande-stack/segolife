@@ -54,6 +54,9 @@ const SENDER_BY_NOTIFICATION_CATEGORY: Record<NotificationCategory, SenderKey> =
   benefits: "system",
   promotions: "system",
   events: "tickets",
+  // COM-01 — nunca se envía por email hoy (in-app only), pero un remitente
+  // correcto queda listo si algún día se añade ese canal.
+  messages: "support",
 };
 
 export function resolveSenderByAdminCategory(adminCategory: AdminTemplateCategory | null | undefined): SenderIdentity {
