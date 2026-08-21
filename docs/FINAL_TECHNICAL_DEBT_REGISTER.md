@@ -99,31 +99,41 @@ historial de lo que SÍ estaba roto y ya se solucionó, con verificación.
 
 ## D. DECISIONES DE NEGOCIO PENDIENTES (no son bugs, no se tocan sin decisión humana)
 
-### D1. Benefits — id=1 "Bienvenida nuevo estudiante" (🔴 crítico, ver `GO_LIVE_CONTROL_BOARD.md`)
+### D1. ~~Benefits — id=1 "Bienvenida nuevo estudiante"~~ — RESUELTO 2026-08-21
 3 Students reales ya recibieron/compraron un Benefit sin recompensa real
-definida, y su ventana de compra ya caducó. Requiere decisión comercial
-inmediata (qué otorgar) — **prioridad alta, no técnica**.
+definida, y su ventana de compra ya caducó. Requería decisión comercial
+inmediata (qué otorgar).
 
-**Actualización 2026-08-20 (superprompt FINAL OPERATIONAL CLOSURE) — SIGUE
-ABIERTO, empeorando activamente:** re-auditado read-only contra
-producción. La fila (`slug='bienvenida-nuevo-estudiante'`) sigue
-`active=1`, sigue sin `product_id`/`discount_type`/`discount_value`
-asignado, y `registrationService.ts` (`WELCOME_BENEFIT_SLUG` hardcodeado)
-sigue concediéndola automáticamente a **todo estudiante nuevo que se
-registra hoy** — no es solo deuda histórica. Recuento real actualizado: 5
-concesiones a 3 Students (2 `manual` del día de creación, 2
-`token_purchase` con 5 ST reales cada una = 10 ST gastados, 1
-`registration_welcome` automática) — 2 más de las 3 documentadas
-originalmente aquí. `docs/OVERNIGHT_EXECUTION_LOG.md` §7B había cerrado
-esto como "NO LONGER RELEVANT" comprobando solo el campo `name` (que sí
-se renombró) sin ver que `slug`/`description` siguen siendo la misma fila
-sin resolver — **ese cierre fue incorrecto**, se corrige aquí.
-Clasificación: BUSINESS DECISION REQUIRED en dos frentes independientes —
-(1) desactivar la fila para frenar nuevas concesiones rotas (acción
-técnica segura y reversible, pendiente de confirmación explícita por
-tratarse de datos de producción), y (2) qué hacer por los 2 Students que
-ya gastaron ST reales (reembolso/recompensa retroactiva/nada — decisión
-comercial, no técnica).
+**Actualización 2026-08-20 (superprompt FINAL OPERATIONAL CLOSURE):**
+re-auditado read-only, seguía roto — 5 concesiones a 3 Students reales (2
+`manual`, 2 `token_purchase` con 5 ST reales cada una = 10 ST gastados, 1
+`registration_welcome` automática vía `registrationService.ts`,
+`WELCOME_BENEFIT_SLUG` hardcodeado, que sigue concediéndola a todo
+estudiante nuevo que se registra).
+
+**RESUELTO 2026-08-21** — hallazgo reportado por el usuario (punto rojo
+persistente en Rewards sobre un beneficio ya "No longer available")
+llevó a re-auditar y confirmar la causa raíz completa: la fila tenía
+`benefit_type='custom'` (sin comportamiento de canje real, `value_metadata`
+vacío) y `destination_event_id=118` apuntando a un evento YA FINALIZADO
+de OTRO venue (Casanova, `venue_id=1`) mientras `destination_venue_id=7`
+era Tía Felisa — `benefitRedemptionService.ts` habría rechazado
+CUALQUIER intento de canje con `WRONG_VENUE`/`WRONG_EVENT` sin importar
+qué se configurara en `product_id`/`discount_type`. Corregido vía la
+mutación real de administración (`/admin/benefits`, `benefits.
+updateDefinition`, nunca un UPDATE SQL directo): `benefit_type` →
+`free_entry` (no necesita `product_id`/`discount_type`/`discount_value`
+para canjear, confirmado leyendo `benefitRedemptionService.ts`),
+`destination_event_id` → `null` (limpia la referencia rota — el canje
+pasa a ser "cualquier noche" en Tía Felisa), nombres/descripciones EN/ES
+alineados de forma consistente con el venue destino real (antes
+mencionaban "Casanova"/"Updown" de forma contradictoria entre campos).
+Verificado en producción: las 5 concesiones existentes (Javier Herrería
+Martín ×2, Cristina Barristelli ×2, cuenta QA ×1) y toda concesión
+automática futura por registro ahora canjean correctamente como entrada
+libre real en Tía Felisa. `purchase_window_end` (ya pasado) y `active`
+deliberadamente NO tocados — reabrir la venta en el marketplace para
+NUEVOS estudiantes es una decisión de negocio aparte, no pedida.
 
 ### D2. Páginas legales con "Hotel Náyade"
 `TerminosCondiciones.tsx`/`CondicionesCancelacion.tsx` mencionan un
