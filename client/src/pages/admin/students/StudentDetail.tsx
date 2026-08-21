@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import type { TimelineEventDTO, TimelineEventType, TimelineCursor } from "@shared/segolife/student360";
 import type { StudentDetail as StudentDetailData } from "../../../../../server/db/studentsDb";
-import { EditStudentDialog, DeleteStudentDialog } from "./StudentLifecycleDialogs";
+import { EditStudentDialog, DeleteStudentDialog, ComunicarDialog, useCommunicateAction } from "./StudentLifecycleDialogs";
 
 // ─── Helpers de presentación ────────────────────────────────────────────────
 
@@ -658,52 +658,10 @@ function SendMessageDialog({ userId, open, onOpenChange }: { userId: number; ope
   );
 }
 
-// COM-01 — Comunicar: abre una conversación bidireccional real (histórico
-// persistente, el Student puede responder), a diferencia de "Enviar
-// mensaje" (SendMessageDialog, arriba) que sigue siendo un aviso de un solo
-// sentido — ambos coexisten a propósito, no se sustituyen.
-function ComunicarDialog({ userId, open, onOpenChange }: { userId: number; open: boolean; onOpenChange: (v: boolean) => void }) {
-  const [, navigate] = useLocation();
-  const [subject, setSubject] = useState("");
-  const [body, setBody] = useState("");
-
-  const createMut = trpc.studentMessages.adminCreateConversation.useMutation({
-    onSuccess: (res) => {
-      toast.success("Conversación iniciada");
-      setSubject(""); setBody(""); onOpenChange(false);
-      navigate(`/admin/students/messages/${res.conversation.id}`);
-    },
-    onError: e => toast.error(e.message),
-  });
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>Comunicar con el Student</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2">
-          <div><Label>Asunto</Label><Input value={subject} onChange={e => setSubject(e.target.value)} maxLength={256} placeholder="Asunto de la conversación" /></div>
-          <div><Label>Mensaje</Label><Textarea rows={5} value={body} onChange={e => setBody(e.target.value)} maxLength={5000} placeholder="Escribe tu mensaje…" /></div>
-          <p className="text-xs text-muted-foreground">El Student recibirá una notificación y podrá responder — el hilo queda guardado en Mensajes.</p>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button
-            disabled={!subject.trim() || !body.trim() || createMut.isPending}
-            onClick={() => createMut.mutate({ studentUserId: userId, subject: subject.trim(), body: body.trim() })}
-          >
-            {createMut.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MessageCircle className="w-4 h-4 mr-2" />}
-            Iniciar conversación
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function EngagementTab({ studentProfileId, userId }: { studentProfileId: number; userId: number }) {
   const { data, isLoading } = trpc.students360.getEngagement.useQuery({ studentProfileId });
   const [sendOpen, setSendOpen] = useState(false);
-  const [comunicarOpen, setComunicarOpen] = useState(false);
+  const { communicate, checking: communicateChecking, dialogOpen: comunicarOpen, setDialogOpen: setComunicarOpen } = useCommunicateAction(userId);
   if (isLoading) return <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
   const notifications = data?.notifications ?? [];
   const preferences = data?.preferences ?? [];
@@ -711,11 +669,13 @@ function EngagementTab({ studentProfileId, userId }: { studentProfileId: number;
   return (
     <div className="space-y-4">
       <div className="flex justify-end gap-2">
-        <Button size="sm" variant="outline" onClick={() => setComunicarOpen(true)}><MessageCircle className="w-4 h-4 mr-2" /> Comunicar</Button>
+        <Button size="sm" variant="outline" onClick={communicate} disabled={communicateChecking}>
+          {communicateChecking ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MessageCircle className="w-4 h-4 mr-2" />} Comunicarse
+        </Button>
         <Button size="sm" onClick={() => setSendOpen(true)}><Send className="w-4 h-4 mr-2" /> Enviar mensaje</Button>
       </div>
       <SendMessageDialog userId={userId} open={sendOpen} onOpenChange={setSendOpen} />
-      <ComunicarDialog userId={userId} open={comunicarOpen} onOpenChange={setComunicarOpen} />
+      <ComunicarDialog studentUserId={userId} open={comunicarOpen} onOpenChange={setComunicarOpen} />
       <div className="bg-card border border-border rounded-lg p-4">
         <p className="text-sm font-semibold text-foreground mb-3">Notificaciones in-app</p>
         <p className="text-xs text-muted-foreground mb-3">
@@ -1030,6 +990,10 @@ export default function StudentDetail() {
 
   const { data: student, isLoading, error } = trpc.students.getById.useQuery({ id: studentProfileId });
   const { data: allTags } = trpc.students.listTags.useQuery();
+  // Llamado incondicionalmente (regla de hooks) aunque `student` aún no
+  // haya cargado — el botón que usa `communicate` no se renderiza hasta
+  // que sí hay datos, así que el placeholder nunca llega a dispararse.
+  const { communicate, checking: communicateChecking, dialogOpen: comunicarOpen, setDialogOpen: setComunicarOpen } = useCommunicateAction(student?.profile.userId ?? 0);
 
   if (isLoading) {
     return (
@@ -1077,10 +1041,13 @@ export default function StudentDetail() {
               Alta: {fmtDate(student.profile.createdAt)} · Último acceso: {student.user.lastSignedIn ? fmtDateTime(student.user.lastSignedIn) : "—"}
             </p>
           </div>
-          <div className="flex items-start gap-3">
-            <div className="flex gap-1">
-              <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}><Pencil className="w-4 h-4 mr-1.5" />Editar</Button>
-              <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteOpen(true)}><Trash2 className="w-4 h-4 mr-1.5" />Borrar</Button>
+          <div className="flex items-start gap-3 flex-wrap">
+            <div className="flex gap-1 flex-wrap">
+              <Button variant="outline" size="sm" onClick={communicate} disabled={communicateChecking} aria-label="Comunicarse con este estudiante" title="Comunicarse">
+                {communicateChecking ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <MessageCircle className="w-4 h-4 mr-1.5" />}Comunicarse
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} aria-label="Editar estudiante" title="Editar"><Pencil className="w-4 h-4 mr-1.5" />Editar</Button>
+              <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteOpen(true)} aria-label="Borrar estudiante" title="Borrar"><Trash2 className="w-4 h-4 mr-1.5" />Borrar</Button>
             </div>
             <StatusChangeControl studentProfileId={studentProfileId} currentStatus={student.profile.status} />
           </div>
@@ -1092,6 +1059,7 @@ export default function StudentDetail() {
           onClose={() => setDeleteOpen(false)}
           onSuccess={() => navigate("/admin/students")}
         />
+        <ComunicarDialog studentUserId={student.profile.userId} open={comunicarOpen} onOpenChange={setComunicarOpen} />
 
         <Tabs value={tab} onValueChange={setTab}>
           <div className="overflow-x-auto -mx-1 px-1">

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Loader2, Pencil, Eye, EyeOff, Trash2, AlertTriangle } from "lucide-react";
+import { Loader2, Pencil, Eye, EyeOff, Trash2, AlertTriangle, MessageCircle } from "lucide-react";
 
 /**
  * STU-01 — diálogos de ciclo de vida del Student (Editar / Ocultar-Mostrar /
@@ -307,4 +308,96 @@ export function DeleteStudentDialog({ studentProfileId, onClose, onSuccess }: Ba
       </DialogContent>
     </Dialog>
   );
+}
+
+// ─── Comunicarse (STU-02) ───────────────────────────────────────────────────
+// COM-01 — abre una conversación bidireccional real (histórico persistente,
+// el Student puede responder), a diferencia de "Enviar mensaje"
+// (SendMessageDialog en StudentDetail.tsx) que sigue siendo un aviso de un
+// solo sentido — ambos coexisten a propósito, no se sustituyen. Movido aquí
+// desde StudentDetail.tsx (STU-02) para poder reutilizarlo también desde
+// StudentsManager — mismo criterio "un único componente, nunca diverge"
+// que el resto de este archivo.
+
+interface ComunicarDialogProps {
+  studentUserId: number;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}
+
+export function ComunicarDialog({ studentUserId, open, onOpenChange }: ComunicarDialogProps) {
+  const [, navigate] = useLocation();
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+
+  const createMut = trpc.studentMessages.adminCreateConversation.useMutation({
+    onSuccess: (res) => {
+      toast.success("Conversación iniciada");
+      setSubject(""); setBody(""); onOpenChange(false);
+      navigate(`/admin/students/messages/${res.conversation.id}`);
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle>Comunicarse con el Student</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-2">
+          <div><Label htmlFor="stu-comunicar-subject">Asunto</Label><Input id="stu-comunicar-subject" value={subject} onChange={e => setSubject(e.target.value)} maxLength={256} placeholder="Asunto de la conversación" /></div>
+          <div><Label htmlFor="stu-comunicar-body">Mensaje</Label><Textarea id="stu-comunicar-body" rows={5} value={body} onChange={e => setBody(e.target.value)} maxLength={5000} placeholder="Escribe tu mensaje…" /></div>
+          <p className="text-xs text-muted-foreground">El Student recibirá una notificación y podrá responder — el hilo queda guardado en Mensajes.</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button
+            disabled={!subject.trim() || !body.trim() || createMut.isPending}
+            onClick={() => createMut.mutate({ studentUserId, subject: subject.trim(), body: body.trim() })}
+          >
+            {createMut.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MessageCircle className="w-4 h-4 mr-2" />}
+            Iniciar conversación
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * STU-02 — lógica compartida del botón "Comunicarse": localiza LA
+ * conversación general del Student (adminFindGeneralConversation, nunca
+ * crea nada) y, si existe, navega directo a ese hilo exacto (abierto o
+ * cerrado — StudentMessageDetail ya resuelve "reabrir" por su cuenta); si
+ * no existe ninguna, abre ComunicarDialog para crear la primera. Esto es lo
+ * que hace que pulsar "Comunicarse" varias veces nunca cree conversaciones
+ * duplicadas: solo el envío del formulario de ComunicarDialog crea algo, y
+ * esa creación es idempotente en el propio backend
+ * (createGeneralConversationForStudent). Un único hook consumido desde la
+ * fila del listado, la cabecera de la ficha, y la pestaña Engagement —
+ * nunca 3 implementaciones distintas.
+ */
+export function useCommunicateAction(studentUserId: number) {
+  const utils = trpc.useUtils();
+  const [, navigate] = useLocation();
+  const [checking, setChecking] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  const communicate = async () => {
+    if (checking) return;
+    setChecking(true);
+    try {
+      const result = await utils.studentMessages.adminFindGeneralConversation.fetch({ studentUserId });
+      if (result.conversationId) {
+        navigate(`/admin/students/messages/${result.conversationId}`);
+      } else {
+        setDialogOpen(true);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No se pudo comprobar la conversación con este estudiante");
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return { communicate, checking, dialogOpen, setDialogOpen };
 }

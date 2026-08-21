@@ -14,11 +14,30 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Search, GraduationCap, Loader2, ArrowUp, ArrowDown, Coins, X, Pencil, Eye, EyeOff, Trash2 } from "lucide-react";
+import { Search, GraduationCap, Loader2, ArrowUp, ArrowDown, Coins, X, Pencil, Eye, EyeOff, Trash2, MessageCircle } from "lucide-react";
 import { useAdminCommunity } from "@/contexts/AdminCommunityContext";
 import { ADMIN_COMMUNITY_FILTER_ALL } from "@shared/segolife/adminCommunityFilter";
 import { useUrlParam } from "@/hooks/useUrlParam";
-import { EditStudentDialog, HideStudentDialog, DeleteStudentDialog } from "./StudentLifecycleDialogs";
+import { EditStudentDialog, HideStudentDialog, DeleteStudentDialog, ComunicarDialog, useCommunicateAction } from "./StudentLifecycleDialogs";
+
+/** STU-02 — botón "Comunicarse" de una fila: hook y diálogo propios, ya que cada fila necesita resolver/crear su propia conversación de forma independiente. */
+function CommunicateRowButton({ studentUserId, name }: { studentUserId: number; name: string | null }) {
+  const { communicate, checking, dialogOpen, setDialogOpen } = useCommunicateAction(studentUserId);
+  return (
+    <>
+      <button
+        onClick={ev => { ev.preventDefault(); ev.stopPropagation(); communicate(); }}
+        disabled={checking}
+        className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground disabled:opacity-50"
+        title="Comunicarse"
+        aria-label={`Comunicarse con ${name ?? "estudiante"}`}
+      >
+        {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageCircle className="w-4 h-4" />}
+      </button>
+      <ComunicarDialog studentUserId={studentUserId} open={dialogOpen} onOpenChange={setDialogOpen} />
+    </>
+  );
+}
 
 const SEGMENT_LABEL: Record<string, string> = {
   new: "Nuevos", active: "Activos", highly_engaged: "Muy comprometidos",
@@ -284,6 +303,7 @@ export default function StudentsManager() {
                     <TableCell className="text-muted-foreground">{fmtDate(s.createdAt)}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
+                        <CommunicateRowButton studentUserId={s.userId} name={s.name} />
                         <button
                           onClick={ev => { ev.preventDefault(); ev.stopPropagation(); setEditTarget(s.studentProfileId); }}
                           className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
