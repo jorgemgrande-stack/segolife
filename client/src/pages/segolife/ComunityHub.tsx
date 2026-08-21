@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Vote, Coins, Heart, Loader2, Send, Flame, ImagePlus, X, Plus } from "lucide-react";
+import { Vote, Coins, Heart, Loader2, Send, Flame, ImagePlus, X, Plus, MapPin } from "lucide-react";
 import { QUESTION_TYPES_WITH_OPTIONS, type ComunityQuestionType } from "@/lib/comunity";
 
 /**
@@ -109,16 +109,33 @@ function ActivasTab({ slug }: { slug: string }) {
     <div className="space-y-3">
       {data.map(p => (
         <div key={p.id} className="rounded-2xl border border-border bg-card p-4 segolife-card-shadow">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {p.urgencyType === "flash" && <span className="text-xs font-bold text-amber-500">⚡ FLASH</span>}
-                <p className="font-semibold text-foreground truncate">{p.title}</p>
+          {/* Hallazgo real (2026-08-22, captura del cliente): yes_no/me_apunto
+              respondían directo desde la card y nunca enlazaban al detalle —
+              foto, descripción, ubicación y resultados en vivo (resultsVisibility
+              "immediate") solo existían ahí, así que ese estudiante nunca los veía
+              aunque ya hubiera respondido. Ahora el bloque de info SIEMPRE enlaza
+              al detalle, para cualquier tipo de pregunta. */}
+          <Link href={`/${slug}/comunity/${p.id}`} className="block">
+            <div className="flex items-start gap-3">
+              {p.coverImageUrl && <img src={p.coverImageUrl} alt="" className="size-14 shrink-0 rounded-xl object-cover" />}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {p.urgencyType === "flash" && <span className="text-xs font-bold text-amber-500">⚡ FLASH</span>}
+                      <p className="font-semibold text-foreground truncate">{p.title}</p>
+                    </div>
+                    {p.description && <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{p.description}</p>}
+                    <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+                      <span>⏳ {timeLeftLabelI18n(t, p.endsAt)} · {questionTypeLabel(t, p.questionType as ComunityQuestionType)}</span>
+                      {p.venueName && <span className="flex items-center gap-0.5">· <MapPin className="size-3" /> {p.venueName}</span>}
+                    </p>
+                  </div>
+                  {responseReward > 0 && <span className="flex items-center gap-1 text-xs font-medium text-primary shrink-0"><Coins className="size-3.5" />+{responseReward}</span>}
+                </div>
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5">⏳ {timeLeftLabelI18n(t, p.endsAt)} · {questionTypeLabel(t, p.questionType as ComunityQuestionType)}</p>
             </div>
-            {responseReward > 0 && <span className="flex items-center gap-1 text-xs font-medium text-primary shrink-0"><Coins className="size-3.5" />+{responseReward}</span>}
-          </div>
+          </Link>
 
           {/* Respuesta rápida desde la card (spec punto 24) — solo tipos seguros sin abrir detalle */}
           {p.questionType === "yes_no" ? (

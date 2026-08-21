@@ -134,6 +134,20 @@ export async function getProposalById(id: number, db?: AnyDbHandle): Promise<Com
   return row ?? null;
 }
 
+/**
+ * Nombre real del venue de una propuesta — mismo join ya usado por
+ * listProposals() más abajo (venueName en ProposalListItem), nunca antes
+ * expuesto al lado Student (getPublicById/myActive en community.ts): la
+ * ubicación de una propuesta no se mostraba nunca al estudiante, hallazgo
+ * real reportado con captura 2026-08-22.
+ */
+export async function getVenueName(venueId: number | null, db?: AnyDbHandle): Promise<string | null> {
+  if (venueId == null) return null;
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select({ name: venues.name }).from(venues).where(eq(venues.id, venueId)).limit(1);
+  return row?.name ?? null;
+}
+
 export interface ProposalListItem extends CommunityProposal {
   venueName: string | null;
   communities: { id: number; name: string }[];

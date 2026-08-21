@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import { ArrowUp, ArrowDown, Loader2, CheckCircle2, Coins } from "lucide-react";
+import { ArrowUp, ArrowDown, Loader2, CheckCircle2, Coins, MapPin } from "lucide-react";
 
 type QuestionType =
   | "single_choice" | "yes_no" | "percentage_scale" | "scale_1_5"
@@ -94,6 +94,10 @@ export default function ComunityQuestionDetail() {
         <div>
           <h1 className="text-xl font-semibold text-foreground">{proposal.title}</h1>
           {proposal.description && <p className="mt-1 text-sm text-muted-foreground">{proposal.description}</p>}
+          {/* Hallazgo real (2026-08-22, captura del cliente) — la ubicación de la propuesta nunca se mostraba al Student. */}
+          {proposal.venueName && (
+            <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><MapPin className="size-3.5" /> {proposal.venueName}</p>
+          )}
           <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
             {isOpen ? <span>⏳ {timeLeftLabelI18n(t, proposal.endsAt)}</span> : <span>{t("comunity.statusClosed")}</span>}
             {responseReward > 0 && (

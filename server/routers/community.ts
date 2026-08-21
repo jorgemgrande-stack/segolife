@@ -11,7 +11,7 @@ import { getCommunityAccess, resolveCommunityFilter, type CommunityAccess } from
 import {
   createProposal, updateProposal, setProposalStatus, getProposalById, listProposals,
   setProposalOptions, listProposalOptions, getProposalCommunityIds, setProposalCommunities,
-  isProposalOpenForResponses,
+  isProposalOpenForResponses, getVenueName,
 } from "../segolife/community/communityDb";
 import { previewProposalAudience, publishProposal, CommunityPublishError } from "../segolife/community/communityAudienceService";
 import { submitResponse, getUserResponse, CommunityResponseError, type ResponsePayload } from "../segolife/community/communityResponseService";
@@ -450,7 +450,7 @@ export const communityRouter = router({
 
   /** Propuestas activas en MI audiencia (hub, spec punto 23). */
   myActive: protectedProcedure.query(async ({ ctx }) => {
-    const { communityProposalAudiences, communityProposals } = await import("../../drizzle/schema");
+    const { communityProposalAudiences, communityProposals, venues } = await import("../../drizzle/schema");
     const { getDb } = await import("../db");
     const { inArray, eq: eqOp, and: andOp } = await import("drizzle-orm");
     const db = await getDb();
@@ -462,7 +462,17 @@ export const communityRouter = router({
     const now = new Date();
     const rows = await db.select().from(communityProposals)
       .where(andOp(inArray(communityProposals.id, proposalIds), eqOp(communityProposals.status, "active")));
-    return rows.filter(p => isProposalOpenForResponses(p, now));
+    const open = rows.filter(p => isProposalOpenForResponses(p, now));
+
+    // Hallazgo real (2026-08-22, captura del cliente): la ubicación de una
+    // propuesta nunca se resolvía/mostraba al Student, solo al admin
+    // (ProposalListItem.venueName). Batch, sin N+1 — mismo criterio que
+    // listProposals() en communityDb.ts.
+    const venueIds = Array.from(new Set(open.map(p => p.venueId).filter((v): v is number => v != null)));
+    const venueRows = venueIds.length ? await db.select({ id: venues.id, name: venues.name }).from(venues).where(inArray(venues.id, venueIds)) : [];
+    const venueNameById = new Map(venueRows.map(v => [v.id, v.name]));
+
+    return open.map(p => ({ ...p, venueName: p.venueId != null ? (venueNameById.get(p.venueId) ?? null) : null }));
   }),
 
   myResponded: protectedProcedure.query(async ({ ctx }) => {
@@ -491,8 +501,13 @@ export const communityRouter = router({
         (proposal.resultsVisibility === "after_vote" && !!myResponse) ||
         (proposal.resultsVisibility === "after_close" && (proposal.status === "closed" || (proposal.endsAt != null && proposal.endsAt.getTime() < now.getTime())));
 
+      // Hallazgo real (2026-08-22, captura del cliente): la ubicación de una
+      // propuesta nunca se resolvía/mostraba al Student (solo existía para
+      // el admin, ver listProposals/ProposalListItem.venueName).
+      const venueName = await getVenueName(proposal.venueId, undefined);
+
       return {
-        proposal: { ...proposal, description: proposal.description }, // sin campos admin sensibles adicionales
+        proposal: { ...proposal, description: proposal.description, venueName }, // sin campos admin sensibles adicionales
         options: options.map(o => ({ id: o.id, label: o.label, sortOrder: o.sortOrder })), // sin isPositiveIntent (interno)
         myResponse: myResponse ? { response: myResponse.response, values: myResponse.values } : null,
         results: showResults ? await getProposalResults(input.id, false) : null,
