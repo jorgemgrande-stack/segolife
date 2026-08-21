@@ -49,10 +49,17 @@ test.describe("FIX-07 — Student con bottom nav (mobile/tablet): Community visi
     await expect(page).toHaveURL(new RegExp(`/${student.community}/comunity$`));
     await expect(communityLink).toHaveAttribute("aria-current", "page");
 
-    // Contenido real de Community carga (no solo la navegación).
+    // Contenido real de Community carga (no solo la navegación). "Your
+    // ideas" solo se renderiza si el Student ya tiene propuestas reales
+    // (ComunityHub.tsx: `{!!myProposals?.length && ...}`) — la cuenta QA
+    // usada aquí no tiene ninguna (DATA STATE, confirmado vía
+    // community.myProposals antes de escribir este test), y el spec §22
+    // prohíbe crear una propuesta real solo para hacerla aparecer. Se
+    // comprueba en su lugar el formulario Proponer en sí, siempre presente
+    // independientemente de datos.
     await expect(page.getByRole("tab", { name: /propose|proponer/i })).toBeVisible({ timeout: 15000 });
     await page.getByRole("tab", { name: /propose|proponer/i }).click();
-    await expect(page.getByText(/your ideas|tus ideas/i)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/what do you propose|qué propones/i)).toBeVisible({ timeout: 15000 });
 
     expect(await hasHorizontalOverflow(page), "overflow horizontal en Community con 6 items en el bottom nav").toBe(false);
 
