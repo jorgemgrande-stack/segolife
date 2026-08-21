@@ -124,20 +124,20 @@ export function EditStudentDialog({ studentProfileId, onClose, onSuccess }: Base
               aquí — cada uno tiene su propio flujo o está fuera de alcance por seguridad.
             </p>
             <div className="grid grid-cols-2 gap-3">
-              <div><Label>Nombre</Label><Input value={form.firstName} onChange={e => set("firstName", e.target.value)} maxLength={128} /></div>
-              <div><Label>Apellidos</Label><Input value={form.lastName} onChange={e => set("lastName", e.target.value)} maxLength={128} /></div>
-              <div><Label>Email</Label><Input type="email" value={form.email} onChange={e => set("email", e.target.value)} maxLength={320} /></div>
-              <div><Label>Teléfono</Label><Input value={form.phone} onChange={e => set("phone", e.target.value)} maxLength={32} /></div>
-              <div><Label>Fecha de nacimiento</Label><Input placeholder="YYYY-MM-DD" value={form.dateOfBirth} onChange={e => set("dateOfBirth", e.target.value)} maxLength={10} /></div>
-              <div><Label>Nacionalidad</Label><Input placeholder="ES" value={form.nationality} onChange={e => set("nationality", e.target.value.slice(0, 2))} maxLength={2} /></div>
-              <div><Label>País de origen</Label><Input placeholder="ES" value={form.countryOfOrigin} onChange={e => set("countryOfOrigin", e.target.value.slice(0, 2))} maxLength={2} /></div>
-              <div><Label>Programa / grado</Label><Input value={form.degreeProgram} onChange={e => set("degreeProgram", e.target.value)} maxLength={256} /></div>
-              <div><Label>Curso académico</Label><Input value={form.academicYear} onChange={e => set("academicYear", e.target.value)} maxLength={32} /></div>
-              <div><Label>Fecha de llegada</Label><Input placeholder="YYYY-MM-DD" value={form.arrivalDate} onChange={e => set("arrivalDate", e.target.value)} maxLength={10} /></div>
-              <div><Label>Fecha prevista de salida</Label><Input placeholder="YYYY-MM-DD" value={form.expectedDepartureDate} onChange={e => set("expectedDepartureDate", e.target.value)} maxLength={10} /></div>
-              <div><Label>Ciudad</Label><Input value={form.city} onChange={e => set("city", e.target.value)} maxLength={128} /></div>
-              <div><Label>Código postal</Label><Input value={form.postalCode} onChange={e => set("postalCode", e.target.value)} maxLength={16} /></div>
-              <div className="col-span-2"><Label>Dirección (privada)</Label><Input value={form.addressLine} onChange={e => set("addressLine", e.target.value)} maxLength={256} /></div>
+              <div><Label htmlFor="stu-edit-firstName">Nombre</Label><Input id="stu-edit-firstName" value={form.firstName} onChange={e => set("firstName", e.target.value)} maxLength={128} /></div>
+              <div><Label htmlFor="stu-edit-lastName">Apellidos</Label><Input id="stu-edit-lastName" value={form.lastName} onChange={e => set("lastName", e.target.value)} maxLength={128} /></div>
+              <div><Label htmlFor="stu-edit-email">Email</Label><Input id="stu-edit-email" type="email" value={form.email} onChange={e => set("email", e.target.value)} maxLength={320} /></div>
+              <div><Label htmlFor="stu-edit-phone">Teléfono</Label><Input id="stu-edit-phone" value={form.phone} onChange={e => set("phone", e.target.value)} maxLength={32} /></div>
+              <div><Label htmlFor="stu-edit-dob">Fecha de nacimiento</Label><Input id="stu-edit-dob" placeholder="YYYY-MM-DD" value={form.dateOfBirth} onChange={e => set("dateOfBirth", e.target.value)} maxLength={10} /></div>
+              <div><Label htmlFor="stu-edit-nationality">Nacionalidad</Label><Input id="stu-edit-nationality" placeholder="ES" value={form.nationality} onChange={e => set("nationality", e.target.value.slice(0, 2))} maxLength={2} /></div>
+              <div><Label htmlFor="stu-edit-country">País de origen</Label><Input id="stu-edit-country" placeholder="ES" value={form.countryOfOrigin} onChange={e => set("countryOfOrigin", e.target.value.slice(0, 2))} maxLength={2} /></div>
+              <div><Label htmlFor="stu-edit-degree">Programa / grado</Label><Input id="stu-edit-degree" value={form.degreeProgram} onChange={e => set("degreeProgram", e.target.value)} maxLength={256} /></div>
+              <div><Label htmlFor="stu-edit-year">Curso académico</Label><Input id="stu-edit-year" value={form.academicYear} onChange={e => set("academicYear", e.target.value)} maxLength={32} /></div>
+              <div><Label htmlFor="stu-edit-arrival">Fecha de llegada</Label><Input id="stu-edit-arrival" placeholder="YYYY-MM-DD" value={form.arrivalDate} onChange={e => set("arrivalDate", e.target.value)} maxLength={10} /></div>
+              <div><Label htmlFor="stu-edit-departure">Fecha prevista de salida</Label><Input id="stu-edit-departure" placeholder="YYYY-MM-DD" value={form.expectedDepartureDate} onChange={e => set("expectedDepartureDate", e.target.value)} maxLength={10} /></div>
+              <div><Label htmlFor="stu-edit-city">Ciudad</Label><Input id="stu-edit-city" value={form.city} onChange={e => set("city", e.target.value)} maxLength={128} /></div>
+              <div><Label htmlFor="stu-edit-postal">Código postal</Label><Input id="stu-edit-postal" value={form.postalCode} onChange={e => set("postalCode", e.target.value)} maxLength={16} /></div>
+              <div className="col-span-2"><Label htmlFor="stu-edit-address">Dirección (privada)</Label><Input id="stu-edit-address" value={form.addressLine} onChange={e => set("addressLine", e.target.value)} maxLength={256} /></div>
             </div>
           </div>
         )}
@@ -203,8 +203,8 @@ export function HideStudentDialog({ studentProfileId, onClose, onSuccess }: Base
               : "El estudiante vuelve a aparecer en el listado por defecto."}
           </p>
           <div>
-            <Label>Motivo</Label>
-            <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="Obligatorio…" autoFocus />
+            <Label htmlFor="stu-hide-reason">Motivo</Label>
+            <Input id="stu-hide-reason" value={reason} onChange={e => setReason(e.target.value)} placeholder="Obligatorio…" autoFocus />
           </div>
         </div>
         <DialogFooter>
@@ -284,8 +284,8 @@ export function DeleteStudentDialog({ studentProfileId, onClose, onSuccess }: Ba
                   real (SegoTokens, tickets, asistencia, consumo, conversaciones, comunidad).
                 </p>
                 <div>
-                  <Label>Motivo</Label>
-                  <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="Obligatorio…" autoFocus />
+                  <Label htmlFor="stu-delete-reason">Motivo</Label>
+                  <Input id="stu-delete-reason" value={reason} onChange={e => setReason(e.target.value)} placeholder="Obligatorio…" autoFocus />
                 </div>
               </>
             )}
