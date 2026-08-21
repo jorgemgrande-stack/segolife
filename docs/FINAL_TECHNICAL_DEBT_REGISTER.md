@@ -631,3 +631,149 @@ después de ocultar al estudiante, así que revertir necesita
 "inactive" durante la depuración; revertida cada vez vía la propia
 mutación auditada de la app (nunca un UPDATE silencioso), y confirmada
 "active" al cierre.
+
+---
+
+## M. LNF-01 — Lost & Found / Objetos perdidos — 2026-08-21 — DONE
+
+Circuito completo Student → Venue → Admin/venue_admin → COM-01 →
+Student, nuevo end-to-end (a diferencia de STU-01/COM-01, no había nada
+reutilizable de "Lost & Found" en el código heredado — auditoría previa
+confirmó que Comunity, con su propio texto/imagen, es un dominio
+distinto y NO se reutilizó por diseño, spec §28).
+
+**Modelo de datos**: dos tablas nuevas, `lost_found_reports`
+(studentUserId/venueId/communityId nullable/lostDate/approximateTime/
+description/imageStorageKey nullable/status enum
+open|found|closed_not_found/conversationId/resolvedAt/resolvedByUserId/
+resolutionNote) y `lost_found_case_actions` (auditoría de transiciones,
+before/after/reason). Migración `apply-0165-lost-found.cjs` (mismo
+patrón `.cjs` idempotente que apply-0164), aplicada y verificada en
+local dev DB; **pendiente aplicar en producción** vía `railway ssh`
+antes de que el deploy pueda escribir sobre esas tablas.
+
+**Atomicidad caso + conversación**: `createLostFoundReport` crea la fila
+del caso Y la conversación inicial de COM-01 en la MISMA transacción —
+se exportó `insertConversationAndFirstMessage` (antes privada de
+`studentMessagesDb.ts`) para llamarla dentro de la transacción propia de
+Lost & Found, ya que drizzle-orm/mysql2 no soporta transacciones
+anidadas. El primer mensaje de esa conversación es la propia descripción
+del Student — para esto se generalizó `CreateConversationInput` con
+`initialSenderRole?: "admin"|"student"` (default `"admin"`, sin cambio
+de comportamiento para ningún llamador existente, verificado con la
+suite completa de `studentMessagesDb.test.ts`).
+
+**COM-01 reutilizado tal cual, nunca duplicado**: cada caso enlaza a
+`conversations` vía `contextType="lost_found"`/`contextId=report.id` +
+`conversationId` denormalizado (evita N+1 al listar). No existe
+`lost_item_messages` ni ningún chat paralelo. Hallazgo de arquitectura
+real durante el diseño: `student_messages.manage` (COM-01/STU-02) es
+exclusivamente de Admin global — un venue_admin gestionando un caso de
+su propio venue no puede usar `/admin/students/messages/:id`. Se
+resolvió con procedures nuevas y finas en `lostFound.ts`
+(`adminGetConversation`/`adminReplyToConversation`/
+`adminCloseConversation`/`adminReopenConversation`/
+`adminMarkConversationRead`) que llaman a las MISMAS funciones de BD de
+COM-01 (`getConversationForAdmin`/`replyAsAdmin`/…) pero autorizan por
+`lost_found.process` + alcance de venue en vez del permiso global de
+COM-01. El lado Student no necesitó ningún procedure nuevo:
+`studentMessages.getConversation/.reply/.markRead` ya eran
+`protectedProcedure` autoservicio, reutilizados sin tocar.
+
+**Resolución = mensaje real, no un canal aparte**: `markFound`/
+`markClosedNotFound` exigen una `resolutionNote` no vacía y, tras
+confirmar la transición, la publican (best-effort, nunca deshace el
+cambio de estado si el envío falla) como mensaje real de COM-01 —
+dispara la misma notificación "messages" ya existente. Satisface el
+requisito de negocio ("el texto de resolución debe llegar al Student")
+sin inventar un segundo canal de notificación.
+
+**Máquina de estados**: OPEN→FOUND/CLOSED_NOT_FOUND, y reopen
+(FOUND/CLOSED_NOT_FOUND→OPEN, exige motivo, auditado, preserva la
+última `resolutionNote` real). FOUND→CLOSED_NOT_FOUND directo está
+prohibido. Concurrencia (spec §26): `transitionStatus` relee la fila con
+`SELECT … FOR UPDATE` dentro de la propia transacción antes de decidir
+si la transición es válida — un segundo admin actuando sobre un caso ya
+resuelto por otro recibe `INVALID_TRANSITION`, nunca sobrescribe en
+silencio.
+
+**RBAC / venue_admin (spec §14)**: reutiliza tal cual
+`getVenueStaffAccess`/`requireVenueAccess`/`venueAccessAllows`
+(el mismo helper de Commerce/Benefits/Stock/Cash) — nuevo permiso
+`lost_found.manage` como marcador de alcance GLOBAL puro (nunca
+concedido a venue_admin, invariante ya estructural en
+`venueAdminPolicy.ts`/`isGlobalScopePermission`), y `lost_found.view`/
+`.process` sí concedidos a venue_admin vía
+`VENUE_ADMIN_PERMISSION_BUNDLE`. El detalle admin solo expone
+`id/name/email/phone` del Student (SELECT directo a `users`, nunca la
+agregación de Student 360) — venue_admin gestionando Lost & Found no
+gana visión del CRM completo.
+
+**Dos superficies Admin, un solo componente compartido**: se descubrió
+durante el diseño que TODO el nav lateral de `AdminLayout` es
+`roles: ["admin"]` salvo un único ítem ("Mi local") — venue_admin no
+tiene sidebar, opera desde `VenueApp.tsx` (Venue & Partner App, shell de
+pestañas independiente). Por eso Lost & Found tiene dos entradas: `/admin/
+lost-found` (Global Admin, listado con filtros venue/estado/búsqueda,
+respeta el selector de comunidad ya existente) y una nueva pestaña
+"Perdidos" dentro de `VenueApp.tsx` (venue_admin, acotada a su venue
+seleccionado). Ambas renderizan el MISMO `LostFoundCaseDetail.tsx`
+— la autorización real vive en el servidor, nunca se duplicó la ficha.
+
+**Imágenes**: `lostFoundPhotoService.ts` reutiliza la validación REAL de
+MG-03 (`validateImageBuffer`, extraída de `studentPhotoService.ts` sin
+tocar su comportamiento existente — decodificación real con `sharp()`,
+límites de tamaño/dimensión, MIME allowlist) con un resize propio
+(máx. 1600px, sin recorte cuadrado — un objeto fotografiado no debe
+recortarse como una cara). Foto opcional; su fallo NUNCA deshace el
+caso ya creado (mismo criterio de tolerancia que MG-03). Servida vía
+`GET /api/lost-found/:id/photo`, autenticado, autorizado solo para
+dueño/admin global/venue_admin con acceso al venue real del caso.
+
+**Notificaciones**: sin sistema nuevo — reutiliza `notifyStudentNewMessage`
+(ya exportado desde `studentMessages.ts`) para toda comunicación
+Admin→Student, y el mismo patrón de badge de pendientes que COM-01
+(`adminPendingCount`) para que Admin detecte casos nuevos/con respuesta
+sin leer (`lostFound.adminPendingCount`, cuenta casos OPEN o con
+conversación sin leer por Admin, con el mismo alcance por venue).
+
+**SegoTokens**: no tocado — Lost & Found no otorga ni consume tokens,
+confirmado por diseño y por tests (nunca se importó `token_wallets`/
+`token_ledger` en ningún archivo nuevo).
+
+**Decisión de negocio pendiente (spec §22, no inventada)**: no existe
+una política canónica de retención de imágenes/PII/conversaciones de
+casos cerrados — **BUSINESS DECISION REQUIRED** antes de definir un job
+de limpieza; hasta entonces, los casos cerrados y sus fotos se conservan
+indefinidamente (mismo criterio conservador que COM-01/STU-01: nunca
+borrar por defecto sin instrucción explícita).
+
+**Borrado**: deliberadamente NO existe un botón "Borrar" (spec §21) —
+un caso se resuelve vía estado (FOUND/CLOSED_NOT_FOUND), nunca se
+elimina, por las mismas razones de trazabilidad/PII que STU-01 aplicó a
+Students con historial real.
+
+Tests: `lostFoundDb.test.ts` (BD real, 15 tests — atomicidad,
+validación, IDOR Student, alcance por venue de `listLostFoundReportsForAdmin`
+incl. `venueIds=[]`→vacío nunca "todos", exposición mínima del detalle
+admin, máquina de estados incl. concurrencia, `countPendingForAdmin`) +
+`lostFound.test.ts` (mockeado, 19 tests — sin sesión, RBAC Student
+denegado, IDOR self-scoped, alcance por venue vía `role="admin"` para
+ejercitar la lógica interna dado que un `venue_admin` real nunca llega
+al handler en este entorno mockeado sin BD, ver
+`venueAdminPolicy.test.ts` para la garantía real del bundle,
+transiciones best-effort, envoltorio de conversación, `adminPendingCount`)
++ `venueAdminPolicy.test.ts` ampliado (2 tests nuevos, bundle exacto
+sembrado incluye `lost_found.view`/`.process`, `.manage` confirmado
+global). TypeScript 0 (`npx tsc --noEmit` limpio). Build PASS. Suite
+completa: 269/274 archivos pasan sin `DATABASE_URL` (los 5 que
+requieren BD real, incluido `lostFoundDb.test.ts`, pasan los 4/4 al
+ejecutarlos aparte contra `localhost:3307` — mismo patrón pre-existente
+que `studentMessagesDb.test.ts`/`studentLifecycleService.test.ts`,
+confirmado que NINGUNO de los 2 grupos es un regresión nueva).
+
+**Pendiente antes de cerrar**: aplicar `apply-0165-lost-found.cjs` en
+producción, spec E2E Playwright de producción (§35), y verificación
+visual mobile/tablet/desktop (§36) — ver informe final LNF-01 para el
+detalle exacto de qué quedó verificado y qué queda como bloqueo externo
+o dato QA pendiente de limpieza.
