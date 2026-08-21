@@ -6,13 +6,19 @@ import { SegolifeBottomNav } from "./SegolifeBottomNav";
 afterEach(cleanup);
 
 /**
- * Nav inferior (Fase 6, "navegación principal") — Home|Explore|Comunity|
- * [SCAN]|Rewards|Profile, SCAN central elevado, estado activo por ruta
- * real, y agnóstica de comunidad (slug es una prop, nunca un literal
- * "ie"/"uva" en el componente — spec, "no hardcodear lista de
- * comunidades"). FIX-07: Comunity (regresión — faltaba en este array
- * aunque ya existía en SegolifeSidebar.tsx, dejándolo inaccesible desde
- * la navegación en cualquier viewport por debajo del breakpoint xl:).
+ * Nav inferior (Fase 6, "navegación principal") — Home|Explore|[SCAN]|
+ * Comunity|Rewards, SCAN central REALMENTE centrado (2 items a cada
+ * lado), estado activo por ruta real, y agnóstica de comunidad (slug es
+ * una prop, nunca un literal "ie"/"uva" en el componente — spec, "no
+ * hardcodear lista de comunidades"). FIX-07: Comunity (regresión —
+ * faltaba en este array aunque ya existía en SegolifeSidebar.tsx,
+ * dejándolo inaccesible desde la navegación en cualquier viewport por
+ * debajo del breakpoint xl:). FIX-07B: Profile se retira SOLO de aquí
+ * (sigue accesible desde SegolifeHeader.tsx, ver SegolifeHeader.test.tsx)
+ * y Comunity pasa a ir DESPUÉS del hueco central — con Profile fuera, un
+ * grid de 6 columnas (3 items antes del hueco + 2 después) no tenía
+ * columna central real y el botón SCAN quedaba descuadrado a la
+ * izquierda; con 5 columnas (2 + hueco + 2) sí la tiene.
  */
 describe("SegolifeBottomNav", () => {
   beforeEach(() => {
@@ -69,5 +75,15 @@ describe("SegolifeBottomNav", () => {
     window.history.pushState({}, "", "/ie/rewards");
     render(<SegolifeBottomNav slug="ie" />);
     expect(screen.getByRole("link", { name: /Comunity|Comunidad/ })).not.toHaveAttribute("aria-current");
+  });
+
+  it("FIX-07B — Profile NO aparece en el bottom nav (sigue accesible solo desde el header)", () => {
+    render(<SegolifeBottomNav slug="ie" />);
+    expect(screen.queryByRole("link", { name: /^Profile$|^Perfil$/ })).not.toBeInTheDocument();
+  });
+
+  it("FIX-07B — exactamente 5 destinos en el nav: Home, Explore, Scan, Comunity, Rewards, sin Profile", () => {
+    render(<SegolifeBottomNav slug="ie" />);
+    expect(screen.getAllByRole("link")).toHaveLength(5);
   });
 });

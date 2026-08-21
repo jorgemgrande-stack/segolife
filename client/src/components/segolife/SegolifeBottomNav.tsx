@@ -1,24 +1,26 @@
 import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
-import { Home as HomeIcon, Compass, Vote, QrCode, Gift, User } from "lucide-react";
+import { Home as HomeIcon, Compass, Vote, QrCode, Gift } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
  * Navegación inferior definitiva de Segolife (Fase 6) — Home | Explore |
- * Comunity | [SCAN] | Rewards | Profile, con SCAN como botón central
- * elevado (spec, punto "navegación principal"). `slug` es el prefijo de
- * comunidad actual (p.ej. "ie") — nunca se hardcodea "ie"/"uva" aquí, se
- * recibe como prop.
+ * [SCAN] | Comunity | Rewards, con SCAN como botón central elevado
+ * REALMENTE centrado (2 items a cada lado — spec, punto "navegación
+ * principal"). `slug` es el prefijo de comunidad actual (p.ej. "ie") —
+ * nunca se hardcodea "ie"/"uva" aquí, se recibe como prop.
  *
- * FIX-07: Comunity faltaba en este array — existía en SegolifeSidebar.tsx
- * (desktop, >=1200px) pero nunca se replicó aquí, así que quedaba
- * inaccesible desde la navegación en mobile Y en cualquier viewport por
- * debajo de 1200px (incluida una tablet en horizontal/vertical típica,
- * p.ej. 1024×768 — el breakpoint real de la sidebar es más alto de lo que
- * "tablet" sugiere). La ruta en sí nunca estuvo rota (accesible siempre
- * por URL directa) — solo faltaba el punto de entrada en la navegación.
- * Mismo icono (`Vote`) y misma `label` (`t("nav.comunity")`) que ya usa
- * SegolifeSidebar, para no introducir una segunda fuente de verdad visual.
+ * FIX-07B: Profile se retira de AQUÍ exclusivamente — sigue existiendo
+ * como ruta y sigue accesible desde el icono de usuario de
+ * SegolifeHeader.tsx (nunca tocado). FIX-07 había insertado Comunity
+ * ANTES del hueco central, dejando 3 items a la izquierda y 2 a la
+ * derecha en un grid de 6 columnas — un grid de 6 columnas no tiene una
+ * columna central real, así que el botón SCAN quedaba descuadrado hacia
+ * la izquierda. Con Profile fuera y Comunity movida DESPUÉS del hueco
+ * central, vuelven a ser 5 columnas (2 + hueco + 2), la misma proporción
+ * simétrica que existía antes de FIX-07 — Comunity ocupa ahora la
+ * posición que antes tenía Profile en el grid, no la que tenía en el
+ * array previo a este cambio.
  */
 export function SegolifeBottomNav({ slug, benefitsBadge }: { slug: string; benefitsBadge?: boolean }) {
   const { t } = useTranslation();
@@ -27,10 +29,9 @@ export function SegolifeBottomNav({ slug, benefitsBadge }: { slug: string; benef
   const items = [
     { key: "home", href: `/${slug}`, icon: HomeIcon, label: t("nav.home"), exact: true },
     { key: "explore", href: `/${slug}/explore`, icon: Compass, label: t("nav.explore") },
-    { key: "comunity", href: `/${slug}/comunity`, icon: Vote, label: t("nav.comunity") },
     null, // hueco central para el botón SCAN elevado
+    { key: "comunity", href: `/${slug}/comunity`, icon: Vote, label: t("nav.comunity") },
     { key: "rewards", href: `/${slug}/rewards`, icon: Gift, label: t("nav.rewards"), badge: benefitsBadge },
-    { key: "profile", href: `/${slug}/profile`, icon: User, label: t("nav.profile") },
   ] as const;
 
   const isActive = (href: string, exact?: boolean) => (exact ? location === href : location.startsWith(href));
@@ -40,7 +41,7 @@ export function SegolifeBottomNav({ slug, benefitsBadge }: { slug: string; benef
       className="segolife-safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 backdrop-blur"
       aria-label={t("nav.home")}
     >
-      <div className="relative mx-auto grid max-w-md grid-cols-6 items-center px-1">
+      <div className="relative mx-auto grid max-w-md grid-cols-5 items-center px-2">
         {items.map((item, i) => {
           if (!item) {
             return (
