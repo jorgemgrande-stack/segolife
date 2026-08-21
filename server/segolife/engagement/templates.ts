@@ -113,6 +113,32 @@ export const ENGAGEMENT_TEMPLATES: Record<string, EngagementTemplate> = {
       () => "Enter SEGOLIFE",
     ),
   },
+  // Historical Students → Real Student (2026-08-21): conversión admin de una
+  // identidad histórica de Fourvenues (persona real, sin cuenta Segolife
+  // todavía) en un Student real — el email de acceso es la ÚNICA vía para
+  // que sepa que ahora tiene cuenta, así que siempre es email (nunca
+  // solo in_app: nadie puede ver un in_app sin sesión todavía).
+  historical_student_welcome: {
+    key: "historical_student_welcome", version: 1, category: "account", adminCategory: "ACCOUNT",
+    audienceType: "transactional", channels: ["in_app", "email"], status: "active",
+    description: "Bienvenida al crear una cuenta real desde una identidad histórica de Fourvenues (admin).", triggerEvent: "HistoricalIdentityConvertedToStudent",
+    titleEn: "Welcome back to SEGOLIFE ✦", titleEs: "Bienvenido/a de nuevo a SEGOLIFE ✦",
+    bodyEn: "Hi {{studentFirstName}}, set up your password to access your account.", bodyEs: "Hola {{studentFirstName}}, configura tu contraseña para acceder a tu cuenta.",
+    subjectEn: "You already have a place in SEGOLIFE", subjectEs: "Ya tienes un lugar en SEGOLIFE",
+    preheaderEn: "We recognized your history — set up your password to access it.", preheaderEs: "Reconocemos tu historial — configura tu contraseña para acceder.",
+    allowedVariables: ["studentFirstName", "venueNames"],
+    buildEmailBody: (vars, _locale, ctx) => {
+      const headline = `Hi, ${vars.studentFirstName || ""}.`.trim();
+      const p1 = vars.venueNames
+        ? `We recognized your history at ${vars.venueNames} — you already have a place in the SEGOLIFE community.`
+        : "We recognized your history with us — you already have a place in the SEGOLIFE community.";
+      const p2 = "Set up your password to access your SegoTokens, benefits and profile.";
+      const rows = heroBlock({ headline }) +
+        contentBlock(`<p style="margin:0 0 8px;">${escapeHtml(p1)}</p><p style="margin:0;">${escapeHtml(p2)}</p>`) +
+        (ctx.deepLinkUrl ? `<tr><td style="padding:0 32px;">${ctaButton("Set up my account", ctx.deepLinkUrl)}</td></tr>` : "");
+      return { rows, paragraphs: [p1, p2], headline };
+    },
+  },
   profile_incomplete: {
     key: "profile_incomplete", version: 1, category: "account", adminCategory: "ACCOUNT",
     audienceType: "marketing", channels: ["in_app", "email"], status: "active",

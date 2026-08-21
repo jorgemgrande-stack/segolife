@@ -16,6 +16,7 @@ import {
   classifyMatch,
   getMyHistoricalMatchPreview,
   claimMyHistoricalIdentity,
+  convertHistoricalIdentityToStudent,
   HistoricalIdentityError,
 } from "../segolife/students/historicalIdentityService";
 import { getStudentByUserId } from "../db/studentsDb";
@@ -89,6 +90,37 @@ export const historicalIdentitiesRouter = router({
       } catch (err) {
         mapHistoricalIdentityError(err);
       }
+    }),
+
+  /**
+   * Estudiantes históricos → Student real (petición del cliente, 2026-08-21):
+   * crea la cuenta real (users + student_profile + comunidad), la vincula al
+   * historial completo (mismo `claimHistoricalIdentity` de siempre) y envía
+   * el email de bienvenida con el enlace para configurar el acceso — ver
+   * convertHistoricalIdentityToStudent() para el detalle completo.
+   */
+  convertToStudent: historicalIdentitiesManageProcedure
+    .input(z.object({ identityKey: z.string().min(1), communityId: z.number().int().positive(), universityId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await convertHistoricalIdentityToStudent({
+          identityKey: input.identityKey,
+          communityId: input.communityId,
+          universityId: input.universityId,
+          actorUserId: ctx.user.id,
+        });
+      } catch (err) {
+        mapHistoricalIdentityError(err);
+      }
+    }),
+
+  /** Resuelve el studentProfileId real de una identidad ya vinculada — para poder llevar al admin directo a su ficha (mismos diálogos Editar/Ocultar/Borrar/Comunicarse que cualquier Student). */
+  resolveLinkedStudent: historicalIdentitiesViewProcedure
+    .input(z.object({ userId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const student = await getStudentByUserId(input.userId);
+      if (!student) throw new TRPCError({ code: "NOT_FOUND", message: "Estudiante no encontrado" });
+      return { studentProfileId: student.profile.id };
     }),
 
   unclaim: historicalIdentitiesManageProcedure

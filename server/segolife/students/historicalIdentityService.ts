@@ -23,13 +23,20 @@
 import { eq, and, or, inArray, sql as drizzleSql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
+import crypto from "crypto";
 import {
   unresolvedOperations, users, studentProfiles, events, venues, eventTickets,
+  communities, passwordResetTokens,
   type UnresolvedOperation,
 } from "../../../drizzle/schema";
 import { linkUnresolvedOperation, ignoreUnresolvedOperation, UnresolvedOperationError } from "../integrations/unresolvedOperationsService";
 import { ingestAttendance } from "../ticketing/attendancePipeline";
 import { recordStudentAdminAction } from "./studentAdminActionsDb";
+import { ensureStudentProfile, updateStudentProfile } from "../../db/studentsDb";
+import { addUserToCommunity, getCommunityUniversities } from "../../db/communitiesDb";
+import { updatePreference } from "../engagement/notificationPreferencesService";
+import { createNotification } from "../engagement/notificationService";
+import { renderTemplate } from "../engagement/templates";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 3 });
 const _db = drizzle(_pool);
@@ -449,6 +456,152 @@ export async function claimHistoricalIdentity(
   return { status: "CLAIMED", identityKey: input.identityKey, userId: input.userId, operationsLinked, operationsAlreadyLinked: linkedRows.length, ticketsAttributed, attendanceMaterialized };
 }
 
+// ─── Convertir identidad histórica en Student real (petición del cliente,
+// 2026-08-21) ────────────────────────────────────────────────────────────
+//
+// Hueco real detectado al auditar este servicio: `claimHistoricalIdentity`
+// SOLO vincula una identidad a un userId que YA EXISTE — no había ninguna
+// vía para crear la cuenta real desde cero a partir de una identidad
+// histórica sin cuenta (spec original §41 nunca cubrió este caso). Esta
+// función compone, en este orden: (1) alta transaccional del usuario +
+// student_profile + comunidad — MISMO patrón que registrationService.ts
+// (reutilizado, nunca duplicado a mano), pero sin contraseña (la elige el
+// propio estudiante vía el link de bienvenida) y con isActive=true desde el
+// alta (a diferencia del flujo de invitación de empleados/partners — aquí
+// el admin está dando de alta a una persona real ya verificada por su
+// propio historial de Fourvenues, no una invitación especulativa); (2) el
+// claim ya existente (nunca se duplica esa lógica); (3) email de bienvenida
+// reutilizando EXACTAMENTE el mismo mecanismo de password_reset_tokens +
+// /nueva-contrasena que ya usa passwordReset.ts — cero página nueva de
+// activación, cero tabla nueva de tokens.
+export interface ConvertToStudentInput {
+  identityKey: string;
+  actorUserId: number;
+  communityId: number;
+  universityId: number;
+}
+
+export interface ConvertToStudentResult {
+  userId: number;
+  claim: ClaimResult;
+  welcomeEmailSent: boolean;
+}
+
+const _CONVERT_TOKEN_EXPIRY_DAYS = 7;
+
+export async function convertHistoricalIdentityToStudent(input: ConvertToStudentInput, db?: DbHandle): Promise<ConvertToStudentResult> {
+  const conn = db ?? (await getDb());
+  const groups = await loadAllIdentityGroups(conn);
+  const g = groups.get(input.identityKey);
+  if (!g) throw new HistoricalIdentityError("NOT_FOUND", "Identidad histórica no encontrada");
+
+  // Solo tiene sentido para identidades SIN ninguna cuenta Segolife
+  // relacionada todavía — si ya hay un match (posible o exacto) o ya está
+  // vinculada, la vía correcta es "Vincular a estudiante" (claim), nunca
+  // crear una segunda cuenta con el mismo email/teléfono.
+  if (g.status === "LINKED") {
+    throw new HistoricalIdentityError("ALREADY_LINKED", "Esta identidad ya está vinculada a un estudiante real — no hace falta crear una cuenta nueva.");
+  }
+  if (g.status === "CONFLICT") {
+    throw new HistoricalIdentityError("CONFLICT", "Esta identidad tiene un conflicto de vinculación sin resolver — resuélvelo antes de crear una cuenta.");
+  }
+  if (g.status === "POSSIBLE_MATCH" || g.status === "AUTO_MATCH_CANDIDATE") {
+    throw new HistoricalIdentityError("HAS_EXISTING_MATCH", "Ya existe una cuenta Segolife con este email o teléfono — usa \"Vincular a estudiante\" en vez de crear una cuenta nueva.");
+  }
+  if (!g.email) {
+    throw new HistoricalIdentityError("EMAIL_REQUIRED", "Esta identidad histórica no tiene email — no se puede crear ni notificar una cuenta sin uno.");
+  }
+
+  const [community] = await conn.select({ id: communities.id, status: communities.status }).from(communities).where(eq(communities.id, input.communityId)).limit(1);
+  if (!community || community.status !== "active") {
+    throw new HistoricalIdentityError("COMMUNITY_NOT_FOUND", "La comunidad seleccionada no está disponible.");
+  }
+  const university = (await getCommunityUniversities(community.id, conn)).find(u => u.id === input.universityId);
+  if (!university) {
+    throw new HistoricalIdentityError("UNIVERSITY_NOT_FOUND", "La universidad seleccionada no está disponible para esta comunidad.");
+  }
+
+  // Mismo heurístico documentado en HistoricalIdentityListItem.name: el
+  // nombre de Fourvenues es un único campo de texto libre — se separa solo
+  // para presentación/almacenamiento (nunca para matching), el admin puede
+  // corregirlo después con "Editar" como con cualquier otro estudiante.
+  const nameParts = (g.name ?? "").trim().split(/\s+/).filter(Boolean);
+  const firstName = nameParts[0] ?? "";
+  const lastName = nameParts.slice(1).join(" ");
+
+  const openId = `historical_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+  const rawToken = crypto.randomBytes(48).toString("hex");
+  const tokenExpiry = new Date(Date.now() + _CONVERT_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+
+  const userId = await conn.transaction(async (tx) => {
+    const [existingUser] = await tx.select({ id: users.id }).from(users).where(eq(users.email, g.email!)).limit(1);
+    if (existingUser) {
+      // Carrera real (spec §33 de registrationService.ts, mismo criterio) —
+      // loadAllIdentityGroups ya se calculó antes de esta transacción.
+      throw new HistoricalIdentityError("HAS_EXISTING_MATCH", "Ya existe una cuenta Segolife con este email — usa \"Vincular a estudiante\" en vez de crear una cuenta nueva.");
+    }
+
+    const insertResult = await tx.insert(users).values({
+      openId,
+      email: g.email!,
+      name: g.name ?? g.email!,
+      phone: g.phone ?? "",
+      passwordHash: null,
+      loginMethod: "local",
+      isActive: true,
+      inviteToken: null,
+      inviteTokenExpiry: null,
+      inviteAccepted: false,
+    });
+    const insertId = (insertResult as unknown as [{ insertId: number }])[0].insertId;
+
+    await ensureStudentProfile(insertId, tx);
+    await updateStudentProfile(insertId, { firstName: firstName || null, lastName: lastName || null, universityId: university.id }, tx);
+    await addUserToCommunity(insertId, community.id, undefined, tx);
+    // Sin consentimiento de marketing explícito (el admin lo crea, no el
+    // propio estudiante) — se registra enabled:false por auditoría, mismo
+    // criterio que registrationService.ts; el estudiante puede activarlo él
+    // mismo luego desde sus preferencias.
+    await updatePreference({ userId: insertId, category: "promotions", channel: "email", enabled: false }, tx);
+
+    await tx.insert(passwordResetTokens).values({ userId: insertId, token: rawToken, expiresAt: tokenExpiry });
+
+    return insertId;
+  });
+
+  const claim = await claimHistoricalIdentity({
+    identityKey: input.identityKey,
+    userId,
+    actorUserId: input.actorUserId,
+    method: "admin_convert_to_student",
+    reason: "Cuenta creada desde estudiante histórico",
+  }, conn);
+
+  let welcomeEmailSent = false;
+  try {
+    const venueNames = (await conn.select({ name: venues.name }).from(venues).where(inArray(venues.id, g.venueIds.length ? g.venueIds : [0])))
+      .map(v => v.name).join(", ");
+    const vars = { studentFirstName: firstName || (g.name ?? ""), venueNames };
+    const rendered = renderTemplate("historical_student_welcome", vars, `/nueva-contrasena?token=${rawToken}`, vars);
+    const result = await createNotification({
+      userId, communityId: community.id, type: "historical_student_welcome", category: "account",
+      audienceType: "transactional", rendered, templateKey: "historical_student_welcome", templateVersion: 1,
+      sourceType: "user", sourceId: userId,
+      idempotencyKey: `historical_student_welcome:${userId}`,
+      additionalChannels: ["email"], sendImmediately: true,
+      recipient: { email: g.email },
+    }, conn);
+    welcomeEmailSent = result.status === "created";
+  } catch (err) {
+    // Best-effort — mismo criterio que grantWelcomeBenefitBestEffort: un
+    // fallo de envío nunca debe deshacer la cuenta/claim ya confirmados. El
+    // admin puede reenviar la invitación desde "Comunicarse" si hace falta.
+    console.error("[convertHistoricalIdentityToStudent] No se pudo enviar el email de bienvenida:", err);
+  }
+
+  return { userId, claim, welcomeEmailSent };
+}
+
 export interface UnclaimResult {
   identityKey: string;
   operationsReverted: number;
@@ -513,7 +666,13 @@ async function getStudentProfileId(userId: number, db: DbHandle): Promise<number
 }
 
 export class HistoricalIdentityError extends Error {
-  constructor(public code: "NOT_FOUND" | "NOT_LINKED" | "REASON_REQUIRED", message: string) {
+  constructor(
+    public code:
+      | "NOT_FOUND" | "NOT_LINKED" | "REASON_REQUIRED"
+      | "ALREADY_LINKED" | "CONFLICT" | "HAS_EXISTING_MATCH" | "EMAIL_REQUIRED"
+      | "COMMUNITY_NOT_FOUND" | "UNIVERSITY_NOT_FOUND",
+    message: string
+  ) {
     super(message);
     this.name = "HistoricalIdentityError";
   }

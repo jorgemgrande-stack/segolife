@@ -7,13 +7,23 @@
  * queries a varias tablas distintas).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { unresolvedOperations, users, events, venues, eventTickets, studentProfiles } from "../../../drizzle/schema";
+import { unresolvedOperations, users, events, venues, eventTickets, studentProfiles, communities, passwordResetTokens } from "../../../drizzle/schema";
 
-const { mockLinkUnresolvedOperation, mockIgnoreUnresolvedOperation, mockIngestAttendance, mockRecordStudentAdminAction } = vi.hoisted(() => ({
+const {
+  mockLinkUnresolvedOperation, mockIgnoreUnresolvedOperation, mockIngestAttendance, mockRecordStudentAdminAction,
+  mockEnsureStudentProfile, mockUpdateStudentProfile, mockAddUserToCommunity, mockGetCommunityUniversities,
+  mockUpdatePreference, mockCreateNotification,
+} = vi.hoisted(() => ({
   mockLinkUnresolvedOperation: vi.fn(),
   mockIgnoreUnresolvedOperation: vi.fn(),
   mockIngestAttendance: vi.fn(),
   mockRecordStudentAdminAction: vi.fn(),
+  mockEnsureStudentProfile: vi.fn(),
+  mockUpdateStudentProfile: vi.fn(),
+  mockAddUserToCommunity: vi.fn(),
+  mockGetCommunityUniversities: vi.fn(),
+  mockUpdatePreference: vi.fn(),
+  mockCreateNotification: vi.fn(),
 }));
 
 vi.mock("../integrations/unresolvedOperationsService", async () => {
@@ -26,6 +36,10 @@ vi.mock("../integrations/unresolvedOperationsService", async () => {
 });
 vi.mock("../ticketing/attendancePipeline", () => ({ ingestAttendance: mockIngestAttendance }));
 vi.mock("./studentAdminActionsDb", () => ({ recordStudentAdminAction: mockRecordStudentAdminAction }));
+vi.mock("../../db/studentsDb", () => ({ ensureStudentProfile: mockEnsureStudentProfile, updateStudentProfile: mockUpdateStudentProfile }));
+vi.mock("../../db/communitiesDb", () => ({ addUserToCommunity: mockAddUserToCommunity, getCommunityUniversities: mockGetCommunityUniversities }));
+vi.mock("../engagement/notificationPreferencesService", () => ({ updatePreference: mockUpdatePreference }));
+vi.mock("../engagement/notificationService", () => ({ createNotification: mockCreateNotification }));
 
 import {
   classifyMatch, normalizePhone, normalizeEmail, identityKeyFor,
@@ -34,6 +48,7 @@ import {
   getHistoricalIdentityStatsByVenue,
   getMyHistoricalMatchPreview, claimMyHistoricalIdentity, resolveHistoricalIdentityBestEffort,
   getHistoricalOverviewForStudent, getHistoricalTimelineForStudent,
+  convertHistoricalIdentityToStudent,
   HistoricalIdentityError,
 } from "./historicalIdentityService";
 import { UnresolvedOperationError } from "../integrations/unresolvedOperationsService";
@@ -604,5 +619,162 @@ describe("getHistoricalTimelineForStudent — Student 360 (spec §16)", () => {
     const result = await getHistoricalTimelineForStudent(42, 2, 0, db);
     expect(result.total).toBe(3);
     expect(result.items).toHaveLength(2);
+  });
+});
+
+describe("convertHistoricalIdentityToStudent — Estudiantes históricos → Student real (2026-08-21)", () => {
+  const ACTIVE_COMMUNITY = { id: 1, status: "active" };
+  const IE_UNIVERSITY = { id: 10, name: "IE University" };
+
+  /** DB dedicada: además de lo que ya cubre fakeDb (unresolvedOperations/users
+   * para loadAllIdentityGroups), soporta communities y una transacción real
+   * con insert(users)/insert(passwordResetTokens) — mismo patrón que
+   * registrationService.test.ts:makeMockDb. */
+  function fakeConvertDb(opts: {
+    unresolvedRows?: unknown[];
+    usersRows?: Array<{ id: number; email?: string | null; phone?: string | null }>;
+    communitiesRows?: Array<{ id: number; status: string }>;
+    existingUserInTx?: { id: number } | null;
+    insertId?: number;
+  }) {
+    const inserted: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+    const tx = {
+      select: () => ({
+        from: (table: unknown) => ({
+          where: () => ({
+            limit: async () => (table === users ? (opts.existingUserInTx ? [opts.existingUserInTx] : []) : []),
+          }),
+        }),
+      }),
+      insert: (table: unknown) => ({
+        values: async (values: Record<string, unknown>) => {
+          inserted.push({ table, values });
+          if (table === users) return [{ insertId: opts.insertId ?? 500 }];
+          return [{ affectedRows: 1 }];
+        },
+      }),
+    };
+    const rowsFor = (table: unknown) => {
+      if (table === users) return opts.usersRows ?? [];
+      if (table === unresolvedOperations) return opts.unresolvedRows ?? [];
+      if (table === communities) return opts.communitiesRows ?? [];
+      return [];
+    };
+    return {
+      select: (_cols?: unknown) => ({
+        from: (table: unknown) => ({
+          then: (resolve: (v: unknown[]) => void) => Promise.resolve(rowsFor(table)).then(resolve),
+          where: () => ({
+            limit: async (n: number) => rowsFor(table).slice(0, n),
+            then: (resolve: (v: unknown[]) => void) => Promise.resolve(rowsFor(table)).then(resolve),
+          }),
+        }),
+      }),
+      // Necesario porque claimHistoricalIdentity() actualiza eventTickets.userId
+      // tras vincular una operación de tipo "order" — mismo no-op que fakeDb().
+      update: (_table: unknown) => ({ set: (_values: Record<string, unknown>) => ({ where: async () => [{ affectedRows: 1 }] }) }),
+      transaction: async (cb: (tx: unknown) => Promise<number>) => cb(tx),
+      __inserted: inserted,
+    } as unknown as Parameters<typeof claimHistoricalIdentity>[1] & { __inserted: typeof inserted };
+  }
+
+  beforeEach(() => {
+    mockEnsureStudentProfile.mockResolvedValue({});
+    mockUpdateStudentProfile.mockResolvedValue({});
+    mockAddUserToCommunity.mockResolvedValue(undefined);
+    mockGetCommunityUniversities.mockResolvedValue([IE_UNIVERSITY]);
+    mockUpdatePreference.mockResolvedValue(undefined);
+    mockCreateNotification.mockResolvedValue({ status: "created", notification: { id: 1 } });
+  });
+
+  const UNREGISTERED_ROW = unresolvedRow({ id: 1, operationType: "order", referenceType: "event_ticket", referenceId: 501, status: "unresolved" });
+
+  it("caso exitoso: crea usuario + perfil + comunidad, vincula el historial y envía el email de bienvenida", async () => {
+    const db = fakeConvertDb({ unresolvedRows: [UNREGISTERED_ROW], usersRows: [], communitiesRows: [ACTIVE_COMMUNITY], insertId: 77 });
+    mockLinkUnresolvedOperation.mockResolvedValue({ ...UNREGISTERED_ROW, status: "linked", linkedUserId: 77 });
+
+    const result = await convertHistoricalIdentityToStudent(
+      { identityKey: "email:ana@example.com", actorUserId: 1, communityId: 1, universityId: 10 },
+      db as any
+    );
+
+    expect(result.userId).toBe(77);
+    expect(result.claim.status).toBe("CLAIMED");
+    expect(result.welcomeEmailSent).toBe(true);
+
+    const userInsert = (db as any).__inserted.find((i: any) => i.table === users);
+    expect(userInsert.values).toMatchObject({ email: "ana@example.com", isActive: true, passwordHash: null });
+    expect((db as any).__inserted.some((i: any) => i.table === passwordResetTokens)).toBe(true);
+
+    expect(mockEnsureStudentProfile).toHaveBeenCalledWith(77, expect.anything());
+    expect(mockUpdateStudentProfile).toHaveBeenCalledWith(77, expect.objectContaining({ firstName: "Ana", universityId: 10 }), expect.anything());
+    expect(mockAddUserToCommunity).toHaveBeenCalledWith(77, 1, undefined, expect.anything());
+    expect(mockUpdatePreference).toHaveBeenCalledWith({ userId: 77, category: "promotions", channel: "email", enabled: false }, expect.anything());
+    expect(mockLinkUnresolvedOperation).toHaveBeenCalledWith(UNREGISTERED_ROW.id, 77, 1, db);
+    expect(mockCreateNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 77, templateKey: "historical_student_welcome", idempotencyKey: "historical_student_welcome:77" }),
+      db
+    );
+  });
+
+  it("status LINKED -> ALREADY_LINKED, nunca crea una segunda cuenta", async () => {
+    const rows = [unresolvedRow({ id: 1, status: "linked", linkedUserId: 99 })];
+    const db = fakeConvertDb({ unresolvedRows: rows, usersRows: [], communitiesRows: [ACTIVE_COMMUNITY] });
+    await expect(convertHistoricalIdentityToStudent({ identityKey: "email:ana@example.com", actorUserId: 1, communityId: 1, universityId: 10 }, db as any))
+      .rejects.toMatchObject({ code: "ALREADY_LINKED" });
+    expect((db as any).__inserted).toHaveLength(0);
+  });
+
+  it("status CONFLICT -> error CONFLICT, no crea cuenta", async () => {
+    const rows = [
+      unresolvedRow({ id: 1, status: "linked", linkedUserId: 10 }),
+      unresolvedRow({ id: 2, status: "linked", linkedUserId: 20 }),
+    ];
+    const db = fakeConvertDb({ unresolvedRows: rows, usersRows: [], communitiesRows: [ACTIVE_COMMUNITY] });
+    await expect(convertHistoricalIdentityToStudent({ identityKey: "email:ana@example.com", actorUserId: 1, communityId: 1, universityId: 10 }, db as any))
+      .rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("ya existe un match (email/teléfono) en users -> HAS_EXISTING_MATCH, nunca duplica la cuenta", async () => {
+    const db = fakeConvertDb({
+      unresolvedRows: [UNREGISTERED_ROW],
+      usersRows: [{ id: 5, email: "ana@example.com", phone: null }],
+      communitiesRows: [ACTIVE_COMMUNITY],
+    });
+    await expect(convertHistoricalIdentityToStudent({ identityKey: "email:ana@example.com", actorUserId: 1, communityId: 1, universityId: 10 }, db as any))
+      .rejects.toMatchObject({ code: "HAS_EXISTING_MATCH" });
+    expect((db as any).__inserted).toHaveLength(0);
+  });
+
+  it("identidad sin email -> EMAIL_REQUIRED (no se puede notificar sin uno)", async () => {
+    const row = unresolvedRow({ id: 1, status: "unresolved", identityHintEmail: null, identityHintPhone: "+34600111222" });
+    const db = fakeConvertDb({ unresolvedRows: [row], usersRows: [], communitiesRows: [ACTIVE_COMMUNITY] });
+    await expect(convertHistoricalIdentityToStudent({ identityKey: "phone:+34600111222", actorUserId: 1, communityId: 1, universityId: 10 }, db as any))
+      .rejects.toMatchObject({ code: "EMAIL_REQUIRED" });
+  });
+
+  it("comunidad inexistente/inactiva -> COMMUNITY_NOT_FOUND", async () => {
+    const db = fakeConvertDb({ unresolvedRows: [UNREGISTERED_ROW], usersRows: [], communitiesRows: [] });
+    await expect(convertHistoricalIdentityToStudent({ identityKey: "email:ana@example.com", actorUserId: 1, communityId: 999, universityId: 10 }, db as any))
+      .rejects.toMatchObject({ code: "COMMUNITY_NOT_FOUND" });
+  });
+
+  it("universidad que no pertenece a la comunidad -> UNIVERSITY_NOT_FOUND", async () => {
+    mockGetCommunityUniversities.mockResolvedValue([{ id: 999, name: "Otra" }]);
+    const db = fakeConvertDb({ unresolvedRows: [UNREGISTERED_ROW], usersRows: [], communitiesRows: [ACTIVE_COMMUNITY] });
+    await expect(convertHistoricalIdentityToStudent({ identityKey: "email:ana@example.com", actorUserId: 1, communityId: 1, universityId: 10 }, db as any))
+      .rejects.toMatchObject({ code: "UNIVERSITY_NOT_FOUND" });
+  });
+
+  it("fallo al enviar el email de bienvenida es best-effort: la cuenta y el claim ya confirmados no se deshacen", async () => {
+    const db = fakeConvertDb({ unresolvedRows: [UNREGISTERED_ROW], usersRows: [], communitiesRows: [ACTIVE_COMMUNITY], insertId: 77 });
+    mockLinkUnresolvedOperation.mockResolvedValue({ ...UNREGISTERED_ROW, status: "linked", linkedUserId: 77 });
+    mockCreateNotification.mockRejectedValue(new Error("Brevo caído"));
+
+    const result = await convertHistoricalIdentityToStudent({ identityKey: "email:ana@example.com", actorUserId: 1, communityId: 1, universityId: 10 }, db as any);
+
+    expect(result.userId).toBe(77);
+    expect(result.claim.status).toBe("CLAIMED");
+    expect(result.welcomeEmailSent).toBe(false);
   });
 });
