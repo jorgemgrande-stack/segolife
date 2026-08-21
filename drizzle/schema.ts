@@ -6742,3 +6742,63 @@ export const economyConfigChanges = mysqlTable("economy_config_changes", {
 }));
 export type EconomyConfigChange = typeof economyConfigChanges.$inferSelect;
 export type InsertEconomyConfigChange = typeof economyConfigChanges.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEGOLIFE LNF-01 — LOST & FOUND / OBJETOS PERDIDOS
+// ═══════════════════════════════════════════════════════════════════════════
+// Auditado antes de crearse: NO reutiliza community_student_proposals (Comunity
+// es encuestas/ideas, dominio distinto aunque también admite texto+imagen de
+// un Student) ni crea mensajería propia — `conversation_id` enlaza a
+// `conversations` (COM-01) vía `contextType='lost_found'`/`contextId=id`,
+// denormalizado aquí para poder mostrar estado/no-leído en el listado sin
+// N+1. Alcance por venue vía `venue_staff` (mismo criterio que Commerce/
+// Benefits/Stock/Cash — ver venueStaffAccess.ts), nunca `students.manage`.
+export const lostFoundReports = mysqlTable("lost_found_reports", {
+  id:                 int("id").autoincrement().primaryKey(),
+  studentUserId:      int("student_user_id").notNull(),
+  venueId:            int("venue_id").notNull(),
+  // Snapshot de la comunidad activa en el momento del reporte — un venue
+  // puede pertenecer a varias comunidades vía community_venues, así que se
+  // fija el contexto real del hecho en vez de derivarlo dinámicamente después.
+  communityId:        int("community_id"),
+  lostDate:           varchar("lost_date", { length: 10 }).notNull(), // YYYY-MM-DD, Europe/Madrid
+  approximateTime:    varchar("approximate_time", { length: 5 }), // HH:MM, opcional — "no recuerda el minuto exacto"
+  description:        text("description").notNull(),
+  // Clave PRIVADA de almacenamiento, NUNCA una URL pública — mismo criterio
+  // que users.avatarStorageKey (MG-03): se sirve vía un endpoint autenticado
+  // que comprueba ownership/permiso, nunca una ruta predecible directa a S3.
+  imageStorageKey:    text("image_storage_key"),
+  status:             mysqlEnum("status", ["open", "found", "closed_not_found"]).notNull().default("open"),
+  conversationId:     int("conversation_id"),
+  resolvedAt:         timestamp("resolved_at"),
+  resolvedByUserId:   int("resolved_by_user_id"),
+  resolutionNote:     text("resolution_note"),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+  updatedAt:          timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  studentIdx: index("lost_found_reports_student_idx").on(table.studentUserId),
+  venueIdx: index("lost_found_reports_venue_idx").on(table.venueId),
+  statusIdx: index("lost_found_reports_status_idx").on(table.status),
+  createdAtIdx: index("lost_found_reports_created_at_idx").on(table.createdAt),
+}));
+export type LostFoundReport = typeof lostFoundReports.$inferSelect;
+export type InsertLostFoundReport = typeof lostFoundReports.$inferInsert;
+
+// Audit trail de transiciones/resolución — mismo patrón que
+// student_admin_actions (STU-01): un dominio distinto necesita su propia
+// tabla pequeña dedicada en vez de forzar una genérica cross-dominio que no
+// existe en este proyecto.
+export const lostFoundCaseActions = mysqlTable("lost_found_case_actions", {
+  id:              int("id").autoincrement().primaryKey(),
+  reportId:        int("report_id").notNull(),
+  actorUserId:     int("actor_user_id").notNull(),
+  action:          varchar("action", { length: 64 }).notNull(),
+  beforeValue:     varchar("before_value", { length: 64 }),
+  afterValue:      varchar("after_value", { length: 64 }),
+  reason:          text("reason"),
+  createdAt:       timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  reportIdx: index("lost_found_case_actions_report_idx").on(table.reportId),
+}));
+export type LostFoundCaseAction = typeof lostFoundCaseActions.$inferSelect;
+export type InsertLostFoundCaseAction = typeof lostFoundCaseActions.$inferInsert;
