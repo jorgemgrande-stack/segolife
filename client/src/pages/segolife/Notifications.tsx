@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useLocation } from "wouter";
-import { ChevronLeft, Bell, Calendar, Coins, Gift, Megaphone, UserCog } from "lucide-react";
+import { ChevronLeft, Bell, Calendar, Coins, Gift, Megaphone, UserCog, MessageCircle } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
@@ -9,7 +9,7 @@ import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
 import { SegolifeRowSkeleton } from "@/components/segolife/SegolifeSkeletons";
 import { Button } from "@/components/ui/button";
 
-type NotificationCategory = "events" | "rewards" | "benefits" | "promotions" | "account";
+type NotificationCategory = "events" | "rewards" | "benefits" | "promotions" | "account" | "messages";
 
 const CATEGORY_ICON: Record<NotificationCategory, typeof Bell> = {
   events: Calendar,
@@ -17,6 +17,7 @@ const CATEGORY_ICON: Record<NotificationCategory, typeof Bell> = {
   benefits: Gift,
   promotions: Megaphone,
   account: UserCog,
+  messages: MessageCircle,
 };
 
 const CATEGORY_STYLES: Record<NotificationCategory, string> = {
@@ -25,6 +26,7 @@ const CATEGORY_STYLES: Record<NotificationCategory, string> = {
   benefits: "bg-accent/10 text-accent",
   promotions: "bg-accent/10 text-accent",
   account: "bg-secondary text-muted-foreground",
+  messages: "bg-primary/10 text-primary",
 };
 
 /**

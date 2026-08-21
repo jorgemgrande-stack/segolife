@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { toast } from "sonner";
-import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell, Ticket, IdCard, Archive, UserPlus, Camera, Trash2 } from "lucide-react";
+import { Coins, ChevronRight, Loader2, LogOut, Sparkles, Bell, Ticket, IdCard, Archive, UserPlus, Camera, Trash2, MessageCircle } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -316,6 +316,12 @@ export default function Profile() {
   const { data: universities } = trpc.communities.listUniversities.useQuery();
   const { data: wallet } = trpc.tokens.getMyWallet.useQuery();
   const { data: walletValue } = trpc.tokens.myWalletPromotionalValue.useQuery();
+  // COM-01 — badge de mensajes sin leer. Reutiliza la misma lista que
+  // Messages.tsx (nunca un endpoint de conteo aparte): el volumen real de
+  // conversaciones de UN Student es siempre pequeño, así que no compensa
+  // mantener un segundo camino solo para el número del badge.
+  const { data: myMessages } = trpc.studentMessages.myConversations.useQuery({ limit: 50 });
+  const unreadMessagesCount = (myMessages?.items ?? []).filter(c => c.unread).length;
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
 
@@ -427,6 +433,16 @@ export default function Profile() {
           >
             <span className="flex items-center gap-2 text-sm font-medium">
               <Sparkles className="size-4" aria-hidden="true" /> {t("profile.viewActivity")}
+            </span>
+            <ChevronRight className="size-4" aria-hidden="true" />
+          </Link>
+          <Link
+            href={`/${slug}/messages`}
+            className="flex items-center justify-between rounded-2xl bg-secondary px-4 py-3 text-secondary-foreground"
+          >
+            <span className="flex items-center gap-2 text-sm font-medium">
+              <MessageCircle className="size-4" aria-hidden="true" />
+              {unreadMessagesCount > 0 ? t("messages.profileEntryUnread", { count: unreadMessagesCount }) : t("messages.profileEntry")}
             </span>
             <ChevronRight className="size-4" aria-hidden="true" />
           </Link>

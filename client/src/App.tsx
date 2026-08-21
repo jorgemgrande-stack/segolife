@@ -31,6 +31,9 @@ const Activity = lazy(() => import("./pages/segolife/Activity"));
 // Fase 7: Engagement Core — inbox de notificaciones + ajustes de preferencias.
 const SegolifeNotifications = lazy(() => import("./pages/segolife/Notifications"));
 const NotificationPreferences = lazy(() => import("./pages/segolife/NotificationPreferences"));
+// COM-01 — Bidirectional Student Communication Center.
+const SegolifeMessages = lazy(() => import("./pages/segolife/Messages"));
+const SegolifeMessageDetail = lazy(() => import("./pages/segolife/MessageDetail"));
 // SEGOLIFE PRE-16.1 — Presential SegoTokens Payments: confirmación/rechazo
 // del Student ante una solicitud de pago con SegoTokens en persona.
 const PaymentRequestConfirm = lazy(() => import("./pages/segolife/PaymentRequestConfirm"));
@@ -173,6 +176,9 @@ const GlobalCalendar = lazy(() => import("./pages/admin/restaurants/GlobalCalend
 // Segolife: CRM de estudiantes (Fase 1C)
 const StudentsManager = lazy(() => import("./pages/admin/students/StudentsManager"));
 const StudentDetail = lazy(() => import("./pages/admin/students/StudentDetail"));
+// COM-01 — Bidirectional Student Communication Center (Admin).
+const StudentMessagesInbox = lazy(() => import("./pages/admin/students/StudentMessagesInbox"));
+const StudentMessageDetail = lazy(() => import("./pages/admin/students/StudentMessageDetail"));
 
 // Segolife: Historical Fourvenues Identity Claim
 const HistoricalIdentities = lazy(() => import("./pages/admin/students/HistoricalIdentities"));
@@ -515,6 +521,8 @@ function Router() {
       {/* Rutas literales ANTES de /admin/students/:id — wouter hace match en orden y ":id" capturaría "historical" si fuera declarada después. */}
       <Route path="/admin/students/historical">{() => <Suspense fallback={<AdminLoadingFallback />}><HistoricalIdentities /></Suspense>}</Route>
       <Route path="/admin/students/referrals">{() => <Suspense fallback={<AdminLoadingFallback />}><ReferralsAdmin /></Suspense>}</Route>
+      <Route path="/admin/students/messages/:id">{() => <Suspense fallback={<AdminLoadingFallback />}><StudentMessageDetail /></Suspense>}</Route>
+      <Route path="/admin/students/messages">{() => <Suspense fallback={<AdminLoadingFallback />}><StudentMessagesInbox /></Suspense>}</Route>
       <Route path="/admin/sales">{() => <Suspense fallback={<AdminLoadingFallback />}><SalesOperationsAdmin /></Suspense>}</Route>
       <Route path="/admin/finance">{() => <Suspense fallback={<AdminLoadingFallback />}><FinanceAdmin /></Suspense>}</Route>
       <Route path="/admin/students/historical/:identityKey">{() => <Suspense fallback={<AdminLoadingFallback />}><HistoricalIdentityDetail /></Suspense>}</Route>
@@ -573,6 +581,8 @@ function Router() {
       <Route path="/:community/activity">{() => <Suspense fallback={null}><Activity /></Suspense>}</Route>
       <Route path="/:community/settings/notifications">{() => <Suspense fallback={null}><NotificationPreferences /></Suspense>}</Route>
       <Route path="/:community/notifications">{() => <Suspense fallback={null}><SegolifeNotifications /></Suspense>}</Route>
+      <Route path="/:community/messages/:id">{() => <Suspense fallback={null}><SegolifeMessageDetail /></Suspense>}</Route>
+      <Route path="/:community/messages">{() => <Suspense fallback={null}><SegolifeMessages /></Suspense>}</Route>
       <Route path="/:community/payment-requests/:requestId">{() => <Suspense fallback={null}><PaymentRequestConfirm /></Suspense>}</Route>
       <Route path="/:community/checkout/:orderId">{() => <Suspense fallback={null}><TicketCheckout /></Suspense>}</Route>
       <Route path="/:community/tickets/:id">{() => <Suspense fallback={null}><TicketDetail /></Suspense>}</Route>

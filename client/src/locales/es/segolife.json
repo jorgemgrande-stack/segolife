@@ -694,6 +694,23 @@
     "transactionalNote": "Las notificaciones esenciales de cuenta siempre se entregan en la app y no se pueden desactivar.",
     "saved": "Preferencias actualizadas"
   },
+  "messages": {
+    "inboxTitle": "Mensajes",
+    "empty": "Todavía no tienes mensajes",
+    "emptyDescription": "Cuando Segolife inicie una conversación contigo, aparecerá aquí.",
+    "statusClosed": "Cerrada",
+    "waitingForYou": "Esperando tu respuesta",
+    "notFoundTitle": "Conversación no encontrada",
+    "notFoundDescription": "Esta conversación no existe o no es tuya.",
+    "backToInbox": "Volver a Mensajes",
+    "senderYou": "Tú",
+    "senderSegolife": "Segolife",
+    "conversationClosed": "Esta conversación está cerrada.",
+    "composerPlaceholder": "Escribe una respuesta…",
+    "send": "Enviar",
+    "profileEntry": "Mensajes",
+    "profileEntryUnread": "Mensajes ({{count}})"
+  },
   "paymentRequest": {
     "title": "Solicitud de pago",
     "bannerTitle": "Solicitud de pago pendiente",

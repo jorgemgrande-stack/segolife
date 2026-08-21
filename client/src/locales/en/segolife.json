@@ -694,6 +694,23 @@
     "transactionalNote": "Essential account notifications are always delivered in the app and can't be turned off.",
     "saved": "Preferences updated"
   },
+  "messages": {
+    "inboxTitle": "Messages",
+    "empty": "No messages yet",
+    "emptyDescription": "When Segolife starts a conversation with you, it will show up here.",
+    "statusClosed": "Closed",
+    "waitingForYou": "Waiting for your reply",
+    "notFoundTitle": "Conversation not found",
+    "notFoundDescription": "This conversation doesn't exist or isn't yours.",
+    "backToInbox": "Back to Messages",
+    "senderYou": "You",
+    "senderSegolife": "Segolife",
+    "conversationClosed": "This conversation is closed.",
+    "composerPlaceholder": "Write a reply…",
+    "send": "Send",
+    "profileEntry": "Messages",
+    "profileEntryUnread": "Messages ({{count}})"
+  },
   "paymentRequest": {
     "title": "Payment request",
     "bannerTitle": "Pending payment request",
