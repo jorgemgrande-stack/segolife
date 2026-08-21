@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "wouter";
 import { toast } from "sonner";
 import AdminLayout from "@/components/AdminLayout";
@@ -8,9 +8,12 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Loader2, Send, Lock, LockOpen, Info } from "lucide-react";
+import { ArrowLeft, Loader2, Send, Lock, LockOpen, Info, Paperclip, X } from "lucide-react";
 
 const MESSAGE_MAX_LENGTH = 5000;
+// Mismos límites que chatImageService.ts/studentPhotoService.ts — feedback rápido, la validación real es siempre server-side.
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+const ALLOWED_PHOTO_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
 
 function fmtDateTime(d: Date | string | null | undefined) {
   if (!d) return "—";
@@ -29,6 +32,10 @@ export default function StudentMessageDetail() {
   const utils = trpc.useUtils();
   const [body, setBody] = useState("");
   const [internal, setInternal] = useState(false);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading, isError } = trpc.studentMessages.adminGetConversation.useQuery(
     { id: conversationId },
@@ -36,15 +43,52 @@ export default function StudentMessageDetail() {
   );
 
   const markRead = trpc.studentMessages.adminMarkRead.useMutation();
-  const reply = trpc.studentMessages.adminReply.useMutation({
-    onSuccess: () => {
-      setBody(""); setInternal(false);
+  const trimmed = body.trim();
+
+  function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!ALLOWED_PHOTO_TYPES.has(file.type)) { toast.error("Formato de imagen no permitido."); return; }
+    if (file.size > MAX_PHOTO_BYTES) { toast.error("La imagen es demasiado grande (máx. 8MB)."); return; }
+    if (photoPreview) URL.revokeObjectURL(photoPreview);
+    setPhotoFile(file);
+    setPhotoPreview(URL.createObjectURL(file));
+  }
+
+  function handleRemovePhoto() {
+    if (photoPreview) URL.revokeObjectURL(photoPreview);
+    setPhotoFile(null);
+    setPhotoPreview(null);
+  }
+
+  async function handleSend() {
+    if (sending) return;
+    setSending(true);
+    try {
+      const formData = new FormData();
+      formData.append("body", trimmed);
+      formData.append("visibility", internal ? "internal" : "public");
+      if (photoFile) formData.append("image", photoFile);
+
+      const res = await fetch(`/api/student-messages/${conversationId}/admin-reply`, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      const resBody = await res.json().catch(() => null);
+      if (!res.ok || !resBody?.success) throw new Error(resBody?.error ?? "No se pudo enviar el mensaje.");
+
+      setBody(""); setInternal(false); handleRemovePhoto();
       utils.studentMessages.adminGetConversation.invalidate({ id: conversationId });
       utils.studentMessages.adminList.invalidate();
       utils.studentMessages.adminPendingCount.invalidate();
-    },
-    onError: e => toast.error(e.message),
-  });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo enviar el mensaje.");
+    } finally {
+      setSending(false);
+    }
+  }
   const closeMut = trpc.studentMessages.adminClose.useMutation({
     onSuccess: () => {
       toast.success("Conversación cerrada");
@@ -83,8 +127,7 @@ export default function StudentMessageDetail() {
 
   const { conversation, messages, student } = data;
   const isClosed = conversation.status === "closed";
-  const trimmed = body.trim();
-  const canSend = trimmed.length > 0 && trimmed.length <= MESSAGE_MAX_LENGTH && !isClosed && !reply.isPending;
+  const canSend = (trimmed.length > 0 || !!photoFile) && trimmed.length <= MESSAGE_MAX_LENGTH && !isClosed && !sending;
 
   return (
     <AdminLayout>
@@ -129,7 +172,14 @@ export default function StudentMessageDetail() {
                       <Info className="w-3 h-3" /> Nota interna — solo staff
                     </p>
                   )}
-                  <p className="whitespace-pre-wrap break-words">{m.body}</p>
+                  {m.imageStorageKey && (
+                    <img
+                      src={`/api/student-messages/messages/${m.id}/image`}
+                      alt=""
+                      className="mb-1.5 max-h-64 rounded-md object-contain"
+                    />
+                  )}
+                  {m.body && <p className="whitespace-pre-wrap break-words">{m.body}</p>}
                   <p className={`mt-1 text-[10px] ${isAdmin && !isInternal ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
                     {isAdmin ? "Admin" : "Student"} · {fmtDateTime(m.createdAt)}
                   </p>
@@ -150,16 +200,36 @@ export default function StudentMessageDetail() {
               rows={3}
               placeholder={internal ? "Nota interna (nunca visible para el Student)…" : "Escribe tu respuesta…"}
             />
+            {photoPreview && (
+              <div className="relative inline-block">
+                <img src={photoPreview} alt="" className="h-20 w-20 rounded-md object-cover" />
+                <button
+                  type="button"
+                  onClick={handleRemovePhoto}
+                  aria-label="Quitar imagen"
+                  className="absolute -right-2 -top-2 flex size-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow"
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="sr-only"
+              onChange={handleFileSelected}
+            />
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 <Switch id="internal-note" checked={internal} onCheckedChange={setInternal} />
                 <Label htmlFor="internal-note" className="text-xs text-muted-foreground">Nota interna (solo staff, el Student nunca la ve)</Label>
+                <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+                  <Paperclip className="w-3.5 h-3.5 mr-1.5" /> {photoFile ? "Cambiar imagen" : "Adjuntar imagen"}
+                </Button>
               </div>
-              <Button
-                disabled={!canSend}
-                onClick={() => reply.mutate({ conversationId, body: trimmed, visibility: internal ? "internal" : "public" })}
-              >
-                {reply.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
+              <Button disabled={!canSend} onClick={handleSend}>
+                {sending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
                 {internal ? "Guardar nota" : "Enviar respuesta"}
               </Button>
             </div>

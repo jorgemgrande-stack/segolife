@@ -106,7 +106,14 @@ export default function MessageDetail() {
             return (
               <div key={m.id} className={`flex ${isStudent ? "justify-end" : "justify-start"}`}>
                 <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${isStudent ? "bg-primary text-primary-foreground" : "segolife-card-shadow bg-card text-foreground"}`}>
-                  <p className="whitespace-pre-wrap break-words text-sm">{m.body}</p>
+                  {m.imageStorageKey && (
+                    <img
+                      src={`/api/student-messages/messages/${m.id}/image`}
+                      alt=""
+                      className="mb-1.5 max-h-64 rounded-lg object-contain"
+                    />
+                  )}
+                  {m.body && <p className="whitespace-pre-wrap break-words text-sm">{m.body}</p>}
                   <p className={`mt-1 text-[10px] ${isStudent ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
                     {isStudent ? t("messages.senderYou") : t("messages.senderSegolife")} · {new Date(m.createdAt).toLocaleString(i18n.language, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
                   </p>
