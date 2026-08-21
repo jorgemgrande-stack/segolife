@@ -14,7 +14,7 @@ import mysql from "mysql2/promise";
 import { eq, like } from "drizzle-orm";
 import {
   users, studentProfiles, eventAttendance, studentAdminActions,
-  notificationPreferences,
+  notificationPreferences, userBenefits,
 } from "../../../drizzle/schema";
 import {
   evaluateStudentDeletionEligibility, deleteStudent,
@@ -71,6 +71,7 @@ afterAll(async () => {
   for (const u of testUsers) {
     await db.delete(eventAttendance).where(eq(eventAttendance.userId, u.id));
     await db.delete(notificationPreferences).where(eq(notificationPreferences.userId, u.id));
+    await db.delete(userBenefits).where(eq(userBenefits.userId, u.id));
     await db.delete(studentProfiles).where(eq(studentProfiles.userId, u.id));
     await db.delete(users).where(eq(users.id, u.id));
   }
@@ -88,6 +89,29 @@ describe("evaluateStudentDeletionEligibility", () => {
     const result = await evaluateStudentDeletionEligibility(blockedStudentUserId, db);
     expect(result.canDelete).toBe(false);
     expect(result.reasons).toContain("tiene asistencia registrada");
+  });
+
+  it("un Benefit de bienvenida SIN USAR (registration_welcome, concedido por registerStudent a TODA cuenta nueva) nunca bloquea por sí solo", async () => {
+    const welcomeOnlyUserId = await insertUser("test-stu01-welcome-benefit", "user");
+    await insertProfile(welcomeOnlyUserId);
+    await db.insert(userBenefits).values({
+      userId: welcomeOnlyUserId, benefitDefinitionId: 999999, sourceType: "registration_welcome",
+      status: "active", validFrom: new Date(), idempotencyKey: `registration_welcome:${welcomeOnlyUserId}`,
+    });
+    const result = await evaluateStudentDeletionEligibility(welcomeOnlyUserId, db);
+    expect(result.canDelete).toBe(true);
+  });
+
+  it("un Benefit real (no welcome, o el welcome SÍ usado) sí bloquea", async () => {
+    const usedWelcomeUserId = await insertUser("test-stu01-used-benefit", "user");
+    await insertProfile(usedWelcomeUserId);
+    await db.insert(userBenefits).values({
+      userId: usedWelcomeUserId, benefitDefinitionId: 999999, sourceType: "registration_welcome",
+      status: "used", usedAt: new Date(), validFrom: new Date(), idempotencyKey: `registration_welcome:${usedWelcomeUserId}`,
+    });
+    const result = await evaluateStudentDeletionEligibility(usedWelcomeUserId, db);
+    expect(result.canDelete).toBe(false);
+    expect(result.reasons).toContain("tiene Benefits concedidos");
   });
 });
 
@@ -113,8 +137,12 @@ describe("deleteStudent — borrado guardado", () => {
     }
   });
 
-  it("borra de verdad una cuenta vacía: users/student_profiles desaparecen, la cascada limpia, y el audit log SOBREVIVE", async () => {
+  it("borra de verdad una cuenta vacía: users/student_profiles desaparecen, la cascada limpia (incluido el Benefit de bienvenida sin usar), y el audit log SOBREVIVE", async () => {
     await db.insert(notificationPreferences).values({ userId: emptyStudentUserId, category: "account", channel: "in_app", enabled: true });
+    await db.insert(userBenefits).values({
+      userId: emptyStudentUserId, benefitDefinitionId: 999999, sourceType: "registration_welcome",
+      status: "active", validFrom: new Date(), idempotencyKey: `registration_welcome:${emptyStudentUserId}`,
+    });
 
     const result = await deleteStudent(emptyStudentProfileId, adminId, "cuenta QA vacía, cierre STU-01", db);
     expect(result.deleted).toBe(true);
@@ -125,6 +153,8 @@ describe("deleteStudent — borrado guardado", () => {
     expect(profileRow).toBeUndefined();
     const prefs = await db.select().from(notificationPreferences).where(eq(notificationPreferences.userId, emptyStudentUserId));
     expect(prefs).toHaveLength(0);
+    const benefits = await db.select().from(userBenefits).where(eq(userBenefits.userId, emptyStudentUserId));
+    expect(benefits).toHaveLength(0);
 
     const auditRows = await db.select().from(studentAdminActions).where(eq(studentAdminActions.studentProfileId, emptyStudentProfileId));
     const deleteAction = auditRows.find(a => a.action === "deleted");

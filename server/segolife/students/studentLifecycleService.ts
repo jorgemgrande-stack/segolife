@@ -92,8 +92,19 @@ async function findDeleteBlockers(userId: number, conn: AnyDbHandle): Promise<st
   const [commerceRow] = await conn.select({ id: commerceTransactions.id }).from(commerceTransactions).where(eq(commerceTransactions.userId, userId)).limit(1);
   if (commerceRow) reasons.push("tiene consumo registrado (TPV)");
 
-  const [benefitRow] = await conn.select({ id: userBenefits.id }).from(userBenefits).where(eq(userBenefits.userId, userId)).limit(1);
-  if (benefitRow) reasons.push("tiene Benefits concedidos");
+  // registerStudent() concede automáticamente un Benefit "registration_welcome"
+  // a TODA cuenta nueva (confirmado en producción: incluso una cuenta creada
+  // hace segundos y jamás tocada ya tiene una fila aquí) — bloquear por esa
+  // fila SOLA haría el borrado arquitectónicamente imposible para cualquier
+  // Student real, exactamente lo que el spec prohíbe para metadatos de
+  // bootstrap (mismo criterio que login events/token_wallets vacío). Solo
+  // cuenta como bloqueo real un Benefit que no sea ese welcome automático, O
+  // que sí llegó a usarse/cancelarse — ambos casos SÍ son actividad real.
+  const benefitRows = await conn.select({ id: userBenefits.id, sourceType: userBenefits.sourceType, usedAt: userBenefits.usedAt })
+    .from(userBenefits).where(eq(userBenefits.userId, userId));
+  if (benefitRows.some(b => b.sourceType !== "registration_welcome" || b.usedAt !== null)) {
+    reasons.push("tiene Benefits concedidos");
+  }
 
   const [conversationRow] = await conn.select({ id: conversations.id }).from(conversations).where(eq(conversations.studentUserId, userId)).limit(1);
   if (conversationRow) reasons.push("tiene conversaciones (Mensajes)");
@@ -221,6 +232,10 @@ export async function deleteStudent(studentProfileId: number, actorUserId: numbe
     await tx.delete(studentTagAssignments).where(eq(studentTagAssignments.studentProfileId, studentProfileId));
     await tx.delete(studentNotes).where(eq(studentNotes.studentProfileId, studentProfileId));
     await tx.delete(userCommunities).where(eq(userCommunities.userId, userId));
+    // Si llegamos hasta aquí, findDeleteBlockers ya garantizó que NINGUNA
+    // fila de user_benefits es real (todas son el welcome automático, sin
+    // usar) — seguro borrarlas todas, nunca dejarlas huérfanas.
+    await tx.delete(userBenefits).where(eq(userBenefits.userId, userId));
     // token_wallets: seguro de borrar SOLO porque findDeleteBlockers ya
     // garantizó cero filas en token_ledger — un wallet sin ledger es
     // infraestructura de bootstrap (balance=0 desde registerStudent), nunca
