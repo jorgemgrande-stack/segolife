@@ -10,6 +10,7 @@ import { router, protectedProcedure } from "../_core/trpc";
 import { listMyNotifications, getUnreadCount, markRead, markAllRead, markClicked, NotificationOwnershipError } from "../segolife/engagement/notificationsDb";
 import { listMyPreferences, updatePreference } from "../segolife/engagement/notificationPreferencesService";
 import { getProvider } from "../segolife/engagement/providers/providerRegistry";
+import { saveSubscription, revokeSubscriptionForUser, hasActivePushSubscription } from "../segolife/engagement/pushSubscriptionService";
 
 function mapOwnershipError(err: unknown): never {
   if (err instanceof NotificationOwnershipError) {
@@ -70,6 +71,35 @@ export const studentNotificationsRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       await updatePreference({ userId: ctx.user.id, ...input }, undefined);
+      return { success: true };
+    }),
+
+  // ─── F67 (Push + WhatsApp) — suscripción push del propio dispositivo ───────
+  // Autoservicio puro: el endpoint SIEMPRE se ata a ctx.user.id (nunca un
+  // userId del body) y solo se opera sobre las propias suscripciones.
+
+  /** Clave pública VAPID para que el cliente llame a pushManager.subscribe() — null si el provider no está configurado (nunca ofrecer el botón de activar sin esto). */
+  pushPublicKey: protectedProcedure.query(() => process.env.VAPID_PUBLIC_KEY ?? null),
+
+  hasActivePushSubscription: protectedProcedure.query(({ ctx }) => hasActivePushSubscription(ctx.user.id)),
+
+  subscribePush: protectedProcedure
+    .input(z.object({
+      endpoint: z.string().url().max(512),
+      keys: z.object({ p256dh: z.string().max(256).nullish(), auth: z.string().max(256).nullish() }),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await saveSubscription({
+        userId: ctx.user.id, endpoint: input.endpoint,
+        keysP256dh: input.keys.p256dh ?? null, keysAuth: input.keys.auth ?? null,
+      });
+      return { success: true };
+    }),
+
+  unsubscribePush: protectedProcedure
+    .input(z.object({ endpoint: z.string().url().max(512) }))
+    .mutation(async ({ ctx, input }) => {
+      await revokeSubscriptionForUser(ctx.user.id, input.endpoint);
       return { success: true };
     }),
 });

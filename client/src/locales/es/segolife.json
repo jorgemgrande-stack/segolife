@@ -741,7 +741,16 @@
     "channelWhatsapp": "WhatsApp",
     "channelUnavailable": "Todavía no disponible",
     "transactionalNote": "Las notificaciones esenciales de cuenta siempre se entregan en la app y no se pueden desactivar.",
-    "saved": "Preferencias actualizadas"
+    "saved": "Preferencias actualizadas",
+    "pushDeviceTitle": "Notificaciones push en este dispositivo",
+    "pushDeviceActive": "Activas en este dispositivo",
+    "pushDeviceInactive": "Todavía no activadas en este dispositivo",
+    "pushActivate": "Activar",
+    "pushDeactivate": "Desactivar",
+    "pushActivated": "Notificaciones push activadas en este dispositivo",
+    "pushDeactivated": "Notificaciones push desactivadas en este dispositivo",
+    "pushDenied": "No se concedió el permiso de notificaciones",
+    "pushError": "No se pudieron activar las notificaciones push — inténtalo de nuevo"
   },
   "messages": {
     "inboxTitle": "Mensajes",

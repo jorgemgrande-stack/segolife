@@ -6,15 +6,16 @@
 import type { NotificationProvider } from "../notificationProvider";
 import { inAppProvider } from "./inAppProvider";
 import { createEmailProvider } from "./emailProvider";
-import { pushProvider } from "./pushProvider";
+import { createPushProvider } from "./pushProvider";
 import { whatsappProvider } from "./whatsappProvider";
 
 const emailProviderInstance = createEmailProvider();
+const pushProviderInstance = createPushProvider();
 
 const registry: Record<string, NotificationProvider> = {
   in_app: inAppProvider,
   email: emailProviderInstance,
-  push: pushProvider,
+  push: pushProviderInstance,
   whatsapp: whatsappProvider,
 };
 

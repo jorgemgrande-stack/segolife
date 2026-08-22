@@ -1,13 +1,14 @@
 import { useTranslation } from "react-i18next";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
-import { ChevronLeft, Loader2 } from "lucide-react";
+import { ChevronLeft, Loader2, Bell, BellOff } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
 import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { usePushSubscription, isPushSupported } from "@/hooks/usePushSubscription";
 
 type NotificationCategory = "events" | "rewards" | "benefits" | "promotions" | "account";
 type MarketingChannel = "email" | "push" | "whatsapp";
@@ -45,6 +46,33 @@ export default function NotificationPreferences() {
   const { data: preferences, isLoading: prefsLoading } = trpc.studentNotifications.preferences.useQuery();
   const { data: availability, isLoading: availLoading } = trpc.studentNotifications.channelAvailability.useQuery();
 
+  // F67 (Push + WhatsApp) — "activado en este dispositivo" es una acción
+  // aparte de la preferencia de categoría/canal de arriba: un estudiante
+  // puede tener push permitido a nivel de preferencia pero nunca haber
+  // concedido el permiso del navegador en ESTE dispositivo concreto. Solo
+  // se ofrece si el provider está realmente configurado (availability.push)
+  // — nunca un botón que prometa algo que el backend no puede cumplir.
+  const { data: hasActiveSubscription, isLoading: subLoading } = trpc.studentNotifications.hasActivePushSubscription.useQuery(undefined, {
+    enabled: !!availability?.push,
+  });
+  const { subscribe, unsubscribe, isSubscribing } = usePushSubscription();
+
+  async function handleActivatePush() {
+    const result = await subscribe();
+    if (result.ok) {
+      toast.success(t("notifications.pushActivated"));
+    } else if (result.reason === "denied") {
+      toast.error(t("notifications.pushDenied"));
+    } else {
+      toast.error(t("notifications.pushError"));
+    }
+  }
+
+  async function handleDeactivatePush() {
+    await unsubscribe();
+    toast.success(t("notifications.pushDeactivated"));
+  }
+
   const updatePreference = trpc.studentNotifications.updatePreferences.useMutation({
     onSuccess: () => { utils.studentNotifications.preferences.invalidate(); },
     onError: e => toast.error(e.message),
@@ -76,6 +104,28 @@ export default function NotificationPreferences() {
           </div>
         ) : (
           <div className="mt-5 space-y-4">
+            {availability?.push && isPushSupported() && (
+              <section className="segolife-card-shadow flex items-center justify-between gap-3 rounded-2xl bg-card p-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  {hasActiveSubscription ? <Bell className="size-5 shrink-0 text-primary" aria-hidden="true" /> : <BellOff className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />}
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-foreground">{t("notifications.pushDeviceTitle")}</p>
+                    <p className="text-xs text-muted-foreground">{hasActiveSubscription ? t("notifications.pushDeviceActive") : t("notifications.pushDeviceInactive")}</p>
+                  </div>
+                </div>
+                {subLoading ? (
+                  <Loader2 className="size-4 animate-spin text-muted-foreground shrink-0" aria-hidden="true" />
+                ) : hasActiveSubscription ? (
+                  <Button size="sm" variant="outline" className="shrink-0" onClick={handleDeactivatePush}>{t("notifications.pushDeactivate")}</Button>
+                ) : (
+                  <Button size="sm" className="shrink-0" disabled={isSubscribing} onClick={handleActivatePush}>
+                    {isSubscribing ? <Loader2 className="mr-1.5 size-3.5 animate-spin" aria-hidden="true" /> : null}
+                    {t("notifications.pushActivate")}
+                  </Button>
+                )}
+              </section>
+            )}
+
             {CATEGORIES.map(category => (
               <section key={category} className="segolife-card-shadow rounded-2xl bg-card p-4">
                 <h2 className="text-sm font-semibold text-foreground">{t(CATEGORY_LABEL_KEY[category])}</h2>

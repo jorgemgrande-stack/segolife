@@ -741,7 +741,16 @@
     "channelWhatsapp": "WhatsApp",
     "channelUnavailable": "Not available yet",
     "transactionalNote": "Essential account notifications are always delivered in the app and can't be turned off.",
-    "saved": "Preferences updated"
+    "saved": "Preferences updated",
+    "pushDeviceTitle": "Push notifications on this device",
+    "pushDeviceActive": "Active on this device",
+    "pushDeviceInactive": "Not activated on this device yet",
+    "pushActivate": "Activate",
+    "pushDeactivate": "Deactivate",
+    "pushActivated": "Push notifications activated on this device",
+    "pushDeactivated": "Push notifications deactivated on this device",
+    "pushDenied": "Notification permission was not granted",
+    "pushError": "Couldn't activate push notifications — try again"
   },
   "messages": {
     "inboxTitle": "Messages",
