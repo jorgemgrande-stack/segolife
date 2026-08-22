@@ -18,6 +18,12 @@ import { QUESTION_TYPE_LABEL, STATUS_LABEL, STATUS_VARIANT, fmtDateTime, timeLef
 import { ComunityEditDialog } from "@/components/admin/comunity/ComunityEditDialog";
 import type { ProposalResults } from "../../../../../server/segolife/community/communityResultsService";
 
+// F64 — mismas etiquetas que ComunityModeration.tsx (preferencia/urgencia
+// expresada por el Student, nunca la urgencyType/FLASH administrativa).
+const STUDENT_URGENCY_LABEL: Record<"no_rush" | "soon" | "urgent", string> = {
+  no_rush: "sin prisa", soon: "pronto", urgent: "urgente",
+};
+
 /**
  * Ficha de detalle de una propuesta COMUNITY — /admin/comunity/:id (spec
  * punto 82: "una de las pantallas más visuales"). Cabecera + resultados
@@ -34,6 +40,15 @@ export default function ComunityDetail() {
   const { data: results } = trpc.community.getResults.useQuery({ id: proposalId });
   const { data: score } = trpc.community.getScore.useQuery({ id: proposalId });
   const { data: venue } = trpc.venues.getById.useQuery({ id: data?.proposal.venueId ?? 0 }, { enabled: !!data?.proposal.venueId });
+  // F64 — la urgencia que el Student expresó al proponer la idea de origen
+  // (nunca la urgencyType/FLASH de la propuesta formal, conceptos distintos)
+  // se muestra aquí como sugerencia informativa justo donde el admin decide
+  // si activar FLASH — nunca la fija automáticamente.
+  const sourceStudentProposalId = data?.proposal.sourceStudentProposalId ?? null;
+  const { data: sourceIdea } = trpc.community.getStudentProposalById.useQuery(
+    { id: sourceStudentProposalId ?? 0 },
+    { enabled: sourceStudentProposalId != null }
+  );
 
   const [respondentsOptionId, setRespondentsOptionId] = useState<number | undefined>(undefined);
   const [showRespondents, setShowRespondents] = useState(false);
@@ -105,7 +120,12 @@ export default function ComunityDetail() {
             <span>Tipo: <span className="text-foreground">{QUESTION_TYPE_LABEL[qType]}</span></span>
             {venue && <span>Venue: <span className="text-foreground">{venue.venue.name}</span></span>}
             <span>Ventana: <span className="text-foreground">{fmtDateTime(proposal.startsAt)} → {fmtDateTime(proposal.endsAt)}</span></span>
-            {proposal.sourceStudentProposalId && <span className="text-foreground">Idea de estudiante</span>}
+            {proposal.sourceStudentProposalId && (
+              <span className="text-foreground">
+                Idea de estudiante
+                {sourceIdea?.urgency && <span className="ml-1 text-muted-foreground">· el estudiante la marcó como "{STUDENT_URGENCY_LABEL[sourceIdea.urgency]}"</span>}
+              </span>
+            )}
             {proposal.convertedEventId && (
               <Link href={`/admin/events/${proposal.convertedEventId}`} className="inline-flex items-center gap-1 text-primary hover:underline">
                 <ExternalLink className="size-3.5" /> Evento convertido

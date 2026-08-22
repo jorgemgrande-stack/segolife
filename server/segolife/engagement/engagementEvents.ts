@@ -191,6 +191,21 @@ export interface StudentRegisteredPayload {
   firstName: string;
 }
 
+// F64 (Community FLASH 2.0) — emitido desde publishProposal() (comunityAudienceService.ts)
+// cuando una propuesta se activa de verdad (independiente de si Community ya
+// notifica in-app directamente por su cuenta, ver notifyProposalPublished).
+// Reservado para F66 (Communication Center): mismo patrón que event_published/
+// event_today — definido y emitido ya, sin listener propio todavía, para que
+// F66 pueda enrutarlo sin volver a tocar el código de Community.
+export interface CommunityProposalPublishedPayload {
+  proposalId: number;
+  title: string;
+  urgencyType: "flash" | "scheduled";
+  endsAt: Date | null;
+  /** Snapshot exacto de audiencia ya resuelto por publishProposal() — nunca se vuelve a resolver aparte. */
+  userIds: number[];
+}
+
 export interface EngagementDomainEvents {
   benefit_granted: BenefitGrantedPayload;
   benefit_expiring: BenefitExpiringPayload;
@@ -213,6 +228,7 @@ export interface EngagementDomainEvents {
   event_updated: EventUpdatedPayload;
   event_cancelled: EventCancelledPayload;
   student_registered: StudentRegisteredPayload;
+  community_proposal_published: CommunityProposalPublishedPayload;
 }
 
 export type EngagementEventType = keyof EngagementDomainEvents;

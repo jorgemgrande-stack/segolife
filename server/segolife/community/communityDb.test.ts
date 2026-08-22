@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isProposalOpenForResponses, getVenueName, isInProposalAudience, computeResultsVisible, isProposalVisibleToUser, canAccessSocialLayer } from "./communityDb";
+import { isProposalOpenForResponses, getVenueName, isInProposalAudience, computeResultsVisible, isProposalVisibleToUser, canAccessSocialLayer, sortActiveProposalsForFeed } from "./communityDb";
 import { communityProposalCommunities, userCommunities } from "../../../drizzle/schema";
 import type { CommunityProposal } from "../../../drizzle/schema";
 
@@ -107,6 +107,37 @@ describe("isInProposalAudience — gate de autorización real del avatar-stack d
 
   it("false si el userId no está en la audiencia snapshoteada de esa propuesta", async () => {
     expect(await isInProposalAudience(10, 999, fakeDb(false))).toBe(false);
+  });
+});
+
+// F64 (Community FLASH 2.0) — GATE "FLASH aparece priorizada" del feed de myActive.
+describe("sortActiveProposalsForFeed — FLASH siempre primero, luego por cierre más próximo", () => {
+  it("una FLASH aparece antes que una scheduled, aunque la scheduled se creara/cierre antes", () => {
+    const flash = proposal({ id: 1, urgencyType: "flash", endsAt: new Date("2026-08-12T20:00:00Z") });
+    const scheduled = proposal({ id: 2, urgencyType: "scheduled", endsAt: new Date("2026-08-12T13:00:00Z") });
+    const sorted = sortActiveProposalsForFeed([scheduled, flash]);
+    expect(sorted.map(p => p.id)).toEqual([1, 2]);
+  });
+
+  it("dentro del mismo grupo (dos FLASH), la que antes cierra va primero", () => {
+    const soon = proposal({ id: 1, urgencyType: "flash", endsAt: new Date("2026-08-12T13:00:00Z") });
+    const later = proposal({ id: 2, urgencyType: "flash", endsAt: new Date("2026-08-12T20:00:00Z") });
+    const sorted = sortActiveProposalsForFeed([later, soon]);
+    expect(sorted.map(p => p.id)).toEqual([1, 2]);
+  });
+
+  it("una propuesta sin endsAt queda al final de su propio grupo (nunca 'vence' antes que una con fecha real)", () => {
+    const noDeadline = proposal({ id: 1, urgencyType: "flash", endsAt: null });
+    const withDeadline = proposal({ id: 2, urgencyType: "flash", endsAt: new Date("2026-08-12T20:00:00Z") });
+    const sorted = sortActiveProposalsForFeed([noDeadline, withDeadline]);
+    expect(sorted.map(p => p.id)).toEqual([2, 1]);
+  });
+
+  it("no muta el array original", () => {
+    const list = [proposal({ id: 1, urgencyType: "scheduled" }), proposal({ id: 2, urgencyType: "flash" })];
+    const sorted = sortActiveProposalsForFeed(list);
+    expect(sorted).not.toBe(list);
+    expect(list.map(p => p.id)).toEqual([1, 2]); // orden original intacto
   });
 });
 

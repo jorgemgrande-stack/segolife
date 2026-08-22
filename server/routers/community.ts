@@ -12,7 +12,7 @@ import {
   createProposal, updateProposal, setProposalStatus, getProposalById, listProposals,
   setProposalOptions, listProposalOptions, getProposalCommunityIds, setProposalCommunities,
   isProposalOpenForResponses, getVenueName, computeResultsVisible, isInProposalAudience, isProposalVisibleToUser,
-  canAccessSocialLayer,
+  canAccessSocialLayer, sortActiveProposalsForFeed,
 } from "../segolife/community/communityDb";
 import { previewProposalAudience, publishProposal, CommunityPublishError } from "../segolife/community/communityAudienceService";
 import { submitResponse, getUserResponse, getRespondedProposalIds, CommunityResponseError, canStudentRespondAgain, type ResponsePayload } from "../segolife/community/communityResponseService";
@@ -410,6 +410,17 @@ export const communityRouter = router({
       return listStudentProposals({ ...input, communityIds });
     }),
 
+  /** F64 — permite a la ficha de una propuesta formal (ComunityDetail) mostrar la urgencia que el Student expresó al proponer la idea de origen, como sugerencia informativa (nunca fuerza urgencyType). Mismo criterio de alcance que convertStudentProposalToFormal. */
+  getStudentProposalById: communityViewProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ input, ctx }) => {
+      const idea = await getStudentProposalById(input.id);
+      if (!idea) throw new TRPCError({ code: "NOT_FOUND", message: "Idea no encontrada" });
+      const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
+      assertCommunityIdsWithinAccess(access, [idea.communityId]);
+      return idea;
+    }),
+
   approveStudentProposal: communityModerateProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ input, ctx }) => {
@@ -498,8 +509,9 @@ export const communityRouter = router({
     // getRespondedProposalIds ya es batch (WHERE proposalId IN (...)), nunca
     // una query por tarjeta.
     const respondedIds = await getRespondedProposalIds(open.map(p => p.id), ctx.user.id);
+    const sorted = sortActiveProposalsForFeed(open);
 
-    return open.map(p => {
+    return sorted.map(p => {
       const hasParticipated = respondedIds.has(p.id);
       return {
         ...p,

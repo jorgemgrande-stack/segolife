@@ -275,6 +275,25 @@ export function isProposalOpenForResponses(proposal: CommunityProposal, now: Dat
 }
 
 /**
+ * F64 (Community FLASH 2.0) — orden del feed de "activas" del Student:
+ * FLASH siempre por delante de scheduled; dentro de cada grupo, la que
+ * antes cierra va primero (más urgente arriba). Sin endsAt, al final de su
+ * grupo (nunca puede "vencer" antes que una con fecha de cierre real). Pura
+ * y exportada aparte (en vez de inline en community.ts::myActive) para
+ * poder testearla sin depender del import() dinámico de BD de ese resolver.
+ */
+export function sortActiveProposalsForFeed<T extends Pick<CommunityProposal, "urgencyType" | "endsAt">>(proposals: T[]): T[] {
+  return [...proposals].sort((a, b) => {
+    const aFlash = a.urgencyType === "flash" ? 0 : 1;
+    const bFlash = b.urgencyType === "flash" ? 0 : 1;
+    if (aFlash !== bFlash) return aFlash - bFlash;
+    const aEnds = a.endsAt ? new Date(a.endsAt).getTime() : Infinity;
+    const bEnds = b.endsAt ? new Date(b.endsAt).getTime() : Infinity;
+    return aEnds - bEnds;
+  });
+}
+
+/**
  * Política ÚNICA de "¿puede este Student ver los resultados/respondientes de
  * esta propuesta?" — antes solo vivía inline dentro de getPublicById
  * (community.ts); extraída aquí para que getRespondents (lista de quién

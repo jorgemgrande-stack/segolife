@@ -30,6 +30,7 @@ import { getStudentProposalById } from "./communityStudentProposalDb";
 import { createNotification } from "../engagement/notificationService";
 import { renderTemplate } from "../engagement/templates";
 import { earnTokens } from "../tokens/tokenEngine";
+import { emitEngagementEvent } from "../engagement/engagementEvents";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 2 });
 const _db = drizzle(_pool);
@@ -140,7 +141,14 @@ export async function publishProposal(proposalId: number, publishedByUserId: num
     if (proposal.sourceStudentProposalId != null) {
       await rewardStudentProposalApproved(proposal.sourceStudentProposalId, conn);
     }
-    await notifyProposalPublished(proposal.id, proposal.title, userIds, conn);
+    await notifyProposalPublished(proposal.id, proposal.title, userIds, proposal.urgencyType, conn);
+    // F64 — evento de dominio reutilizable (F66 Communication Center lo
+    // enrutará más adelante); la notificación in-app real de arriba ya
+    // sucedió, esto NUNCA la sustituye ni la duplica.
+    emitEngagementEvent("community_proposal_published", {
+      proposalId: proposal.id, title: proposal.title, urgencyType: proposal.urgencyType,
+      endsAt: proposal.endsAt, userIds,
+    });
   }
 }
 
@@ -161,10 +169,24 @@ async function rewardStudentProposalApproved(sourceStudentProposalId: number, db
   }
 }
 
-/** Notificación in-app a toda la audiencia — REUSE notificationService, nunca un sistema paralelo (spec punto 20). Solo in-app, canales externos ni se intentan (spec punto 21: "OFF" no significa fallback silencioso, significa que ni se llama). */
-export async function notifyProposalPublished(proposalId: number, title: string, userIds: number[], db?: AnyDbHandle): Promise<void> {
+/**
+ * Notificación in-app a toda la audiencia — REUSE notificationService, nunca
+ * un sistema paralelo (spec punto 20). Solo in-app, canales externos ni se
+ * intentan (spec punto 21: "OFF" no significa fallback silencioso, significa
+ * que ni se llama).
+ *
+ * F64 — `urgencyType` decide plantilla (community_flash_published vs.
+ * community_proposal_published) y prioridad de la notificación
+ * ("high" en FLASH, "normal" en scheduled) — nunca cambia canal ni audiencia.
+ */
+export async function notifyProposalPublished(
+  proposalId: number, title: string, userIds: number[],
+  urgencyType: "flash" | "scheduled" = "scheduled",
+  db?: AnyDbHandle
+): Promise<void> {
   const conn = db ?? (await getDb());
   if (userIds.length === 0) return;
+  const templateKey = urgencyType === "flash" ? "community_flash_published" : "community_proposal_published";
 
   // El deep-link exige slug de comunidad (spec punto 20: "/:community/comunity/:id",
   // spec punto 55: nunca hardcodear IE/UVA) — se resuelve por destinatario,
@@ -182,17 +204,18 @@ export async function notifyProposalPublished(proposalId: number, title: string,
   for (const userId of userIds) {
     const slug = slugByUser.get(userId);
     if (!slug) continue; // sin comunidad conocida — no hay a dónde navegar, se omite sin romper el resto
-    const rendered = renderTemplate("community_proposal_published", { title }, `/${slug}/comunity/${proposalId}`);
+    const rendered = renderTemplate(templateKey, { title }, `/${slug}/comunity/${proposalId}`);
     await createNotification({
       userId,
       communityId: null,
-      type: "community_proposal_published",
+      type: templateKey,
       category: "events",
       audienceType: "transactional",
+      priority: urgencyType === "flash" ? "high" : "normal",
       rendered,
       sourceType: "community_proposal",
       sourceId: proposalId,
-      idempotencyKey: `community_proposal_published:${proposalId}:${userId}`,
+      idempotencyKey: `${templateKey}:${proposalId}:${userId}`,
     }, conn as DbHandle).catch((err: unknown) => {
       console.error(`[communityAudienceService] No se pudo notificar a userId=${userId}:`, err);
     });

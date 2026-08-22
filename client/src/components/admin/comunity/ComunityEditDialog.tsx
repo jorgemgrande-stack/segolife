@@ -18,6 +18,22 @@ import type { CommunityProposal, CommunityOption } from "../../../../../drizzle/
 
 const TYPES_WITH_OPTIONS: ComunityQuestionType[] = ["single_choice", "multiselect", "ranking", "percentage_scale"];
 
+// F64 (Community FLASH 2.0) — mismos presets que ComunityWizard.tsx (nunca un
+// segundo set divergente); antes este diálogo de edición no los ofrecía y
+// obligaba a teclear startsAt/endsAt a mano para una FLASH ya publicada.
+const FLASH_PRESETS: { label: string; minutes: number }[] = [
+  { label: "15 min", minutes: 15 },
+  { label: "30 min", minutes: 30 },
+  { label: "1 hora", minutes: 60 },
+  { label: "3 horas", minutes: 180 },
+];
+
+function untilTonight(): Date {
+  const d = new Date();
+  d.setHours(23, 59, 0, 0);
+  return d;
+}
+
 function toLocalInputValue(d: Date | null): string {
   if (!d) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -187,6 +203,16 @@ export function ComunityEditDialog({ open, onOpenChange, proposal, options, comm
               <Button type="button" variant={urgencyType === "scheduled" ? "default" : "outline"} size="sm" onClick={() => setUrgencyType("scheduled")}>Programada</Button>
               <Button type="button" variant={urgencyType === "flash" ? "default" : "outline"} size="sm" onClick={() => setUrgencyType("flash")}>⚡ Flash</Button>
             </div>
+            {urgencyType === "flash" && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {FLASH_PRESETS.map(p => (
+                  <Button key={p.minutes} type="button" variant="outline" size="sm" onClick={() => setEndsAt(toLocalInputValue(new Date(Date.now() + p.minutes * 60_000)))}>
+                    {p.label}
+                  </Button>
+                ))}
+                <Button type="button" variant="outline" size="sm" onClick={() => setEndsAt(toLocalInputValue(untilTonight()))}>Hasta esta noche</Button>
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div><Label>Inicio (opcional)</Label><Input type="datetime-local" value={startsAt} onChange={e => setStartsAt(e.target.value)} /></div>

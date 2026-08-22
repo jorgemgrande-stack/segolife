@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -66,10 +66,15 @@ function questionTypeLabel(t: TFunction, type: ComunityQuestionType): string {
   return t(`comunity.questionType.${type}`);
 }
 
-/** Cuenta atrás compacta traducida — misma lógica que lib/comunity.ts:timeLeftLabel, versión i18n (Admin sigue usando la fija en español). */
-function timeLeftLabelI18n(t: TFunction, endsAt: Date | string | null | undefined): string {
+/**
+ * Cuenta atrás compacta traducida — misma lógica que lib/comunity.ts:timeLeftLabel,
+ * versión i18n (Admin sigue usando la fija en español). `now` es inyectable
+ * (F64) para que ActivasTab pueda hacerla tickear en vivo sin refetch —
+ * Date.now() como valor por defecto mantiene el comportamiento anterior.
+ */
+function timeLeftLabelI18n(t: TFunction, endsAt: Date | string | null | undefined, now: number = Date.now()): string {
   if (!endsAt) return t("comunity.timeLeft.noDeadline");
-  const diffMs = new Date(endsAt).getTime() - Date.now();
+  const diffMs = new Date(endsAt).getTime() - now;
   if (diffMs <= 0) return t("comunity.timeLeft.closed");
   const minutes = Math.floor(diffMs / 60000);
   if (minutes < 60) return t("comunity.timeLeft.minutes", { count: minutes });
@@ -86,6 +91,26 @@ function ActivasTab({ slug }: { slug: string }) {
   const { community } = useCommunity();
   const { data, isLoading } = trpc.community.myActive.useQuery();
   const utils = trpc.useUtils();
+
+  // F64 (Community FLASH 2.0) — cuenta atrás en viva de verdad, no solo
+  // texto estático recalculado en el próximo refetch. 15s de resolución:
+  // de sobra para ventanas FLASH de minutos/horas, sin recrear el intervalo
+  // en cada render. Al llegar a 0 se refresca el feed una vez — el cierre
+  // real siempre lo decide el servidor (isProposalOpenForResponses), esto
+  // solo evita que el estudiante vea un botón de voto ya inválido.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(id);
+  }, []);
+  const seenExpiredRef = useRef(new Set<number>());
+  useEffect(() => {
+    if (!data) return;
+    const newlyExpired = data.filter(p => p.endsAt && new Date(p.endsAt).getTime() <= now && !seenExpiredRef.current.has(p.id));
+    if (newlyExpired.length === 0) return;
+    newlyExpired.forEach(p => seenExpiredRef.current.add(p.id));
+    utils.community.myActive.invalidate();
+  }, [data, now, utils]);
   const respondMut = trpc.community.respond.useMutation({
     onSuccess: () => { toast.success(t("comunity.voteRegistered")); utils.community.myActive.invalidate(); utils.community.myResponded.invalidate(); },
     onError: e => {
@@ -120,7 +145,13 @@ function ActivasTab({ slug }: { slug: string }) {
 
   return (
     <div className="space-y-3">
-      {data.map(p => (
+      {data.map(p => {
+        // F64 — expirada en el propio reloj del cliente (antes de que el
+        // invalidate de arriba complete el round-trip): el servidor sigue
+        // siendo la única fuente de verdad real (isProposalOpenForResponses),
+        // esto solo evita ofrecer un botón que el backend ya rechazaría.
+        const clientExpired = p.endsAt != null && new Date(p.endsAt).getTime() <= now;
+        return (
         <div key={p.id} className="rounded-2xl border border-border bg-card p-4 segolife-card-shadow">
           {/* Hallazgo real (2026-08-22, captura del cliente): yes_no/me_apunto
               respondían directo desde la card y nunca enlazaban al detalle —
@@ -135,12 +166,16 @@ function ActivasTab({ slug }: { slug: string }) {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      {p.urgencyType === "flash" && <span className="text-xs font-bold text-amber-500">⚡ FLASH</span>}
+                      {p.urgencyType === "flash" && (
+                        <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                          ⚡ FLASH
+                        </span>
+                      )}
                       <p className="font-semibold text-foreground truncate">{p.title}</p>
                     </div>
                     {p.description && <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{p.description}</p>}
                     <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-                      <span>⏳ {timeLeftLabelI18n(t, p.endsAt)} · {questionTypeLabel(t, p.questionType as ComunityQuestionType)}</span>
+                      <span>⏳ {timeLeftLabelI18n(t, p.endsAt, now)} · {questionTypeLabel(t, p.questionType as ComunityQuestionType)}</span>
                       {p.venueName && <span className="flex items-center gap-0.5">· <MapPin className="size-3" /> {p.venueName}</span>}
                     </p>
                   </div>
@@ -156,7 +191,9 @@ function ActivasTab({ slug }: { slug: string }) {
               canStudentRespondAgain, nunca una copia divergente aquí). Una vez bloqueada, la
               tarjeta deja de ser una acción disponible: sin onClick, `disabled` real (no solo
               visual) y `aria-disabled` explícito — nunca se oculta el botón sin informar. */}
-          {p.questionType === "yes_no" ? (
+          {clientExpired ? (
+            <Button size="sm" className="w-full mt-3" variant="secondary" disabled aria-disabled="true">{t("comunity.participationClosed")}</Button>
+          ) : p.questionType === "yes_no" ? (
             p.locked ? (
               <Button size="sm" className="w-full mt-3" variant="secondary" disabled aria-disabled="true">{t("comunity.alreadyAnswered")}</Button>
             ) : (
@@ -175,7 +212,8 @@ function ActivasTab({ slug }: { slug: string }) {
             <Link href={`/${slug}/comunity/${p.id}`}><Button size="sm" variant="outline" className="w-full mt-3">{t("comunity.respond")}</Button></Link>
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

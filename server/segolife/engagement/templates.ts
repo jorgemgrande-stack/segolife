@@ -521,6 +521,18 @@ export const ENGAGEMENT_TEMPLATES: Record<string, EngagementTemplate> = {
     bodyEn: "{{title}}", bodyEs: "{{title}}",
     allowedVariables: ["title"],
   },
+  // F64 (Community FLASH 2.0) — misma notificación que community_proposal_published,
+  // pero con urgencia visible en el propio texto (nunca cambia canal/audiencia:
+  // sigue siendo solo in_app/transactional, ver notifyProposalPublished — la
+  // única diferencia real es priority:"high" al crear la notificación).
+  community_flash_published: {
+    key: "community_flash_published", version: 1, category: "events", adminCategory: "COMMUNITY",
+    audienceType: "transactional", channels: ["in_app"], status: "active",
+    description: "Publicación de una propuesta COMUNITY en modo FLASH (ventana corta).", triggerEvent: "CommunityFlashPublished",
+    titleEn: "⚡ FLASH question — answer now", titleEs: "⚡ Pregunta FLASH — responde ya",
+    bodyEn: "{{title}}", bodyEs: "{{title}}",
+    allowedVariables: ["title"],
+  },
   // COM-02 (Community Social Results, spec §25): solo in_app, nunca email
   // (mismo criterio que el resto de plantillas COMMUNITY de arriba) —
   // "evitar tormentas de notificaciones" (spec §25) por un canal de bajo

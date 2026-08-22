@@ -9,13 +9,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { CommunityProposal, CommunityStudentProposal } from "../../../drizzle/schema";
 
-const { mockGetProposalById, mockSetProposalStatus, mockResolveAudience, mockCreateNotification, mockGetStudentProposalById, mockEarnTokens } = vi.hoisted(() => ({
+const { mockGetProposalById, mockSetProposalStatus, mockResolveAudience, mockCreateNotification, mockGetStudentProposalById, mockEarnTokens, mockEmitEngagementEvent } = vi.hoisted(() => ({
   mockGetProposalById: vi.fn(),
   mockSetProposalStatus: vi.fn(),
   mockResolveAudience: vi.fn(),
   mockCreateNotification: vi.fn(),
   mockGetStudentProposalById: vi.fn(),
   mockEarnTokens: vi.fn(),
+  mockEmitEngagementEvent: vi.fn(),
 }));
 
 vi.mock("./communityDb", () => ({
@@ -24,9 +25,15 @@ vi.mock("./communityDb", () => ({
 }));
 vi.mock("../engagement/audienceEngine", () => ({ resolveAudience: mockResolveAudience }));
 vi.mock("../engagement/notificationService", () => ({ createNotification: mockCreateNotification }));
-vi.mock("../engagement/templates", () => ({ renderTemplate: () => ({ title: "x", body: "x" }) }));
+// F64 — renderTemplate real (no mockeado del todo): se necesita distinguir
+// qué templateKey recibió cada llamada (community_flash_published vs.
+// community_proposal_published), así que se devuelve un fingerprint del key
+// recibido en vez de un objeto fijo — nunca se prueba el contenido real de
+// la plantilla aquí (eso es cosa de templates.test.ts).
+vi.mock("../engagement/templates", () => ({ renderTemplate: (key: string) => ({ title: `title:${key}`, body: `body:${key}` }) }));
 vi.mock("./communityStudentProposalDb", () => ({ getStudentProposalById: mockGetStudentProposalById }));
 vi.mock("../tokens/tokenEngine", () => ({ earnTokens: mockEarnTokens }));
+vi.mock("../engagement/engagementEvents", () => ({ emitEngagementEvent: mockEmitEngagementEvent }));
 
 import { publishProposal } from "./communityAudienceService";
 
@@ -74,6 +81,7 @@ beforeEach(() => {
   mockCreateNotification.mockReset().mockResolvedValue(undefined);
   mockGetStudentProposalById.mockReset();
   mockEarnTokens.mockReset().mockResolvedValue({ ledger: { id: 1 }, wallet: {}, breakdown: {} });
+  mockEmitEngagementEvent.mockReset();
 });
 
 describe("publishProposal — COMMUNITY_PROPOSAL_APPROVED (SEGOLIFE — COMMUNITY Production Implementation)", () => {
@@ -167,5 +175,65 @@ describe("publishProposal — el autor de la idea original SIEMPRE queda en la a
     const db = fakeDbTrackingInserts();
     await expect(publishProposal(10, 1, db)).resolves.toBeUndefined();
     expect((db as unknown as { __insertedUserIds: number[] }).__insertedUserIds).toEqual([77]);
+  });
+});
+
+// F64 (Community FLASH 2.0) — plantilla/prioridad de la notificación in-app +
+// evento de dominio reutilizable para F66. fakeDbWithSlugs SÍ resuelve slugs
+// (a diferencia de fakeDb de arriba, que los deja vacíos a propósito porque
+// esos tests prueban la recompensa, no el contenido de la notificación).
+function fakeDbWithSlugs(rows: Array<{ userId: number; slug: string }>) {
+  return {
+    delete: () => ({ where: () => Promise.resolve() }),
+    insert: () => ({ values: () => Promise.resolve([{ insertId: 1 }]) }),
+    select: () => ({ from: () => ({ innerJoin: () => ({ where: () => Promise.resolve(rows) }) }) }),
+  } as never;
+}
+
+describe("publishProposal — F64: plantilla/prioridad FLASH vs. scheduled + evento community_proposal_published", () => {
+  it("propuesta FLASH → notifica con templateKey/type 'community_flash_published' y priority 'high'", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ urgencyType: "flash", sourceStudentProposalId: null }));
+    mockResolveAudience.mockResolvedValue([42, 43]);
+
+    await publishProposal(10, 1, fakeDbWithSlugs([{ userId: 42, slug: "ie" }, { userId: 43, slug: "ie" }]));
+
+    expect(mockCreateNotification).toHaveBeenCalledTimes(2);
+    for (const call of mockCreateNotification.mock.calls) {
+      expect(call[0]).toMatchObject({ type: "community_flash_published", priority: "high" });
+      expect(call[0].rendered.title).toBe("title:community_flash_published");
+    }
+  });
+
+  it("propuesta scheduled (por defecto) → notifica con templateKey/type 'community_proposal_published' y priority 'normal'", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ urgencyType: "scheduled", sourceStudentProposalId: null }));
+    mockResolveAudience.mockResolvedValue([42]);
+
+    await publishProposal(10, 1, fakeDbWithSlugs([{ userId: 42, slug: "ie" }]));
+
+    expect(mockCreateNotification).toHaveBeenCalledOnce();
+    expect(mockCreateNotification.mock.calls[0][0]).toMatchObject({ type: "community_proposal_published", priority: "normal" });
+  });
+
+  it("al activarse YA, emite community_proposal_published con el snapshot exacto de audiencia y el urgencyType real", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ id: 10, title: "Afterparty en Casanova", urgencyType: "flash", sourceStudentProposalId: null }));
+    mockResolveAudience.mockResolvedValue([42, 43]);
+
+    await publishProposal(10, 1, fakeDbWithSlugs([{ userId: 42, slug: "ie" }, { userId: 43, slug: "ie" }]));
+
+    expect(mockEmitEngagementEvent).toHaveBeenCalledOnce();
+    expect(mockEmitEngagementEvent).toHaveBeenCalledWith("community_proposal_published", expect.objectContaining({
+      proposalId: 10, title: "Afterparty en Casanova", urgencyType: "flash", userIds: expect.arrayContaining([42, 43]),
+    }));
+  });
+
+  it("propuesta programada para el futuro (no se activa YA) → nunca emite el evento (la notificación in-app tampoco se dispara todavía)", async () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000);
+    mockGetProposalById.mockResolvedValue(proposalFixture({ startsAt: future, sourceStudentProposalId: null }));
+    mockResolveAudience.mockResolvedValue([42]);
+
+    await publishProposal(10, 1, fakeDbWithSlugs([{ userId: 42, slug: "ie" }]));
+
+    expect(mockEmitEngagementEvent).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
   });
 });
