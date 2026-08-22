@@ -184,6 +184,21 @@ export async function isInProposalAudience(proposalId: number, userId: number, d
   return !!row;
 }
 
+/**
+ * F65 (ciclo de vida automático) — el snapshot de audiencia ya fijado al
+ * publicar (communityAudienceService.ts::publishProposal, ANTES de saber si
+ * activa ya o queda scheduled). Cuando el scheduler activa una "scheduled"
+ * cuyo startsAt ya llegó, reutiliza EXACTAMENTE este mismo snapshot — nunca
+ * vuelve a llamar a resolveAudience() (violaría "quién podía responder queda
+ * fijado en el momento de publicar", ver cabecera de communityAudienceService.ts).
+ */
+export async function getProposalAudienceUserIds(proposalId: number, db?: AnyDbHandle): Promise<number[]> {
+  const conn = db ?? (await getDb());
+  const rows = await conn.select({ userId: communityProposalAudiences.userId }).from(communityProposalAudiences)
+    .where(eq(communityProposalAudiences.proposalId, proposalId));
+  return rows.map(r => r.userId);
+}
+
 export interface ProposalListItem extends CommunityProposal {
   venueName: string | null;
   communities: { id: number; name: string }[];

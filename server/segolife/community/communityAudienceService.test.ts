@@ -9,9 +9,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { CommunityProposal, CommunityStudentProposal } from "../../../drizzle/schema";
 
-const { mockGetProposalById, mockSetProposalStatus, mockResolveAudience, mockCreateNotification, mockGetStudentProposalById, mockEarnTokens, mockEmitEngagementEvent } = vi.hoisted(() => ({
+const { mockGetProposalById, mockSetProposalStatus, mockGetProposalAudienceUserIds, mockResolveAudience, mockCreateNotification, mockGetStudentProposalById, mockEarnTokens, mockEmitEngagementEvent } = vi.hoisted(() => ({
   mockGetProposalById: vi.fn(),
   mockSetProposalStatus: vi.fn(),
+  mockGetProposalAudienceUserIds: vi.fn(),
   mockResolveAudience: vi.fn(),
   mockCreateNotification: vi.fn(),
   mockGetStudentProposalById: vi.fn(),
@@ -22,6 +23,7 @@ const { mockGetProposalById, mockSetProposalStatus, mockResolveAudience, mockCre
 vi.mock("./communityDb", () => ({
   getProposalById: mockGetProposalById,
   setProposalStatus: mockSetProposalStatus,
+  getProposalAudienceUserIds: mockGetProposalAudienceUserIds,
 }));
 vi.mock("../engagement/audienceEngine", () => ({ resolveAudience: mockResolveAudience }));
 vi.mock("../engagement/notificationService", () => ({ createNotification: mockCreateNotification }));
@@ -35,7 +37,7 @@ vi.mock("./communityStudentProposalDb", () => ({ getStudentProposalById: mockGet
 vi.mock("../tokens/tokenEngine", () => ({ earnTokens: mockEarnTokens }));
 vi.mock("../engagement/engagementEvents", () => ({ emitEngagementEvent: mockEmitEngagementEvent }));
 
-import { publishProposal } from "./communityAudienceService";
+import { publishProposal, activateScheduledProposal } from "./communityAudienceService";
 
 function proposalFixture(overrides: Partial<CommunityProposal> = {}): CommunityProposal {
   return {
@@ -82,6 +84,7 @@ beforeEach(() => {
   mockGetStudentProposalById.mockReset();
   mockEarnTokens.mockReset().mockResolvedValue({ ledger: { id: 1 }, wallet: {}, breakdown: {} });
   mockEmitEngagementEvent.mockReset();
+  mockGetProposalAudienceUserIds.mockReset();
 });
 
 describe("publishProposal — COMMUNITY_PROPOSAL_APPROVED (SEGOLIFE — COMMUNITY Production Implementation)", () => {
@@ -235,5 +238,53 @@ describe("publishProposal — F64: plantilla/prioridad FLASH vs. scheduled + eve
 
     expect(mockEmitEngagementEvent).not.toHaveBeenCalled();
     expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+});
+
+// F65 (Community: ciclo de vida automático) — activateScheduledProposal() es
+// lo que communityLifecycleScheduler.ts llama cada minuto para las
+// "scheduled" cuyo startsAt ya llegó. GATE real: nunca vuelve a resolver
+// audiencia (reutiliza el snapshot ya fijado al publicar) y reproduce
+// exactamente los mismos efectos que publishProposal() con willActivateNow.
+describe("activateScheduledProposal — F65: activación diferida por el scheduler", () => {
+  it("propuesta 'scheduled' cuyo momento llegó: pasa a 'active', reutiliza el snapshot de audiencia (NUNCA resolveAudience) y dispara los mismos efectos que una activación inmediata", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ id: 10, status: "scheduled", urgencyType: "flash", sourceStudentProposalId: null }));
+    mockGetProposalAudienceUserIds.mockResolvedValue([42, 43]);
+
+    await activateScheduledProposal(10, fakeDbWithSlugs([{ userId: 42, slug: "ie" }, { userId: 43, slug: "ie" }]));
+
+    expect(mockResolveAudience).not.toHaveBeenCalled(); // el snapshot ya estaba fijado, nunca se vuelve a resolver
+    expect(mockSetProposalStatus).toHaveBeenCalledWith(10, "active", {}, expect.anything());
+    expect(mockCreateNotification).toHaveBeenCalledTimes(2);
+    expect(mockCreateNotification.mock.calls[0][0]).toMatchObject({ type: "community_flash_published", priority: "high" });
+    expect(mockEmitEngagementEvent).toHaveBeenCalledWith("community_proposal_published", expect.objectContaining({ proposalId: 10, urgencyType: "flash", userIds: [42, 43] }));
+  });
+
+  it("premia al autor original si la propuesta viene de una idea de estudiante, igual que una activación inmediata", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ id: 10, status: "scheduled", sourceStudentProposalId: 3 }));
+    mockGetProposalAudienceUserIds.mockResolvedValue([42]);
+    mockGetStudentProposalById.mockResolvedValue(studentProposalFixture({ id: 3, studentUserId: 77, venueId: 7 }));
+
+    await activateScheduledProposal(10, fakeDbWithSlugs([{ userId: 42, slug: "ie" }]));
+
+    expect(mockEarnTokens).toHaveBeenCalledOnce();
+    expect(mockEarnTokens.mock.calls[0][0]).toMatchObject({ userId: 77, origin: "community_proposal_approved", sourceId: 3 });
+  });
+
+  it("una propuesta que YA no está 'scheduled' (activada por otro tick, o cancelada mientras tanto) no hace nada — defensivo contra doble activación", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ id: 10, status: "active" }));
+
+    await activateScheduledProposal(10, fakeDbWithSlugs([]));
+
+    expect(mockSetProposalStatus).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+    expect(mockEmitEngagementEvent).not.toHaveBeenCalled();
+  });
+
+  it("propuesta inexistente (borrada entre la lectura del scheduler y la activación) no lanza, simplemente no hace nada", async () => {
+    mockGetProposalById.mockResolvedValue(null);
+
+    await expect(activateScheduledProposal(999, fakeDbWithSlugs([]))).resolves.toBeUndefined();
+    expect(mockSetProposalStatus).not.toHaveBeenCalled();
   });
 });

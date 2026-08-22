@@ -23,9 +23,9 @@
 import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
-import { communityProposals, communityProposalAudiences, communities } from "../../../drizzle/schema";
+import { communityProposals, communityProposalAudiences, communities, type CommunityProposal } from "../../../drizzle/schema";
 import { resolveAudience, type AudienceDefinition } from "../engagement/audienceEngine";
-import { getProposalById, setProposalStatus, type AnyDbHandle } from "./communityDb";
+import { getProposalById, setProposalStatus, getProposalAudienceUserIds, type AnyDbHandle } from "./communityDb";
 import { getStudentProposalById } from "./communityStudentProposalDb";
 import { createNotification } from "../engagement/notificationService";
 import { renderTemplate } from "../engagement/templates";
@@ -138,18 +138,43 @@ export async function publishProposal(proposalId: number, publishedByUserId: num
   }, conn);
 
   if (willActivateNow) {
-    if (proposal.sourceStudentProposalId != null) {
-      await rewardStudentProposalApproved(proposal.sourceStudentProposalId, conn);
-    }
-    await notifyProposalPublished(proposal.id, proposal.title, userIds, proposal.urgencyType, conn);
-    // F64 — evento de dominio reutilizable (F66 Communication Center lo
-    // enrutará más adelante); la notificación in-app real de arriba ya
-    // sucedió, esto NUNCA la sustituye ni la duplica.
-    emitEngagementEvent("community_proposal_published", {
-      proposalId: proposal.id, title: proposal.title, urgencyType: proposal.urgencyType,
-      endsAt: proposal.endsAt, userIds,
-    });
+    await activateProposalNow(proposal, userIds, conn);
   }
+}
+
+/**
+ * F65 (ciclo de vida automático) — activa una propuesta "scheduled" cuyo
+ * startsAt ya llegó: NUNCA vuelve a resolver audiencia (reutiliza el
+ * snapshot ya fijado en publishProposal — communityProposalAudiences),
+ * reproduce EXACTAMENTE los mismos efectos de activación que
+ * publishProposal() cuando willActivateNow es true (recompensa/notificación/
+ * evento de dominio). Defensivo: si la propuesta ya no está en "scheduled"
+ * (activada por otro tick concurrente, o cancelada mientras tanto), no hace
+ * nada — nunca reactiva ni renotifica dos veces.
+ */
+export async function activateScheduledProposal(proposalId: number, db?: AnyDbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  const proposal = await getProposalById(proposalId, conn);
+  if (!proposal || proposal.status !== "scheduled") return;
+
+  const userIds = await getProposalAudienceUserIds(proposalId, conn);
+  await setProposalStatus(proposalId, "active", {}, conn);
+  await activateProposalNow(proposal, userIds, conn);
+}
+
+/** Efectos reales de "esta propuesta pasa a active ahora mismo" — compartido por publishProposal (activación inmediata) y activateScheduledProposal (activación diferida por el scheduler, F65). */
+async function activateProposalNow(proposal: CommunityProposal, userIds: number[], conn: AnyDbHandle): Promise<void> {
+  if (proposal.sourceStudentProposalId != null) {
+    await rewardStudentProposalApproved(proposal.sourceStudentProposalId, conn);
+  }
+  await notifyProposalPublished(proposal.id, proposal.title, userIds, proposal.urgencyType, conn);
+  // F64 — evento de dominio reutilizable (F66 Communication Center lo
+  // enrutará más adelante); la notificación in-app real de arriba ya
+  // sucedió, esto NUNCA la sustituye ni la duplica.
+  emitEngagementEvent("community_proposal_published", {
+    proposalId: proposal.id, title: proposal.title, urgencyType: proposal.urgencyType,
+    endsAt: proposal.endsAt, userIds,
+  });
 }
 
 /** SegoTokens al autor de la idea original, solo cuando su propuesta convertida se activa de verdad (ver comentario de cabecera). Best-effort — nunca bloquea la publicación. */

@@ -42,6 +42,7 @@ import { registerTokensEarnedListener } from "../segolife/engagement/tokensEarne
 import { registerEventLifecycleListeners } from "../segolife/engagement/eventLifecycleListener";
 import { registerStudentRegisteredListener } from "../segolife/engagement/studentRegisteredListener";
 import { startEngagementScheduler, isEngagementDeliveryEnabled } from "../segolife/engagement/engagementScheduler";
+import { startCommunityLifecycleScheduler } from "../segolife/community/communityLifecycleScheduler";
 import { startEmailIngestionJob } from "../services/emailTpvIngestionService";
 import { startExpenseEmailIngestionJob } from "../services/expenseEmailIngestionService";
 import { startCommercialEmailSyncJob } from "../services/commercialEmailService";
@@ -866,5 +867,12 @@ verifyDatabaseConnectivity()
       console.log("[Jobs] 'Engagement Scheduler' desactivado — ENGAGEMENT_DELIVERY_ENABLED no está en 'true'");
     }
   })
+  // F65 (Community: ciclo de vida automático) — activa "scheduled"/cierra
+  // "active" vencidas cada minuto (mismo tick que el resto de esta lista).
+  // Default false: en una BD nueva, o mientras no se decida activarlo, el
+  // comportamiento sigue siendo exactamente el de antes (cierre/activación
+  // manual vía closeNow/publish) — puramente aditivo, sin cambiar nada hasta
+  // que se active explícitamente.
+  .then(() => conditionallyStartJob("community_lifecycle_scheduler_enabled", startCommunityLifecycleScheduler, "Community Lifecycle", false))
   .catch(console.error);
 
