@@ -368,6 +368,15 @@ describe("ComunityQuestionDetail — COM-02: sheet de comentarios", () => {
     expect(mutate).toHaveBeenCalledWith({ proposalId: 5, content: "Qué buena idea 😍", parentCommentId: undefined });
   });
 
+  it("Bugfix 'input negro e ilegible' — el composer usa la clase blindada segolife-sheet-input, nunca clases sueltas que el CSS legacy de dark mode pueda sobrescribir", async () => {
+    mockGetPublicById.mockReturnValue({ data: proposalFixture(), isLoading: false });
+    const user = userEvent.setup();
+    renderAt("/ie/comunity/5");
+    await user.click(await screen.findByLabelText(/comments/i));
+    const textarea = await screen.findByPlaceholderText(/write a comment/i);
+    expect(textarea.className).toContain("segolife-sheet-input");
+  });
+
   it("el botón de enviar está deshabilitado con el campo vacío — nunca envía un comentario en blanco", async () => {
     mockGetPublicById.mockReturnValue({ data: proposalFixture(), isLoading: false });
     const user = userEvent.setup();

@@ -73,9 +73,21 @@ test.describe("Bottom Sheet — Comments (regresión funcional tras la migració
     await expect(sheet).toHaveCSS("background-color", "rgb(255, 255, 255)");
     await expect(sheet.getByRole("heading", { name: /^Comments/ })).toBeVisible();
 
+    // Bugfix "input negro e ilegible en Comments Bottom Sheet" (2026-08-22):
+    // el composer debe ser blanco de verdad, con texto/caret oscuros y un
+    // focus ring lila Segolife — nunca heredar el naranja/negro del tema
+    // admin (ver .segolife-sheet-input/.segolife-sheet-surface en index.css).
+    const composer = page.getByPlaceholder("Write a comment…");
+    await expect(composer).toHaveCSS("background-color", "rgb(255, 255, 255)");
     const body = `[QA SHEETS] comentario ${Date.now()}`;
-    await page.getByPlaceholder("Write a comment…").fill(body);
-    await page.getByRole("button", { name: "Post" }).click();
+    await composer.fill(body);
+    await expect(composer).toHaveCSS("color", "oklch(0.2 0.02 300)");
+    await composer.focus();
+    await expect(composer).toHaveCSS("border-color", "oklch(0.52 0.19 296)");
+    const postButton = page.getByRole("button", { name: "Post" });
+    await expect(postButton).toHaveCSS("background-color", "oklch(0.52 0.19 296)");
+
+    await postButton.click();
     await expect(sheet.getByText(body)).toBeVisible();
 
     await page.keyboard.press("Escape");

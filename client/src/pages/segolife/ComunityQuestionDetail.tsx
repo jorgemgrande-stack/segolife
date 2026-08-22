@@ -859,7 +859,7 @@ function CommentsSheet({ proposalId, open, onOpenChange }: { proposalId: number;
           maxLength={1000}
           placeholder={t("comunity.social.writeComment")}
           aria-label={t("comunity.social.writeComment")}
-          className="min-h-0 resize-none border-neutral-200 bg-white text-neutral-900 placeholder:text-neutral-400"
+          className="segolife-sheet-input min-h-0 resize-none"
         />
         <Button size="sm" disabled={!content.trim() || createMut.isPending} onClick={submit}>
           {createMut.isPending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.social.post")}

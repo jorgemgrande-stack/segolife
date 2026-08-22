@@ -400,6 +400,82 @@ html:not(.dark) .text-gray-400  { color: oklch(0.50 0.04 230) !important; }
    de una época sin dark mode). Clase dedicada, nunca `bg-white`, para que
    esa regla no la alcance. */
 .segolife-sheet-surface { background-color: #fff; }
+
+/* Bugfix "input negro e ilegible en Comments Bottom Sheet" (2026-08-22) —
+ * causa raíz real, más profunda que el `bg-white` del propio contenedor: vaul
+ * renderiza el sheet vía Portal directamente como hijo de <body> (confirmado
+ * con getComputedStyle: el Content del drawer NO es descendiente de
+ * `.segolife-theme`, que envuelve el resto del Student frontend). Por eso
+ * NINGÚN var(--primary)/var(--input)/var(--muted-foreground)/etc. usado
+ * dentro del sheet se resolvía con la paleta de Segolife — heredaba la del
+ * admin (incl. su `.dark`, activo por defecto en un navegador sin
+ * localStorage) directamente desde <html>/<body>. Así, el botón "Post"
+ * (bg-primary) salía naranja-oscuro del admin en vez de lila Segolife, y el
+ * Textarea (dark:bg-input/30 de fábrica) salía con el --input oscuro del
+ * admin — el `bg-white` reportado por el cliente era solo el síntoma más
+ * visible de este mismo problema.
+ *
+ * Fix estructural (spec: "resolverlo de forma scoped y reutilizable, no con
+ * excepciones sueltas por componente"): redefinir aquí el MISMO conjunto de
+ * tokens que `.segolife-theme` (mismos valores, nunca una paleta paralela),
+ * pero sobre `.segolife-sheet-surface` — que sí es un ancestro real dentro
+ * del portal. Una declaración directa de `--token` en un elemento siempre
+ * gana sobre un valor heredado de `.dark` en un ancestro más arriba (misma
+ * razón por la que `.segolife-theme` ya funciona fuera de los portales) —
+ * así CUALQUIER componente compartido (Button, Textarea, Select…) que use
+ * `bg-primary`/`bg-input`/`text-muted-foreground`/etc. dentro de un
+ * SegolifeBottomSheet queda correcto automáticamente, sin tocar cada
+ * componente uno a uno ni depender de ganar guerras de especificidad. */
+.segolife-sheet-surface {
+  --background: oklch(0.985 0.004 300);
+  --foreground: oklch(0.20 0.02 300);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.20 0.02 300);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.20 0.02 300);
+  --primary: oklch(0.52 0.19 296);
+  --primary-foreground: oklch(0.99 0.01 296);
+  --secondary: oklch(0.94 0.03 300);
+  --secondary-foreground: oklch(0.32 0.12 300);
+  --muted: oklch(0.96 0.012 300);
+  --muted-foreground: oklch(0.52 0.02 300);
+  --accent: oklch(0.68 0.19 350);
+  --accent-foreground: oklch(0.99 0.01 350);
+  --destructive: oklch(0.55 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.90 0.015 300);
+  --input: oklch(0.92 0.015 300);
+  --ring: oklch(0.52 0.19 296);
+  color-scheme: light;
+  color: var(--foreground);
+}
+
+/* Salvaguarda literal para los controles de escritura (Textarea/Input) —
+ * defensa en profundidad además del fix de tokens de arriba: no depende de
+ * qué utilidad Tailwind "gane" por especificidad, ni de que un futuro
+ * componente compartido use los tokens semánticos correctamente. Clase
+ * explícita (spec §2) para el composer de Comments y cualquier campo de
+ * escritura equivalente dentro de un SegolifeBottomSheet. */
+.segolife-sheet-input {
+  background-color: #fff !important;
+  color: oklch(0.20 0.02 300) !important;
+  caret-color: oklch(0.52 0.19 296) !important;
+  border-color: oklch(0.90 0.015 300) !important;
+}
+.segolife-sheet-input::placeholder {
+  color: oklch(0.52 0.02 300) !important;
+  opacity: 1 !important;
+}
+.segolife-sheet-input:focus-visible {
+  outline: none;
+  border-color: oklch(0.52 0.19 296) !important;
+  box-shadow: 0 0 0 3px oklch(0.52 0.19 296 / 0.35);
+}
+.segolife-sheet-input:disabled,
+.segolife-sheet-input:read-only {
+  background-color: oklch(0.96 0.012 300) !important;
+  color: oklch(0.52 0.02 300) !important;
+}
 .dark .bg-gray-50,
 .dark .bg-slate-50      { background-color: oklch(0.13 0.02 240) !important; }
 .dark .bg-gray-100,
