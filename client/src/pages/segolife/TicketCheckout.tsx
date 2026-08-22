@@ -41,11 +41,21 @@ export default function TicketCheckout() {
   const utils = trpc.useUtils();
   const [tokensInput, setTokensInput] = useState("");
 
-  const { data, isLoading, refetch } = trpc.ticketPurchase.myOrderById.useQuery({ orderId }, { enabled: !!orderId });
+  // F70 (PaymentProvider real) — "awaiting_payment" es el estado real
+  // mientras un checkout hospedado sigue en curso fuera de la app (nunca se
+  // llega aquí sin haber llamado ya a un provider real): se refetch sola
+  // cada pocos segundos para detectar la confirmación del webhook sin que
+  // el estudiante tenga que refrescar a mano — nunca se confía en el
+  // regreso de la redirección por sí solo, siempre se relee el pedido real.
+  const { data, isLoading, refetch } = trpc.ticketPurchase.myOrderById.useQuery(
+    { orderId },
+    { enabled: !!orderId, refetchInterval: q => (q.state.data?.order.status === "awaiting_payment" ? 4000 : false) }
+  );
   const walletQ = trpc.tokens.getMyWallet.useQuery();
 
   const requestedTokensNum = Number(tokensInput) || 0;
-  const canPay = data ? data.order.status === "pending" || data.order.status === "awaiting_payment" : false;
+  const canPay = data ? data.order.status === "pending" : false;
+  const isAwaitingConfirmation = data ? data.order.status === "awaiting_payment" : false;
 
   // SEGOTOKENS SPEND — COTIZACIÓN CANÓNICA (Pre-16.2, spec §7): el ST→€ y el
   // "cuánto queda por pagar" NUNCA se calculan en el cliente — siempre se
@@ -73,10 +83,19 @@ export default function TicketCheckout() {
       if (res.paymentStatus === "succeeded") {
         toast.success(t("ticketing.orderStatusPaid"));
         navigate(`/${slug}/tickets`);
+      } else if (res.paymentStatus === "pending" && res.redirectUrl) {
+        // F70 (PaymentProvider real) — checkout hospedado: el provider real
+        // (hoy nunca configurado, ver checklist de activación) exige salir
+        // de la app a su propia pantalla de pago. NUNCA se marca la compra
+        // como pagada aquí — el pedido vuelve exactamente a esta misma URL
+        // (éxito/cancelación/error) y esta pantalla decide qué mostrar
+        // SIEMPRE releyendo el estado real del pedido, nunca confiando en
+        // qué parámetro trajera la redirección de vuelta.
+        window.location.href = res.redirectUrl;
       } else {
-        // "pending" (checkout hospedado, futuro real) o "failed" — en ambos
-        // casos el order/badge de estado ya refleja la realidad al refetch,
-        // nunca se finge un éxito (spec §14/§45.5).
+        // "failed" (o "pending" sin redirectUrl, provider sin checkout
+        // hospedado) — el order/badge de estado ya refleja la realidad al
+        // refetch, nunca se finge un éxito (spec §14/§45.5).
         refetch();
       }
     },
@@ -133,6 +152,13 @@ export default function TicketCheckout() {
         {order.status === "paid" && (
           <div className="segolife-card-shadow mt-4 flex items-center gap-2 rounded-2xl border border-primary/30 bg-primary/10 p-4 text-sm text-foreground">
             <CheckCircle2 className="size-5 shrink-0 text-primary" aria-hidden="true" /> {t("ticketing.orderStatusPaid")}
+          </div>
+        )}
+
+        {isAwaitingConfirmation && (
+          <div className="segolife-card-shadow mt-4 flex items-center gap-2 rounded-2xl border border-border bg-muted/40 p-4 text-sm text-foreground">
+            <Loader2 className="size-5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
+            {t("ticketing.awaitingPaymentConfirmation")}
           </div>
         )}
 

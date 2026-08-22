@@ -707,6 +707,7 @@
     "paymentUnavailableDescription": "Segolife doesn't have a real payment provider connected yet — this order is saved but can't be paid for right now.",
     "orderStatusPending": "Awaiting checkout",
     "orderStatusAwaitingPayment": "Processing payment",
+    "awaitingPaymentConfirmation": "Waiting for payment confirmation — this can take a few seconds, no need to refresh.",
     "orderStatusPaid": "Paid",
     "orderStatusCancelled": "Cancelled",
     "orderStatusExpired": "Expired",

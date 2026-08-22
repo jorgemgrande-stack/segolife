@@ -707,6 +707,7 @@
     "paymentUnavailableDescription": "Segolife todavía no tiene conectado un método de pago real — este pedido queda guardado, pero no se puede pagar ahora mismo.",
     "orderStatusPending": "Pendiente de pago",
     "orderStatusAwaitingPayment": "Procesando pago",
+    "awaitingPaymentConfirmation": "Esperando confirmación del pago — puede tardar unos segundos, no hace falta refrescar.",
     "orderStatusPaid": "Pagado",
     "orderStatusCancelled": "Cancelado",
     "orderStatusExpired": "Caducado",

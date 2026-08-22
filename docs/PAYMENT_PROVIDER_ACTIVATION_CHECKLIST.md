@@ -68,11 +68,25 @@ técnica; no se toma en este documento.
    35`) — mapear el payload/metadata real del proveedor a esa forma dentro
    de `verifyWebhook()` (p. ej. guardar `orderId` en los metadatos de
    Stripe al crear el pago y leerlo de vuelta en el webhook).
-7. **Redirección de checkout alojado (si el proveedor lo requiere)** —
-   `TicketCheckout.tsx` hoy ignora `PaymentResult.redirectUrl`; haría falta
-   implementar la salida y el retorno a `/:community/checkout/:orderId` (no
-   existen páginas dedicadas de éxito/error/cancelación para tickets
-   nativos, a diferencia del par heredado `/reserva/ok`/`/reserva/error`).
+7. **Redirección de checkout alojado — YA IMPLEMENTADO (F70, 2026-08-23).**
+   `TicketCheckout.tsx` ya navega el navegador de verdad a
+   `PaymentResult.redirectUrl` en cuanto `initiatePayment` devuelve
+   `paymentStatus:"pending"` con esa URL. Decisión de diseño (documentada
+   aquí para no repetir el análisis): el `successUrl`/`cancelUrl` (o su
+   equivalente en el SDK del proveedor elegido) que se le pase al provider
+   real al construir el pago debe apuntar SIEMPRE de vuelta a la MISMA
+   `https://www.segolife.es/:community/checkout/:orderId` — nunca páginas
+   nuevas de `/success`/`/error`/`/cancel` — porque esa pantalla ya sabe
+   renderizar cualquier estado real del pedido (pagado/pendiente/fallido) y
+   ya NUNCA confía en el propio regreso de la redirección como prueba de
+   pago: siempre relee `myOrderById` y decide según el estado real. Mientras
+   el pedido queda `awaiting_payment` (checkout hospedado en curso), la
+   pantalla ya hace polling automático cada 4s para detectar la
+   confirmación del webhook sin que el estudiante tenga que refrescar, y ya
+   NO vuelve a ofrecer el botón de pagar sobre un intento en curso (antes sí
+   lo hacía — bug real corregido en la misma fase, nunca alcanzable en
+   producción hasta ahora porque ningún provider real ha devuelto jamás
+   `redirectUrl`).
 8. **Tests del nuevo proveedor** — replicar el patrón de
    `paymentProviders.test.ts` (garantía de "nunca finge un éxito") más,
    si el proveedor lo permite, una prueba real contra sus credenciales de
