@@ -28,6 +28,17 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "dest
   issued: "secondary", redeemed: "default", expired: "outline", cancelled: "destructive",
 };
 
+// F63 — QR de consumición 2.0: modos de caducidad. Omitir el modo (o dejarlo
+// en 'from_issue') mantiene el comportamiento histórico exacto.
+type QrExpiryMode = "from_issue" | "from_event" | "from_assignment" | "custom" | "none";
+const EXPIRY_MODE_LABEL: Record<QrExpiryMode, string> = {
+  from_issue: "Desde la emisión",
+  from_event: "Desde el inicio del evento",
+  from_assignment: "Al asignarse a un estudiante",
+  custom: "Fecha y hora personalizada",
+  none: "Sin caducidad",
+};
+
 // ── Vista imprimible: solo existe en el momento de emisión — el token en
 // claro nunca se recupera después (ver consumptionQrService.ts). ──────────
 function PrintableQrDialog({ open, onOpenChange, items }: {
@@ -69,6 +80,12 @@ function IssueTab() {
   const [amount, setAmount] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [expiresInMinutes, setExpiresInMinutes] = useState<string>(NONE);
+  // F63 — modo de caducidad + campos específicos de cada modo.
+  const [expiryMode, setExpiryMode] = useState<QrExpiryMode>("from_issue");
+  const [eventId, setEventId] = useState("");
+  const [eventDurationMinutes, setEventDurationMinutes] = useState("");
+  const [assignmentDurationMinutes, setAssignmentDurationMinutes] = useState("");
+  const [customExpiresAt, setCustomExpiresAt] = useState("");
   const [printItems, setPrintItems] = useState<Array<{ token: string; venueName?: string; productName?: string | null; amountCents?: number | null; expiresAt?: string | Date | null }>>([]);
   const [printOpen, setPrintOpen] = useState(false);
 
@@ -104,11 +121,19 @@ function IssueTab() {
 
   const handleSubmit = () => {
     if (venueId === NONE) { toast.error("Selecciona un venue"); return; }
+    if (expiryMode === "from_event" && !eventId) { toast.error("Indica el ID del evento"); return; }
+    if (expiryMode === "custom" && !customExpiresAt) { toast.error("Indica la fecha/hora de caducidad"); return; }
     const base = {
       venueId: Number(venueId),
       productId: productId !== NONE ? Number(productId) : undefined,
       amountCents: amount ? Math.round(Number(amount) * 100) : undefined,
-      expiresAt: expiresAtDate(),
+      expiresAt: expiryMode === "from_issue" ? expiresAtDate() : expiryMode === "custom" ? new Date(customExpiresAt) : undefined,
+      expiryMode,
+      eventId: expiryMode === "from_event" ? Number(eventId) : undefined,
+      expiryDurationMinutes:
+        expiryMode === "from_event" ? (eventDurationMinutes ? Number(eventDurationMinutes) : undefined)
+        : expiryMode === "from_assignment" ? (assignmentDurationMinutes ? Number(assignmentDurationMinutes) : undefined)
+        : undefined,
     };
     if (mode === "single") {
       issueMut.mutate(base);
@@ -159,18 +184,63 @@ function IssueTab() {
           )}
         </div>
         <div>
-          <Label>Caducidad</Label>
-          <Select value={expiresInMinutes} onValueChange={setExpiresInMinutes}>
+          <Label>Caducidad desde</Label>
+          <Select value={expiryMode} onValueChange={v => setExpiryMode(v as QrExpiryMode)}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value={NONE}>Sin caducidad</SelectItem>
-              <SelectItem value="30">30 minutos</SelectItem>
-              <SelectItem value="120">2 horas</SelectItem>
-              <SelectItem value="480">8 horas (hasta cierre)</SelectItem>
-              <SelectItem value="1440">1 día</SelectItem>
+              {(Object.keys(EXPIRY_MODE_LABEL) as QrExpiryMode[]).map(m => (
+                <SelectItem key={m} value={m}>{EXPIRY_MODE_LABEL[m]}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
+
+        {expiryMode === "from_issue" && (
+          <div>
+            <Label>Caduca en</Label>
+            <Select value={expiresInMinutes} onValueChange={setExpiresInMinutes}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>Sin caducidad</SelectItem>
+                <SelectItem value="30">30 minutos</SelectItem>
+                <SelectItem value="120">2 horas</SelectItem>
+                <SelectItem value="480">8 horas (hasta cierre)</SelectItem>
+                <SelectItem value="1440">1 día</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {expiryMode === "from_event" && (
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>ID de evento *</Label>
+              <Input type="number" min={1} value={eventId} onChange={e => setEventId(e.target.value)} placeholder="Ej. 42" />
+            </div>
+            <div>
+              <Label>Minutos desde el inicio (opcional)</Label>
+              <Input type="number" min={1} value={eventDurationMinutes} onChange={e => setEventDurationMinutes(e.target.value)} placeholder="Sin duración = caduca justo al empezar" />
+            </div>
+          </div>
+        )}
+
+        {expiryMode === "from_assignment" && (
+          <div>
+            <Label>Minutos desde la asignación (opcional)</Label>
+            <Input type="number" min={1} value={assignmentDurationMinutes} onChange={e => setAssignmentDurationMinutes(e.target.value)} placeholder="Sin duración = sin caducidad tras asignarse" />
+            <p className="text-xs text-muted-foreground mt-1">
+              El QR nace sin asignar. Asígnalo a un estudiante concreto desde el Listado — desde ese momento empieza a contar su caducidad, y solo ese estudiante podrá canjearlo.
+            </p>
+          </div>
+        )}
+
+        {expiryMode === "custom" && (
+          <div>
+            <Label>Fecha y hora de caducidad *</Label>
+            <Input type="datetime-local" value={customExpiresAt} onChange={e => setCustomExpiresAt(e.target.value)} />
+          </div>
+        )}
+
         <Button onClick={handleSubmit} disabled={issueMut.isPending || issueBatchMut.isPending} className="w-full">
           <QrCode className="w-4 h-4 mr-2" /> {mode === "single" ? "Generar QR" : "Generar lote"}
         </Button>
@@ -204,6 +274,12 @@ function ListTab() {
   const [reverseReason, setReverseReason] = useState<Record<number, string>>({});
   const reverseMut = trpc.consumptionQr.reverseReward.useMutation({
     onSuccess: (res) => { utils.consumptionQr.list.invalidate(); toast.success(res.tokensReversed ? "SegoTokens revertidos" : "Ya estaba revertido"); },
+    onError: e => toast.error(e.message),
+  });
+  // F63 — asignar un QR 'from_assignment' todavía sin asignar a un estudiante concreto.
+  const [assignUserId, setAssignUserId] = useState<Record<number, string>>({});
+  const assignMut = trpc.consumptionQr.assign.useMutation({
+    onSuccess: () => { utils.consumptionQr.list.invalidate(); toast.success("QR asignado"); },
     onError: e => toast.error(e.message),
   });
 
@@ -247,6 +323,7 @@ function ListTab() {
                 <TableHead>Emitido</TableHead>
                 <TableHead>Caduca</TableHead>
                 <TableHead>Estado</TableHead>
+                <TableHead>Asignado a</TableHead>
                 <TableHead>Canjeado por</TableHead>
                 <TableHead></TableHead>
               </TableRow>
@@ -261,8 +338,27 @@ function ListTab() {
                   <TableCell className="text-muted-foreground">{fmtDateTime(qr.issuedAt)}</TableCell>
                   <TableCell className="text-muted-foreground">{fmtDateTime(qr.expiresAt)}</TableCell>
                   <TableCell><Badge variant={STATUS_VARIANT[qr.status]}>{STATUS_LABEL[qr.status]}</Badge></TableCell>
+                  <TableCell className="text-muted-foreground">{qr.assignedUserId ? `#${qr.assignedUserId}` : "—"}</TableCell>
                   <TableCell className="text-muted-foreground">{qr.redeemedByName ?? "—"}</TableCell>
                   <TableCell>
+                    {qr.status === "issued" && qr.expiryMode === "from_assignment" && !qr.assignedUserId && (
+                      <div className="flex items-center gap-1 mb-1">
+                        <Input
+                          type="number" min={1}
+                          placeholder="ID estudiante"
+                          className="h-7 w-[110px] text-xs"
+                          value={assignUserId[qr.id] ?? ""}
+                          onChange={e => setAssignUserId(r => ({ ...r, [qr.id]: e.target.value }))}
+                        />
+                        <Button
+                          size="sm" variant="outline" className="h-7"
+                          disabled={assignMut.isPending || !assignUserId[qr.id]?.trim()}
+                          onClick={() => assignMut.mutate({ qrId: qr.id, userId: Number(assignUserId[qr.id]) })}
+                        >
+                          Asignar
+                        </Button>
+                      </div>
+                    )}
                     {qr.status === "issued" && (
                       <div className="flex items-center gap-1">
                         <Input
@@ -308,11 +404,52 @@ function ListTab() {
   );
 }
 
+// F63 — resumen de un lote (generados/pendientes/asignados/canjeados/caducados/
+// cancelados). Se pide solo bajo demanda (dialog abierto), nunca uno por fila
+// de la lista — evitaría un N+1 de una consulta por lote visible.
+function BatchDetailDialog({ batchId, open, onOpenChange }: { batchId: number | null; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { data, isLoading } = trpc.consumptionQr.getBatchDetail.useQuery({ id: batchId ?? 0 }, { enabled: open && batchId != null });
+  const summaryChips = data ? [
+    { label: "Generados", value: data.summary.total },
+    { label: "Pendientes", value: data.summary.pending },
+    { label: "Asignados", value: data.summary.assigned },
+    { label: "Utilizados", value: data.summary.redeemed },
+    { label: "Caducados", value: data.summary.expired },
+    { label: "Cancelados", value: data.summary.cancelled },
+  ] : [];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader><DialogTitle>Lote #{batchId} — resumen</DialogTitle></DialogHeader>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+        ) : data ? (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Modo de caducidad: {EXPIRY_MODE_LABEL[(data.batch.expiryMode ?? "from_issue") as QrExpiryMode]}
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {summaryChips.map(c => (
+                <div key={c.label} className="border border-border rounded-md p-2 text-center">
+                  <p className="text-lg font-semibold text-foreground tabular-nums">{c.value}</p>
+                  <p className="text-[11px] text-muted-foreground">{c.label}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function BatchesTab() {
   const { filter: communityFilter } = useAdminCommunity();
   const { data: batches, isLoading } = trpc.consumptionQr.listBatches.useQuery({
     communityId: communityFilter === ADMIN_COMMUNITY_FILTER_ALL ? "all" : communityFilter,
   });
+  const [detailBatchId, setDetailBatchId] = useState<number | null>(null);
 
   return (
     <div className="bg-card border border-border rounded-lg overflow-x-auto">
@@ -327,8 +464,10 @@ function BatchesTab() {
               <TableHead>ID</TableHead>
               <TableHead>Venue</TableHead>
               <TableHead>Cantidad</TableHead>
+              <TableHead>Caducidad</TableHead>
               <TableHead>Caduca</TableHead>
               <TableHead>Creado</TableHead>
+              <TableHead></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -337,13 +476,20 @@ function BatchesTab() {
                 <TableCell className="text-muted-foreground">#{b.id}</TableCell>
                 <TableCell className="text-foreground">{b.venueName}</TableCell>
                 <TableCell className="text-muted-foreground">{b.quantity}</TableCell>
+                <TableCell className="text-muted-foreground">{EXPIRY_MODE_LABEL[(b.expiryMode ?? "from_issue") as QrExpiryMode]}</TableCell>
                 <TableCell className="text-muted-foreground">{fmtDateTime(b.expiresAt)}</TableCell>
                 <TableCell className="text-muted-foreground">{fmtDateTime(b.createdAt)}</TableCell>
+                <TableCell>
+                  <Button size="sm" variant="outline" className="h-7" onClick={() => setDetailBatchId(b.id)}>
+                    Ver detalle
+                  </Button>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       )}
+      <BatchDetailDialog batchId={detailBatchId} open={detailBatchId != null} onOpenChange={v => { if (!v) setDetailBatchId(null); }} />
     </div>
   );
 }

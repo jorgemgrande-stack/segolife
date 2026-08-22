@@ -154,6 +154,39 @@ export async function getQrBatchById(id: number, db?: DbHandle): Promise<QrBatch
   return row ?? null;
 }
 
+export interface QrBatchSummary {
+  total: number;
+  /** issued, sin asignar todavía y sin caducar — listo para escanear o asignar. */
+  pending: number;
+  /** issued y ya asignado a un estudiante concreto (expiryMode='from_assignment') — reservado, aún no canjeado. */
+  assigned: number;
+  redeemed: number;
+  /** status='expired' + issued cuyo expiresAt ya pasó (misma reclasificación perezosa de lectura que redeemConsumptionQr — no muta filas, solo cuenta). */
+  expired: number;
+  cancelled: number;
+}
+
+/** F63 — resumen de un lote para la pantalla de gestión (spec "GESTIÓN DE LOTES"). Solo lectura: nunca fuerza la transición 'issued'→'expired' que sí hace redeemConsumptionQr. */
+export async function getQrBatchSummary(batchId: number, db?: DbHandle): Promise<QrBatchSummary> {
+  const conn = db ?? (await getDb());
+  const rows = await conn.select({
+    status: consumptionQrCodes.status,
+    expiresAt: consumptionQrCodes.expiresAt,
+    assignedUserId: consumptionQrCodes.assignedUserId,
+  }).from(consumptionQrCodes).where(eq(consumptionQrCodes.batchId, batchId));
+
+  const summary: QrBatchSummary = { total: rows.length, pending: 0, assigned: 0, redeemed: 0, expired: 0, cancelled: 0 };
+  const now = Date.now();
+  for (const r of rows) {
+    if (r.status === "redeemed") { summary.redeemed++; continue; }
+    if (r.status === "cancelled") { summary.cancelled++; continue; }
+    const isEffectivelyExpired = r.status === "expired" || (r.expiresAt != null && r.expiresAt.getTime() < now);
+    if (isEffectivelyExpired) { summary.expired++; continue; }
+    if (r.assignedUserId != null) { summary.assigned++; } else { summary.pending++; }
+  }
+  return summary;
+}
+
 export async function listRedemptionAttempts(
   filters: { qrId?: number; venueId?: number; result?: string; limit?: number; offset?: number },
   db?: DbHandle

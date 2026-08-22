@@ -56,6 +56,7 @@ import {
   venues,
   venueProducts,
   communityVenues,
+  events,
   type ConsumptionQrCode,
   type QrBatch,
 } from "../../../drizzle/schema";
@@ -86,7 +87,13 @@ export type QrErrorCode =
   | "COMMUNITY_NOT_AUTHORIZED"
   | "REASON_REQUIRED"
   | "CANNOT_CANCEL"
-  | "NOT_REDEEMED";
+  | "NOT_REDEEMED"
+  // F63 (QR de consumición 2.0)
+  | "EVENT_NOT_FOUND"
+  | "EVENT_MISSING_START"
+  | "NOT_YOUR_QR"
+  | "ALREADY_ASSIGNED"
+  | "INVALID_EXPIRY_MODE";
 
 export class QrError extends Error {
   code: QrErrorCode;
@@ -107,12 +114,23 @@ function hashToken(token: string): string {
 
 // ─── EMISIÓN ─────────────────────────────────────────────────────────────────
 
+export type QrExpiryMode = "from_issue" | "from_event" | "from_assignment" | "custom" | "none";
+
 export interface IssueQrInput {
   venueId: number;
   productId?: number | null;
   amountCents?: number | null;
   quantity?: number;
+  /** Compatibilidad total (spec F63: "no romper QR ya generados"): si no se indica `expiryMode`, comportamiento IDÉNTICO al de siempre — este valor se usa tal cual, sin ningún cálculo. */
   expiresAt?: Date | null;
+  /** F63 — por defecto 'from_issue' (comportamiento histórico). Ver comentario de drizzle/schema.ts para el significado de cada modo. */
+  expiryMode?: QrExpiryMode;
+  /** Requerido si expiryMode='from_event'. */
+  eventId?: number | null;
+  /** Minutos desde el momento de anclaje (emisión/inicio del evento/asignación) — null en 'from_issue'/'from_event' = usa `expiresAt` tal cual (compatibilidad); null en 'from_assignment' = sin caducidad una vez asignado. */
+  expiryDurationMinutes?: number | null;
+  /** F63 — si se indica, el QR nace ya asignado a este estudiante (solo tiene sentido con expiryMode='from_assignment'); si se omite, queda anónimo hasta una asignación posterior explícita (assignConsumptionQrToStudent). */
+  assignedUserId?: number | null;
   sourceType?: string;
   sourceReference?: string | null;
   issuedByUserId?: number | null;
@@ -125,10 +143,52 @@ export interface IssuedQr {
   publicToken: string;
 }
 
+/**
+ * Resuelve `expiresAt`/`assignedAt` en el momento de EMISIÓN según el modo
+ * (spec F63). Nunca decide nada en el canje — para cuando `redeemConsumptionQr`
+ * lee el QR, `expiresAt` ya es un timestamp absoluto (o NULL) fijado aquí, y
+ * la comparación de caducidad sigue siendo la misma de siempre.
+ */
+async function resolveIssueExpiry(
+  conn: AnyDbHandle,
+  input: Pick<IssueQrInput, "expiryMode" | "expiresAt" | "eventId" | "expiryDurationMinutes" | "assignedUserId">
+): Promise<{ expiresAt: Date | null; assignedAt: Date | null }> {
+  const mode = input.expiryMode ?? "from_issue";
+  const durationMs = input.expiryDurationMinutes != null ? input.expiryDurationMinutes * 60_000 : null;
+
+  switch (mode) {
+    case "from_issue": {
+      // Compatibilidad total: si ya viene un expiresAt explícito (uso histórico), se respeta tal cual.
+      // Si en su lugar se indica una duración (uso nuevo), se calcula desde AHORA.
+      if (input.expiresAt !== undefined) return { expiresAt: input.expiresAt ?? null, assignedAt: null };
+      return { expiresAt: durationMs != null ? new Date(Date.now() + durationMs) : null, assignedAt: null };
+    }
+    case "from_event": {
+      if (!input.eventId) throw new QrError("INVALID_EXPIRY_MODE", "expiryMode='from_event' requiere indicar un evento");
+      const [event] = await conn.select({ startsAt: events.startsAt }).from(events).where(eq(events.id, input.eventId)).limit(1);
+      if (!event) throw new QrError("EVENT_NOT_FOUND", "El evento indicado no existe");
+      if (!event.startsAt) throw new QrError("EVENT_MISSING_START", "El evento indicado no tiene fecha/hora de inicio configurada");
+      return { expiresAt: durationMs != null ? new Date(event.startsAt.getTime() + durationMs) : event.startsAt, assignedAt: null };
+    }
+    case "from_assignment": {
+      // Sin asignar todavía: sin caducidad hasta que alguien lo asigne (assignConsumptionQrToStudent) — nunca caduca "solo" mientras espera.
+      if (!input.assignedUserId) return { expiresAt: null, assignedAt: null };
+      const now = new Date();
+      return { expiresAt: durationMs != null ? new Date(now.getTime() + durationMs) : null, assignedAt: now };
+    }
+    case "custom":
+      return { expiresAt: input.expiresAt ?? null, assignedAt: null };
+    case "none":
+      return { expiresAt: null, assignedAt: null };
+  }
+}
+
 export async function issueConsumptionQr(input: IssueQrInput, db?: AnyDbHandle): Promise<IssuedQr> {
   const conn = db ?? (await getDb());
   const publicToken = generatePublicToken();
   const codeHash = hashToken(publicToken);
+  const mode = input.expiryMode ?? "from_issue";
+  const { expiresAt, assignedAt } = await resolveIssueExpiry(conn, input);
   const insertResult = await conn.insert(consumptionQrCodes).values({
     codeHash,
     venueId: input.venueId,
@@ -136,7 +196,12 @@ export async function issueConsumptionQr(input: IssueQrInput, db?: AnyDbHandle):
     amountCents: input.amountCents ?? null,
     quantity: input.quantity ?? 1,
     batchId: input.batchId ?? null,
-    expiresAt: input.expiresAt ?? null,
+    expiresAt,
+    expiryMode: mode,
+    eventId: input.eventId ?? null,
+    expiryDurationMinutes: input.expiryDurationMinutes ?? null,
+    assignedUserId: mode === "from_assignment" ? (input.assignedUserId ?? null) : null,
+    assignedAt,
     sourceType: input.sourceType ?? "manual",
     sourceReference: input.sourceReference ?? null,
     issuedByUserId: input.issuedByUserId ?? null,
@@ -144,6 +209,36 @@ export async function issueConsumptionQr(input: IssueQrInput, db?: AnyDbHandle):
   const insertId = (insertResult as unknown as [{ insertId: number }])[0].insertId;
   const [qr] = await conn.select().from(consumptionQrCodes).where(eq(consumptionQrCodes.id, insertId)).limit(1);
   return { qr, publicToken };
+}
+
+/**
+ * Asigna un QR ya emitido (expiryMode='from_assignment', todavía sin
+ * asignar) a un estudiante concreto — el momento de ESTA llamada ancla la
+ * caducidad (spec F63 "entrega/asignación al estudiante"). A partir de aquí
+ * SOLO ese estudiante puede canjearlo (ver redeemConsumptionQr, NOT_YOUR_QR).
+ * Reasignar el MISMO estudiante es idempotente (no reinicia el reloj); a
+ * OTRO estudiante distinto se rechaza — una asignación es una reserva real,
+ * no una etiqueta que se pueda pisar sin más.
+ */
+export async function assignConsumptionQrToStudent(qrId: number, userId: number, db?: AnyDbHandle): Promise<ConsumptionQrCode> {
+  const conn = db ?? (await getDb());
+  const [qr] = await conn.select().from(consumptionQrCodes).where(eq(consumptionQrCodes.id, qrId)).limit(1);
+  if (!qr) throw new QrError("NOT_FOUND", "QR no encontrado");
+  if (qr.expiryMode !== "from_assignment") {
+    throw new QrError("INVALID_EXPIRY_MODE", "Solo un QR con modo de caducidad 'desde la asignación' puede asignarse a un estudiante");
+  }
+  if (qr.status !== "issued") {
+    throw new QrError("CANNOT_CANCEL", `No se puede asignar un QR en estado '${qr.status}'`);
+  }
+  if (qr.assignedUserId === userId) return qr; // idempotente
+  if (qr.assignedUserId != null) {
+    throw new QrError("ALREADY_ASSIGNED", "Este QR ya está asignado a otro estudiante");
+  }
+  const now = new Date();
+  const expiresAt = qr.expiryDurationMinutes != null ? new Date(now.getTime() + qr.expiryDurationMinutes * 60_000) : null;
+  await conn.update(consumptionQrCodes).set({ assignedUserId: userId, assignedAt: now, expiresAt }).where(eq(consumptionQrCodes.id, qrId));
+  const [updated] = await conn.select().from(consumptionQrCodes).where(eq(consumptionQrCodes.id, qrId)).limit(1);
+  return updated;
 }
 
 // ─── EMISIÓN EN LOTE ─────────────────────────────────────────────────────────
@@ -154,6 +249,12 @@ export interface IssueBatchInput {
   amountCents?: number | null;
   quantity: number;
   expiresAt?: Date | null;
+  // F63 — mismos modos que un QR individual; 'from_assignment' se admite
+  // aquí (cada QR del lote nace sin asignar y se asigna uno a uno después,
+  // nunca se reparte un mismo assignedUserId entre varios QR del lote).
+  expiryMode?: QrExpiryMode;
+  eventId?: number | null;
+  expiryDurationMinutes?: number | null;
   createdByUserId?: number | null;
 }
 
@@ -171,6 +272,9 @@ export async function issueQrBatch(input: IssueBatchInput, db?: DbHandle): Promi
     amountCents: input.amountCents ?? null,
     quantity: input.quantity,
     expiresAt: input.expiresAt ?? null,
+    expiryMode: input.expiryMode ?? "from_issue",
+    eventId: input.eventId ?? null,
+    expiryDurationMinutes: input.expiryDurationMinutes ?? null,
     createdByUserId: input.createdByUserId ?? null,
   });
   const batchId = (insertResult as unknown as [{ insertId: number }])[0].insertId;
@@ -183,6 +287,9 @@ export async function issueQrBatch(input: IssueBatchInput, db?: DbHandle): Promi
       productId: input.productId,
       amountCents: input.amountCents,
       expiresAt: input.expiresAt,
+      expiryMode: input.expiryMode,
+      eventId: input.eventId,
+      expiryDurationMinutes: input.expiryDurationMinutes,
       sourceType: "batch",
       sourceReference: String(batchId),
       issuedByUserId: input.createdByUserId,
@@ -287,6 +394,15 @@ export async function redeemConsumptionQr(input: RedeemQrInput, db?: DbHandle): 
     }
     await logAttempt(conn, { qrId: qr.id, tokenFingerprint: codeHash, userId: input.userId, result: "expired", ipAddress: input.ipAddress, userAgent: input.userAgent });
     throw new QrError("EXPIRED", "Este QR ha caducado");
+  }
+
+  // F63 — un QR asignado explícitamente (expiryMode='from_assignment') solo
+  // puede canjearlo el estudiante al que se asignó; uno sin asignar (o con un
+  // modo de caducidad distinto, que nunca se asigna) sigue siendo canjeable
+  // por el primero que lo escanee, exactamente como siempre.
+  if (qr.assignedUserId != null && qr.assignedUserId !== input.userId) {
+    await logAttempt(conn, { qrId: qr.id, tokenFingerprint: codeHash, userId: input.userId, result: "not_your_qr", ipAddress: input.ipAddress, userAgent: input.userAgent });
+    throw new QrError("NOT_YOUR_QR", "Este QR está asignado a otro estudiante");
   }
 
   const [venue] = await conn.select().from(venues).where(eq(venues.id, qr.venueId)).limit(1);

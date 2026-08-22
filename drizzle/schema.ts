@@ -4629,6 +4629,13 @@ export const qrBatches = mysqlTable("qr_batches", {
   amountCents:      int("amount_cents"),
   quantity:         int("quantity").notNull(),
   expiresAt:        timestamp("expires_at"),
+  // F63 — mismo significado que en consumption_qr_codes; se guarda aquí SOLO
+  // para que la pantalla de gestión de lotes muestre cómo se configuró el
+  // lote, nunca se relee al validar un canje individual (cada QR ya tiene su
+  // propio expiry_mode/expires_at fijado en el momento de su propia emisión).
+  expiryMode:       mysqlEnum("expiry_mode", ["from_issue", "from_event", "from_assignment", "custom", "none"]).notNull().default("from_issue"),
+  eventId:          int("event_id"),
+  expiryDurationMinutes: int("expiry_duration_minutes"),
   createdByUserId:  int("created_by_user_id"),
   createdAt:        timestamp("created_at").defaultNow().notNull(),
 });
@@ -4661,6 +4668,17 @@ export type InsertQrBatch = typeof qrBatches.$inferInsert;
 // una entidad con vida propia. Un QR `redeemed` nunca pasa a `cancelled`
 // directamente (ver PASO 20 del roadmap) — ese caso usa reverseTransaction.
 
+// F63 (QR de consumición 2.0) — `expiry_mode` documenta DESDE CUÁNDO se
+// calculó `expires_at`, sin cambiar cómo se valida en el canje (sigue siendo
+// la MISMA comparación `expires_at < now()` de siempre, ver
+// consumptionQrService.ts). Todo QR emitido ANTES de esta fase tiene
+// expiry_mode='from_issue' (el valor por defecto) y su expires_at YA
+// calculado — nunca se recalcula retroactivamente, compatibilidad total.
+//   from_issue:      expires_at = momento de generación + duración (comportamiento histórico, sin cambios)
+//   from_event:      expires_at = events.starts_at del event_id indicado + duración
+//   from_assignment: expires_at queda NULL hasta que se asigna a un estudiante concreto (ver assigned_at) — entonces = assigned_at + duración
+//   custom:          expires_at fijado directamente por el admin, sin cálculo
+//   none:            sin caducidad (expires_at siempre NULL)
 export const consumptionQrCodes = mysqlTable("consumption_qr_codes", {
   id:                 int("id").autoincrement().primaryKey(),
   codeHash:           varchar("code_hash", { length: 64 }).notNull(),
@@ -4671,6 +4689,15 @@ export const consumptionQrCodes = mysqlTable("consumption_qr_codes", {
   batchId:            int("batch_id"),
   issuedAt:           timestamp("issued_at").defaultNow().notNull(),
   expiresAt:          timestamp("expires_at"),
+  expiryMode:         mysqlEnum("expiry_mode", ["from_issue", "from_event", "from_assignment", "custom", "none"]).notNull().default("from_issue"),
+  eventId:            int("event_id"),
+  expiryDurationMinutes: int("expiry_duration_minutes"),
+  // "Asignación" real (spec F63 "entrega/asignación al estudiante"): un QR
+  // from_assignment asignado a un userId concreto SOLO puede canjearlo ESE
+  // estudiante (ver redeemConsumptionQr, NOT_YOUR_QR) — nunca un simple
+  // texto informativo, es una reserva de verdad.
+  assignedUserId:     int("assigned_user_id"),
+  assignedAt:         timestamp("assigned_at"),
   status:             mysqlEnum("status", ["issued", "redeemed", "expired", "cancelled"]).notNull().default("issued"),
   redeemedAt:         timestamp("redeemed_at"),
   redeemedByUserId:   int("redeemed_by_user_id"),
@@ -4708,6 +4735,7 @@ export const qrRedemptionAttempts = mysqlTable("qr_redemption_attempts", {
     "success", "already_redeemed", "expired", "cancelled",
     "invalid_token", "not_found", "venue_inactive", "product_inactive",
     "community_not_authorized", "outside_schedule", "no_rule", "rate_limited", "error",
+    "not_your_qr", // F63 — QR de consumición 2.0 (asignación a estudiante)
   ]).notNull(),
   ipAddress:          varchar("ip_address", { length: 64 }),
   userAgent:          varchar("user_agent", { length: 256 }),

@@ -30,6 +30,7 @@ import {
   redeemConsumptionQr,
   cancelConsumptionQr,
   reverseConsumptionQrReward,
+  assignConsumptionQrToStudent,
   QrError,
 } from "./consumptionQrService";
 import { benefitEvents, type BenefitGrantedPayload } from "../benefits/benefitEvents";
@@ -49,6 +50,7 @@ import {
   benefitDefinitions,
   benefitCommunities,
   userBenefits,
+  events,
 } from "../../../drizzle/schema";
 import { TokenEngineError } from "../tokens/tokenLedgerService";
 
@@ -56,6 +58,9 @@ function blankQr(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: 1, codeHash: "hash1", venueId: 10, productId: null, amountCents: null, quantity: 1,
     batchId: null, issuedAt: new Date("2026-01-01"), expiresAt: null, status: "issued",
+    // F63 — modos de caducidad + asignación
+    expiryMode: "from_issue", eventId: null, expiryDurationMinutes: null,
+    assignedUserId: null, assignedAt: null,
     redeemedAt: null, redeemedByUserId: null, ledgerId: null, sourceType: "manual",
     sourceReference: null, issuedByUserId: null, terminalId: null,
     cancelledAt: null, cancelledByUserId: null, cancelReason: null, metadata: null,
@@ -128,6 +133,8 @@ function makeQrServiceMockDb(config: {
   benefitDefinitionRow?: Record<string, unknown> | null;
   /** Fuerza que el INSERT de user_benefits lance un error real (no ER_DUP_ENTRY) — para probar que un fallo del motor de Benefits revierte TODA la transacción, incluidos tokens y la marca redeemed del QR. */
   throwOnBenefitGrant?: boolean;
+  /** F63 — evento consultado por resolveIssueExpiry en modo 'from_event'. undefined = tabla vacía (evento inexistente). */
+  event?: Record<string, unknown> | null;
 }) {
   let qr = { ...config.qr };
   let wallet = config.wallet ?? { id: 1, userId: 42, balance: 0, lifetimeEarned: 0, lifetimeSpent: 0, status: "active", createdAt: new Date(), updatedAt: new Date() };
@@ -200,6 +207,7 @@ function makeQrServiceMockDb(config: {
     };
     b.then = (resolve: (v: unknown) => void) => {
       if (table === consumptionQrCodes) return resolve([qr]);
+      if (table === events) return resolve(config.event !== undefined ? (config.event ? [config.event] : []) : []);
       if (table === venues) return resolve(config.venue !== undefined ? (config.venue ? [config.venue] : []) : [blankVenue()]);
       if (table === venueProducts) return resolve(config.product ? [config.product] : []);
       if (table === communityVenues) return resolve(config.venueCommunityRows ?? []);
@@ -277,6 +285,125 @@ describe("consumptionQrService — emisión (issueConsumptionQr)", () => {
   });
 });
 
+describe("consumptionQrService — F63: modos de caducidad (issueConsumptionQr)", () => {
+  it("compatibilidad total: sin expiryMode, expiresAt se usa tal cual (comportamiento histórico exacto)", async () => {
+    const { db, getQr } = makeQrServiceMockDb({ qr: blankQr() });
+    const fixedDate = new Date("2026-06-01T20:00:00Z");
+    const { qr } = await issueConsumptionQr({ venueId: 10, expiresAt: fixedDate }, db);
+    expect(qr.expiryMode).toBe("from_issue");
+    expect(qr.expiresAt).toEqual(fixedDate);
+    expect(getQr().assignedUserId).toBeNull();
+  });
+
+  it("compatibilidad total: sin expiryMode ni expiresAt, expiresAt queda null como siempre", async () => {
+    const { db } = makeQrServiceMockDb({ qr: blankQr() });
+    const { qr } = await issueConsumptionQr({ venueId: 10 }, db);
+    expect(qr.expiryMode).toBe("from_issue");
+    expect(qr.expiresAt).toBeNull();
+  });
+
+  it("'from_event': toma expiresAt del startsAt del evento indicado", async () => {
+    const startsAt = new Date("2026-09-15T21:00:00Z");
+    const { db } = makeQrServiceMockDb({ qr: blankQr(), event: { id: 7, startsAt } });
+    const { qr } = await issueConsumptionQr({ venueId: 10, expiryMode: "from_event", eventId: 7 }, db);
+    expect(qr.expiryMode).toBe("from_event");
+    expect(qr.eventId).toBe(7);
+    expect(qr.expiresAt).toEqual(startsAt);
+  });
+
+  it("'from_event': con expiryDurationMinutes, expiresAt = inicio del evento + duración", async () => {
+    const startsAt = new Date("2026-09-15T21:00:00Z");
+    const { db } = makeQrServiceMockDb({ qr: blankQr(), event: { id: 7, startsAt } });
+    const { qr } = await issueConsumptionQr({ venueId: 10, expiryMode: "from_event", eventId: 7, expiryDurationMinutes: 120 }, db);
+    expect(qr.expiresAt).toEqual(new Date(startsAt.getTime() + 120 * 60_000));
+  });
+
+  it("'from_event' sin eventId lanza INVALID_EXPIRY_MODE", async () => {
+    const { db } = makeQrServiceMockDb({ qr: blankQr() });
+    await expect(issueConsumptionQr({ venueId: 10, expiryMode: "from_event" }, db)).rejects.toMatchObject({ code: "INVALID_EXPIRY_MODE" });
+  });
+
+  it("'from_event' con un evento inexistente lanza EVENT_NOT_FOUND", async () => {
+    const { db } = makeQrServiceMockDb({ qr: blankQr(), event: null });
+    await expect(issueConsumptionQr({ venueId: 10, expiryMode: "from_event", eventId: 999 }, db)).rejects.toMatchObject({ code: "EVENT_NOT_FOUND" });
+  });
+
+  it("'from_event' con un evento sin fecha de inicio lanza EVENT_MISSING_START", async () => {
+    const { db } = makeQrServiceMockDb({ qr: blankQr(), event: { id: 7, startsAt: null } });
+    await expect(issueConsumptionQr({ venueId: 10, expiryMode: "from_event", eventId: 7 }, db)).rejects.toMatchObject({ code: "EVENT_MISSING_START" });
+  });
+
+  it("'from_assignment' sin assignedUserId: nace sin caducidad y sin asignar (anónimo hasta asignación explícita)", async () => {
+    const { db } = makeQrServiceMockDb({ qr: blankQr() });
+    const { qr } = await issueConsumptionQr({ venueId: 10, expiryMode: "from_assignment" }, db);
+    expect(qr.expiresAt).toBeNull();
+    expect(qr.assignedUserId).toBeNull();
+    expect(qr.assignedAt).toBeNull();
+  });
+
+  it("'from_assignment' con assignedUserId ya en la emisión: queda asignado desde el momento de emisión", async () => {
+    const { db } = makeQrServiceMockDb({ qr: blankQr() });
+    const { qr } = await issueConsumptionQr({ venueId: 10, expiryMode: "from_assignment", assignedUserId: 77, expiryDurationMinutes: 60 }, db);
+    expect(qr.assignedUserId).toBe(77);
+    expect(qr.assignedAt).toBeInstanceOf(Date);
+    expect(qr.expiresAt).toBeInstanceOf(Date);
+  });
+
+  it("'custom': expiresAt se usa tal cual, igual que 'from_issue'", async () => {
+    const { db } = makeQrServiceMockDb({ qr: blankQr() });
+    const fixedDate = new Date("2026-12-24T23:00:00Z");
+    const { qr } = await issueConsumptionQr({ venueId: 10, expiryMode: "custom", expiresAt: fixedDate }, db);
+    expect(qr.expiresAt).toEqual(fixedDate);
+  });
+
+  it("'none': nunca caduca, incluso si se indica expiresAt por error", async () => {
+    const { db } = makeQrServiceMockDb({ qr: blankQr() });
+    const { qr } = await issueConsumptionQr({ venueId: 10, expiryMode: "none", expiresAt: new Date("2020-01-01") }, db);
+    expect(qr.expiresAt).toBeNull();
+  });
+});
+
+describe("consumptionQrService — F63: asignación a estudiante (assignConsumptionQrToStudent)", () => {
+  it("asigna un QR 'from_assignment' sin asignar: fija assignedUserId/assignedAt y calcula expiresAt desde ahora", async () => {
+    const { db, getQr } = makeQrServiceMockDb({ qr: blankQr({ expiryMode: "from_assignment", expiryDurationMinutes: 30 }) });
+    const updated = await assignConsumptionQrToStudent(1, 42, db);
+    expect(updated.assignedUserId).toBe(42);
+    expect(updated.assignedAt).toBeInstanceOf(Date);
+    expect(updated.expiresAt).toBeInstanceOf(Date);
+    expect(getQr().assignedUserId).toBe(42);
+  });
+
+  it("reasignar al MISMO estudiante es idempotente (no reinicia el reloj)", async () => {
+    const assignedAt = new Date("2026-01-01T10:00:00Z");
+    const { db } = makeQrServiceMockDb({ qr: blankQr({ expiryMode: "from_assignment", assignedUserId: 42, assignedAt }) });
+    const updated = await assignConsumptionQrToStudent(1, 42, db);
+    expect(updated.assignedAt).toEqual(assignedAt); // sin cambios — nunca reescribe
+  });
+
+  it("asignar a OTRO estudiante distinto ya asignado lanza ALREADY_ASSIGNED", async () => {
+    const { db } = makeQrServiceMockDb({ qr: blankQr({ expiryMode: "from_assignment", assignedUserId: 42 }) });
+    await expect(assignConsumptionQrToStudent(1, 99, db)).rejects.toMatchObject({ code: "ALREADY_ASSIGNED" });
+  });
+
+  it("asignar un QR que no está en modo 'from_assignment' lanza INVALID_EXPIRY_MODE", async () => {
+    const { db } = makeQrServiceMockDb({ qr: blankQr({ expiryMode: "from_issue" }) });
+    await expect(assignConsumptionQrToStudent(1, 42, db)).rejects.toMatchObject({ code: "INVALID_EXPIRY_MODE" });
+  });
+
+  it("asignar un QR que ya no está 'issued' lanza error (no se puede asignar un QR redimido/cancelado/caducado)", async () => {
+    const { db } = makeQrServiceMockDb({ qr: blankQr({ expiryMode: "from_assignment", status: "redeemed" }) });
+    await expect(assignConsumptionQrToStudent(1, 42, db)).rejects.toThrow(QrError);
+  });
+
+  it("QR inexistente lanza NOT_FOUND", async () => {
+    const emptyDb = {
+      select: () => ({ from: () => ({ where: () => ({ limit: () => Promise.resolve([]) }) }) }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    await expect(assignConsumptionQrToStudent(999, 42, emptyDb)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
 describe("consumptionQrService — emisión en lote (issueQrBatch)", () => {
   it("genera N códigos únicos, todos asociados al mismo batch", async () => {
     const { db } = makeQrServiceMockDb({ qr: blankQr() });
@@ -285,6 +412,20 @@ describe("consumptionQrService — emisión en lote (issueQrBatch)", () => {
     const tokens = new Set(result.qrs.map(q => q.publicToken));
     expect(tokens.size).toBe(5); // todos únicos
     result.qrs.forEach(q => expect(q.qr.batchId).toBe(result.batch.id));
+  });
+
+  it("F63 — propaga expiryMode/eventId/expiryDurationMinutes a cada QR del lote", async () => {
+    const startsAt = new Date("2026-09-15T21:00:00Z");
+    const { db } = makeQrServiceMockDb({ qr: blankQr(), event: { id: 7, startsAt } });
+    const result = await issueQrBatch({
+      venueId: 10, quantity: 3, createdByUserId: 1,
+      expiryMode: "from_event", eventId: 7,
+    }, db);
+    result.qrs.forEach(q => {
+      expect(q.qr.expiryMode).toBe("from_event");
+      expect(q.qr.eventId).toBe(7);
+      expect(q.qr.expiresAt).toEqual(startsAt);
+    });
   });
 });
 
@@ -393,6 +534,29 @@ describe("consumptionQrService — canje (redeemConsumptionQr)", () => {
     await expect(redeemConsumptionQr({ token: "x", userId: 42 }, db)).rejects.toThrow(TokenEngineError);
     expect(getQr().status).toBe("issued"); // el rollback deshizo la marca redeemed
     expect(getWallet().balance).toBe(0);
+  });
+
+  it("F63 — un QR asignado a otro estudiante lanza NOT_YOUR_QR y no acredita tokens", async () => {
+    const { db, getQr, getWallet, getAttempts } = makeQrServiceMockDb({
+      qr: blankQr({ expiryMode: "from_assignment", assignedUserId: 77 }),
+      venue: blankVenue(),
+      rules: [blankRule()],
+    });
+    await expect(redeemConsumptionQr({ token: "x", userId: 42 }, db)).rejects.toMatchObject({ code: "NOT_YOUR_QR" });
+    expect(getQr().status).toBe("issued");
+    expect(getWallet().balance).toBe(0);
+    expect(getAttempts()[0].result).toBe("not_your_qr");
+  });
+
+  it("F63 — el estudiante al que SÍ está asignado el QR puede canjearlo con normalidad", async () => {
+    const { db, getQr } = makeQrServiceMockDb({
+      qr: blankQr({ expiryMode: "from_assignment", assignedUserId: 42 }),
+      venue: blankVenue(),
+      rules: [blankRule({ fixedAmount: 20 })],
+    });
+    const result = await redeemConsumptionQr({ token: "x", userId: 42 }, db);
+    expect(result.breakdown.final).toBe(20);
+    expect(getQr().status).toBe("redeemed");
   });
 
   it("fuera de horario, propaga OUTSIDE_SCHEDULE y el QR NO queda redeemed (rollback)", async () => {
