@@ -15,11 +15,19 @@ export interface AudienceDefinitionForm {
   profileComplete: string; // "" | true | false
   createdAfter: string;
   createdBefore: string;
+  // F66 (Communication Center) — existían en audienceEngine.ts desde el
+  // diseño original pero nunca se exponían en este constructor visual
+  // (confirmado por auditoría). venueId vacío = sin filtro de venue,
+  // independientemente de venueActivityKind.
+  venueId: string;
+  venueActivityKind: "" | "visited" | "benefit_granted" | "benefit_redeemed";
+  eventId: string;
 }
 
 export const EMPTY_AUDIENCE_FORM: AudienceDefinitionForm = {
   communityIds: [], tagIds: [], tokensBalanceMin: "", tokensBalanceMax: "",
   benefitStatus: "", academicYear: "", profileComplete: "", createdAfter: "", createdBefore: "",
+  venueId: "", venueActivityKind: "", eventId: "",
 };
 
 /** Convierte el form de UI a la forma que espera resolveAudiencePreview/createCampaign — omite claves vacías (spec: sin filtros = sin audiencia, nunca "todos"). */
@@ -34,6 +42,8 @@ export function toAudienceDefinition(form: AudienceDefinitionForm) {
     profileComplete: form.profileComplete ? form.profileComplete === "true" : undefined,
     createdAfter: form.createdAfter || undefined,
     createdBefore: form.createdBefore || undefined,
+    venueActivity: form.venueId && form.venueActivityKind ? { venueId: Number(form.venueId), kind: form.venueActivityKind } : undefined,
+    eventAttended: form.eventId ? { eventId: Number(form.eventId) } : undefined,
   };
 }
 
@@ -43,15 +53,14 @@ function hasAnyFilter(form: AudienceDefinitionForm): boolean {
 
 /**
  * Constructor de audiencia reutilizado por el wizard de campañas y por la
- * página standalone de Audiencia (Fase 7, spec puntos 18-22, 69). Solo
- * expone los filtros de mayor valor (comunidad, etiquetas, SegoTokens,
- * beneficio, año académico, perfil completo, fecha de alta) — venue
- * activity / event attended existen en el backend (audienceEngine.ts) pero
- * no se exponen aquí todavía, para no sobrecargar un primer builder usable.
+ * página standalone de Audiencia (Fase 7, spec puntos 18-22, 69; venue
+ * activity/evento añadidos en F66 — existían en audienceEngine.ts desde el
+ * diseño original pero nunca se exponían aquí, confirmado por auditoría).
  */
 export function AudienceFilterBuilder({ value, onChange }: { value: AudienceDefinitionForm; onChange: (v: AudienceDefinitionForm) => void }) {
   const { data: communities } = trpc.communities.list.useQuery();
   const { data: tags } = trpc.students.listTags.useQuery();
+  const { data: venues } = trpc.venues.publicActive.useQuery({});
 
   const definition = toAudienceDefinition(value);
   const { data: preview, isFetching: previewLoading } = trpc.engagement.resolveAudiencePreview.useQuery(definition, {
@@ -120,6 +129,34 @@ export function AudienceFilterBuilder({ value, onChange }: { value: AudienceDefi
         <div className="grid grid-cols-2 gap-2">
           <div><Label>Alta desde</Label><Input type="date" value={value.createdAfter} onChange={e => set("createdAfter", e.target.value)} /></div>
           <div><Label>Alta hasta</Label><Input type="date" value={value.createdBefore} onChange={e => set("createdBefore", e.target.value)} /></div>
+        </div>
+        <div>
+          <Label>Actividad en venue</Label>
+          <Select
+            value={value.venueId || "any"}
+            onValueChange={v => onChange({ ...value, venueId: v === "any" ? "" : v, venueActivityKind: v === "any" ? "" : (value.venueActivityKind || "visited") })}
+          >
+            <SelectTrigger className="w-full"><SelectValue placeholder="Cualquier venue" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="any">Cualquier venue</SelectItem>
+              {(venues ?? []).map(v => <SelectItem key={v.id} value={String(v.id)}>{v.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Tipo de actividad</Label>
+          <Select value={value.venueActivityKind || "visited"} onValueChange={v => set("venueActivityKind", v as AudienceDefinitionForm["venueActivityKind"])} disabled={!value.venueId}>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="visited">Ha consumido/visitado</SelectItem>
+              <SelectItem value="benefit_granted">Se le concedió un beneficio</SelectItem>
+              <SelectItem value="benefit_redeemed">Canjeó un beneficio</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Asistió al evento — ID (opcional)</Label>
+          <Input type="number" min={1} value={value.eventId} onChange={e => set("eventId", e.target.value)} placeholder="Ej. 42" />
         </div>
       </div>
 

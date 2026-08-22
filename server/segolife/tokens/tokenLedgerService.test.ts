@@ -16,6 +16,7 @@ import {
   TokenEngineError,
 } from "./tokenLedgerService";
 import { tokenWallets, tokenLedger } from "../../../drizzle/schema";
+import { engagementEvents } from "../engagement/engagementEvents";
 
 function blankWallet(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -214,6 +215,23 @@ describe("tokenLedgerService — ajuste manual (adjustManualTokens)", () => {
     expect(ledger.sourceType).toBe("manual_adjustment");
     expect(ledger.amount).toBe(25);
     expect(ledger.createdByUserId).toBe(1);
+  });
+
+  // F66 (Communication Center) — el motor emite el evento tipado tras
+  // confirmar el ajuste; tokensAdjustedListener.ts es quien decide notificar
+  // (este archivo solo prueba la emisión, no el contenido de la notificación).
+  it("emite tokens_adjusted_admin con el ledgerId real tras confirmar el ajuste", async () => {
+    const { db } = makeLedgerMockDb(blankWallet({ balance: 100 }));
+    const received: Array<{ userId: number; direction: string; amount: number; ledgerId: number }> = [];
+    const listener = (p: typeof received[number]) => { received.push(p); };
+    engagementEvents.onTyped("tokens_adjusted_admin", listener);
+
+    const { ledger } = await adjustManualTokens({ userId: 42, direction: "debit", amount: 10, reason: "Corrección", adminUserId: 1 }, db);
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ userId: 42, direction: "debit", amount: 10, ledgerId: ledger.id });
+    engagementEvents.removeListener("tokens_adjusted_admin", listener);
   });
 });
 

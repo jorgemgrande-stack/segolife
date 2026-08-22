@@ -38,6 +38,7 @@ import {
   type TokenWallet,
   type TokenLedgerEntry,
 } from "../../../drizzle/schema";
+import { emitEngagementEvent } from "../engagement/engagementEvents";
 
 // Pool con más de 1 conexión (a diferencia de venuesDb.ts/studentsDb.ts) —
 // aquí varias transacciones concurrentes SÍ deben poder abrirse a la vez
@@ -341,7 +342,7 @@ export async function adjustManualTokens(
   if (!input.reason || !input.reason.trim()) {
     throw new TokenEngineError("REASON_REQUIRED", "El ajuste manual requiere un motivo");
   }
-  return postLedgerMovement({
+  const result = await postLedgerMovement({
     userId: input.userId,
     direction: input.direction,
     amount: input.amount,
@@ -349,6 +350,13 @@ export async function adjustManualTokens(
     sourceType: "manual_adjustment",
     createdByUserId: input.adminUserId,
   }, db);
+  // F66 (Communication Center) — solo emite el evento tipado, nunca conoce
+  // notificationService.ts ni ningún provider (spec §4); un listener
+  // aparte (tokensAdjustedListener.ts) decide si eso implica notificar.
+  emitEngagementEvent("tokens_adjusted_admin", {
+    userId: input.userId, direction: input.direction, amount: input.amount, ledgerId: result.ledger.id,
+  });
+  return result;
 }
 
 export async function ensureWallet(userId: number, db?: AnyDbHandle): Promise<TokenWallet> {

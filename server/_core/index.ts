@@ -41,8 +41,11 @@ import { registerTicketCheckedInListener } from "../segolife/engagement/ticketCh
 import { registerTokensEarnedListener } from "../segolife/engagement/tokensEarnedListener";
 import { registerEventLifecycleListeners } from "../segolife/engagement/eventLifecycleListener";
 import { registerStudentRegisteredListener } from "../segolife/engagement/studentRegisteredListener";
+import { registerTokensAdjustedListener } from "../segolife/engagement/tokensAdjustedListener";
 import { startEngagementScheduler, isEngagementDeliveryEnabled } from "../segolife/engagement/engagementScheduler";
 import { startCommunityLifecycleScheduler } from "../segolife/community/communityLifecycleScheduler";
+import { startBenefitExpiryScheduler } from "../segolife/benefits/benefitExpiryScheduler";
+import { startProfileIncompleteScheduler } from "../segolife/students/profileIncompleteScheduler";
 import { startEmailIngestionJob } from "../services/emailTpvIngestionService";
 import { startExpenseEmailIngestionJob } from "../services/expenseEmailIngestionService";
 import { startCommercialEmailSyncJob } from "../services/commercialEmailService";
@@ -860,6 +863,11 @@ verifyDatabaseConnectivity()
   .then(() => { registerTokensEarnedListener(); })
   .then(() => { registerEventLifecycleListeners(); })
   .then(() => { registerStudentRegisteredListener(); })
+  // F66 (Communication Center) — tokens_adjusted_admin ya tenía plantilla
+  // completa EN/ES y evento tipado, pero ningún caller real lo emitía
+  // (confirmado por auditoría). In-process, siempre registrado, igual que
+  // el resto de listeners de esta lista — nunca depende del scheduler.
+  .then(() => { registerTokensAdjustedListener(); })
   .then(() => {
     if (isEngagementDeliveryEnabled()) {
       startEngagementScheduler();
@@ -874,5 +882,15 @@ verifyDatabaseConnectivity()
   // manual vía closeNow/publish) — puramente aditivo, sin cambiar nada hasta
   // que se active explícitamente.
   .then(() => conditionallyStartJob("community_lifecycle_scheduler_enabled", startCommunityLifecycleScheduler, "Community Lifecycle", false))
+  // F66 (Communication Center) — benefit_expiring ya tenía plantilla EN/ES
+  // completa (v2, con email) desde la fase original, documentada como
+  // "requiere un job programado, no implementado en esta fase". Puramente
+  // aditivo y default false, igual que el resto de esta lista.
+  .then(() => conditionallyStartJob("benefit_expiry_reminder_enabled", startBenefitExpiryScheduler, "Benefit Expiry Reminder", false))
+  // F66 — profile_incomplete, mismo criterio: plantilla lista desde la fase
+  // original, "requiere job programado, no implementado". audienceType
+  // marketing → respeta preferencia de opt-out del estudiante (nunca
+  // sendImmediately, ver cabecera del propio scheduler).
+  .then(() => conditionallyStartJob("profile_incomplete_reminder_enabled", startProfileIncompleteScheduler, "Profile Incomplete Reminder", false))
   .catch(console.error);
 

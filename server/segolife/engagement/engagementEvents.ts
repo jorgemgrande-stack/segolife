@@ -185,6 +185,20 @@ export interface EventCancelledPayload {
 // EVENT_REMINDER/BENEFIT_EXPIRING (requieren un job programado, no un evento
 // síncrono — documentado como pendiente real, no construido esta fase).
 
+// F66 (Communication Center) — TOKENS_ADJUSTED_ADMIN. El motor de tokens
+// (postLedgerMovement) no conoce notificationService.ts: adjustManualTokens()
+// solo emite este evento tras confirmar el ajuste; tokensAdjustedListener.ts
+// interpreta la intención de comunicación. Sin communityId (a diferencia de
+// TokensEarnedPayload) porque un ajuste manual de admin no tiene un origen
+// de comunidad real — mismo criterio que reverseLedger/retryPendingClawbacks
+// ("la deuda económica es transversal", ver tokens.ts).
+export interface TokensAdjustedAdminPayload {
+  userId: number;
+  direction: "credit" | "debit";
+  amount: number;
+  ledgerId: number;
+}
+
 export interface StudentRegisteredPayload {
   userId: number;
   communityId: number;
@@ -229,6 +243,7 @@ export interface EngagementDomainEvents {
   event_cancelled: EventCancelledPayload;
   student_registered: StudentRegisteredPayload;
   community_proposal_published: CommunityProposalPublishedPayload;
+  tokens_adjusted_admin: TokensAdjustedAdminPayload;
 }
 
 export type EngagementEventType = keyof EngagementDomainEvents;
