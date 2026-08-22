@@ -469,7 +469,16 @@ export const tokensRouter = router({
         userId: input.userId, origin: input.origin, venueId: input.venueId ?? null, eventId: input.eventId ?? null,
         communityId: input.communityId ?? null, amountSpent: input.amountSpent,
       }, "SIMULATION");
-      return result.explanation;
+      // F61 (economía, prioridad y simulador) — el simulador solo devolvía
+      // ruleId dentro del breakdown, nunca resuelto a nombre/prioridad — un
+      // admin no podía ver claramente "qué regla ganó" sin ir a mirarla
+      // aparte. Mismo patrón ya usado por el preview de autoservicio del
+      // Student (studentRewardPreviewService.ts).
+      const winningRule = result.explanation.ruleId != null ? await getTokenRuleById(result.explanation.ruleId) : null;
+      return {
+        ...result.explanation,
+        rule: winningRule ? { id: winningRule.id, name: winningRule.name, priority: winningRule.priority, scope: winningRule.scope } : null,
+      };
     }),
 
   // ─── AUTOSERVICIO DEL ESTUDIANTE ────────────────────────────────────────────

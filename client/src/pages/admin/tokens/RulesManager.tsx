@@ -160,6 +160,10 @@ function RulePreviewPanel() {
             <p className="text-sm text-rose-500 font-medium">DENIED — {preview.reason}</p>
           ) : (
             <div className="space-y-1 text-sm">
+              {/* F61 — "regla ganadora" explícita (nombre + prioridad), antes solo se mostraba el desglose numérico sin decir QUÉ regla lo produjo. */}
+              {preview.rule && (
+                <div className="flex justify-between"><span className="text-muted-foreground">Regla ganadora</span><span className="font-medium text-foreground">{preview.rule.name} (prioridad {preview.rule.priority})</span></div>
+              )}
               <div className="flex justify-between"><span className="text-muted-foreground">Base</span><span className="text-foreground">{preview.breakdown?.base ?? 0}</span></div>
               {!!preview.breakdown?.recurrenceBonus && (
                 <div className="flex justify-between"><span className="text-muted-foreground">Recurrencia</span><span className="text-foreground">+{preview.breakdown.recurrenceBonus}</span></div>
@@ -393,7 +397,7 @@ export default function RulesManager() {
               <div>
                 <Label>Prioridad</Label>
                 <Input type="number" value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} />
-                <p className="mt-1 text-xs text-muted-foreground">Mayor número = más prioridad. Si dos reglas activas pueden aplicar a la misma acción, gana una sola — nunca se suman. Evita dejar dos con la misma prioridad sobre el mismo alcance.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Mayor número = más prioridad. Si dos reglas activas pueden aplicar a la misma acción, gana una sola — nunca se suman. En caso de empate exacto, decide primero el alcance más específico (evento &gt; producto &gt; venue &gt; comunidad &gt; global) y, si aun así empatan, la regla creada primero. Evita depender de esto: pon prioridades distintas cuando quieras que una gane siempre — revisa "Salud" en Economía para ver si hay reglas en conflicto.</p>
               </div>
               <div><Label>Inicio (opcional)</Label><Input type="datetime-local" value={form.startsAt} onChange={e => setForm(f => ({ ...f, startsAt: e.target.value }))} /></div>
               <div><Label>Fin (opcional)</Label><Input type="datetime-local" value={form.endsAt} onChange={e => setForm(f => ({ ...f, endsAt: e.target.value }))} /></div>

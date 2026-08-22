@@ -127,6 +127,47 @@ describe("tokenRuleEngine — selección de regla (findApplicableRule)", () => {
     expect(rule?.id).toBe(2);
   });
 
+  // F61 — repro exacto del ejemplo del cliente: regla general de un venue vs.
+  // regla específica de un evento de ese mismo venue, ambas encajan a la vez
+  // porque el check-in real trae venueId Y eventId simultáneamente
+  // (attendancePipeline.ts). Si la del evento tiene mayor prioridad, gana
+  // ella pese a que "venue" no es su alcance — el motor NUNCA infiere
+  // jerarquías, solo mira el número que puso el admin.
+  it("venue general (priority=5) vs. evento específico del mismo venue (priority=10): gana el evento", async () => {
+    const venueRule = blankRule({ id: 1, scope: "venue", scopeVenueId: 10, priority: 5, fixedAmount: 10 });
+    const eventRule = blankRule({ id: 2, scope: "event", scopeEventId: 77, priority: 10, fixedAmount: 20 });
+    const db = makeSimpleMockDb([venueRule, eventRule]);
+    const rule = await findApplicableRule({ direction: "earn", origin: "attendance", venueId: 10, eventId: 77 }, new Date(), db);
+    expect(rule?.id).toBe(2);
+  });
+
+  it("mismo escenario con las prioridades invertidas: gana el venue general, aunque el evento sea 'más específico'", async () => {
+    const venueRule = blankRule({ id: 1, scope: "venue", scopeVenueId: 10, priority: 10, fixedAmount: 10 });
+    const eventRule = blankRule({ id: 2, scope: "event", scopeEventId: 77, priority: 5, fixedAmount: 20 });
+    const db = makeSimpleMockDb([venueRule, eventRule]);
+    const rule = await findApplicableRule({ direction: "earn", origin: "attendance", venueId: 10, eventId: 77 }, new Date(), db);
+    expect(rule?.id).toBe(1);
+  });
+
+  // F61 — desempate DETERMINISTA cuando la prioridad numérica es idéntica:
+  // 1) prioridad (ya probado arriba) → 2) especificidad del alcance → 3) id
+  // más bajo. Nunca el orden crudo (no garantizado) de un SELECT sin ORDER BY.
+  it("empate exacto de prioridad, venue vs evento del mismo venue: gana el alcance más específico (evento)", async () => {
+    const venueRule = blankRule({ id: 5, scope: "venue", scopeVenueId: 10, priority: 5 });
+    const eventRule = blankRule({ id: 1, scope: "event", scopeEventId: 77, priority: 5 }); // id más bajo, pero NO debe ganar por eso
+    const db = makeSimpleMockDb([venueRule, eventRule]);
+    const rule = await findApplicableRule({ direction: "earn", origin: "attendance", venueId: 10, eventId: 77 }, new Date(), db);
+    expect(rule?.id).toBe(1); // gana por especificidad (event > venue), no por prioridad ni por id
+  });
+
+  it("empate exacto de prioridad Y de especificidad de alcance: gana el id más bajo (la regla creada primero)", async () => {
+    const older = blankRule({ id: 3, scope: "global", priority: 5 });
+    const newer = blankRule({ id: 9, scope: "global", priority: 5 });
+    const db = makeSimpleMockDb([newer, older]); // orden de lectura deliberadamente "al revés"
+    const rule = await findApplicableRule({ direction: "earn", origin: "manual" }, new Date(), db);
+    expect(rule?.id).toBe(3);
+  });
+
   it("una regla scope=ticket_type solo aplica al tipo de entrada exacto (Loyalty Production Hardening)", async () => {
     const rule = blankRule({ id: 4, scope: "ticket_type", scopeTicketTypeId: 77 });
     const dbMatch = makeSimpleMockDb([rule]);

@@ -203,6 +203,7 @@ function SimulatorTab() {
         {data && (
           <div className="rounded-lg border border-border p-3 space-y-1 text-sm">
             <p><strong className="text-foreground">{data.eligible ? "Concedería" : "No concedería"}:</strong> {data.breakdown?.final ?? 0} ST</p>
+            {data.rule && <p className="text-xs text-muted-foreground">Regla ganadora: <strong className="text-foreground">{data.rule.name}</strong> (prioridad {data.rule.priority})</p>}
             <p className="text-xs text-muted-foreground">Motivo: {data.reason}</p>
             {data.breakdown && (
               <p className="text-xs text-muted-foreground">

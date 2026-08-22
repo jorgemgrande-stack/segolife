@@ -16,15 +16,15 @@
  * qué no las demás?" sin necesitar un Student, útil para que el admin
  * entienda la PRECEDENCIA antes de tocar nada.
  */
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import {
   tokenRules, tokenCampaigns, tokenRedemptionPolicies, referralCampaigns,
-  benefitDefinitions, economyConfigChanges,
+  benefitDefinitions, economyConfigChanges, events, venueProducts,
   type TokenRule, type EconomyConfigChange,
 } from "../../../drizzle/schema";
-import { findApplicableRule, type RuleMatchScope } from "./tokenRuleEngine";
+import { findApplicableRule, compareRulesByPrecedence, type RuleMatchScope } from "./tokenRuleEngine";
 import { listTokenRules, updateTokenRule } from "../../db/tokenRulesDb";
 import { listTokenRedemptionPolicies, createTokenRedemptionPolicy, updateTokenRedemptionPolicy } from "../../db/tokenRedemptionPoliciesDb";
 import { createReferralCampaign, updateReferralCampaign, activateReferralCampaign, listReferralCampaigns } from "../referrals/referralService";
@@ -212,6 +212,29 @@ function scopeKey(r: Pick<TokenRule, "scope" | "scopeVenueId" | "scopeEventId" |
   return [r.scope, r.scopeVenueId, r.scopeEventId, r.scopeCommunityId, r.scopeProductId, r.scopeTicketTypeId].join(":");
 }
 
+/** F61 — ¿los rangos [startsAt,endsAt] de dos reglas se solapan en algún instante? null = sin límite en ese extremo. */
+function windowsOverlap(a: Pick<TokenRule, "startsAt" | "endsAt">, b: Pick<TokenRule, "startsAt" | "endsAt">): boolean {
+  const aStart = a.startsAt ?? new Date(-8_640_000_000_000_000);
+  const aEnd = a.endsAt ?? new Date(8_640_000_000_000_000);
+  const bStart = b.startsAt ?? new Date(-8_640_000_000_000_000);
+  const bEnd = b.endsAt ?? new Date(8_640_000_000_000_000);
+  return aStart <= bEnd && bStart <= aEnd;
+}
+
+/** ¿Existe al menos un PAR dentro del grupo cuyas ventanas de fecha se solapen? (evita falsos positivos: dos reglas del mismo alcance pero vigentes en periodos disjuntos — p.ej. una de enero-junio y otra de julio-diciembre — nunca compiten de verdad). */
+function hasOverlappingPair(group: TokenRule[]): boolean {
+  for (let i = 0; i < group.length; i++) {
+    for (let j = i + 1; j < group.length; j++) {
+      if (windowsOverlap(group[i], group[j])) return true;
+    }
+  }
+  return false;
+}
+
+function ruleLabel(r: TokenRule): string {
+  return `"${r.name}" (id=${r.id}, priority=${r.priority}, scope=${r.scope})`;
+}
+
 export async function detectEconomyConflicts(db?: DbHandle): Promise<EconomyConflict[]> {
   const conn = db ?? (await getDb());
   const conflicts: EconomyConflict[] = [];
@@ -224,6 +247,11 @@ export async function detectEconomyConflicts(db?: DbHandle): Promise<EconomyConf
     arr.push(r);
     byOrigin.set(r.origin, arr);
   }
+
+  // Alcance EXACTAMENTE idéntico (misma reglas de siempre) — ahora solo se
+  // marca si además hay al menos un par cuya ventana de fechas realmente se
+  // solapa (spec F61 "ventanas temporales solapadas"); dos reglas del mismo
+  // alcance vigentes en periodos disjuntos no son un conflicto real.
   byOrigin.forEach((group, origin) => {
     const byScope = new Map<string, TokenRule[]>();
     for (const r of group) {
@@ -233,14 +261,56 @@ export async function detectEconomyConflicts(db?: DbHandle): Promise<EconomyConf
       byScope.set(key, arr);
     }
     byScope.forEach((sameScope, key) => {
-      if (sameScope.length > 1) {
+      if (sameScope.length > 1 && hasOverlappingPair(sameScope)) {
         conflicts.push({
           severity: "conflict",
           code: "OVERLAPPING_RULES",
-          message: `${sameScope.length} reglas activas de "${origin}" comparten exactamente el mismo alcance (${key}) — el desempate por priority puede ser accidental. Reglas: ${sameScope.map((r: TokenRule) => `"${r.name}" (id=${r.id}, priority=${r.priority})`).join(", ")}.`,
+          message: `${sameScope.length} reglas activas de "${origin}" comparten exactamente el mismo alcance (${key}) y sus ventanas de fecha se solapan — el desempate por priority puede ser accidental. Reglas: ${sameScope.map(ruleLabel).join(", ")}.`,
         });
       }
     });
+  });
+
+  // F61 — cruces REALES entre alcances distintos que el detector anterior
+  // nunca veía (p.ej. una regla general de un venue vs. una específica de un
+  // evento de ESE MISMO venue): el motor real (findApplicableRule) SÍ las
+  // hace competir entre sí, así que el detector debe verlo también. Se
+  // resuelven las relaciones físicas reales (evento→venue, producto→venue)
+  // en vez de asumirlas — nunca se avisa de un cruce que no puede ocurrir.
+  const eventIds = Array.from(new Set(activeEarn.map(r => r.scopeEventId).filter((id): id is number => id != null)));
+  const productIds = Array.from(new Set(activeEarn.map(r => r.scopeProductId).filter((id): id is number => id != null)));
+  const [eventRows, productRows] = await Promise.all([
+    eventIds.length ? conn.select({ id: events.id, venueId: events.venueId }).from(events).where(inArray(events.id, eventIds)) : Promise.resolve([]),
+    productIds.length ? conn.select({ id: venueProducts.id, venueId: venueProducts.venueId }).from(venueProducts).where(inArray(venueProducts.id, productIds)) : Promise.resolve([]),
+  ]);
+  const eventVenueById = new Map(eventRows.map(e => [e.id, e.venueId]));
+  const productVenueById = new Map(productRows.map(p => [p.id, p.venueId]));
+
+  function scopesCanOverlap(a: TokenRule, b: TokenRule): boolean {
+    if (a.scope === "global" || b.scope === "global") return true; // global siempre compite con cualquier otra
+    if (a.scope === "venue" && b.scope === "event") return eventVenueById.get(b.scopeEventId!) === a.scopeVenueId;
+    if (a.scope === "event" && b.scope === "venue") return eventVenueById.get(a.scopeEventId!) === b.scopeVenueId;
+    if (a.scope === "venue" && b.scope === "product") return productVenueById.get(b.scopeProductId!) === a.scopeVenueId;
+    if (a.scope === "product" && b.scope === "venue") return productVenueById.get(a.scopeProductId!) === b.scopeVenueId;
+    return false; // community/ticket_type cruzados con otro alcance: relación real no resuelta todavía, no se adivina.
+  }
+
+  byOrigin.forEach((group, origin) => {
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        const a = group[i], b = group[j];
+        if (a.scope === b.scope) continue; // ya cubierto arriba (mismo alcance exacto)
+        if (!scopesCanOverlap(a, b) || !windowsOverlap(a, b)) continue;
+        const samePriority = a.priority === b.priority;
+        conflicts.push({
+          severity: samePriority ? "conflict" : "warning",
+          code: "CROSS_SCOPE_OVERLAP",
+          message: samePriority
+            ? `Dos reglas activas de "${origin}" con alcances distintos pueden aplicar a la misma acción real y tienen LA MISMA prioridad — el desempate no es evidente. ${ruleLabel(a)} vs. ${ruleLabel(b)}.`
+            : `Dos reglas activas de "${origin}" con alcances distintos pueden aplicar a la misma acción real; hoy gana siempre la de mayor prioridad. ${ruleLabel(a.priority >= b.priority ? a : b)} prevalece sobre ${ruleLabel(a.priority >= b.priority ? b : a)}.`,
+        });
+      }
+    }
   });
 
   const policies = await listTokenRedemptionPolicies(conn);
@@ -270,9 +340,16 @@ export async function previewRuleForScope(scope: RuleMatchScope, db?: DbHandle):
   const conn = db ?? (await getDb());
   const effectiveRule = await findApplicableRule(scope, new Date(), conn);
   const all = await conn.select().from(tokenRules).where(and(eq(tokenRules.direction, scope.direction), eq(tokenRules.origin, scope.origin), eq(tokenRules.active, true)));
+  // F61 — ordenadas por la MISMA precedencia real (prioridad → especificidad
+  // → id) que decide `effectiveRule`, nunca el orden crudo de lectura de BD:
+  // el admin debe poder leer esta lista de arriba a abajo como "quién gana,
+  // luego quién sería el siguiente", no una lista sin relación con el ganador.
   return {
     effectiveRule,
-    candidates: all.map(r => ({ id: r.id, name: r.name, priority: r.priority, scope: r.scope })),
+    candidates: all
+      .slice()
+      .sort(compareRulesByPrecedence)
+      .map(r => ({ id: r.id, name: r.name, priority: r.priority, scope: r.scope })),
   };
 }
 

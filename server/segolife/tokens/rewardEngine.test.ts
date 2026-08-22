@@ -353,3 +353,43 @@ describe("evaluateReward — modo LIVE (SegoTokens Live Activation, spec §19 �
     expect(queueRules).toBeDefined(); // nunca se llegó a consumir la cola de reglas
   });
 });
+
+/**
+ * F61 (economía, prioridad y simulador) — GATE explícito: "el simulador debe
+ * utilizar el MISMO motor de evaluación real, nunca una segunda
+ * implementación". Los tests de arriba ya comprueban esto INDIRECTAMENTE
+ * (cada uno compara SIMULATION/LIVE contra un desglose calculado a mano por
+ * quien escribió el test) — aquí se demuestra la equivalencia de forma
+ * EJECUTABLE: el mismo escenario (regla + campaña) se evalúa una vez en
+ * SIMULATION y otra en LIVE, con dos mocks independientes pero idénticos, y
+ * se comparan los desgloses devueltos entre sí — nunca contra un valor
+ * hardcodeado que ambas ramas pudieran coincidentemente compartir por error.
+ */
+describe("evaluateReward — F61: paridad ejecutable SIMULATION vs LIVE (mismos inputs -> mismo desglose)", () => {
+  it("regla fija + campaña (multiplicador+bonus): SIMULATION calcula EXACTAMENTE lo que LIVE concede de verdad", async () => {
+    const campaignFixture = { id: 1, name: "x2+5", description: null, multiplier: "2.00", bonusTokens: 5, startsAt: null, endsAt: null, active: true, priority: 0, createdAt: new Date(), updatedAt: new Date() };
+    const scopeFixture = { communities: [], venues: [], events: [] }; // campaña global
+
+    const sim = makeWritableMockDb({ campaigns: [campaignFixture], campaignScope: scopeFixture });
+    sim.queueRules([blankRule({ id: 1, calcMethod: "fixed", fixedAmount: 10, dailyLimit: 100 })]); // findApplicableRule
+    sim.queueRules([]); // applyRecurrenceBonus — sin reglas de recurrencia
+    const simResult = await evaluateReward({ userId: 42, origin: "attendance" }, "SIMULATION", sim.db);
+
+    const live = makeWritableMockDb({ campaigns: [campaignFixture], campaignScope: scopeFixture });
+    live.queueRules([blankRule({ id: 1, calcMethod: "fixed", fixedAmount: 10, dailyLimit: 100 })]);
+    live.queueRules([]);
+    const liveResult = await evaluateReward({ userId: 42, origin: "attendance" }, "LIVE", live.db);
+
+    // base=10, campaña: 10*2=20 +5=25 — nunca se afirma este número de nuevo:
+    // se compara un resultado contra el OTRO, no contra un literal repetido.
+    expect(simResult.explanation.breakdown).toEqual(liveResult.explanation.breakdown);
+    expect(simResult.explanation.ruleId).toBe(liveResult.explanation.ruleId);
+    expect(simResult.explanation.eligible).toBe(liveResult.explanation.eligible);
+
+    // Única diferencia esperada entre ambos modos: LIVE persiste de verdad, SIMULATION nunca.
+    expect(simResult.ledgerId).toBeNull();
+    expect(liveResult.ledgerId).not.toBeNull();
+    expect(live.getLedgerWrites()).toHaveLength(1);
+    expect((live.getWallet() as { balance: number }).balance).toBe(liveResult.explanation.breakdown!.final);
+  });
+});

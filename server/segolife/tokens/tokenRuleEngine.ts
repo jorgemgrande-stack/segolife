@@ -58,6 +58,36 @@ function isWithinDateWindow(rule: { startsAt: Date | null; endsAt: Date | null }
   return true;
 }
 
+/**
+ * F61 (economía, prioridad y simulador) — desempate DETERMINISTA cuando dos
+ * reglas activas coinciden en la misma acción: antes de esto, un empate
+ * exacto de `priority` se resolvía por el orden crudo que devolviera MySQL
+ * para un SELECT sin ORDER BY (no garantizado por el código, aunque en la
+ * práctica coincidía con el orden de id) — mientras que el listado del
+ * admin ordena por prioridad+fecha de creación descendente, lo que podía
+ * sugerir "gana la más reciente" sin que eso fuera cierto en el motor real.
+ * Nunca más ambiguo: 1) prioridad (mayor gana) → 2) especificidad del
+ * alcance (evento > producto/tipo de entrada > venue > comunidad > global)
+ * → 3) id más bajo (la regla configurada primero) como último desempate,
+ * siempre determinista y estable ante cualquier orden de lectura de BD.
+ */
+const SCOPE_SPECIFICITY: Record<TokenRule["scope"], number> = {
+  global: 0,
+  community: 1,
+  venue: 2,
+  product: 3,
+  ticket_type: 3,
+  event: 4,
+};
+
+export function compareRulesByPrecedence(a: TokenRule, b: TokenRule): number {
+  if (a.priority !== b.priority) return b.priority - a.priority;
+  const specA = SCOPE_SPECIFICITY[a.scope] ?? 0;
+  const specB = SCOPE_SPECIFICITY[b.scope] ?? 0;
+  if (specA !== specB) return specB - specA;
+  return a.id - b.id;
+}
+
 function ruleMatchesScope(rule: TokenRule, scope: RuleMatchScope): boolean {
   switch (rule.scope) {
     case "global": return true;
@@ -83,7 +113,7 @@ export async function findApplicableRule(
   ));
   const candidates = rows.filter(r => isWithinDateWindow(r, at) && ruleMatchesScope(r, scope));
   if (candidates.length === 0) return null;
-  candidates.sort((a, b) => b.priority - a.priority);
+  candidates.sort(compareRulesByPrecedence);
   return candidates[0];
 }
 
@@ -171,7 +201,7 @@ export async function applyRecurrenceBonus(ctx: RecurrenceContext, db?: AnyDbHan
     ruleMatchesScope(r, { direction: "earn", origin: "recurrence", communityId: ctx.communityId, venueId: ctx.venueId })
   );
   if (candidates.length === 0) return { bonus: 0, rule: null };
-  candidates.sort((a, b) => b.priority - a.priority);
+  candidates.sort(compareRulesByPrecedence);
 
   for (const rule of candidates) {
     const since = windowStart(rule.recurrenceWindow!, at);
@@ -222,7 +252,12 @@ export async function findApplicableCampaign(scope: CampaignMatchScope, db?: Any
     if (matchesCommunity || matchesVenue || matchesEvent) matches.push(campaign);
   }
   if (matches.length === 0) return null;
-  matches.sort((a, b) => b.priority - a.priority);
+  // Las campañas no tienen un `scope` discriminado como las reglas (usan
+  // tablas puente comunidad/venue/evento, cualquier coincidencia vale) — el
+  // mismo desempate por especificidad no aplica aquí. Mismo criterio final
+  // que las reglas: prioridad, y ante empate exacto, el id más bajo (la
+  // campaña creada primero) — nunca el orden crudo de un SELECT sin ORDER BY.
+  matches.sort((a, b) => (b.priority !== a.priority ? b.priority - a.priority : a.id - b.id));
   return matches[0];
 }
 

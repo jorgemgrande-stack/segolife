@@ -24,7 +24,7 @@ vi.mock("../referrals/referralService", () => ({
   activateReferralCampaign: mockActivateReferralCampaign,
 }));
 
-import { tokenRules, tokenCampaigns, tokenRedemptionPolicies, benefitDefinitions, economyConfigChanges } from "../../../drizzle/schema";
+import { tokenRules, tokenCampaigns, tokenRedemptionPolicies, benefitDefinitions, economyConfigChanges, events, venueProducts } from "../../../drizzle/schema";
 import {
   detectEconomyConflicts, previewRuleForScope, getEconomyGovernanceOverview,
   applyTokenRuleValueChange, setGlobalRedemptionConversion, setGlobalReferralEconomics,
@@ -41,6 +41,12 @@ function makeDb(config: {
   campaigns?: Array<Record<string, unknown>>;
   benefits?: Array<Record<string, unknown>>;
   changes?: Array<Record<string, unknown>>;
+  // F61 — relaciones físicas reales para el detector de conflictos cruzados
+  // (¿este evento pertenece a este venue? ¿este producto?). Vacío por
+  // defecto: los tests existentes nunca fijan scopeEventId/scopeProductId,
+  // así que el detector nunca llega a consultar estas tablas para ellos.
+  events?: Array<Record<string, unknown>>;
+  venueProducts?: Array<Record<string, unknown>>;
 } = {}) {
   const tables = new Map<unknown, MockTable<Record<string, unknown>>>([
     [tokenRules, new MockTable(tokenRules as unknown as Record<string, unknown>, config.rules ?? [ruleFixture()])],
@@ -48,6 +54,8 @@ function makeDb(config: {
     [tokenCampaigns, new MockTable(tokenCampaigns as unknown as Record<string, unknown>, config.campaigns ?? [])],
     [benefitDefinitions, new MockTable(benefitDefinitions as unknown as Record<string, unknown>, config.benefits ?? [])],
     [economyConfigChanges, new MockTable(economyConfigChanges as unknown as Record<string, unknown>, config.changes ?? [])],
+    [events, new MockTable(events as unknown as Record<string, unknown>, config.events ?? [])],
+    [venueProducts, new MockTable(venueProducts as unknown as Record<string, unknown>, config.venueProducts ?? [])],
   ]);
   const db = createMockDb(tables);
   return { db, rulesTable: tables.get(tokenRules)!, policiesTable: tables.get(tokenRedemptionPolicies)!, changesTable: tables.get(economyConfigChanges)! };
@@ -93,6 +101,79 @@ describe("detectEconomyConflicts — spec §22/§24", () => {
     const { db } = makeDb({ policies: [{ id: 1, communityId: null, venueId: null, eventId: null, active: true }] });
     const conflicts = await detectEconomyConflicts(db);
     expect(conflicts.some(c => c.code === "COMMUNITY_IDEA_SUBMITTED_NOT_CONNECTED" && c.severity === "not_connected")).toBe(true);
+  });
+
+  // F61 (economía, prioridad y simulador) — cruces REALES entre alcances
+  // distintos, el caso exacto que el detector anterior nunca veía.
+  it("#7 venue general vs. evento específico DE ESE MISMO venue, misma prioridad -> CROSS_SCOPE_OVERLAP conflict", async () => {
+    mockListReferralCampaigns.mockResolvedValue([{ status: "active", communityId: null }]);
+    const { db } = makeDb({
+      rules: [
+        ruleFixture({ id: 1, name: "General del venue", scope: "venue", scopeVenueId: 10, priority: 5 }),
+        ruleFixture({ id: 2, name: "Evento especial", scope: "event", scopeEventId: 77, priority: 5 }),
+      ],
+      policies: [{ id: 1, communityId: null, venueId: null, eventId: null, active: true }],
+      events: [{ id: 77, venueId: 10 }],
+    });
+    const conflicts = await detectEconomyConflicts(db);
+    const found = conflicts.find(c => c.code === "CROSS_SCOPE_OVERLAP");
+    expect(found?.severity).toBe("conflict");
+  });
+
+  it("#8 mismo escenario con prioridades DISTINTAS -> CROSS_SCOPE_OVERLAP solo como warning informativo", async () => {
+    mockListReferralCampaigns.mockResolvedValue([{ status: "active", communityId: null }]);
+    const { db } = makeDb({
+      rules: [
+        ruleFixture({ id: 1, name: "General del venue", scope: "venue", scopeVenueId: 10, priority: 5 }),
+        ruleFixture({ id: 2, name: "Evento especial", scope: "event", scopeEventId: 77, priority: 10 }),
+      ],
+      policies: [{ id: 1, communityId: null, venueId: null, eventId: null, active: true }],
+      events: [{ id: 77, venueId: 10 }],
+    });
+    const conflicts = await detectEconomyConflicts(db);
+    const found = conflicts.find(c => c.code === "CROSS_SCOPE_OVERLAP");
+    expect(found?.severity).toBe("warning");
+    expect(found?.message).toMatch(/Evento especial.*prevalece/);
+  });
+
+  it("#9 evento de OTRO venio distinto -> nunca se avisa de un cruce que no puede ocurrir", async () => {
+    mockListReferralCampaigns.mockResolvedValue([{ status: "active", communityId: null }]);
+    const { db } = makeDb({
+      rules: [
+        ruleFixture({ id: 1, name: "General del venue 10", scope: "venue", scopeVenueId: 10, priority: 5 }),
+        ruleFixture({ id: 2, name: "Evento del venue 20", scope: "event", scopeEventId: 77, priority: 5 }),
+      ],
+      policies: [{ id: 1, communityId: null, venueId: null, eventId: null, active: true }],
+      events: [{ id: 77, venueId: 20 }], // NO es el venue 10 — nunca compiten de verdad
+    });
+    const conflicts = await detectEconomyConflicts(db);
+    expect(conflicts.some(c => c.code === "CROSS_SCOPE_OVERLAP")).toBe(false);
+  });
+
+  it("#10 una regla global SIEMPRE se avisa como solapable con cualquier otra regla activa del mismo origen", async () => {
+    mockListReferralCampaigns.mockResolvedValue([{ status: "active", communityId: null }]);
+    const { db } = makeDb({
+      rules: [
+        ruleFixture({ id: 1, name: "Global", scope: "global", priority: 0 }),
+        ruleFixture({ id: 2, name: "Venue 10", scope: "venue", scopeVenueId: 10, priority: 5 }),
+      ],
+      policies: [{ id: 1, communityId: null, venueId: null, eventId: null, active: true }],
+    });
+    const conflicts = await detectEconomyConflicts(db);
+    expect(conflicts.some(c => c.code === "CROSS_SCOPE_OVERLAP")).toBe(true);
+  });
+
+  it("#11 dos reglas del MISMO alcance exacto pero vigentes en periodos disjuntos -> nunca compiten de verdad, sin conflicto", async () => {
+    mockListReferralCampaigns.mockResolvedValue([{ status: "active", communityId: null }]);
+    const { db } = makeDb({
+      rules: [
+        ruleFixture({ id: 1, name: "Enero-Junio", startsAt: new Date("2026-01-01"), endsAt: new Date("2026-06-30") }),
+        ruleFixture({ id: 2, name: "Julio-Diciembre", startsAt: new Date("2026-07-01"), endsAt: new Date("2026-12-31") }),
+      ],
+      policies: [{ id: 1, communityId: null, venueId: null, eventId: null, active: true }],
+    });
+    const conflicts = await detectEconomyConflicts(db);
+    expect(conflicts.some(c => c.code === "OVERLAPPING_RULES")).toBe(false);
   });
 });
 
