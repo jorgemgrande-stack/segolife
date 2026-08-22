@@ -349,10 +349,28 @@ export async function spendTokens(input: SpendTokensInput, db?: AnyDbHandle): Pr
       throw new TokenEngineError("RULE_LIMIT_EXCEEDED", "Se ha alcanzado el límite diario de gasto de esta regla");
     }
   }
+  // F60 (saneamiento funcional) — semanal/lifetime se comprobaban en earnTokens
+  // pero NUNCA en spendTokens, pese a que el formulario de Reglas deja
+  // rellenar los 4 límites sin condicionar por dirección: un admin podía
+  // configurar "límite semanal de gasto" creyendo que se respetaba y el
+  // motor jamás lo miraba. Mismo criterio que dailyLimit/monthlyLimit de
+  // gasto (rechaza la operación completa, nunca recorta).
+  if (rule.weeklyLimit != null) {
+    const spentThisWeek = await sumAmountByRuleInWindow(input.userId, rule.id, "debit", weekStart(at), conn);
+    if (spentThisWeek + cost > rule.weeklyLimit) {
+      throw new TokenEngineError("RULE_LIMIT_EXCEEDED", "Se ha alcanzado el límite semanal de gasto de esta regla");
+    }
+  }
   if (rule.monthlyLimit != null) {
     const spentThisMonth = await sumAmountByRuleInWindow(input.userId, rule.id, "debit", monthStart(at), conn);
     if (spentThisMonth + cost > rule.monthlyLimit) {
       throw new TokenEngineError("RULE_LIMIT_EXCEEDED", "Se ha alcanzado el límite mensual de gasto de esta regla");
+    }
+  }
+  if (rule.lifetimeLimit != null) {
+    const spentLifetime = await sumAmountByRuleInWindow(input.userId, rule.id, "debit", lifetimeStart(), conn);
+    if (spentLifetime + cost > rule.lifetimeLimit) {
+      throw new TokenEngineError("RULE_LIMIT_EXCEEDED", "Se ha alcanzado el límite de por vida de gasto de esta regla");
     }
   }
 

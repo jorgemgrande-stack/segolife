@@ -111,7 +111,12 @@ const ruleInputSchema = z.object({
   name: z.string().min(1).max(256),
   description: z.string().max(4000).nullish(),
   direction: z.enum(["earn", "spend"]),
-  origin: z.enum(["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign"]),
+  // F60 (saneamiento funcional) — community_response/community_proposal_approved
+  // faltaban aquí: son orígenes con reglas REALES activas en producción
+  // (communityResponseService.ts/communityAudienceService.ts), pero no podían
+  // crearse/editarse desde el formulario admin estándar — solo dándolas de
+  // alta directamente en la base de datos. Nunca una discrepancia aceptable.
+  origin: z.enum(["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign", "community_response", "community_proposal_approved"]),
   // "ticket_type" (Loyalty Production Hardening, 2026-08-14) — scope determinista
   // por event_ticket_types.id (nunca por nombre), ver drizzle/schema.ts.
   scope: z.enum(["global", "community", "venue", "event", "product", "ticket_type"]).default("global"),
@@ -453,7 +458,7 @@ export const tokensRouter = router({
   previewReward: tokensViewProcedure
     .input(z.object({
       userId: z.number().int().positive(),
-      origin: z.enum(["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign"]),
+      origin: z.enum(["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign", "community_response", "community_proposal_approved"]),
       venueId: z.number().int().positive().optional(),
       eventId: z.number().int().positive().optional(),
       communityId: z.number().int().positive().optional(),

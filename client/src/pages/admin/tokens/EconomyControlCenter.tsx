@@ -158,20 +158,24 @@ function HealthTab() {
 // ─── Simulador (Student real) ───────────────────────────────────────────────
 
 // Alcance completo (11 origins) — usado por previewRuleForScope (Fase 10.5,
-// sin Student). tokens.previewReward (Fase Live Loyalty, existente) solo
-// acepta 9 — limitación heredada, fuera de alcance de esta fase tocarla.
+// sin Student). F60 (saneamiento funcional) — tokens.previewReward ya
+// aceptaba solo 9 orígenes (excluía community_response/
+// community_proposal_approved, pese a tener reglas reales activas en
+// producción); el backend ya se corrigió para aceptar los 11, así que este
+// simulador deja de necesitar una lista reducida aparte.
 const ORIGINS = ["ticket", "consumption", "attendance", "recurrence", "community_response", "community_proposal_approved", "event", "purchase", "product", "manual", "campaign"] as const;
-const PREVIEW_REWARD_ORIGINS = ["ticket", "consumption", "attendance", "recurrence", "event", "purchase", "product", "manual", "campaign"] as const;
+const PREVIEW_REWARD_ORIGINS = ORIGINS;
 
 function SimulatorTab() {
   const [userId, setUserId] = useState("");
   const [origin, setOrigin] = useState<string>("consumption");
   const [venueId, setVenueId] = useState("");
+  const [eventId, setEventId] = useState("");
   const [amountSpent, setAmountSpent] = useState("");
   const [triggered, setTriggered] = useState(false);
 
   const { data, isLoading, error } = trpc.tokens.previewReward.useQuery(
-    { userId: Number(userId), origin: origin as typeof PREVIEW_REWARD_ORIGINS[number], venueId: venueId ? Number(venueId) : undefined, amountSpent: amountSpent ? Number(amountSpent) : undefined },
+    { userId: Number(userId), origin: origin as typeof PREVIEW_REWARD_ORIGINS[number], venueId: venueId ? Number(venueId) : undefined, eventId: eventId ? Number(eventId) : undefined, amountSpent: amountSpent ? Number(amountSpent) : undefined },
     { enabled: triggered && !!userId && (PREVIEW_REWARD_ORIGINS as readonly string[]).includes(origin) },
   );
 
@@ -179,13 +183,18 @@ function SimulatorTab() {
     <div className="space-y-4">
       <Section title="Simulador de recompensa (Student real)">
         <p className="text-xs text-muted-foreground">Usa la MISMA lógica que una recompensa real (topes/recurrencia incluidos) — nunca escribe nada.</p>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
           <Input placeholder="ID de Student" type="number" value={userId} onChange={e => setUserId(e.target.value)} />
           <Select value={origin} onValueChange={setOrigin}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>{PREVIEW_REWARD_ORIGINS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
           </Select>
           <Input placeholder="Venue ID (opcional)" type="number" value={venueId} onChange={e => setVenueId(e.target.value)} />
+          {/* F60 — el backend ya distingue venue general vs. evento específico
+              al decidir qué regla gana (findApplicableRule); este simulador
+              nunca lo pedía, así que no se podía comprobar en pantalla ese
+              escenario concreto sin leer código. */}
+          <Input placeholder="Evento ID (opcional)" type="number" value={eventId} onChange={e => setEventId(e.target.value)} />
           <Input placeholder="Importe € (si aplica)" type="number" value={amountSpent} onChange={e => setAmountSpent(e.target.value)} />
           <Button disabled={!userId} onClick={() => setTriggered(true)}>Simular</Button>
         </div>
@@ -215,17 +224,23 @@ function SimulatorTab() {
 function PrecedenceTab() {
   const [origin, setOrigin] = useState<string>("consumption");
   const [venueId, setVenueId] = useState("");
-  const { data, isLoading } = trpc.tokens.previewRuleForScope.useQuery({ direction: "earn", origin: origin as typeof ORIGINS[number], venueId: venueId ? Number(venueId) : undefined });
+  const [eventId, setEventId] = useState("");
+  const { data, isLoading } = trpc.tokens.previewRuleForScope.useQuery({
+    direction: "earn", origin: origin as typeof ORIGINS[number],
+    venueId: venueId ? Number(venueId) : undefined,
+    eventId: eventId ? Number(eventId) : undefined,
+  });
 
   return (
     <Section title="Precedencia de reglas (sin Student)">
-      <p className="text-xs text-muted-foreground">¿Qué regla ganaría para este alcance ahora mismo, y por qué no las demás?</p>
-      <div className="grid grid-cols-2 gap-2">
+      <p className="text-xs text-muted-foreground">¿Qué regla ganaría para este alcance ahora mismo, y por qué no las demás? Prueba un venue y un evento a la vez para ver exactamente cuál gana entre una regla general y una específica.</p>
+      <div className="grid grid-cols-3 gap-2">
         <Select value={origin} onValueChange={setOrigin}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>{ORIGINS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
         </Select>
         <Input placeholder="Venue ID (opcional)" type="number" value={venueId} onChange={e => setVenueId(e.target.value)} />
+        <Input placeholder="Evento ID (opcional)" type="number" value={eventId} onChange={e => setEventId(e.target.value)} />
       </div>
       {isLoading ? <Loader2 className="w-5 h-5 animate-spin text-primary" /> : data && (
         <div className="text-sm space-y-1">

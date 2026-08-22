@@ -389,4 +389,42 @@ describe("tokenEngine — spendTokens", () => {
       spendTokens({ userId: 42, venueId: 7 }, db)
     ).rejects.toMatchObject({ code: "RULE_LIMIT_EXCEEDED" });
   });
+
+  // F60 (saneamiento funcional) — weeklyLimit/lifetimeLimit se comprobaban en
+  // earnTokens pero nunca en spendTokens, pese a que el formulario de Reglas
+  // deja rellenar los 4 límites sin condicionar por dirección (bug real
+  // detectado por auditoría, no solo una omisión de test).
+  it("RULE_LIMIT_EXCEEDED cuando ya se alcanzó el límite SEMANAL de gasto de la regla", async () => {
+    const { db, queueRules, queueLedgerRead } = makeEngineMockDb({ wallet: blankWallet({ balance: 100 }) });
+    queueRules([blankRule({ id: 1, direction: "spend", origin: "product", calcMethod: "fixed", fixedAmount: 30, weeklyLimit: 30 })]);
+    queueLedgerRead([{ amount: 30 }]); // ya se gastaron 30 esta semana con esta regla
+    await expect(
+      spendTokens({ userId: 42, venueId: 7 }, db)
+    ).rejects.toMatchObject({ code: "RULE_LIMIT_EXCEEDED" });
+  });
+
+  it("RULE_LIMIT_EXCEEDED cuando ya se alcanzó el límite DE POR VIDA de gasto de la regla", async () => {
+    const { db, queueRules, queueLedgerRead } = makeEngineMockDb({ wallet: blankWallet({ balance: 100 }) });
+    queueRules([blankRule({ id: 1, direction: "spend", origin: "product", calcMethod: "fixed", fixedAmount: 30, lifetimeLimit: 30 })]);
+    queueLedgerRead([{ amount: 30 }]); // ya se gastaron 30 en total con esta regla
+    await expect(
+      spendTokens({ userId: 42, venueId: 7 }, db)
+    ).rejects.toMatchObject({ code: "RULE_LIMIT_EXCEEDED" });
+  });
+
+  it("por debajo de los 4 límites (diario/semanal/mensual/lifetime) a la vez → gasto permitido", async () => {
+    const { db, getWallet, queueRules, queueLedgerRead } = makeEngineMockDb({ wallet: blankWallet({ balance: 100 }) });
+    queueRules([blankRule({
+      id: 1, direction: "spend", origin: "product", calcMethod: "fixed", fixedAmount: 10,
+      dailyLimit: 40, weeklyLimit: 60, monthlyLimit: 200, lifetimeLimit: 500,
+    })]);
+    // sumAmountByRuleInWindow se consulta en orden diario→semanal→mensual→lifetime.
+    queueLedgerRead([{ amount: 20 }]); // diario: 20+10=30 <= 40 OK
+    queueLedgerRead([{ amount: 20 }]); // semanal: 20+10=30 <= 60 OK
+    queueLedgerRead([{ amount: 20 }]); // mensual: 20+10=30 <= 200 OK
+    queueLedgerRead([{ amount: 20 }]); // lifetime: 20+10=30 <= 500 OK
+    const result = await spendTokens({ userId: 42, venueId: 7 }, db);
+    expect(result.breakdown.final).toBe(10);
+    expect(getWallet()?.balance).toBe(90);
+  });
 });

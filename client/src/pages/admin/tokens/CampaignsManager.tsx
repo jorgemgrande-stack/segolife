@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import AdminLayout from "@/components/AdminLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -32,22 +32,47 @@ export default function CampaignsManager() {
   const [form, setForm] = useState<CampaignForm>(emptyForm);
   const [scopeCommunities, setScopeCommunities] = useState<Set<number>>(new Set());
   const [scopeVenues, setScopeVenues] = useState<Set<number>>(new Set());
+  // F60 (saneamiento funcional) — el motor y el esquema ya soportaban asociar
+  // una campaña a eventos concretos (campaign_events, findApplicableCampaign),
+  // pero este formulario nunca ofrecía cómo elegirlos y guardaba SIEMPRE
+  // eventIds:[] al enviar — hoy era físicamente imposible hacerlo desde el
+  // panel. Búsqueda simple sobre los eventos recientes/próximos (acotado a
+  // 200, admin-only) en vez de un picker paginado aparte.
+  const [scopeEvents, setScopeEvents] = useState<Set<number>>(new Set());
+  const [eventSearch, setEventSearch] = useState("");
   const utils = trpc.useUtils();
 
   const { data: campaigns, isLoading, error } = trpc.tokens.listCampaigns.useQuery();
   const { data: communities } = trpc.communities.list.useQuery();
   const { data: venues } = trpc.venues.publicActive.useQuery({});
+  const { data: eventSearchResults } = trpc.events.list.useQuery(
+    { communityId: "all", search: eventSearch, limit: 5 },
+    { enabled: eventSearch.trim().length >= 2 }
+  );
+  // Los nombres de los eventos ya seleccionados (incl. al editar una campaña
+  // existente, donde solo se conoce el id) se resuelven contra los propios
+  // resultados de búsqueda a medida que aparecen — igual que el buscador de
+  // Student del simulador de Reglas, sin una segunda consulta por-id.
+  const [eventNames, setEventNames] = useState<Map<number, string>>(new Map());
+  useEffect(() => {
+    if (!eventSearchResults) return;
+    setEventNames(prev => {
+      const next = new Map(prev);
+      for (const e of eventSearchResults.items) next.set(e.id, e.name);
+      return next;
+    });
+  }, [eventSearchResults]);
 
   const createMut = trpc.tokens.createCampaign.useMutation({
     onSuccess: async (res) => {
-      if (res.campaign) await scopeMut.mutateAsync({ id: res.campaign.id, communityIds: Array.from(scopeCommunities), venueIds: Array.from(scopeVenues), eventIds: [] });
+      if (res.campaign) await scopeMut.mutateAsync({ id: res.campaign.id, communityIds: Array.from(scopeCommunities), venueIds: Array.from(scopeVenues), eventIds: Array.from(scopeEvents) });
       utils.tokens.listCampaigns.invalidate(); toast.success("Campaña creada"); setOpen(false);
     },
     onError: e => toast.error(e.message),
   });
   const updateMut = trpc.tokens.updateCampaign.useMutation({
     onSuccess: async () => {
-      if (editId) await scopeMut.mutateAsync({ id: editId, communityIds: Array.from(scopeCommunities), venueIds: Array.from(scopeVenues), eventIds: [] });
+      if (editId) await scopeMut.mutateAsync({ id: editId, communityIds: Array.from(scopeCommunities), venueIds: Array.from(scopeVenues), eventIds: Array.from(scopeEvents) });
       utils.tokens.listCampaigns.invalidate(); toast.success("Campaña actualizada"); setOpen(false);
     },
     onError: e => toast.error(e.message),
@@ -58,7 +83,7 @@ export default function CampaignsManager() {
     onError: e => toast.error(e.message),
   });
 
-  const openCreate = () => { setEditId(null); setForm(emptyForm); setScopeCommunities(new Set()); setScopeVenues(new Set()); setOpen(true); };
+  const openCreate = () => { setEditId(null); setForm(emptyForm); setScopeCommunities(new Set()); setScopeVenues(new Set()); setScopeEvents(new Set()); setEventSearch(""); setOpen(true); };
   const openEdit = (c: NonNullable<typeof campaigns>[number]) => {
     setEditId(c.id);
     setForm({
@@ -70,6 +95,8 @@ export default function CampaignsManager() {
     });
     setScopeCommunities(new Set(c.scope.communityIds));
     setScopeVenues(new Set(c.scope.venueIds));
+    setScopeEvents(new Set(c.scope.eventIds));
+    setEventSearch("");
     setOpen(true);
   };
 
@@ -180,13 +207,41 @@ export default function CampaignsManager() {
                 ))}
               </div>
               <p className="text-xs text-muted-foreground mb-2">Venues</p>
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-wrap gap-3 mb-3">
                 {(venues ?? []).map(v => (
                   <label key={v.id} className="flex items-center gap-1.5 text-sm">
                     <Checkbox checked={scopeVenues.has(v.id)} onCheckedChange={() => toggleSet(scopeVenues, setScopeVenues, v.id)} />
                     {v.name}
                   </label>
                 ))}
+              </div>
+              <p className="text-xs text-muted-foreground mb-2">Eventos</p>
+              {scopeEvents.size > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {Array.from(scopeEvents).map(id => (
+                    <Badge key={id} variant="outline" className="gap-1.5">
+                      {eventNames.get(id) ?? `Evento #${id}`}
+                      <button type="button" onClick={() => toggleSet(scopeEvents, setScopeEvents, id)} aria-label={`Quitar ${eventNames.get(id) ?? `evento ${id}`}`}>×</button>
+                    </Badge>
+                  ))}
+                </div>
+              )}
+              <div className="relative">
+                <Input placeholder="Buscar evento por nombre..." value={eventSearch} onChange={e => setEventSearch(e.target.value)} />
+                {eventSearchResults && eventSearchResults.items.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full border border-border rounded-md bg-popover shadow-md divide-y divide-border">
+                    {eventSearchResults.items.map(e => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        className="block w-full text-left px-3 py-1.5 text-sm hover:bg-accent"
+                        onClick={() => { toggleSet(scopeEvents, setScopeEvents, e.id); setEventSearch(""); }}
+                      >
+                        {e.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>

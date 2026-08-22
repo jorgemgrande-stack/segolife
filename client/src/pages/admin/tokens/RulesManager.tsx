@@ -42,6 +42,8 @@ interface RuleForm {
   recurrenceThreshold: string;
   recurrenceMode: string;
   priority: string;
+  startsAt: string;
+  endsAt: string;
 }
 
 const emptyForm: RuleForm = {
@@ -50,10 +52,26 @@ const emptyForm: RuleForm = {
   calcMethod: "fixed", fixedAmount: "", rate: "", multiplier: "", minSpend: "",
   maxTokens: "", dailyLimit: "", weeklyLimit: "", monthlyLimit: "", lifetimeLimit: "",
   recurrenceWindow: "", recurrenceThreshold: "", recurrenceMode: "",
-  priority: "0",
+  priority: "0", startsAt: "", endsAt: "",
 };
 
-const ORIGINS = ["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign"];
+// F60 (saneamiento funcional) — "participación en Community"/"idea aprobada"
+// SÍ tienen reglas reales activas en producción (communityResponseService.ts/
+// communityAudienceService.ts llaman a earnTokens con estos orígenes), pero
+// el desplegable nunca los ofrecía — esas reglas solo podían darse de alta
+// escribiendo directamente en la base de datos. "event"/"product"/"purchase"/
+// "manual" (como origen de UNA REGLA, distinto del ajuste manual de saldo)
+// siguen sin ningún disparador real conectado — se dejan seleccionables para
+// no romper una edición futura, pero jamás se presentan como "ya conectados".
+const ORIGINS = ["attendance", "event", "ticket", "purchase", "consumption", "product", "manual", "recurrence", "campaign", "community_response", "community_proposal_approved"];
+const ORIGIN_LABELS: Record<string, string> = {
+  attendance: "Asistencia a evento", event: "Evento (sin disparador conectado)",
+  ticket: "Compra de entrada", purchase: "Compra genérica (sin disparador conectado)",
+  consumption: "Consumición (QR / TPV)", product: "Producto (sin disparador conectado)",
+  manual: "Manual (sin disparador conectado — usa Ajuste manual en la ficha del estudiante)",
+  recurrence: "Recurrencia (bonus)", campaign: "Campaña (bonus)",
+  community_response: "Participación en Community", community_proposal_approved: "Idea de estudiante aprobada en Community",
+};
 
 /**
  * SEGOTOKENS ECONOMY (spec §26-27) — Rule Preview/Simulador. SIEMPRE vía
@@ -66,6 +84,7 @@ function RulePreviewPanel() {
   const [selectedStudent, setSelectedStudent] = useState<{ userId: number; name: string } | null>(null);
   const [origin, setOrigin] = useState("attendance");
   const [venueId, setVenueId] = useState("");
+  const [eventId, setEventId] = useState("");
   const [amountSpent, setAmountSpent] = useState("");
 
   const { data: studentResults } = trpc.students.list.useQuery(
@@ -78,6 +97,11 @@ function RulePreviewPanel() {
       userId: selectedStudent?.userId ?? 0,
       origin: origin as never,
       venueId: venueId ? Number(venueId) : undefined,
+      // F60 — el backend ya aceptaba eventId (evaluateReward/findApplicableRule
+      // lo usan para decidir la regla ganadora entre un venue general y un
+      // evento específico), pero este simulador nunca lo pedía — un admin no
+      // podía comprobar en pantalla ese escenario concreto sin leer código.
+      eventId: eventId ? Number(eventId) : undefined,
       amountSpent: amountSpent ? Number(amountSpent) : undefined,
     },
     { enabled: !!selectedStudent }
@@ -121,10 +145,11 @@ function RulePreviewPanel() {
           <Label>Origen</Label>
           <Select value={origin} onValueChange={setOrigin}>
             <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>{ORIGINS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
+            <SelectContent>{ORIGINS.map(o => <SelectItem key={o} value={o}>{ORIGIN_LABELS[o] ?? o}</SelectItem>)}</SelectContent>
           </Select>
         </div>
         <div><Label>Venue ID (opcional)</Label><Input type="number" value={venueId} onChange={e => setVenueId(e.target.value)} /></div>
+        <div><Label>Evento ID (opcional)</Label><Input type="number" value={eventId} onChange={e => setEventId(e.target.value)} /></div>
         <div><Label>Importe pagado € (si aplica)</Label><Input value={amountSpent} onChange={e => setAmountSpent(e.target.value)} placeholder="18.00" /></div>
       </div>
       {selectedStudent && (
@@ -197,6 +222,8 @@ export default function RulesManager() {
       recurrenceWindow: rule.recurrenceWindow ?? "", recurrenceThreshold: rule.recurrenceThreshold != null ? String(rule.recurrenceThreshold) : "",
       recurrenceMode: rule.recurrenceMode ?? "",
       priority: String(rule.priority),
+      startsAt: rule.startsAt ? new Date(rule.startsAt).toISOString().slice(0, 16) : "",
+      endsAt: rule.endsAt ? new Date(rule.endsAt).toISOString().slice(0, 16) : "",
     });
     setOpen(true);
   };
@@ -224,6 +251,8 @@ export default function RulesManager() {
     recurrenceThreshold: form.origin === "recurrence" && form.recurrenceThreshold ? Number(form.recurrenceThreshold) : undefined,
     recurrenceMode: form.origin === "recurrence" && form.recurrenceMode ? (form.recurrenceMode as never) : undefined,
     priority: Number(form.priority) || 0,
+    startsAt: form.startsAt ? new Date(form.startsAt) : undefined,
+    endsAt: form.endsAt ? new Date(form.endsAt) : undefined,
   });
 
   const handleSubmit = () => {
@@ -321,7 +350,7 @@ export default function RulesManager() {
                 <Select value={form.origin} onValueChange={v => setForm(f => ({ ...f, origin: v }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {ORIGINS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                    {ORIGINS.map(o => <SelectItem key={o} value={o}>{ORIGIN_LABELS[o] ?? o}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -361,7 +390,13 @@ export default function RulesManager() {
                   </SelectContent>
                 </Select>
               </div>
-              <div><Label>Prioridad</Label><Input type="number" value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} /></div>
+              <div>
+                <Label>Prioridad</Label>
+                <Input type="number" value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} />
+                <p className="mt-1 text-xs text-muted-foreground">Mayor número = más prioridad. Si dos reglas activas pueden aplicar a la misma acción, gana una sola — nunca se suman. Evita dejar dos con la misma prioridad sobre el mismo alcance.</p>
+              </div>
+              <div><Label>Inicio (opcional)</Label><Input type="datetime-local" value={form.startsAt} onChange={e => setForm(f => ({ ...f, startsAt: e.target.value }))} /></div>
+              <div><Label>Fin (opcional)</Label><Input type="datetime-local" value={form.endsAt} onChange={e => setForm(f => ({ ...f, endsAt: e.target.value }))} /></div>
 
               {form.calcMethod === "fixed" && (
                 <div><Label>Tokens fijos</Label><Input type="number" value={form.fixedAmount} onChange={e => setForm(f => ({ ...f, fixedAmount: e.target.value }))} /></div>
