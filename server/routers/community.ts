@@ -538,13 +538,21 @@ export const communityRouter = router({
       // divergente). Antes de participar en una propuesta activa, la ficha
       // sigue siendo el VoteForm de siempre, sin ningún cambio.
       const showSocialLayer = canAccessSocialLayer(proposal.status, hasResponded);
-      const [author, likeState, commentCounts] = showSocialLayer
+      // COM-02C (spec §15/§16/§32) — "último comentario" en la propia ficha:
+      // se reutiliza EXACTAMENTE listComments (limit:1) — misma fuente de
+      // verdad y misma puerta de acceso (assertCanInteract) que el resto de
+      // comentarios, nunca una segunda lógica que pudiera mostrar uno oculto
+      // o de una propuesta a la que no se puede acceder. Solo se pide cuando
+      // showSocialLayer ya es true (evita una query extra en el camino
+      // caliente de VoteForm, spec §32 "no descargar de más").
+      const [author, likeState, commentCounts, latestCommentsPage] = showSocialLayer
         ? await Promise.all([
             resolveProposalAuthor(proposal),
             getLikeState(input.id, ctx.user.id),
             getCommentCountsBatch([input.id]),
+            listComments(input.id, ctx.user.id, { limit: 1, offset: 0 }),
           ])
-        : [null, { liked: false, count: 0 }, new Map<number, number>()];
+        : [null, { liked: false, count: 0 }, new Map<number, number>(), { total: 0, items: [] }];
 
       return {
         proposal: { ...proposal, description: proposal.description, venueName }, // sin campos admin sensibles adicionales
@@ -558,6 +566,7 @@ export const communityRouter = router({
         liked: likeState.liked,
         likeCount: likeState.count,
         commentCount: commentCounts.get(input.id) ?? 0,
+        latestComment: latestCommentsPage.items[0] ?? null,
       };
     }),
 

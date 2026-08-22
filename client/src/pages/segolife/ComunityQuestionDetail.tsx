@@ -110,6 +110,7 @@ export default function ComunityQuestionDetail() {
             results={results}
             myResponse={myResponse}
             options={options}
+            latestComment={data.latestComment}
             qType={qType}
             proposalId={proposalId}
             slug={slug}
@@ -416,12 +417,11 @@ function PublicResults({ qType, results, proposalId }: { qType: QuestionType; re
   }
 
   if (results.meApunto) {
-    return (
-      <div className="space-y-2">
-        <p className="text-lg font-semibold text-foreground">{t("comunity.countJoining", { count: results.meApunto.count })}</p>
-        <RespondentAvatarStack proposalId={proposalId} total={results.meApunto.count} />
-      </div>
-    );
+    // COM-02C (spec §8/§9) — nunca más "Results (N)" / "N joining" como
+    // titular de card: el avatar-stack ya reutilizado de COM-02 lleva el
+    // recuento implícito ("Antonio, Cristina" o "Antonio y 17 más"), aquí
+    // solo se le añade el verbo para que se lea como una frase social.
+    return <RespondentAvatarStack proposalId={proposalId} total={results.meApunto.count} />;
   }
 
   if (results.openText) {
@@ -477,7 +477,7 @@ function RespondentAvatarStack({ proposalId, total }: { proposalId: number; tota
           {items.map(r => <RespondentAvatar key={r.userId} proposalId={proposalId} userId={r.userId} name={r.name} hasAvatar={r.hasAvatar} />)}
         </div>
         <p className="text-xs text-muted-foreground">
-          {extra > 0 ? t("comunity.respondentsAndMore", { names, count: extra }) : names}
+          {extra > 0 ? t("comunity.respondentsAndMore", { names, count: extra }) : names} {t("comunity.social.joinedSuffix")}
         </p>
       </button>
       <AllRespondentsDialog proposalId={proposalId} total={total} open={showAll} onOpenChange={setShowAll} />
@@ -533,7 +533,31 @@ function AllRespondentsDialog({ proposalId, total, open, onOpenChange }: { propo
 
 type ProposalAuthor = { userId: number; name: string | null; hasAvatar: boolean } | null;
 
-function SocialProposalView({ proposal, author, liked, likeCount, commentCount, results, myResponse, options, qType, proposalId, slug }: {
+/**
+ * Descripción con recorte a unas pocas líneas + "… more"/"… más" (spec
+ * COM-02C §12) — puramente de presentación (line-clamp CSS + un toggle
+ * local), sin tocar el texto real ni volver a pedirlo al servidor. Una vez
+ * expandida se queda expandida (el propio pedido no exige poder replegarla).
+ */
+const DESCRIPTION_TRUNCATE_THRESHOLD = 180; // ~3-4 líneas en el ancho social típico
+
+function ExpandableDescription({ text }: { text: string }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const canTruncate = text.length > DESCRIPTION_TRUNCATE_THRESHOLD;
+  return (
+    <div className="mt-1 text-sm text-muted-foreground">
+      <p className={!expanded && canTruncate ? "line-clamp-4 whitespace-pre-line" : "whitespace-pre-line"}>{text}</p>
+      {canTruncate && !expanded && (
+        <button type="button" onClick={() => setExpanded(true)} className="mt-0.5 font-medium text-foreground">
+          {t("comunity.social.readMore")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function SocialProposalView({ proposal, author, liked, likeCount, commentCount, results, myResponse, options, latestComment, qType, proposalId, slug }: {
   proposal: { status: string; title: string; description: string | null; coverImageUrl: string | null; venueName: string | null; endsAt: Date | string | null };
   author: ProposalAuthor;
   liked: boolean;
@@ -542,6 +566,7 @@ function SocialProposalView({ proposal, author, liked, likeCount, commentCount, 
   results: any;
   myResponse: { response: unknown; values: { optionId: number | null; valueText: string | null; valueNumber: number | null }[] } | null;
   options: { id: number; label: string; sortOrder: number }[];
+  latestComment: { id: number; content: string; createdAt: Date | string; author: { userId: number; name: string | null; hasAvatar: boolean } } | null;
   qType: QuestionType;
   proposalId: number;
   slug: string | null;
@@ -611,23 +636,31 @@ function SocialProposalView({ proposal, author, liked, likeCount, commentCount, 
         </div>
       )}
 
-      <div className="flex items-center gap-5">
+      {/* Barra de acciones sociales (spec COM-02C §3): ♡ comentario compartir,
+          orden estable ya reutilizado de COM-02 — "guardar" queda fuera a
+          propósito (spec §6): no existe arquitectura de favoritos en
+          SEGOLIFE y no se ha construido una solo por estética; si se añade
+          en el futuro, va al final de esta fila (`ml-auto` en Share pasaría
+          a un separador intermedio). Padding negativo (`-m-2 p-2`) en cada
+          botón para ampliar el área táctil a ~44px sin alterar el espaciado
+          visual entre iconos (spec §25). */}
+      <div className="flex items-center gap-4">
         <button
           type="button"
           onClick={() => likeMut.mutate({ proposalId })}
           disabled={likeMut.isPending}
-          className="flex items-center gap-1.5"
+          className="-m-2 flex items-center gap-1.5 p-2"
           aria-label={t("comunity.social.like")}
           aria-pressed={liked}
         >
           <Heart className={`size-6 ${liked ? "fill-destructive text-destructive" : "text-foreground"}`} />
           {likeCount > 0 && <span className="text-sm tabular-nums text-muted-foreground">{likeCount}</span>}
         </button>
-        <button type="button" onClick={() => setCommentsOpen(true)} className="flex items-center gap-1.5" aria-label={t("comunity.social.comments")}>
+        <button type="button" onClick={() => setCommentsOpen(true)} className="-m-2 flex items-center gap-1.5 p-2" aria-label={t("comunity.social.comments")}>
           <MessageCircle className="size-6 text-foreground" />
           {commentCount > 0 && <span className="text-sm tabular-nums text-muted-foreground">{commentCount}</span>}
         </button>
-        <button type="button" onClick={handleShare} className="ml-auto flex items-center gap-1.5" aria-label={t("comunity.social.share")}>
+        <button type="button" onClick={handleShare} className="-m-2 ml-auto flex items-center gap-1.5 p-2" aria-label={t("comunity.social.share")}>
           <Share2 className="size-6 text-foreground" />
         </button>
       </div>
@@ -652,17 +685,31 @@ function SocialProposalView({ proposal, author, liked, likeCount, commentCount, 
 
       <div>
         <p className="font-semibold text-foreground">{proposal.title}</p>
-        {proposal.description && <p className="mt-1 text-sm text-muted-foreground">{proposal.description}</p>}
+        {proposal.description && <ExpandableDescription text={proposal.description} />}
         {proposal.venueName && (
           <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><MapPin className="size-3.5" /> {proposal.venueName}</p>
         )}
       </div>
 
-      {results && (
-        <div className="rounded-2xl border border-border bg-card p-4">
-          <p className="mb-3 text-sm font-semibold text-foreground">{t("comunity.results")} ({results.totalResponses})</p>
-          <PublicResults qType={qType} results={results} proposalId={proposalId} />
-        </div>
+      {/* COM-02C (spec §14) — sin card administrativa alrededor: el titular
+          (headline, arriba) ya hace de "resultado destacado"; aquí solo el
+          desglose real por tipo (PublicResults, sin tocar) directamente
+          integrado en el post, nunca dentro de un "Results (N)" envuelto. */}
+      {results && <PublicResults qType={qType} results={results} proposalId={proposalId} />}
+
+      {latestComment && (
+        <button type="button" onClick={() => setCommentsOpen(true)} className="flex w-full items-start gap-2.5 text-left">
+          <Avatar className="size-7 shrink-0">
+            {latestComment.author.hasAvatar && <img src={`/api/community/proposals/${proposalId}/respondents/${latestComment.author.userId}/photo`} alt="" className="size-full object-cover" />}
+            <AvatarFallback className="text-xs">{initials(latestComment.author.name)}</AvatarFallback>
+          </Avatar>
+          <p className="min-w-0 text-sm">
+            <span className="font-semibold text-foreground">{latestComment.author.name ?? t("comunity.someone")}</span>{" "}
+            <span className="text-muted-foreground">{relativeTimeLabel(latestComment.createdAt, i18n.language)}</span>
+            <br />
+            <span className="text-foreground">{latestComment.content}</span>
+          </p>
+        </button>
       )}
 
       <button type="button" onClick={() => setCommentsOpen(true)} className="text-left text-sm text-muted-foreground hover:text-foreground">

@@ -110,6 +110,7 @@ function proposalFixture(overrides: Partial<Record<string, unknown>> = {}) {
     liked: false,
     likeCount: 0,
     commentCount: 0,
+    latestComment: null,
     ...overrides,
   };
 }
@@ -238,6 +239,67 @@ describe("ComunityQuestionDetail — COM-02: ficha social de una propuesta FINAL
     // exactamente 1 vez significaría que el fallback no se está renderizando.
     const headings = await screen.findAllByText("Tanker's official pre");
     expect(headings.length).toBe(2);
+  });
+});
+
+describe("ComunityQuestionDetail — COM-02C: pulido social (sin card 'Results (N)', participantes compactos, último comentario)", () => {
+  it("nunca muestra la card administrativa 'Results (N)' — el desglose va directo en el post (spec §8/§14)", async () => {
+    mockGetPublicById.mockReturnValue({ data: proposalFixture(), isLoading: false });
+    renderAt("/ie/comunity/5");
+    await screen.findByText(/2 attended/i);
+    expect(screen.queryByText("Results (2)")).not.toBeInTheDocument();
+  });
+
+  it("participantes (me_apunto) se muestran como avatar-stack + 'joined', nunca '2 joining' como titular aparte", async () => {
+    mockGetPublicRespondents.mockReturnValue({ data: { total: 2, items: [{ userId: 4, name: "Antonio Ruiz", hasAvatar: false }, { userId: 7, name: "Cristina", hasAvatar: false }] } });
+    mockGetPublicById.mockReturnValue({ data: proposalFixture(), isLoading: false });
+    renderAt("/ie/comunity/5");
+    expect(await screen.findByText(/Antonio, Cristina joined/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^2 joining$/i)).not.toBeInTheDocument();
+  });
+
+  it("el último comentario visible aparece directamente en la ficha (avatar+nombre+tiempo+texto)", async () => {
+    mockGetPublicById.mockReturnValue({
+      data: proposalFixture({
+        commentCount: 1,
+        latestComment: { id: 1, content: "Qué ganas de que llegue, va a ser épico", createdAt: new Date(Date.now() - 2 * 3600 * 1000), author: { userId: 9, name: "Cristina B.", hasAvatar: false } },
+      }),
+      isLoading: false,
+    });
+    renderAt("/ie/comunity/5");
+    expect(await screen.findByText("Cristina B.")).toBeInTheDocument();
+    expect(await screen.findByText("Qué ganas de que llegue, va a ser épico")).toBeInTheDocument();
+  });
+
+  it("con exactamente 1 comentario muestra 'View comment' (singular) — nunca 'View all 1 comments' (spec §17)", async () => {
+    mockGetPublicById.mockReturnValue({ data: proposalFixture({ commentCount: 1 }), isLoading: false });
+    renderAt("/ie/comunity/5");
+    expect(await screen.findByText("View comment")).toBeInTheDocument();
+    expect(screen.queryByText(/view all 1 comments/i)).not.toBeInTheDocument();
+  });
+
+  it("con varios comentarios muestra 'View all N comments' (plural correcto)", async () => {
+    mockGetPublicById.mockReturnValue({ data: proposalFixture({ commentCount: 7 }), isLoading: false });
+    renderAt("/ie/comunity/5");
+    expect(await screen.findByText("View all 7 comments")).toBeInTheDocument();
+  });
+
+  it("una descripción larga se recorta con '… more' y se expande por completo al pulsar", async () => {
+    const longText = "Esta descripción es deliberadamente muy larga para forzar el recorte visual de varias líneas. ".repeat(4);
+    mockGetPublicById.mockReturnValue({ data: proposalFixture({ proposal: { ...proposalFixture().proposal, description: longText } }), isLoading: false });
+    const user = userEvent.setup();
+    renderAt("/ie/comunity/5");
+    const moreButton = await screen.findByText("… more");
+    await user.click(moreButton);
+    expect(screen.queryByText("… more")).not.toBeInTheDocument();
+    expect(await screen.findAllByText(longText.trim(), { exact: false })).not.toHaveLength(0);
+  });
+
+  it("una descripción corta nunca muestra el botón '… more' (nada que expandir)", async () => {
+    mockGetPublicById.mockReturnValue({ data: proposalFixture(), isLoading: false }); // descripción corta por defecto
+    renderAt("/ie/comunity/5");
+    await screen.findByText("Segovia vuelve a llenarse de estudiantes");
+    expect(screen.queryByText("… more")).not.toBeInTheDocument();
   });
 });
 

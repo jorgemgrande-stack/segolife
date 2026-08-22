@@ -501,6 +501,7 @@ describe("COM-02B — getPublicById: scoping por comunidad (gap preexistente cor
     mockResolveProposalAuthor.mockReset().mockResolvedValue(null);
     mockGetLikeState.mockReset().mockResolvedValue({ liked: false, count: 0 });
     mockGetCommentCountsBatch.mockReset().mockResolvedValue(new Map());
+    mockListComments.mockReset().mockResolvedValue({ total: 0, items: [] });
   });
 
   it("Student de una comunidad que no es la de la propuesta -> FORBIDDEN (spec §25, gap documentado en el informe COM-02 ahora corregido)", async () => {
@@ -537,6 +538,30 @@ describe("COM-02B — getPublicById: scoping por comunidad (gap preexistente cor
     mockGetUserResponse.mockResolvedValue(null); // ni siquiera respondió, y aun así está cerrada
     const result = await callerAs(42).getPublicById({ id: 10 });
     expect(result.showSocialLayer).toBe(true);
+  });
+
+  it("COM-02C: showSocialLayer=true -> latestComment se resuelve vía listComments(limit:1) real, misma fuente de verdad que el resto de comentarios", async () => {
+    mockListComments.mockResolvedValue({
+      total: 3,
+      items: [{ id: 9, proposalId: 10, content: "El más reciente", createdAt: new Date(), isOwn: false, author: { userId: 4, name: "Cristina", hasAvatar: false }, replies: [] }],
+    });
+    const result = await callerAs(42).getPublicById({ id: 10 });
+    expect(mockListComments).toHaveBeenCalledWith(10, 42, { limit: 1, offset: 0 });
+    expect(result.latestComment).toMatchObject({ id: 9, content: "El más reciente" });
+  });
+
+  it("COM-02C: showSocialLayer=false (activa, sin responder) -> latestComment=null, listComments NUNCA se llama (spec §32, no query de más)", async () => {
+    mockGetProposalById.mockResolvedValue({ id: 10, status: "active", venueId: null, endsAt: null, resultsVisibility: "immediate" });
+    mockGetUserResponse.mockResolvedValue(null);
+    const result = await callerAs(42).getPublicById({ id: 10 });
+    expect(result.latestComment).toBeNull();
+    expect(mockListComments).not.toHaveBeenCalled();
+  });
+
+  it("COM-02C: sin comentarios visibles -> latestComment=null (nunca un objeto vacío inventado)", async () => {
+    mockListComments.mockResolvedValue({ total: 0, items: [] });
+    const result = await callerAs(42).getPublicById({ id: 10 });
+    expect(result.latestComment).toBeNull();
   });
 });
 

@@ -535,6 +535,8 @@
       "viewAllComments_other": "Ver los {{count}} comentarios",
       "noCommentsYet": "Todavía no hay comentarios",
       "beFirstToComment": "Sé el primero en comentar",
+      "readMore": "… más",
+      "joinedSuffix": "se han apuntado",
       "commentsTitle": "Comentarios",
       "deletedComment": "Comentario eliminado",
       "moderatedByAdmin": "Eliminado por moderación",
