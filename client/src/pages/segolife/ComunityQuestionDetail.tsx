@@ -14,7 +14,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SegolifeBottomSheet } from "@/components/segolife/SegolifeBottomSheet";
 import { toast } from "sonner";
-import { ArrowUp, ArrowDown, Loader2, CheckCircle2, Coins, MapPin, Heart, MessageCircle, Share2, X, Link2, Mail, Send } from "lucide-react";
+import { ArrowUp, ArrowDown, Loader2, CheckCircle2, Coins, MapPin, Heart, MessageCircle, Share2, X, Link2, Mail, Send, Bookmark } from "lucide-react";
 import { initials, relativeTimeLabel, resultHeadline, myResponseSummary } from "@/lib/comunitySocial";
 
 type QuestionType =
@@ -108,6 +108,7 @@ export default function ComunityQuestionDetail() {
             likeCount={data.likeCount}
             commentCount={data.commentCount}
             shareCount={data.shareCount}
+            bookmarked={data.bookmarked}
             results={results}
             myResponse={myResponse}
             options={options}
@@ -142,6 +143,10 @@ export default function ComunityQuestionDetail() {
           </div>
         </div>
 
+        <div className="flex justify-end">
+          <BookmarkButton proposalId={proposalId} bookmarked={data.bookmarked} />
+        </div>
+
         {justResponded && (
           <div className="flex items-center gap-2 rounded-2xl border border-primary/30 bg-primary/5 p-4 text-sm text-foreground">
             <CheckCircle2 className="size-5 text-primary shrink-0" />
@@ -173,6 +178,42 @@ export default function ComunityQuestionDetail() {
         <Button variant="ghost" onClick={() => navigate(`/${slug}/comunity`)}>{t("comunity.backToComunity")}</Button>
       </SegolifePageContainer>
     </SegolifeAppShell>
+  );
+}
+
+// ─── F68 (Community Engagement avanzado) — guardar para más tarde ──────────
+// A propósito disponible en AMBAS vistas (VoteForm y SocialProposalView):
+// a diferencia de like/comment/share, el caso de uso principal es guardar
+// una propuesta ACTIVA antes incluso de votar, así que nunca depende de
+// showSocialLayer.
+function BookmarkButton({ proposalId, bookmarked }: { proposalId: number; bookmarked: boolean }) {
+  const { t } = useTranslation();
+  const utils = trpc.useUtils();
+  const mut = trpc.community.toggleBookmark.useMutation({
+    onMutate: async () => {
+      await utils.community.getPublicById.cancel({ id: proposalId });
+      const prev = utils.community.getPublicById.getData({ id: proposalId });
+      if (prev) utils.community.getPublicById.setData({ id: proposalId }, { ...prev, bookmarked: !prev.bookmarked });
+      return { prev };
+    },
+    onError: (err, _vars, ctx) => {
+      if (ctx?.prev) utils.community.getPublicById.setData({ id: proposalId }, ctx.prev);
+      toast.error(err.message);
+    },
+    onSettled: () => utils.community.getPublicById.invalidate({ id: proposalId }),
+  });
+
+  return (
+    <button
+      type="button"
+      onClick={() => mut.mutate({ proposalId })}
+      disabled={mut.isPending}
+      className="-m-2 flex items-center gap-1.5 p-2"
+      aria-label={bookmarked ? t("comunity.social.unsave") : t("comunity.social.save")}
+      aria-pressed={bookmarked}
+    >
+      <Bookmark className={`size-6 ${bookmarked ? "fill-primary text-primary" : "text-foreground"}`} />
+    </button>
   );
 }
 
@@ -610,13 +651,14 @@ function ShareFallbackSheet({ open, onClose, title, url, onShared }: {
   );
 }
 
-function SocialProposalView({ proposal, author, liked, likeCount, commentCount, shareCount, results, myResponse, options, latestComment, qType, proposalId, slug }: {
+function SocialProposalView({ proposal, author, liked, likeCount, commentCount, shareCount, bookmarked, results, myResponse, options, latestComment, qType, proposalId, slug }: {
   proposal: { status: string; title: string; description: string | null; coverImageUrl: string | null; venueName: string | null; endsAt: Date | string | null };
   author: ProposalAuthor;
   liked: boolean;
   likeCount: number;
   shareCount: number;
   commentCount: number;
+  bookmarked: boolean;
   results: any;
   myResponse: { response: unknown; values: { optionId: number | null; valueText: string | null; valueNumber: number | null }[] } | null;
   options: { id: number; label: string; sortOrder: number }[];
@@ -710,14 +752,12 @@ function SocialProposalView({ proposal, author, liked, likeCount, commentCount, 
         </div>
       )}
 
-      {/* Barra de acciones sociales (spec COM-02C §3): ♡ comentario compartir,
-          orden estable ya reutilizado de COM-02 — "guardar" queda fuera a
-          propósito (spec §6): no existe arquitectura de favoritos en
-          SEGOLIFE y no se ha construido una solo por estética; si se añade
-          en el futuro, va al final de esta fila (`ml-auto` en Share pasaría
-          a un separador intermedio). Padding negativo (`-m-2 p-2`) en cada
-          botón para ampliar el área táctil a ~44px sin alterar el espaciado
-          visual entre iconos (spec §25). */}
+      {/* Barra de acciones sociales (spec COM-02C §3): ♡ comentario compartir
+          guardar, orden estable ya reutilizado de COM-02. "Guardar" (F68) va
+          al final tras Share, con su propio separador — Share ya no es
+          `ml-auto` (ese rol pasa a Bookmark). Padding negativo (`-m-2 p-2`)
+          en cada botón para ampliar el área táctil a ~44px sin alterar el
+          espaciado visual entre iconos (spec §25). */}
       <div className="flex items-center gap-4">
         <button
           type="button"
@@ -734,10 +774,13 @@ function SocialProposalView({ proposal, author, liked, likeCount, commentCount, 
           <MessageCircle className="size-6 text-foreground" />
           {commentCount > 0 && <span className="text-sm tabular-nums text-muted-foreground">{commentCount}</span>}
         </button>
-        <button type="button" onClick={handleShare} className="-m-2 ml-auto flex items-center gap-1.5 p-2" aria-label={t("comunity.social.share")}>
+        <button type="button" onClick={handleShare} className="-m-2 flex items-center gap-1.5 p-2" aria-label={t("comunity.social.share")}>
           <Share2 className="size-6 text-foreground" />
           {shareCount > 0 && <span className="text-sm tabular-nums text-muted-foreground">{shareCount}</span>}
         </button>
+        <div className="ml-auto">
+          <BookmarkButton proposalId={proposalId} bookmarked={bookmarked} />
+        </div>
       </div>
       <ShareFallbackSheet
         open={shareSheetOpen}
@@ -809,6 +852,8 @@ interface CommentAuthorShape { userId: number; name: string | null; hasAvatar: b
 interface CommentShape {
   id: number; proposalId: number; content: string; createdAt: Date | string; isOwn: boolean;
   author: CommentAuthorShape; replies: CommentShape[];
+  // F68 (Community Engagement avanzado) — reacción sobre el comentario, dimensión independiente del like de la propuesta.
+  likeCount: number; likedByMe: boolean;
 }
 
 function CommentsSheet({ proposalId, open, onOpenChange }: { proposalId: number; open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -926,6 +971,12 @@ function CommentsSheet({ proposalId, open, onOpenChange }: { proposalId: number;
 
 function CommentRow({ comment, onReply, onDelete }: { comment: CommentShape; onReply?: () => void; onDelete: () => void }) {
   const { t, i18n } = useTranslation();
+  const utils = trpc.useUtils();
+  const likeMut = trpc.community.toggleCommentLike.useMutation({
+    onSuccess: () => utils.community.listComments.invalidate({ proposalId: comment.proposalId }),
+    onError: e => toast.error(e.message),
+  });
+
   return (
     <div className="flex gap-2.5" data-testid={`comment-row-${comment.id}`}>
       <Avatar className="size-8 shrink-0">
@@ -939,6 +990,17 @@ function CommentRow({ comment, onReply, onDelete }: { comment: CommentShape; onR
         </p>
         <div className="mt-0.5 flex items-center gap-3 text-xs text-neutral-500">
           <span>{relativeTimeLabel(comment.createdAt, i18n.language)}</span>
+          <button
+            type="button"
+            onClick={() => likeMut.mutate({ commentId: comment.id })}
+            disabled={likeMut.isPending}
+            className={`flex items-center gap-1 font-medium ${comment.likedByMe ? "text-destructive" : "hover:text-neutral-900"}`}
+            aria-pressed={comment.likedByMe}
+            aria-label={t("comunity.social.like")}
+          >
+            <Heart className={`size-3.5 ${comment.likedByMe ? "fill-destructive text-destructive" : ""}`} />
+            {comment.likeCount > 0 && <span className="tabular-nums">{comment.likeCount}</span>}
+          </button>
           {onReply && <button type="button" onClick={onReply} className="font-medium hover:text-neutral-900">{t("comunity.social.reply")}</button>}
           {comment.isOwn && <button type="button" onClick={onDelete} className="font-medium hover:text-destructive">{t("comunity.social.delete")}</button>}
         </div>

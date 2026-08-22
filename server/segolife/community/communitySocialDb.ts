@@ -16,7 +16,8 @@ import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import {
   communityProposalComments, communityProposalLikes, communityProposalShares,
-  communityStudentProposals, users,
+  communityProposalBookmarks, communityCommentLikes,
+  communityStudentProposals, users, venues,
   type CommunityProposalComment,
 } from "../../../drizzle/schema";
 import { isProposalVisibleToUser, canAccessSocialLayer, getProposalById, type AnyDbHandle } from "./communityDb";
@@ -156,6 +157,78 @@ export async function getShareCountsBatch(proposalIds: number[], db?: AnyDbHandl
   return new Map(rows.map(r => [r.proposalId, Number(r.count)]));
 }
 
+// ─── BOOKMARKS (F68 — Community Engagement avanzado) ───────────────────────
+// "Guardar para más tarde" — a propósito NUNCA usa assertCanInteract (esa
+// puerta exige finalizada o ya respondida): el caso de uso principal es
+// guardar una propuesta MIENTRAS sigue activa, para no perderla antes de
+// votar. Solo exige que la propuesta sea visible para el estudiante
+// (isProposalVisibleToUser) — misma comprobación que el resto del feed.
+
+export async function getBookmarkState(proposalId: number, userId: number, db?: AnyDbHandle): Promise<boolean> {
+  const conn = (db ?? (await getDb())) as DbHandle;
+  const [row] = await conn.select({ id: communityProposalBookmarks.id }).from(communityProposalBookmarks)
+    .where(and(eq(communityProposalBookmarks.proposalId, proposalId), eq(communityProposalBookmarks.userId, userId))).limit(1);
+  return !!row;
+}
+
+export async function toggleBookmark(proposalId: number, userId: number, db?: AnyDbHandle): Promise<{ bookmarked: boolean }> {
+  const conn = (db ?? (await getDb())) as DbHandle;
+  const proposal = await getProposalById(proposalId, conn);
+  if (!proposal) throw new CommunitySocialError("NOT_FOUND", "Propuesta no encontrada.");
+  if (!(await isProposalVisibleToUser(proposalId, userId, conn))) {
+    throw new CommunitySocialError("FORBIDDEN", "No tienes acceso a esta propuesta.");
+  }
+
+  const [existing] = await conn.select({ id: communityProposalBookmarks.id }).from(communityProposalBookmarks)
+    .where(and(eq(communityProposalBookmarks.proposalId, proposalId), eq(communityProposalBookmarks.userId, userId))).limit(1);
+
+  if (existing) {
+    await conn.delete(communityProposalBookmarks).where(eq(communityProposalBookmarks.id, existing.id));
+    return { bookmarked: false };
+  }
+  try {
+    await conn.insert(communityProposalBookmarks).values({ proposalId, userId });
+  } catch (err) {
+    if (!isDuplicateKeyError(err)) throw err; // carrera (doble-click) — UNIQUE real ya lo protege, idempotente
+  }
+  return { bookmarked: true };
+}
+
+export interface BookmarkedProposalItem {
+  id: number;
+  title: string;
+  status: string;
+  urgencyType: string;
+  endsAt: Date | null;
+  venueName: string | null;
+  bookmarkedAt: Date;
+}
+
+/** Vista "Guardados" del propio estudiante — más recientes primero. Nunca expone bookmarks de otro usuario (siempre filtrado por el propio userId). */
+export async function listMyBookmarkedProposals(userId: number, db?: AnyDbHandle): Promise<BookmarkedProposalItem[]> {
+  const conn = (db ?? (await getDb())) as DbHandle;
+  const { communityProposals } = await import("../../../drizzle/schema");
+  const rows = await conn.select({
+    id: communityProposals.id, title: communityProposals.title, status: communityProposals.status,
+    urgencyType: communityProposals.urgencyType, endsAt: communityProposals.endsAt, venueId: communityProposals.venueId,
+    bookmarkedAt: communityProposalBookmarks.createdAt,
+  })
+    .from(communityProposalBookmarks)
+    .innerJoin(communityProposals, eq(communityProposalBookmarks.proposalId, communityProposals.id))
+    .where(eq(communityProposalBookmarks.userId, userId))
+    .orderBy(desc(communityProposalBookmarks.createdAt));
+
+  const venueIds = Array.from(new Set(rows.map(r => r.venueId).filter((v): v is number => v != null)));
+  const venueRows = venueIds.length ? await conn.select({ id: venues.id, name: venues.name }).from(venues).where(inArray(venues.id, venueIds)) : [];
+  const venueNameById = new Map(venueRows.map(v => [v.id, v.name]));
+
+  return rows.map(r => ({
+    id: r.id, title: r.title, status: r.status, urgencyType: r.urgencyType, endsAt: r.endsAt,
+    venueName: r.venueId != null ? (venueNameById.get(r.venueId) ?? null) : null,
+    bookmarkedAt: r.bookmarkedAt,
+  }));
+}
+
 // ─── COMENTARIOS ────────────────────────────────────────────────────────────
 
 export interface CommentAuthor {
@@ -174,6 +247,9 @@ export interface CommentWithAuthor {
   isHidden: boolean;
   author: CommentAuthor;
   replies: CommentWithAuthor[];
+  // F68 — reacción sobre el comentario, dimensión independiente del like de la propuesta.
+  likeCount: number;
+  likedByMe: boolean;
 }
 
 /** Batch de nombre/avatar por userId — mismo criterio "sin N+1" que getProposalRespondents (communityResultsService.ts). */
@@ -238,11 +314,20 @@ export async function listComments(
     repliesByParent.set(r.parentCommentId!, list);
   }
 
+  // F68 — batch, sin N+1 (una tanda de comentarios+respuestas por request, nunca una query por comentario).
+  const allCommentIds = [...roots, ...replies].map(c => c.id);
+  const [likeCounts, myLikes] = await Promise.all([
+    getCommentLikeCountsBatch(allCommentIds, conn),
+    getMyCommentLikesBatch(allCommentIds, viewerUserId, conn),
+  ]);
+
   const toItem = (c: CommunityProposalComment, replyItems: CommentWithAuthor[]): CommentWithAuthor => ({
     id: c.id, proposalId: c.proposalId, parentCommentId: c.parentCommentId, content: c.content, createdAt: c.createdAt,
     isOwn: c.userId === viewerUserId, isHidden: c.isHidden,
     author: authorsById.get(c.userId) ?? { userId: c.userId, name: null, hasAvatar: false },
     replies: replyItems,
+    likeCount: likeCounts.get(c.id) ?? 0,
+    likedByMe: myLikes.has(c.id),
   });
 
   const items = roots.map(root => toItem(root, (repliesByParent.get(root.id) ?? []).map(r => toItem(r, []))));
@@ -316,6 +401,54 @@ export async function getCommentCountsBatch(proposalIds: number[], db?: AnyDbHan
     .where(and(inArray(communityProposalComments.proposalId, proposalIds), eq(communityProposalComments.isHidden, false)))
     .groupBy(communityProposalComments.proposalId);
   return new Map(rows.map(r => [r.proposalId, Number(r.count)]));
+}
+
+// ─── LIKES DE COMENTARIO (F68 — Community Engagement avanzado) ─────────────
+// Reacción sobre UN comentario, dimensión independiente del like de la
+// propuesta — mismo criterio de acceso que crear/leer comentarios
+// (assertCanInteract sobre la propuesta dueña del comentario), y nunca se
+// puede reaccionar a un comentario ya oculto (moderado/borrado).
+
+/** Batch, sin N+1 — para listComments (una tanda de comentarios+respuestas por request). */
+export async function getCommentLikeCountsBatch(commentIds: number[], db?: AnyDbHandle): Promise<Map<number, number>> {
+  if (commentIds.length === 0) return new Map();
+  const conn = (db ?? (await getDb())) as DbHandle;
+  const rows = await conn.select({ commentId: communityCommentLikes.commentId, count: sql<number>`COUNT(*)` })
+    .from(communityCommentLikes).where(inArray(communityCommentLikes.commentId, commentIds)).groupBy(communityCommentLikes.commentId);
+  return new Map(rows.map(r => [r.commentId, Number(r.count)]));
+}
+
+/** ¿Qué comentarios, de esta tanda, ha dado ya like ESTE viewer? — batch, para no marcar el corazón relleno vía N consultas. */
+export async function getMyCommentLikesBatch(commentIds: number[], userId: number, db?: AnyDbHandle): Promise<Set<number>> {
+  if (commentIds.length === 0) return new Set();
+  const conn = (db ?? (await getDb())) as DbHandle;
+  const rows = await conn.select({ commentId: communityCommentLikes.commentId }).from(communityCommentLikes)
+    .where(and(inArray(communityCommentLikes.commentId, commentIds), eq(communityCommentLikes.userId, userId)));
+  return new Set(rows.map(r => r.commentId));
+}
+
+export async function toggleCommentLike(commentId: number, userId: number, db?: AnyDbHandle): Promise<{ liked: boolean; count: number }> {
+  const conn = (db ?? (await getDb())) as DbHandle;
+  const comment = await getCommentById(commentId, conn);
+  if (!comment || comment.isHidden) throw new CommunitySocialError("NOT_FOUND", "Comentario no encontrado.");
+  await assertCanInteract(comment.proposalId, userId, conn);
+
+  const [existing] = await conn.select({ id: communityCommentLikes.id }).from(communityCommentLikes)
+    .where(and(eq(communityCommentLikes.commentId, commentId), eq(communityCommentLikes.userId, userId))).limit(1);
+
+  if (existing) {
+    await conn.delete(communityCommentLikes).where(eq(communityCommentLikes.id, existing.id));
+  } else {
+    try {
+      await conn.insert(communityCommentLikes).values({ commentId, userId });
+    } catch (err) {
+      if (!isDuplicateKeyError(err)) throw err; // carrera (doble-click) — UNIQUE real ya lo protege, idempotente
+    }
+  }
+  const [countRow] = await conn.select({ count: sql<number>`COUNT(*)` }).from(communityCommentLikes).where(eq(communityCommentLikes.commentId, commentId));
+  const [likedRow] = await conn.select({ id: communityCommentLikes.id }).from(communityCommentLikes)
+    .where(and(eq(communityCommentLikes.commentId, commentId), eq(communityCommentLikes.userId, userId))).limit(1);
+  return { liked: !!likedRow, count: Number(countRow?.count ?? 0) };
 }
 
 /**

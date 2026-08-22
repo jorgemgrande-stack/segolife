@@ -35,6 +35,7 @@ import {
   getLikeState, toggleLike, listComments, createComment, deleteOwnComment, moderateComment,
   getCommentCountsBatch, getLikeCountsBatch, resolveProposalAuthor, CommunitySocialError,
   recordShare, getShareCountsBatch, type ShareMethod,
+  toggleBookmark, getBookmarkState, listMyBookmarkedProposals, toggleCommentLike,
 } from "../segolife/community/communitySocialDb";
 import { notifyProposalCommented, notifyCommentReplied } from "../segolife/community/communityCommentNotifier";
 
@@ -565,6 +566,11 @@ export const communityRouter = router({
       // el admin, ver listProposals/ProposalListItem.venueName).
       const venueName = await getVenueName(proposal.venueId, undefined);
 
+      // F68 — a diferencia de like/comment/share, el estado de bookmark se
+      // resuelve SIEMPRE (nunca gateado por showSocialLayer): su caso de uso
+      // principal es guardar una propuesta activa antes incluso de votar.
+      const bookmarked = await getBookmarkState(input.id, ctx.user.id);
+
       // COM-02B (spec §1-§5) — la ficha social ya no depende solo de
       // status="closed": también se muestra en una propuesta ACTIVA cuando
       // este Student YA respondió (canAccessSocialLayer, communityDb.ts,
@@ -603,6 +609,7 @@ export const communityRouter = router({
         commentCount: commentCounts.get(input.id) ?? 0,
         latestComment: latestCommentsPage.items[0] ?? null,
         shareCount: shareCounts.get(input.id) ?? 0,
+        bookmarked,
       };
     }),
 
@@ -676,6 +683,34 @@ export const communityRouter = router({
     .mutation(async ({ input, ctx }) => {
       try {
         return await toggleLike(input.proposalId, ctx.user.id);
+      } catch (err) {
+        mapCommunitySocialError(err);
+      }
+    }),
+
+  // ─── F68 (Community Engagement avanzado) — guardar para más tarde ─────────
+  // A propósito NO usa la misma puerta que like/comment/share (nunca exige
+  // finalizada ni ya respondida) — ver toggleBookmark en communitySocialDb.ts.
+
+  toggleBookmark: protectedProcedure
+    .input(z.object({ proposalId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await toggleBookmark(input.proposalId, ctx.user.id);
+      } catch (err) {
+        mapCommunitySocialError(err);
+      }
+    }),
+
+  myBookmarks: protectedProcedure.query(({ ctx }) => listMyBookmarkedProposals(ctx.user.id)),
+
+  // ─── F68 — reacción sobre un comentario concreto ───────────────────────────
+
+  toggleCommentLike: protectedProcedure
+    .input(z.object({ commentId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await toggleCommentLike(input.commentId, ctx.user.id);
       } catch (err) {
         mapCommunitySocialError(err);
       }

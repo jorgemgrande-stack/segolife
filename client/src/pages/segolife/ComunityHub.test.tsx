@@ -43,6 +43,8 @@ vi.mock("@/lib/trpc", () => ({
       trending: { useQuery: noopQuery },
       respond: { useMutation: mockRespond },
       submitProposal: { useMutation: mockSubmitProposal },
+      // F68 (Community Engagement avanzado) — SavedProposalsSheet ahora se renderiza siempre en el Hub (bottom sheet de cabecera).
+      myBookmarks: { useQuery: noopQuery },
     },
     venues: { publicActive: { useQuery: mockVenuesPublicActive } },
     tokens: { previewMyReward: { useQuery: noopQuery } },

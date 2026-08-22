@@ -7,6 +7,7 @@ import { trpc } from "@/lib/trpc";
 import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
 import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
+import { SegolifeBottomSheet } from "@/components/segolife/SegolifeBottomSheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
-import { Vote, Coins, Heart, Loader2, Send, Flame, ImagePlus, X, Plus, MapPin, MessageCircle, Share2 } from "lucide-react";
+import { Vote, Coins, Heart, Loader2, Send, Flame, ImagePlus, X, Plus, MapPin, MessageCircle, Share2, Bookmark } from "lucide-react";
 import { QUESTION_TYPES_WITH_OPTIONS, type ComunityQuestionType } from "@/lib/comunity";
 import { initials, relativeTimeLabel, resultHeadline } from "@/lib/comunitySocial";
 
@@ -34,14 +35,25 @@ import { initials, relativeTimeLabel, resultHeadline } from "@/lib/comunitySocia
 export default function ComunityHub() {
   const { t } = useTranslation();
   const { slug } = useCommunity();
+  const [savedOpen, setSavedOpen] = useState(false);
 
   return (
     <SegolifeAppShell requireAuth title="Comunity">
       <SegolifePageContainer className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Vote className="size-5 text-primary" />
-          <h1 className="text-xl font-semibold text-foreground">Comunity</h1>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Vote className="size-5 text-primary" />
+            <h1 className="text-xl font-semibold text-foreground">Comunity</h1>
+          </div>
+          {/* F68 (Community Engagement avanzado) — acceso a "Guardados" desde
+              un botón de cabecera (bottom sheet), no una 5ª pestaña — evita
+              recargar el TabsList ya con 4 pestañas en una pantalla móvil. */}
+          <Button variant="ghost" size="icon" onClick={() => setSavedOpen(true)} aria-label={t("comunity.social.savedTitle")}>
+            <Bookmark className="size-5 text-foreground" />
+          </Button>
         </div>
+
+        <SavedProposalsSheet slug={slug!} open={savedOpen} onOpenChange={setSavedOpen} />
 
         <Tabs defaultValue="activas">
           <TabsList className="w-full">
@@ -215,6 +227,44 @@ function ActivasTab({ slug }: { slug: string }) {
         );
       })}
     </div>
+  );
+}
+
+// ─── F68 (Community Engagement avanzado) — Guardados ───────────────────────
+
+function SavedProposalsSheet({ slug, open, onOpenChange }: { slug: string; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { t } = useTranslation();
+  const { data, isLoading } = trpc.community.myBookmarks.useQuery(undefined, { enabled: open });
+
+  return (
+    <SegolifeBottomSheet open={open} onClose={() => onOpenChange(false)} title={t("comunity.social.savedTitle")}>
+      {isLoading ? (
+        <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
+      ) : !data || data.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-1 py-10 text-center">
+          <Bookmark className="size-8 text-muted-foreground/40" aria-hidden="true" />
+          <p className="text-sm font-medium text-foreground">{t("comunity.social.noSavedYet")}</p>
+          <p className="text-xs text-muted-foreground">{t("comunity.social.noSavedYetDescription")}</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {data.map(p => (
+            <Link key={p.id} href={`/${slug}/comunity/${p.id}`} onClick={() => onOpenChange(false)} className="block rounded-xl border border-border bg-card p-3">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {p.urgencyType === "flash" && (
+                  <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-bold text-amber-600 dark:text-amber-400">⚡ FLASH</span>
+                )}
+                <p className="font-semibold text-foreground truncate">{p.title}</p>
+              </div>
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+                <span>{p.status === "closed" ? t("comunity.statusClosed") : timeLeftLabelI18n(t, p.endsAt)}</span>
+                {p.venueName && <span className="flex items-center gap-0.5">· <MapPin className="size-3" /> {p.venueName}</span>}
+              </p>
+            </Link>
+          ))}
+        </div>
+      )}
+    </SegolifeBottomSheet>
   );
 }
 

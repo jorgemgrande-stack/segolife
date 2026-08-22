@@ -23,6 +23,7 @@ const {
   mockAuthMe, mockHomeSummary, mockStudentsMe, mockUseCommunity,
   mockGetPublicById, mockToggleLike, mockListComments, mockCreateComment, mockDeleteComment, mockRespond,
   mockGetPublicRespondents, mockPreviewMyReward, mockRecordShare,
+  mockToggleBookmark, mockToggleCommentLike,
   noopQuery,
 } = vi.hoisted(() => ({
   mockAuthMe: vi.fn(),
@@ -38,6 +39,11 @@ const {
   mockGetPublicRespondents: vi.fn(),
   mockPreviewMyReward: vi.fn(),
   mockRecordShare: vi.fn(),
+  // F68 (Community Engagement avanzado) — BookmarkButton/CommentRow ahora
+  // renderizan siempre (bookmark ya no depende de showSocialLayer), así que
+  // TODO test de este archivo pasa por aquí, no solo los de F68.
+  mockToggleBookmark: vi.fn(),
+  mockToggleCommentLike: vi.fn(),
   noopQuery: () => ({ data: undefined, isLoading: false }),
 }));
 
@@ -57,6 +63,8 @@ vi.mock("@/lib/trpc", () => ({
       getPublicById: { useQuery: mockGetPublicById },
       getPublicRespondents: { useQuery: mockGetPublicRespondents },
       toggleLike: { useMutation: mockToggleLike },
+      toggleBookmark: { useMutation: mockToggleBookmark },
+      toggleCommentLike: { useMutation: mockToggleCommentLike },
       listComments: { useQuery: mockListComments },
       createComment: { useMutation: mockCreateComment },
       deleteComment: { useMutation: mockDeleteComment },
@@ -139,6 +147,8 @@ beforeEach(async () => {
   mockDeleteComment.mockReturnValue({ mutate: vi.fn(), isPending: false });
   mockRespond.mockReturnValue({ mutate: vi.fn(), isPending: false });
   mockRecordShare.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockToggleBookmark.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockToggleCommentLike.mockReturnValue({ mutate: vi.fn(), isPending: false });
   mockListComments.mockReturnValue({ data: { total: 0, items: [] }, isLoading: false });
 });
 

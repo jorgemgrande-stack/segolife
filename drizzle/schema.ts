@@ -6378,6 +6378,46 @@ export const communityProposalShares = mysqlTable("community_proposal_shares", {
 export type CommunityProposalShare = typeof communityProposalShares.$inferSelect;
 export type InsertCommunityProposalShare = typeof communityProposalShares.$inferInsert;
 
+// ─── COMMUNITY_PROPOSAL_BOOKMARKS (F68 — Community Engagement avanzado) ────
+// "Guardar para más tarde" — a propósito una tabla DISTINTA de
+// community_proposal_likes: un like es una valoración social sobre un
+// resultado ya cerrado (exige assertCanInteract), un bookmark es la acción
+// contraria — guardar algo para volver a encontrarlo, típicamente MIENTRAS
+// sigue activo y el estudiante aún no ha votado. Nunca se gatea con la
+// misma puerta social (ver toggleBookmark en communitySocialDb.ts): solo se
+// exige que la propuesta sea visible para el estudiante
+// (isProposalVisibleToUser), igual que el propio feed de myActive.
+export const communityProposalBookmarks = mysqlTable("community_proposal_bookmarks", {
+  id:           int("id").autoincrement().primaryKey(),
+  proposalId:   int("proposal_id").notNull(),
+  userId:       int("user_id").notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  proposalUserUnique: unique("community_proposal_bookmarks_unique").on(table.proposalId, table.userId),
+  userIdx:      index("community_proposal_bookmarks_user_id_idx").on(table.userId),
+}));
+export type CommunityProposalBookmark = typeof communityProposalBookmarks.$inferSelect;
+export type InsertCommunityProposalBookmark = typeof communityProposalBookmarks.$inferInsert;
+
+// ─── COMMUNITY_COMMENT_LIKES (F68 — Community Engagement avanzado) ─────────
+// Reacción sobre UN comentario concreto — mismo patrón exacto que
+// community_proposal_likes (toggle único por usuario, conteo siempre
+// agregado en vivo), pero a nivel de comentario individual en vez de
+// propuesta completa. Tabla separada a propósito: un mismo usuario puede
+// dar like a la propuesta Y, independientemente, a uno o varios de sus
+// comentarios — son dos dimensiones de reacción distintas.
+export const communityCommentLikes = mysqlTable("community_comment_likes", {
+  id:           int("id").autoincrement().primaryKey(),
+  commentId:    int("comment_id").notNull(),
+  userId:       int("user_id").notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  commentUserUnique: unique("community_comment_likes_unique").on(table.commentId, table.userId),
+  userIdx:      index("community_comment_likes_user_id_idx").on(table.userId),
+}));
+export type CommunityCommentLike = typeof communityCommentLikes.$inferSelect;
+export type InsertCommunityCommentLike = typeof communityCommentLikes.$inferInsert;
+
 // ─── SEGOLIFE: REFERRAL & INVITE REWARDS ENGINE (Fase 8) ───────────────────────
 // Auditado antes de crearse (spec §76-79): dominio de referidos genuinamente
 // nuevo, sin tabla previa equivalente — el único "invite"/"invitation" del
