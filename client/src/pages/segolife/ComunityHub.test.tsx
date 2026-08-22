@@ -24,11 +24,12 @@ if (!Element.prototype.scrollIntoView) {
  * este bug real (no solo "el texto existe", sino "el texto responde al
  * idioma").
  */
-const { mockMyActive, mockSubmitProposal, mockVenuesPublicActive, mockMyProposals, noopQuery, noopMutation } = vi.hoisted(() => ({
+const { mockMyActive, mockSubmitProposal, mockVenuesPublicActive, mockMyProposals, mockRespond, noopQuery, noopMutation } = vi.hoisted(() => ({
   mockMyActive: vi.fn(),
   mockSubmitProposal: vi.fn(),
   mockVenuesPublicActive: vi.fn(),
   mockMyProposals: vi.fn(),
+  mockRespond: vi.fn(),
   noopQuery: () => ({ data: undefined, isLoading: false }),
   noopMutation: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -40,7 +41,7 @@ vi.mock("@/lib/trpc", () => ({
       myResponded: { useQuery: noopQuery },
       myProposals: { useQuery: mockMyProposals },
       trending: { useQuery: noopQuery },
-      respond: { useMutation: noopMutation },
+      respond: { useMutation: mockRespond },
       submitProposal: { useMutation: mockSubmitProposal },
     },
     venues: { publicActive: { useQuery: mockVenuesPublicActive } },
@@ -95,6 +96,7 @@ beforeEach(() => {
   mockVenuesPublicActive.mockReturnValue({ data: [{ id: 5, name: "Casanova" }, { id: 6, name: "Tía Felisa" }], isLoading: false });
   mockSubmitProposal.mockReturnValue({ mutate: vi.fn(), isPending: false });
   mockMyProposals.mockReturnValue({ data: undefined, isLoading: false });
+  mockRespond.mockReturnValue({ mutate: vi.fn(), isPending: false });
   vi.stubGlobal("fetch", vi.fn());
 });
 
@@ -567,5 +569,96 @@ describe("ComunityHub — ProponerTab MG-05: configuración de voto propuesta", 
     renderAt("/ie/comunity");
     await openProposeTab();
     expect(await screen.findByText(/voting: yes \/ no/i)).toBeInTheDocument();
+  });
+});
+
+describe("ComunityHub — Bugfix 'impedir voto múltiple' (2026-08-22): la tarjeta se bloquea tras participar", () => {
+  it("me_apunto ya participado (locked=true, servidor) → 'Already joined' bloqueado, aria-disabled, nunca dispara la mutación al pulsar", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockRespond.mockReturnValue({ mutate: mockMutate, isPending: false });
+    mockMyActive.mockReturnValue({
+      data: [{ id: 1, title: "BBQ night", questionType: "me_apunto", endsAt: new Date(Date.now() + 3600_000), urgencyType: null, hasParticipated: true, locked: true, allowChangeResponse: true }],
+      isLoading: false,
+    });
+    renderAt("/ie/comunity");
+
+    const btn = screen.getByRole("button", { name: /already joined/i });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("button", { name: /i'm in/i })).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(btn);
+    expect(mockMutate).not.toHaveBeenCalled();
+  });
+
+  it("me_apunto sin participar (locked=false) → 'I'm in' sigue activo, al pulsar llama a respond con el payload real", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockRespond.mockReturnValue({ mutate: mockMutate, isPending: false });
+    mockMyActive.mockReturnValue({
+      data: [{ id: 1, title: "BBQ night", questionType: "me_apunto", endsAt: new Date(Date.now() + 3600_000), urgencyType: null, hasParticipated: false, locked: false, allowChangeResponse: true }],
+      isLoading: false,
+    });
+    renderAt("/ie/comunity");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /^🙋 i'm in$/i }));
+    expect(mockMutate).toHaveBeenCalledWith({ proposalId: 1, payload: { questionType: "me_apunto" } });
+  });
+
+  it("yes_no ya participado (locked=true) → estado bloqueado en vez de Yes/No, nunca dispara la mutación", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockRespond.mockReturnValue({ mutate: mockMutate, isPending: false });
+    mockMyActive.mockReturnValue({
+      data: [{ id: 2, title: "Beach party?", questionType: "yes_no", endsAt: new Date(Date.now() + 3600_000), urgencyType: null, hasParticipated: true, locked: true, allowChangeResponse: false }],
+      isLoading: false,
+    });
+    renderAt("/ie/comunity");
+
+    const btn = screen.getByRole("button", { name: /already answered/i });
+    expect(btn).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /yes/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^👎 no$/i })).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(btn);
+    expect(mockMutate).not.toHaveBeenCalled();
+  });
+
+  it("yes_no sin participar → Yes/No siguen activos como siempre (sin regresión)", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockRespond.mockReturnValue({ mutate: mockMutate, isPending: false });
+    mockMyActive.mockReturnValue({
+      data: [{ id: 2, title: "Beach party?", questionType: "yes_no", endsAt: new Date(Date.now() + 3600_000), urgencyType: null, hasParticipated: false, locked: false, allowChangeResponse: true }],
+      isLoading: false,
+    });
+    renderAt("/ie/comunity");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /^👍 yes$/i }));
+    expect(mockMutate).toHaveBeenCalledWith({ proposalId: 2, payload: { questionType: "yes_no", value: "yes" } });
+  });
+
+  it("un intento rechazado como ALREADY_RESPONDED (carrera/doble pestaña) refresca el feed y NO muestra un toast de error redundante", async () => {
+    await i18n.changeLanguage("en");
+    let capturedOnError: ((e: unknown) => void) | undefined;
+    mockRespond.mockImplementation((opts: { onError?: (e: unknown) => void }) => {
+      capturedOnError = opts?.onError;
+      return { mutate: vi.fn(), isPending: false };
+    });
+    mockMyActive.mockReturnValue({
+      data: [{ id: 1, title: "BBQ night", questionType: "me_apunto", endsAt: new Date(Date.now() + 3600_000), urgencyType: null, hasParticipated: false, locked: false, allowChangeResponse: true }],
+      isLoading: false,
+    });
+    renderAt("/ie/comunity");
+
+    expect(capturedOnError).toBeTypeOf("function");
+    // No debe lanzar ni requerir más que refrescar el feed — la propia
+    // tarjeta se bloqueará con el estado real en el siguiente fetch.
+    expect(() => capturedOnError!({ message: "Ya has respondido a esta propuesta y no admite cambios", data: { domainCode: "ALREADY_RESPONDED" } })).not.toThrow();
   });
 });

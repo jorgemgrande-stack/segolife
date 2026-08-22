@@ -50,6 +50,29 @@ export class CommunityResponseError extends Error {
 
 export const OPEN_TEXT_MAX_LENGTH = 1000;
 
+/**
+ * Bugfix "impedir voto múltiple" — `allowChangeResponse` es una función
+ * legítima y admin-configurable (ComunityWizard.tsx/ComunityEditDialog.tsx:
+ * "permitir cambiar la respuesta antes de que cierre la propuesta"), tiene
+ * sentido para tipos de OPINIÓN (yes_no/single_choice/scale_1_5/...). Pero
+ * "me_apunto" ("I'm in") no tiene un valor alternativo al que "cambiar" — es
+ * un compromiso de un solo uso (headcount), nunca una opinión reversible.
+ * Por eso este tipo se trata SIEMPRE como terminal, sin importar el flag del
+ * admin — única fuente de verdad reutilizada tanto por submitResponse()
+ * (backend) como por el feed (community.ts myActive) para decidir si la
+ * tarjeta debe bloquearse.
+ */
+export function canStudentRespondAgain(proposal: Pick<CommunityProposal, "questionType" | "allowChangeResponse">): boolean {
+  return proposal.questionType !== "me_apunto" && proposal.allowChangeResponse;
+}
+
+function isDuplicateKeyError(err: unknown): boolean {
+  const hasErrno1062 = (e: unknown): boolean => !!e && typeof e === "object" && "errno" in e && (e as { errno?: number }).errno === 1062;
+  if (hasErrno1062(err)) return true;
+  const cause = err && typeof err === "object" ? (err as { cause?: unknown }).cause : undefined;
+  return hasErrno1062(cause);
+}
+
 /** Sanitización mínima (spec punto 73): sin HTML arbitrario, longitud acotada. No es un sanitizador HTML completo — solo strip de tags, suficiente porque el texto se renderiza siempre como texto plano en el frontend, nunca con dangerouslySetInnerHTML. */
 export function sanitizeOpenText(raw: string): string {
   return raw.replace(/<[^>]*>/g, "").trim().slice(0, OPEN_TEXT_MAX_LENGTH);
@@ -152,11 +175,18 @@ export async function submitResponse(
   const options = await conn.select().from(communityOptions).where(eq(communityOptions.proposalId, proposalId)) as CommunityOption[];
   const valueRows = buildValueRows(payload, options);
 
+  const canChange = canStudentRespondAgain(proposal);
+
   const [existing] = await (conn as DbHandle).select().from(communityResponses)
     .where(and(eq(communityResponses.proposalId, proposalId), eq(communityResponses.userId, userId))).limit(1);
 
-  if (existing && !proposal.allowChangeResponse) {
+  if (existing && !canChange) {
     throw new CommunityResponseError("ALREADY_RESPONDED", "Ya has respondido a esta propuesta y no admite cambios");
+  }
+
+  async function overwriteExistingResponse(id: number): Promise<void> {
+    await (conn as DbHandle).update(communityResponses).set({ updatedAt: new Date() }).where(eq(communityResponses.id, id));
+    await (conn as DbHandle).delete(communityResponseValues).where(eq(communityResponseValues.responseId, id));
   }
 
   let responseId: number;
@@ -165,12 +195,31 @@ export async function submitResponse(
   if (existing) {
     responseId = existing.id;
     isFirstResponse = false;
-    await (conn as DbHandle).update(communityResponses).set({ updatedAt: new Date() }).where(eq(communityResponses.id, responseId));
-    await (conn as DbHandle).delete(communityResponseValues).where(eq(communityResponseValues.responseId, responseId));
+    await overwriteExistingResponse(responseId);
   } else {
-    const insertResult = await (conn as DbHandle).insert(communityResponses).values({ proposalId, userId });
-    responseId = (insertResult as unknown as [{ insertId: number }])[0].insertId;
-    isFirstResponse = true;
+    try {
+      const insertResult = await (conn as DbHandle).insert(communityResponses).values({ proposalId, userId });
+      responseId = (insertResult as unknown as [{ insertId: number }])[0].insertId;
+      isFirstResponse = true;
+    } catch (err) {
+      // Carrera real (doble click, dos pestañas, reintento de red): entre
+      // nuestro SELECT y este INSERT, otra petición concurrente para el
+      // MISMO (proposalId,userId) ya ganó — el UNIQUE(proposal_id,user_id)
+      // real de community_responses (última garantía, nunca solo el SELECT
+      // previo) es quien lo detecta. Nunca dejar escapar un 500 genérico:
+      // releemos la fila que la otra petición ya creó y aplicamos la MISMA
+      // regla de negocio que si la hubiéramos visto desde el principio.
+      if (!isDuplicateKeyError(err)) throw err;
+      const [raced] = await (conn as DbHandle).select().from(communityResponses)
+        .where(and(eq(communityResponses.proposalId, proposalId), eq(communityResponses.userId, userId))).limit(1);
+      if (!raced) throw err; // no debería ocurrir nunca — no ocultar un error real desconocido
+      if (!canChange) {
+        throw new CommunityResponseError("ALREADY_RESPONDED", "Ya has respondido a esta propuesta y no admite cambios");
+      }
+      responseId = raced.id;
+      isFirstResponse = false;
+      await overwriteExistingResponse(responseId);
+    }
   }
 
   for (const row of valueRows) {
@@ -211,6 +260,20 @@ export async function getUserResponse(proposalId: number, userId: number, db?: A
   if (!response) return null;
   const values = await (conn as DbHandle).select().from(communityResponseValues).where(eq(communityResponseValues.responseId, response.id));
   return { response, values };
+}
+
+/**
+ * Batch, sin N+1 (spec "Bugfix: impedir voto múltiple" §4) — de una lista de
+ * propuestas, cuáles ya tienen respuesta de este usuario. Usado por
+ * community.ts (myActive) para que el feed conozca `hasParticipated` con UNA
+ * sola query, nunca una por tarjeta.
+ */
+export async function getRespondedProposalIds(proposalIds: number[], userId: number, db?: AnyDbHandle): Promise<Set<number>> {
+  if (proposalIds.length === 0) return new Set();
+  const conn = (db ?? (await getDb())) as DbHandle;
+  const rows = await conn.select({ proposalId: communityResponses.proposalId }).from(communityResponses)
+    .where(and(inArray(communityResponses.proposalId, proposalIds), eq(communityResponses.userId, userId)));
+  return new Set(rows.map(r => r.proposalId));
 }
 
 export async function countResponses(proposalId: number, db?: AnyDbHandle): Promise<number> {

@@ -88,7 +88,18 @@ function ActivasTab({ slug }: { slug: string }) {
   const utils = trpc.useUtils();
   const respondMut = trpc.community.respond.useMutation({
     onSuccess: () => { toast.success(t("comunity.voteRegistered")); utils.community.myActive.invalidate(); utils.community.myResponded.invalidate(); },
-    onError: e => toast.error(e.message),
+    onError: e => {
+      // Bugfix "impedir voto múltiple" — un segundo intento (doble click, dos
+      // pestañas, carrera) puede llegar aquí como CONFLICT/ALREADY_RESPONDED
+      // real del servidor. Refrescar SIEMPRE el feed: la tarjeta se bloqueará
+      // sola con el estado real, sin necesidad de un toast redundante para
+      // ese caso concreto. domainCode viene del errorFormatter (server/_core/
+      // trpc.ts) — nunca string-matching sobre e.message (siempre en español).
+      utils.community.myActive.invalidate();
+      const domainCode = (e.data as { domainCode?: string } | undefined)?.domainCode;
+      if (domainCode === "ALREADY_RESPONDED") return;
+      toast.error(domainCode === "CLOSED" ? t("comunity.participationClosed") : t("comunity.participationError"));
+    },
   });
 
   // SEGOTOKENS REWARD PREVIEW (Fase 10.6) — la regla COMMUNITY_RESPONSE es
@@ -139,14 +150,27 @@ function ActivasTab({ slug }: { slug: string }) {
             </div>
           </Link>
 
-          {/* Respuesta rápida desde la card (spec punto 24) — solo tipos seguros sin abrir detalle */}
+          {/* Respuesta rápida desde la card (spec punto 24) — solo tipos seguros sin abrir detalle.
+              Bugfix "impedir voto múltiple" (2026-08-22): `p.locked` viene YA calculado por el
+              servidor (myActive, community.ts — misma regla que submitResponse()/
+              canStudentRespondAgain, nunca una copia divergente aquí). Una vez bloqueada, la
+              tarjeta deja de ser una acción disponible: sin onClick, `disabled` real (no solo
+              visual) y `aria-disabled` explícito — nunca se oculta el botón sin informar. */}
           {p.questionType === "yes_no" ? (
-            <div className="mt-3 flex gap-2">
-              <Button size="sm" className="flex-1" variant="outline" disabled={respondMut.isPending} onClick={() => respondMut.mutate({ proposalId: p.id, payload: { questionType: "yes_no", value: "yes" } })}>{t("comunity.yes")}</Button>
-              <Button size="sm" className="flex-1" variant="outline" disabled={respondMut.isPending} onClick={() => respondMut.mutate({ proposalId: p.id, payload: { questionType: "yes_no", value: "no" } })}>{t("comunity.no")}</Button>
-            </div>
+            p.locked ? (
+              <Button size="sm" className="w-full mt-3" variant="secondary" disabled aria-disabled="true">{t("comunity.alreadyAnswered")}</Button>
+            ) : (
+              <div className="mt-3 flex gap-2">
+                <Button size="sm" className="flex-1" variant="outline" disabled={respondMut.isPending} onClick={() => respondMut.mutate({ proposalId: p.id, payload: { questionType: "yes_no", value: "yes" } })}>{t("comunity.yes")}</Button>
+                <Button size="sm" className="flex-1" variant="outline" disabled={respondMut.isPending} onClick={() => respondMut.mutate({ proposalId: p.id, payload: { questionType: "yes_no", value: "no" } })}>{t("comunity.no")}</Button>
+              </div>
+            )
           ) : p.questionType === "me_apunto" ? (
-            <Button size="sm" className="w-full mt-3" disabled={respondMut.isPending} onClick={() => respondMut.mutate({ proposalId: p.id, payload: { questionType: "me_apunto" } })}>{t("comunity.imIn")}</Button>
+            p.locked ? (
+              <Button size="sm" className="w-full mt-3" variant="secondary" disabled aria-disabled="true">{t("comunity.alreadyJoined")}</Button>
+            ) : (
+              <Button size="sm" className="w-full mt-3" disabled={respondMut.isPending} onClick={() => respondMut.mutate({ proposalId: p.id, payload: { questionType: "me_apunto" } })}>{t("comunity.imIn")}</Button>
+            )
           ) : (
             <Link href={`/${slug}/comunity/${p.id}`}><Button size="sm" variant="outline" className="w-full mt-3">{t("comunity.respond")}</Button></Link>
           )}

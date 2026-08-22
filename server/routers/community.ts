@@ -15,7 +15,7 @@ import {
   canAccessSocialLayer,
 } from "../segolife/community/communityDb";
 import { previewProposalAudience, publishProposal, CommunityPublishError } from "../segolife/community/communityAudienceService";
-import { submitResponse, getUserResponse, CommunityResponseError, type ResponsePayload } from "../segolife/community/communityResponseService";
+import { submitResponse, getUserResponse, getRespondedProposalIds, CommunityResponseError, canStudentRespondAgain, type ResponsePayload } from "../segolife/community/communityResponseService";
 import { getProposalResults, getProposalRespondents } from "../segolife/community/communityResultsService";
 import { computeCommunityScore } from "../segolife/community/communityScoreService";
 import { isPositiveRespondent, isPositiveAttendanceIntention, attendanceIntentionFromCode } from "../segolife/community/communityIntentService";
@@ -490,7 +490,28 @@ export const communityRouter = router({
     const venueRows = venueIds.length ? await db.select({ id: venues.id, name: venues.name }).from(venues).where(inArray(venues.id, venueIds)) : [];
     const venueNameById = new Map(venueRows.map(v => [v.id, v.name]));
 
-    return open.map(p => ({ ...p, venueName: p.venueId != null ? (venueNameById.get(p.venueId) ?? null) : null }));
+    // Bugfix "impedir voto múltiple" (2026-08-22): esta query nunca devolvía
+    // si el Student YA había respondido — el botón rápido de la tarjeta
+    // ("I'm in"/Yes/No) se renderizaba siempre disponible, sin importar la
+    // participación real, y cada click volvía a "tener éxito" en el backend
+    // (allowChangeResponse=true por defecto en TODAS las propuestas reales).
+    // getRespondedProposalIds ya es batch (WHERE proposalId IN (...)), nunca
+    // una query por tarjeta.
+    const respondedIds = await getRespondedProposalIds(open.map(p => p.id), ctx.user.id);
+
+    return open.map(p => {
+      const hasParticipated = respondedIds.has(p.id);
+      return {
+        ...p,
+        venueName: p.venueId != null ? (venueNameById.get(p.venueId) ?? null) : null,
+        hasParticipated,
+        // Misma regla que submitResponse() (communityResponseService.ts) —
+        // nunca una copia divergente de "¿puede este Student volver a
+        // responder?" (spec "listado y detalle deben utilizar la misma
+        // fuente de verdad").
+        locked: hasParticipated && !canStudentRespondAgain(p),
+      };
+    });
   }),
 
   myResponded: protectedProcedure.query(async ({ ctx }) => {
@@ -753,7 +774,12 @@ export const communityRouter = router({
       } catch (err) {
         if (err instanceof CommunityResponseError) {
           const httpCode = err.code === "ALREADY_RESPONDED" ? "CONFLICT" : err.code === "CLOSED" ? "BAD_REQUEST" : err.code === "NOT_FOUND" ? "NOT_FOUND" : "BAD_REQUEST";
-          throw new TRPCError({ code: httpCode, message: err.message });
+          // cause: err → errorFormatter (server/_core/trpc.ts) expone
+          // data.domainCode = err.code, para que el frontend distinga
+          // ALREADY_RESPONDED/CLOSED/etc. sin hacer string-matching sobre
+          // err.message (que es siempre texto en español) — mismo mecanismo
+          // ya usado por consumptionQr/benefits.
+          throw new TRPCError({ code: httpCode, message: err.message, cause: err });
         }
         throw err;
       }

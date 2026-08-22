@@ -23,7 +23,7 @@ const {
   mockGetLikeState, mockToggleLike, mockListComments, mockCreateComment, mockDeleteOwnComment, mockModerateComment,
   mockGetCommentCountsBatch, mockGetLikeCountsBatch, mockResolveProposalAuthor,
   mockNotifyProposalCommented, mockNotifyCommentReplied, mockGetProposalCommunityIds,
-  mockRecordShare, mockGetShareCountsBatch,
+  mockRecordShare, mockGetShareCountsBatch, mockSubmitResponse,
 } = vi.hoisted(() => ({
   mockGetUserCommunities: vi.fn(),
   mockSubmitStudentProposal: vi.fn(),
@@ -56,6 +56,7 @@ const {
   mockGetProposalCommunityIds: vi.fn(),
   mockRecordShare: vi.fn(),
   mockGetShareCountsBatch: vi.fn(),
+  mockSubmitResponse: vi.fn(),
 }));
 vi.mock("../db/communitiesDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../db/communitiesDb")>();
@@ -100,7 +101,7 @@ vi.mock("../segolife/community/communityDb", async (importOriginal) => {
 });
 vi.mock("../segolife/community/communityResponseService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/community/communityResponseService")>();
-  return { ...actual, getUserResponse: mockGetUserResponse };
+  return { ...actual, getUserResponse: mockGetUserResponse, submitResponse: mockSubmitResponse };
 });
 vi.mock("../segolife/community/communityResultsService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/community/communityResultsService")>();
@@ -684,5 +685,34 @@ describe("COM-02 — Community Social Results: likes/comentarios, siempre re-aut
     mockGetCommunityAccess.mockResolvedValue("all");
     await callerAsAdmin(1).adminListComments({ proposalId: 10, limit: 50, offset: 0 });
     expect(mockListComments).toHaveBeenCalledWith(10, 1, { limit: 50, offset: 0 }, true);
+  });
+});
+
+describe("Bugfix 'impedir voto múltiple' (2026-08-22) — respond: delegación + mapeo de error sin string-matching", () => {
+  beforeEach(() => { mockSubmitResponse.mockReset(); });
+
+  it("respond rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().respond({ proposalId: 1, payload: { questionType: "me_apunto" } })).rejects.toThrow(/please login/i);
+  });
+
+  it("delega directamente en submitResponse() y devuelve success:true + el resultado", async () => {
+    mockSubmitResponse.mockResolvedValue({ response: { id: 10 }, rewardGranted: true });
+    const result = await callerAs(42).respond({ proposalId: 1, payload: { questionType: "me_apunto" } });
+    expect(mockSubmitResponse).toHaveBeenCalledWith(1, 42, { questionType: "me_apunto" });
+    expect(result).toMatchObject({ success: true, rewardGranted: true });
+  });
+
+  it("ALREADY_RESPONDED (2º intento — repro exacto del bug) → CONFLICT, con la causa de dominio propagada para el frontend (nunca string-matching sobre el mensaje)", async () => {
+    const { CommunityResponseError } = await vi.importActual<typeof import("../segolife/community/communityResponseService")>("../segolife/community/communityResponseService");
+    mockSubmitResponse.mockRejectedValue(new CommunityResponseError("ALREADY_RESPONDED", "Ya has respondido a esta propuesta y no admite cambios"));
+    await expect(callerAs(42).respond({ proposalId: 1, payload: { questionType: "me_apunto" } }))
+      .rejects.toMatchObject({ code: "CONFLICT", cause: expect.objectContaining({ code: "ALREADY_RESPONDED" }) });
+  });
+
+  it("CLOSED → BAD_REQUEST, nunca un 500 genérico", async () => {
+    const { CommunityResponseError } = await vi.importActual<typeof import("../segolife/community/communityResponseService")>("../segolife/community/communityResponseService");
+    mockSubmitResponse.mockRejectedValue(new CommunityResponseError("CLOSED", "Esta propuesta no está abierta para respuestas ahora mismo"));
+    await expect(callerAs(42).respond({ proposalId: 1, payload: { questionType: "me_apunto" } }))
+      .rejects.toMatchObject({ code: "BAD_REQUEST", cause: expect.objectContaining({ code: "CLOSED" }) });
   });
 });

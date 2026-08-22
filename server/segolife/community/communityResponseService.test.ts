@@ -11,7 +11,7 @@ vi.mock("./communityDb", async (importOriginal) => {
 });
 vi.mock("../tokens/tokenEngine", () => ({ earnTokens: mockEarnTokens }));
 
-import { buildValueRows, sanitizeOpenText, OPEN_TEXT_MAX_LENGTH, CommunityResponseError, submitResponse, type ResponsePayload } from "./communityResponseService";
+import { buildValueRows, sanitizeOpenText, OPEN_TEXT_MAX_LENGTH, CommunityResponseError, submitResponse, canStudentRespondAgain, getRespondedProposalIds, type ResponsePayload } from "./communityResponseService";
 
 function option(overrides: Partial<CommunityOption> = {}): CommunityOption {
   return { id: 1, proposalId: 1, label: "Opción", sortOrder: 0, isPositiveIntent: false, createdAt: new Date(), ...overrides } as CommunityOption;
@@ -111,9 +111,19 @@ function proposalFixture(overrides: Partial<CommunityProposal> = {}): CommunityP
   } as CommunityProposal;
 }
 
-function fakeDb(opts: { options?: CommunityOption[]; existingResponse?: Record<string, unknown> | null } = {}) {
+function fakeDb(opts: {
+  options?: CommunityOption[];
+  existingResponse?: Record<string, unknown> | null;
+  // Simula una carrera real (spec "Bugfix: impedir voto múltiple", §9): el
+  // SELECT previo no ve nada, pero para cuando este INSERT se ejecuta, OTRA
+  // petición concurrente ya comprometió esta fila — el INSERT debe fallar
+  // como lo haría el UNIQUE(proposal_id,user_id) real de MySQL (errno 1062),
+  // y la fila pasa a estar "visible" para cualquier SELECT posterior.
+  raceOnInsert?: Record<string, unknown>;
+} = {}) {
   let responseRow: Record<string, unknown> | null = opts.existingResponse ?? null;
   let nextId = 900;
+  let insertAttempts = 0;
 
   function selectFrom(table: unknown) {
     const chain: Record<string, unknown> = {};
@@ -132,6 +142,13 @@ function fakeDb(opts: { options?: CommunityOption[]; existingResponse?: Record<s
     insert: (table: unknown) => ({
       values: (v: Record<string, unknown>) => {
         if (table === communityResponses) {
+          insertAttempts++;
+          if (opts.raceOnInsert) {
+            responseRow = opts.raceOnInsert;
+            const err = new Error("ER_DUP_ENTRY") as Error & { errno: number };
+            err.errno = 1062;
+            return Promise.reject(err);
+          }
           responseRow = { id: nextId, proposalId: v.proposalId, userId: v.userId, respondedAt: new Date(), updatedAt: new Date(), rewardGranted: false, tokenLedgerId: null };
           return Promise.resolve([{ insertId: nextId }]);
         }
@@ -149,7 +166,7 @@ function fakeDb(opts: { options?: CommunityOption[]; existingResponse?: Record<s
     delete: () => ({ where: () => Promise.resolve() }),
   };
 
-  return { db: db as never, getResponseRow: () => responseRow };
+  return { db: db as never, getResponseRow: () => responseRow, getInsertAttempts: () => insertAttempts };
 }
 
 describe("submitResponse — recompensa vía earnTokens() (nunca postLedgerMovement directo)", () => {
@@ -190,5 +207,113 @@ describe("submitResponse — recompensa vía earnTokens() (nunca postLedgerMovem
 
     expect(result.rewardGranted).toBe(false);
     expect(getResponseRow()).not.toBeNull(); // la respuesta SÍ quedó persistida
+  });
+});
+
+describe("canStudentRespondAgain — única fuente de verdad (submitResponse() Y myActive del feed)", () => {
+  it("me_apunto: siempre false, incluso con allowChangeResponse=true — no hay valor alternativo al que 'cambiar'", () => {
+    expect(canStudentRespondAgain({ questionType: "me_apunto", allowChangeResponse: true })).toBe(false);
+    expect(canStudentRespondAgain({ questionType: "me_apunto", allowChangeResponse: false })).toBe(false);
+  });
+
+  it("yes_no/otros tipos: refleja allowChangeResponse tal cual (comportamiento admin existente, sin cambios)", () => {
+    expect(canStudentRespondAgain({ questionType: "yes_no", allowChangeResponse: true })).toBe(true);
+    expect(canStudentRespondAgain({ questionType: "yes_no", allowChangeResponse: false })).toBe(false);
+    expect(canStudentRespondAgain({ questionType: "scale_1_5", allowChangeResponse: true })).toBe(true);
+  });
+});
+
+describe("getRespondedProposalIds — batch sin N+1 (spec 'Bugfix: impedir voto múltiple' §4)", () => {
+  it("array vacío → Set vacío, sin consultar la BD en absoluto", async () => {
+    const selectSpy = vi.fn();
+    const result = await getRespondedProposalIds([], 42, { select: selectSpy } as never);
+    expect(result).toEqual(new Set());
+    expect(selectSpy).not.toHaveBeenCalled();
+  });
+
+  it("UNA sola query (nunca una por proposalId) devuelve el conjunto ya respondido por ese userId", async () => {
+    const whereSpy = vi.fn().mockResolvedValue([{ proposalId: 5 }, { proposalId: 9 }]);
+    const fromSpy = vi.fn(() => ({ where: whereSpy }));
+    const selectSpy = vi.fn(() => ({ from: fromSpy }));
+
+    const result = await getRespondedProposalIds([5, 6, 9], 42, { select: selectSpy } as never);
+
+    expect(result).toEqual(new Set([5, 9]));
+    expect(selectSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("submitResponse — Bugfix 'impedir voto múltiple' (2026-08-22): me_apunto terminal + concurrencia real", () => {
+  beforeEach(() => { mockGetProposalById.mockReset(); mockEarnTokens.mockReset(); });
+
+  it("me_apunto ya respondido, INCLUSO con allowChangeResponse=true → ALREADY_RESPONDED, nunca reescribe silenciosamente (repro exacto del bug reportado)", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ questionType: "me_apunto", allowChangeResponse: true }));
+    const { db } = fakeDb({ existingResponse: { id: 10, proposalId: 1, userId: 42, rewardGranted: true, tokenLedgerId: 555 } });
+
+    await expect(submitResponse(1, 42, { questionType: "me_apunto" }, db)).rejects.toMatchObject({ code: "ALREADY_RESPONDED" });
+    expect(mockEarnTokens).not.toHaveBeenCalled();
+  });
+
+  it("yes_no ya respondido con allowChangeResponse=true → sigue permitiendo cambiar de respuesta (feature admin existente, sin regresión)", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ questionType: "yes_no", allowChangeResponse: true }));
+    const { db, getResponseRow } = fakeDb({ existingResponse: { id: 10, proposalId: 1, userId: 42, rewardGranted: true, tokenLedgerId: 555 } });
+
+    const result = await submitResponse(1, 42, { questionType: "yes_no", value: "no" }, db);
+    expect(result.response.id).toBe(10);
+    expect(mockEarnTokens).not.toHaveBeenCalled(); // no es la primera respuesta, nunca vuelve a premiar
+    expect(getResponseRow()).not.toBeNull();
+  });
+
+  it("yes_no ya respondido con allowChangeResponse=false → ALREADY_RESPONDED (comportamiento existente, sin cambios)", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ questionType: "yes_no", allowChangeResponse: false }));
+    const { db } = fakeDb({ existingResponse: { id: 10, proposalId: 1, userId: 42, rewardGranted: true, tokenLedgerId: 555 } });
+
+    await expect(submitResponse(1, 42, { questionType: "yes_no", value: "no" }, db)).rejects.toMatchObject({ code: "ALREADY_RESPONDED" });
+  });
+
+  it("CONCURRENCIA — dos peticiones casi simultáneas de me_apunto: el UNIQUE real de BD gana la carrera, la segunda se resuelve como ALREADY_RESPONDED (nunca un 500 genérico, nunca doble recompensa)", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ questionType: "me_apunto", allowChangeResponse: true }));
+    // existingResponse null → el SELECT previo no ve nada (como en una carrera
+    // real), pero el INSERT falla porque la OTRA petición ya ganó.
+    const { db, getInsertAttempts } = fakeDb({
+      raceOnInsert: { id: 77, proposalId: 1, userId: 42, rewardGranted: true, tokenLedgerId: 999 },
+    });
+
+    await expect(submitResponse(1, 42, { questionType: "me_apunto" }, db)).rejects.toMatchObject({ code: "ALREADY_RESPONDED" });
+    expect(mockEarnTokens).not.toHaveBeenCalled(); // la petición que pierde la carrera JAMÁS concede recompensa
+    expect(getInsertAttempts()).toBe(1); // un único intento real de INSERT, nunca un reintento ciego
+  });
+
+  it("CONCURRENCIA — tipo con allowChangeResponse=true (no me_apunto): tras perder la carrera, actualiza la fila que la otra petición ya creó en vez de fallar", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ questionType: "yes_no", allowChangeResponse: true }));
+    const { db, getResponseRow } = fakeDb({
+      raceOnInsert: { id: 77, proposalId: 1, userId: 42, rewardGranted: false, tokenLedgerId: null },
+    });
+
+    const result = await submitResponse(1, 42, { questionType: "yes_no", value: "yes" }, db);
+    expect(result.response.id).toBe(77);
+    expect(result.rewardGranted).toBe(false); // no es la ganadora de la carrera → nunca llama a earnTokens
+    expect(mockEarnTokens).not.toHaveBeenCalled();
+    expect(getResponseRow()).not.toBeNull();
+  });
+
+  it("CONCURRENCIA — tipo sin allowChangeResponse: tras perder la carrera, también ALREADY_RESPONDED (nunca un 500 genérico)", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ questionType: "yes_no", allowChangeResponse: false }));
+    const { db } = fakeDb({
+      raceOnInsert: { id: 77, proposalId: 1, userId: 42, rewardGranted: false, tokenLedgerId: null },
+    });
+
+    await expect(submitResponse(1, 42, { questionType: "yes_no", value: "yes" }, db)).rejects.toMatchObject({ code: "ALREADY_RESPONDED" });
+    expect(mockEarnTokens).not.toHaveBeenCalled();
+  });
+
+  it("un error de INSERT que NO es de clave duplicada nunca se confunde con una carrera — se propaga tal cual", async () => {
+    mockGetProposalById.mockResolvedValue(proposalFixture({ questionType: "me_apunto", allowChangeResponse: true }));
+    const { db } = fakeDb();
+    (db as unknown as { insert: (t: unknown) => { values: () => Promise<never> } }).insert = () => ({
+      values: () => Promise.reject(new Error("connection reset")),
+    });
+
+    await expect(submitResponse(1, 42, { questionType: "me_apunto" }, db)).rejects.toThrow("connection reset");
   });
 });
