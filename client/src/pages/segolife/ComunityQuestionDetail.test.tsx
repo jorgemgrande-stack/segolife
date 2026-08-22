@@ -102,6 +102,8 @@ function proposalFixture(overrides: Partial<Record<string, unknown>> = {}) {
     },
     options: [],
     myResponse: { response: {}, values: [] },
+    hasResponded: true,
+    showSocialLayer: true,
     results: { totalResponses: 2, totalAudience: 5, participationRate: 40, meApunto: { count: 2 } },
     isOpen: false,
     author: null,
@@ -142,15 +144,66 @@ afterEach(() => {
   i18n.changeLanguage("en");
 });
 
-describe("ComunityQuestionDetail — propuesta ACTIVA: el flujo de votación existente no se toca (regresión)", () => {
-  it("una propuesta activa sigue mostrando VoteForm, nunca la ficha social", async () => {
+describe("ComunityQuestionDetail — propuesta ACTIVA sin responder: el flujo de votación existente no se toca (regresión)", () => {
+  it("una propuesta activa sin respuesta propia sigue mostrando VoteForm, nunca la ficha social", async () => {
     mockGetPublicById.mockReturnValue({
-      data: proposalFixture({ proposal: { ...proposalFixture().proposal, status: "active" }, isOpen: true, myResponse: null }),
+      data: proposalFixture({
+        proposal: { ...proposalFixture().proposal, status: "active" },
+        isOpen: true, myResponse: null, hasResponded: false, showSocialLayer: false,
+      }),
       isLoading: false,
     });
     renderAt("/ie/comunity/5");
     expect(await screen.findByText(/i'm in/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/comments/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("ComunityQuestionDetail — COM-02B: propuesta ACTIVA pero ya respondida entra en la ficha social", () => {
+  it("con showSocialLayer=true (activa + ya respondió) muestra la ficha social, no el VoteForm", async () => {
+    mockGetPublicById.mockReturnValue({
+      data: proposalFixture({
+        proposal: { ...proposalFixture().proposal, status: "active" },
+        isOpen: true, showSocialLayer: true, hasResponded: true,
+      }),
+      isLoading: false,
+    });
+    renderAt("/ie/comunity/5");
+    expect(await screen.findByLabelText(/comments/i)).toBeInTheDocument();
+    expect(screen.queryByText(/i'm in/i)).not.toBeInTheDocument();
+  });
+
+  it("muestra 'Voting open' + tiempo restante y 'You already participated' — nunca 'Voting finished' (spec §6/§20, no aparentar cierre)", async () => {
+    mockGetPublicById.mockReturnValue({
+      data: proposalFixture({
+        proposal: { ...proposalFixture().proposal, status: "active", endsAt: new Date(Date.now() + 36 * 3600 * 1000) },
+        isOpen: true, showSocialLayer: true, hasResponded: true,
+      }),
+      isLoading: false,
+    });
+    renderAt("/ie/comunity/5");
+    expect(await screen.findByText("Voting open")).toBeInTheDocument();
+    expect(await screen.findByText("You already participated")).toBeInTheDocument();
+    expect(screen.queryByText("Voting finished")).not.toBeInTheDocument();
+  });
+
+  it("propuesta CERRADA sigue mostrando 'Voting finished' (regresión COM-02, spec §21)", async () => {
+    mockGetPublicById.mockReturnValue({ data: proposalFixture(), isLoading: false }); // default: status="closed"
+    renderAt("/ie/comunity/5");
+    expect(await screen.findByText("Voting finished")).toBeInTheDocument();
+  });
+
+  it("muestra 'Your response: X' para un tipo simple (yes_no) sin perder el rastro del voto propio", async () => {
+    mockGetPublicById.mockReturnValue({
+      data: proposalFixture({
+        proposal: { ...proposalFixture().proposal, status: "active", questionType: "yes_no", endsAt: new Date(Date.now() + 3600 * 1000) },
+        isOpen: true, showSocialLayer: true, hasResponded: true,
+        myResponse: { response: {}, values: [{ optionId: null, valueText: "yes", valueNumber: null }] },
+      }),
+      isLoading: false,
+    });
+    renderAt("/ie/comunity/5");
+    expect(await screen.findByText(/Your response:.*Yes/)).toBeInTheDocument();
   });
 });
 

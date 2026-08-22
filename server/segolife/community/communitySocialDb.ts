@@ -15,11 +15,12 @@ import { eq, and, inArray, desc, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import {
-  communityProposalComments, communityProposalLikes, communityProposals,
+  communityProposalComments, communityProposalLikes,
   communityStudentProposals, users,
   type CommunityProposalComment,
 } from "../../../drizzle/schema";
-import { isProposalVisibleToUser, type AnyDbHandle } from "./communityDb";
+import { isProposalVisibleToUser, canAccessSocialLayer, getProposalById, type AnyDbHandle } from "./communityDb";
+import { isProposalRespondent } from "./communityResultsService";
 
 const _pool = mysql.createPool({ uri: process.env.DATABASE_URL!, connectionLimit: 3 });
 const _db = drizzle(_pool);
@@ -49,21 +50,23 @@ function assertValidContent(content: string): string {
 }
 
 /**
- * Reglas comunes de "¿puede userId comentar/dar like a esta propuesta?"
- * (spec §19): existe, pertenece a su comunidad (isProposalVisibleToUser,
- * spec §18), y está finalizada — comentarios sociales = propuestas
- * finalizadas/resultados (spec §19, "si la arquitectura recomienda permitir
- * también durante Active, documentarlo como evolución futura, no hacerlo
- * silenciosamente" — ver informe final COM-02, sección AV).
+ * Reglas comunes de "¿puede userId comentar/leer comentarios/dar like a
+ * esta propuesta?" (spec COM-02B §3/§14/§19): existe, pertenece a su
+ * comunidad (isProposalVisibleToUser, spec §18), y está finalizada O activa
+ * con userId ya respondida (canAccessSocialLayer, communityDb.ts — misma
+ * política que ahora usa getPublicById, nunca una segunda copia). Antes
+ * exigía únicamente status="closed" (ver informe COM-02 sección AV,
+ * "documentado como evolución futura") — COM-02B implementa esa evolución.
  */
 async function assertCanInteract(proposalId: number, userId: number, conn: DbHandle): Promise<void> {
-  const [proposal] = await conn.select({ id: communityProposals.id, status: communityProposals.status }).from(communityProposals).where(eq(communityProposals.id, proposalId)).limit(1);
+  const proposal = await getProposalById(proposalId, conn);
   if (!proposal) throw new CommunitySocialError("NOT_FOUND", "Propuesta no encontrada.");
   if (!(await isProposalVisibleToUser(proposalId, userId, conn))) {
     throw new CommunitySocialError("FORBIDDEN", "No tienes acceso a esta propuesta.");
   }
-  if (proposal.status !== "closed") {
-    throw new CommunitySocialError("NOT_CLOSED", "Los comentarios se habilitan cuando la propuesta finaliza.");
+  const hasResponded = await isProposalRespondent(proposalId, userId, conn);
+  if (!canAccessSocialLayer(proposal.status, hasResponded)) {
+    throw new CommunitySocialError("NOT_CLOSED", "Los comentarios y likes se habilitan al participar en la propuesta, o cuando esta finaliza.");
   }
 }
 
@@ -165,6 +168,15 @@ export async function listComments(
   proposalId: number, viewerUserId: number, opts: { limit: number; offset: number }, includeHidden = false, db?: AnyDbHandle
 ): Promise<{ total: number; items: CommentWithAuthor[] }> {
   const conn = (db ?? (await getDb())) as DbHandle;
+  // includeHidden=true SOLO lo pasa la vista de moderación Admin (ya exige
+  // community.view/community.moderate en el router) — un Admin no "participa"
+  // en la propuesta, así que la puerta social (assertCanInteract) NUNCA se le
+  // aplica. Un Student (includeHidden=false, spec COM-02B §16: leer
+  // comentarios antes de participar podría condicionar el voto) sí pasa por
+  // la MISMA puerta que crear comentario/dar like — nunca una copia distinta.
+  if (!includeHidden) {
+    await assertCanInteract(proposalId, viewerUserId, conn);
+  }
   const hiddenFilter = includeHidden ? [] : [eq(communityProposalComments.isHidden, false)];
 
   const [totalRow] = await conn.select({ count: sql<number>`COUNT(*)` }).from(communityProposalComments)

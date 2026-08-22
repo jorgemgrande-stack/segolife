@@ -10,9 +10,9 @@ import { describe, it, expect } from "vitest";
 import {
   createComment, deleteOwnComment, moderateComment,
   toggleLike, getLikeCountsBatch, getCommentCountsBatch,
-  resolveProposalAuthor,
+  resolveProposalAuthor, listComments,
 } from "./communitySocialDb";
-import { communityProposals, communityProposalComments, communityProposalLikes, communityStudentProposals, users, userCommunities, communityProposalCommunities } from "../../../drizzle/schema";
+import { communityProposals, communityProposalComments, communityProposalLikes, communityStudentProposals, users, userCommunities, communityProposalCommunities, communityResponses } from "../../../drizzle/schema";
 
 const NOW = new Date("2026-08-22T12:00:00.000Z");
 
@@ -29,6 +29,7 @@ function fakeDb(opts: {
   proposalCommunityLinks?: Array<{ proposalId: number; communityId: number }>;
   usersTable?: Array<{ id: number; name: string | null; avatarStorageKey: string | null }>;
   studentProposals?: Array<{ id: number; studentUserId: number }>;
+  responses?: Array<{ id: number; proposalId: number; userId: number }>;
 }) {
   const proposals = opts.proposals ?? [proposalRow()];
   const comments = opts.comments ?? [];
@@ -37,6 +38,7 @@ function fakeDb(opts: {
   const proposalCommunityLinks = opts.proposalCommunityLinks ?? [];
   const usersTable = opts.usersTable ?? [];
   const studentProposals = opts.studentProposals ?? [];
+  const responses = opts.responses ?? [];
   let nextCommentId = (comments.reduce((max, c) => Math.max(max, c.id as number), 0)) + 1;
   const inserted: Array<Record<string, unknown>> = [];
   const updates: Array<{ table: unknown; values: Record<string, unknown>; where: unknown }> = [];
@@ -49,6 +51,7 @@ function fakeDb(opts: {
     if (table === communityProposalCommunities) return proposalCommunityLinks as unknown as Record<string, unknown>[];
     if (table === users) return usersTable as unknown as Record<string, unknown>[];
     if (table === communityStudentProposals) return studentProposals as unknown as Record<string, unknown>[];
+    if (table === communityResponses) return responses as unknown as Record<string, unknown>[];
     return [];
   }
 
@@ -140,9 +143,15 @@ describe("createComment — COM-02 §11/§12/§19", () => {
     await expect(createComment({ proposalId: 999, userId: 42, content: "hola" }, db)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
-  it("propuesta todavía activa (no cerrada) -> NOT_CLOSED, nunca se comenta antes de finalizar", async () => {
+  it("propuesta todavía activa (no cerrada) y el usuario NO ha respondido -> NOT_CLOSED (spec COM-02B §8, no saltarse la participación)", async () => {
     const db = fakeDb({ proposals: [proposalRow({ status: "active" })] });
     await expect(createComment({ proposalId: 10, userId: 42, content: "hola" }, db)).rejects.toMatchObject({ code: "NOT_CLOSED" });
+  });
+
+  it("propuesta ACTIVA pero el usuario YA respondió -> permitido (spec COM-02B §2.B/§7, fix de producto)", async () => {
+    const db = fakeDb({ proposals: [proposalRow({ status: "active" })], responses: [{ id: 1, proposalId: 10, userId: 42 }] });
+    const comment = await createComment({ proposalId: 10, userId: 42, content: "ya voté, comento" }, db);
+    expect(comment.content).toBe("ya voté, comento");
   });
 
   it("propuesta scopeada a otra comunidad de la que el usuario no es miembro -> FORBIDDEN (spec §18/§27, cross-community)", async () => {
@@ -201,12 +210,44 @@ describe("moderateComment — Admin (spec §17), mismo mecanismo soft-delete que
   });
 });
 
-// listComments (paginación raíz+réplica, spec §12/§22/§23) hace varias
-// queries DISTINTAS con predicados distintos sobre la MISMA tabla
-// (comunidad_proposal_comments) — un fake db genérico por tabla no puede
-// distinguirlas de forma fiable. Se verifica en su lugar contra BD local
-// real (ver informe final COM-02, sección AJ/AK) en vez de un fake frágil
-// que fingiera pasar sin probar el filtrado real.
+// listComments: el CONTENIDO (paginación raíz+réplica, spec §12/§22/§23)
+// hace varias queries DISTINTAS con predicados distintos sobre la MISMA
+// tabla (community_proposal_comments) — un fake db genérico por tabla no
+// puede distinguirlas de forma fiable, así que ese caso se verifica contra
+// BD local real (ver informe final COM-02, sección AJ/AK). La PUERTA de
+// acceso (assertCanInteract, spec COM-02B §14/§16) sí se puede probar aquí
+// con seguridad: todos sus casos de rechazo terminan ANTES de llegar a esas
+// queries ambiguas.
+describe("listComments — puerta de acceso (spec COM-02B §14/§16, Student nunca lee antes de participar)", () => {
+  it("propuesta inexistente -> NOT_FOUND", async () => {
+    const db = fakeDb({ proposals: [] });
+    await expect(listComments(999, 42, { limit: 20, offset: 0 }, false, db)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("propuesta de otra comunidad -> FORBIDDEN (spec §18, cross-community)", async () => {
+    const db = fakeDb({
+      proposals: [proposalRow()],
+      proposalCommunityLinks: [{ proposalId: 10, communityId: 2 }],
+      userCommunityMemberships: [{ userId: 42, communityId: 1 }],
+    });
+    await expect(listComments(10, 42, { limit: 20, offset: 0 }, false, db)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("propuesta ACTIVA y el Student NO ha respondido -> NOT_CLOSED, nunca lee comentarios antes de votar (spec COM-02B §16)", async () => {
+    const db = fakeDb({ proposals: [proposalRow({ status: "active" })] });
+    await expect(listComments(10, 42, { limit: 20, offset: 0 }, false, db)).rejects.toMatchObject({ code: "NOT_CLOSED" });
+  });
+
+  it("propuesta ACTIVA y el Student YA respondió -> se permite leer (spec COM-02B §16)", async () => {
+    const db = fakeDb({ proposals: [proposalRow({ status: "active" })], responses: [{ id: 1, proposalId: 10, userId: 42 }] });
+    await expect(listComments(10, 42, { limit: 20, offset: 0 }, false, db)).resolves.toMatchObject({ total: 0, items: [] });
+  });
+
+  it("includeHidden=true (vista Admin) NUNCA exige haber respondido — un Admin no participa en la propuesta", async () => {
+    const db = fakeDb({ proposals: [proposalRow({ status: "active" })] }); // sin respuesta propia
+    await expect(listComments(10, 1, { limit: 20, offset: 0 }, true, db)).resolves.toMatchObject({ total: 0, items: [] });
+  });
+});
 
 describe("toggleLike — like social, NUNCA un voto (spec §35)", () => {
   it("primer toggle: da like", async () => {
@@ -222,9 +263,15 @@ describe("toggleLike — like social, NUNCA un voto (spec §35)", () => {
     expect(result.liked).toBe(false);
   });
 
-  it("propuesta todavía activa -> NOT_CLOSED, no se puede dar like antes de finalizar", async () => {
+  it("propuesta todavía activa y sin respuesta propia -> NOT_CLOSED, no se puede dar like antes de participar (spec COM-02B §9)", async () => {
     const db = fakeDb({ proposals: [proposalRow({ status: "active" })] });
     await expect(toggleLike(10, 42, db)).rejects.toMatchObject({ code: "NOT_CLOSED" });
+  });
+
+  it("propuesta ACTIVA pero el usuario ya respondió -> se permite el like (spec COM-02B §9)", async () => {
+    const db = fakeDb({ proposals: [proposalRow({ status: "active" })], responses: [{ id: 1, proposalId: 10, userId: 42 }] });
+    const result = await toggleLike(10, 42, db);
+    expect(result.liked).toBe(true);
   });
 });
 

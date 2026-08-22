@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { toast } from "sonner";
 import { ArrowUp, ArrowDown, Loader2, CheckCircle2, Coins, MapPin, Heart, MessageCircle, Share2, X } from "lucide-react";
-import { initials, relativeTimeLabel, resultHeadline } from "@/lib/comunitySocial";
+import { initials, relativeTimeLabel, resultHeadline, myResponseSummary } from "@/lib/comunitySocial";
 
 type QuestionType =
   | "single_choice" | "yes_no" | "percentage_scale" | "scale_1_5"
@@ -89,13 +89,14 @@ export default function ComunityQuestionDetail() {
   const alreadyResponded = !!myResponse;
   const canRespond = isOpen && (!alreadyResponded || proposal.allowChangeResponse);
 
-  // COM-02 — Community Social Results (spec §4/§19): el diseño social se
-  // aplica EXACTAMENTE cuando la propuesta está finalizada, reutilizando el
-  // lifecycle real (status="closed", mismo criterio que ya filtraba
-  // ResultadosTab en ComunityHub.tsx) — nunca un estado nuevo. Una propuesta
-  // activa sigue exactamente el flujo de siempre (VoteForm/resultados
-  // simples), sin ningún cambio.
-  if (proposal.status === "closed") {
+  // COM-02B (spec §1-§5, fix de producto sobre COM-02): la ficha social ya
+  // NO depende únicamente de status="closed" — el servidor decide con
+  // `showSocialLayer` (canAccessSocialLayer, comunityDb.ts): finalizada
+  // (siempre) O activa y este Student YA respondió (spec §2.B, "no debe
+  // seguir viendo Already joined sobre la ficha antigua"). Antes de
+  // participar en una propuesta activa, sigue siendo el VoteForm de
+  // siempre — sin ningún cambio (spec §2.A).
+  if (data.showSocialLayer) {
     return (
       <SegolifeAppShell requireAuth title={proposal.title}>
         <SegolifePageContainer className="space-y-4">
@@ -107,6 +108,8 @@ export default function ComunityQuestionDetail() {
             likeCount={data.likeCount}
             commentCount={data.commentCount}
             results={results}
+            myResponse={myResponse}
+            options={options}
             qType={qType}
             proposalId={proposalId}
             slug={slug}
@@ -530,18 +533,22 @@ function AllRespondentsDialog({ proposalId, total, open, onOpenChange }: { propo
 
 type ProposalAuthor = { userId: number; name: string | null; hasAvatar: boolean } | null;
 
-function SocialProposalView({ proposal, author, liked, likeCount, commentCount, results, qType, proposalId, slug }: {
-  proposal: { title: string; description: string | null; coverImageUrl: string | null; venueName: string | null; endsAt: Date | string | null };
+function SocialProposalView({ proposal, author, liked, likeCount, commentCount, results, myResponse, options, qType, proposalId, slug }: {
+  proposal: { status: string; title: string; description: string | null; coverImageUrl: string | null; venueName: string | null; endsAt: Date | string | null };
   author: ProposalAuthor;
   liked: boolean;
   likeCount: number;
   commentCount: number;
   results: any;
+  myResponse: { response: unknown; values: { optionId: number | null; valueText: string | null; valueNumber: number | null }[] } | null;
+  options: { id: number; label: string; sortOrder: number }[];
   qType: QuestionType;
   proposalId: number;
   slug: string | null;
 }) {
   const { t, i18n } = useTranslation();
+  const isClosed = proposal.status === "closed";
+  const responseSummary = myResponseSummary(t, qType, myResponse, options);
   const utils = trpc.useUtils();
   const [commentsOpen, setCommentsOpen] = useState(false);
 
@@ -625,7 +632,23 @@ function SocialProposalView({ proposal, author, liked, likeCount, commentCount, 
         </button>
       </div>
 
-      {headline && <p className="text-lg font-bold text-foreground">{headline}</p>}
+      {isClosed ? (
+        <>
+          <span className="w-fit rounded-full bg-secondary px-2.5 py-1 text-xs font-semibold text-muted-foreground">{t("comunity.social.votingFinished")}</span>
+          {headline && <p className="text-lg font-bold text-foreground">{headline}</p>}
+        </>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">{t("comunity.social.votingOpen")}</span>
+          <span className="text-xs text-muted-foreground">⏳ {timeLeftLabelI18n(t, proposal.endsAt)}</span>
+        </div>
+      )}
+      {!isClosed && (
+        <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+          <CheckCircle2 className="size-4 text-primary shrink-0" /> {t("comunity.social.alreadyParticipated")}
+        </p>
+      )}
+      {!isClosed && responseSummary && <p className="text-sm text-muted-foreground">{responseSummary}</p>}
 
       <div>
         <p className="font-semibold text-foreground">{proposal.title}</p>

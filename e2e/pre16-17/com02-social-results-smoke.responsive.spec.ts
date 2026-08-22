@@ -46,4 +46,27 @@ test.describe("COM-02 — smoke no destructivo en producción", () => {
     const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
     expect(hasOverflow).toBe(false);
   });
+
+  /**
+   * COM-02B — fix de producto: la ficha social ahora también aparece en una
+   * propuesta ACTIVA cuando el Student YA respondió. La cuenta QA dedicada
+   * (qa.pre1617.ie@segolife.es) NUNCA ha respondido a ninguna propuesta real
+   * (confirmado por lectura directa) — votar ahora solo para esta
+   * verificación crearía una participación/recompensa real, prohibido por
+   * el punto 18/31 ("no votar de nuevo", "0 alteraciones votes"). Este smoke
+   * confirma en su lugar, de forma no destructiva, que la propuesta real
+   * /ie/comunity/5 (activa, la que motivó este fix) sigue mostrando el
+   * VoteForm de siempre para quien no ha participado — regresión, nunca se
+   * envía ningún voto — y que la capa social NO aparece antes de participar.
+   */
+  test("COM-02B (no destructivo): /ie/comunity/5 activa y sin participar sigue mostrando VoteForm, nunca la capa social", async ({ page }) => {
+    await loginViaUI(page, student.email, student.password);
+    await page.goto(`/${student.community}/comunity/5`);
+    await expect(page.getByText(/i'm in/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Comments", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Like", exact: true })).toHaveCount(0);
+
+    const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+    expect(hasOverflow).toBe(false);
+  });
 });

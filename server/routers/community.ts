@@ -12,6 +12,7 @@ import {
   createProposal, updateProposal, setProposalStatus, getProposalById, listProposals,
   setProposalOptions, listProposalOptions, getProposalCommunityIds, setProposalCommunities,
   isProposalOpenForResponses, getVenueName, computeResultsVisible, isInProposalAudience, isProposalVisibleToUser,
+  canAccessSocialLayer,
 } from "../segolife/community/communityDb";
 import { previewProposalAudience, publishProposal, CommunityPublishError } from "../segolife/community/communityAudienceService";
 import { submitResponse, getUserResponse, CommunityResponseError, type ResponsePayload } from "../segolife/community/communityResponseService";
@@ -508,23 +509,36 @@ export const communityRouter = router({
     .query(async ({ input, ctx }) => {
       const proposal = await getProposalById(input.id);
       if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Propuesta no encontrada" });
+
+      // COM-02B (spec §25) — gap preexistente documentado en el informe final
+      // de COM-02 (sección AV): esta query nunca comprobaba scoping por
+      // comunidad. Un Admin (rol legacy real, mismo criterio que el resto de
+      // este router) queda exento — no "pertenece" a una comunidad como
+      // Student, gestiona a través de su RBAC real.
+      if (ctx.user.role !== "admin" && !(await isProposalVisibleToUser(input.id, ctx.user.id))) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No tienes acceso a esta propuesta" });
+      }
+
       const options = await listProposalOptions(input.id);
       const myResponse = await getUserResponse(input.id, ctx.user.id);
+      const hasResponded = !!myResponse;
 
       const now = new Date();
-      const showResults = computeResultsVisible(proposal, !!myResponse, now);
+      const showResults = computeResultsVisible(proposal, hasResponded, now);
 
       // Hallazgo real (2026-08-22, captura del cliente): la ubicación de una
       // propuesta nunca se resolvía/mostraba al Student (solo existía para
       // el admin, ver listProposals/ProposalListItem.venueName).
       const venueName = await getVenueName(proposal.venueId, undefined);
 
-      // COM-02 — Community Social Results: autor + like/comment counts SOLO
-      // para propuestas ya finalizadas (spec §4/§19, "no romper Active") —
-      // evita 3 queries extra en el camino caliente de una propuesta activa,
-      // donde la experiencia social todavía no aplica.
-      const isClosed = proposal.status === "closed";
-      const [author, likeState, commentCounts] = isClosed
+      // COM-02B (spec §1-§5) — la ficha social ya no depende solo de
+      // status="closed": también se muestra en una propuesta ACTIVA cuando
+      // este Student YA respondió (canAccessSocialLayer, communityDb.ts,
+      // misma política que assertCanInteract/listComments — nunca una copia
+      // divergente). Antes de participar en una propuesta activa, la ficha
+      // sigue siendo el VoteForm de siempre, sin ningún cambio.
+      const showSocialLayer = canAccessSocialLayer(proposal.status, hasResponded);
+      const [author, likeState, commentCounts] = showSocialLayer
         ? await Promise.all([
             resolveProposalAuthor(proposal),
             getLikeState(input.id, ctx.user.id),
@@ -536,6 +550,8 @@ export const communityRouter = router({
         proposal: { ...proposal, description: proposal.description, venueName }, // sin campos admin sensibles adicionales
         options: options.map(o => ({ id: o.id, label: o.label, sortOrder: o.sortOrder })), // sin isPositiveIntent (interno)
         myResponse: myResponse ? { response: myResponse.response, values: myResponse.values } : null,
+        hasResponded,
+        showSocialLayer,
         results: showResults ? await getProposalResults(input.id, false) : null,
         isOpen: isProposalOpenForResponses(proposal, now),
         author,
@@ -625,17 +641,13 @@ export const communityRouter = router({
     .input(z.object({ proposalId: z.number().int().positive(), limit: z.number().int().min(1).max(50).default(20), offset: z.number().int().min(0).default(0) }))
     .query(async ({ input, ctx }) => {
       try {
-        // list en sí no lanza si la propuesta no es visible — se comprueba
-        // aquí explícitamente para no filtrar comentarios de una propuesta
-        // ajena (spec §18/§27) antes de tocar la tabla de comentarios.
-        const proposal = await getProposalById(input.proposalId);
-        if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Propuesta no encontrada" });
-        if (!(await isProposalVisibleToUser(input.proposalId, ctx.user.id))) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "No tienes acceso a esta propuesta" });
-        }
+        // listComments() ya exige internamente (spec COM-02B §14/§16, misma
+        // puerta que createComment/toggleLike, nunca una copia): la propuesta
+        // existe, es visible para la comunidad del Student, y está cerrada O
+        // activa con este Student ya respondido — nunca duplicar esa
+        // comprobación aquí.
         return await listComments(input.proposalId, ctx.user.id, { limit: input.limit, offset: input.offset });
       } catch (err) {
-        if (err instanceof TRPCError) throw err;
         mapCommunitySocialError(err);
       }
     }),

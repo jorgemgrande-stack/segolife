@@ -60,3 +60,38 @@ export function resultHeadline(t: TFunction, qType: QuestionType, results: any):
   if (results.openText) return t("comunity.social.resultShareOpenText", { count: results.totalResponses });
   return t("comunity.social.resultShareDefault", { count: results.totalResponses });
 }
+
+interface MyResponseValue { optionId: number | null; valueText: string | null; valueNumber: number | null }
+interface MyResponseShape { values: MyResponseValue[] }
+
+/**
+ * "Tu respuesta: X" (spec COM-02B §12) — nunca debe parecer que el voto
+ * desapareció al entrar en la ficha social de una propuesta activa. Solo se
+ * reconstruye para los tipos donde el resumen es simple e inequívoco
+ * (spec §12: "no es imprescindible para todos los tipos si la arquitectura
+ * no lo expone limpiamente") — el resto se cubre con el indicador genérico
+ * "✓ Ya has participado" en el propio componente, nunca con un resumen
+ * inventado o parcial que pudiera confundir.
+ */
+export function myResponseSummary(
+  t: TFunction, qType: QuestionType, myResponse: MyResponseShape | null, options: { id: number; label: string }[]
+): string | null {
+  if (!myResponse) return null;
+  const first = myResponse.values[0];
+  if (!first) return null;
+
+  if (qType === "single_choice" && first.optionId != null) {
+    const label = options.find(o => o.id === first.optionId)?.label;
+    return label ? t("comunity.social.yourResponse", { value: label }) : null;
+  }
+  if (qType === "yes_no" && first.valueText) {
+    return t("comunity.social.yourResponse", { value: first.valueText === "yes" ? t("comunity.yes") : t("comunity.no") });
+  }
+  if (qType === "scale_1_5" && first.valueNumber != null) {
+    return t("comunity.social.yourRating", { value: first.valueNumber });
+  }
+  if (qType === "attendance_intention" && first.valueText) {
+    return t("comunity.social.yourResponse", { value: t(`comunity.attendanceIntention.${first.valueText}`) });
+  }
+  return null;
+}

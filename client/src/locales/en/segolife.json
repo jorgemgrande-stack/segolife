@@ -515,6 +515,10 @@
     "loadMore": "Load more",
     "social": {
       "votingFinished": "Voting finished",
+      "votingOpen": "Voting open",
+      "alreadyParticipated": "You already participated",
+      "yourResponse": "Your response: {{value}}",
+      "yourRating": "Your rating: {{value}}/5",
       "brandAuthor": "SEGOLIFE",
       "adminCreated": "Community pick",
       "like": "Like",

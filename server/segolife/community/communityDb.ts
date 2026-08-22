@@ -289,6 +289,24 @@ export function computeResultsVisible(proposal: CommunityProposal, hasResponded:
   );
 }
 
+/**
+ * COM-02B — Política ÚNICA de "¿puede userId acceder a la capa social
+ * (ficha SocialProposalView, comentarios, like) de esta propuesta?": está
+ * finalizada (siempre), O está activa y este Student YA respondió (nunca
+ * antes de participar — evita que se salte la votación por endpoint, y
+ * evita que la conversación/resultado condicione su voto). NUNCA confundir
+ * con isProposalOpenForResponses (eso es sobre poder VOTAR, dimensión
+ * independiente — spec COM-02B §3: "ya votó" != "la votación terminó").
+ *
+ * Pura — recibe `hasResponded` ya resuelto por el caller desde la fuente
+ * canónica real (community_responses, vía getUserResponse/
+ * isProposalRespondent) para que getPublicById, assertCanInteract y
+ * listComments usen EXACTAMENTE el mismo criterio sin repetirlo (spec §14).
+ */
+export function canAccessSocialLayer(status: CommunityProposal["status"], hasResponded: boolean): boolean {
+  return status === "closed" || (status === "active" && hasResponded);
+}
+
 /** Propuestas activas cuya ventana ya venció — para cierre (con scheduler ON) o para query pública que las trata como cerradas aunque status siga "active" en BD. */
 export async function listExpiredActiveProposals(now: Date, db?: AnyDbHandle): Promise<CommunityProposal[]> {
   const conn = db ?? (await getDb());

@@ -19,7 +19,7 @@ const {
   mockGetCommunityAccess, mockListTrendingStudentProposals,
   mockGetProposalById, mockIsInProposalAudience, mockComputeResultsVisible,
   mockGetUserResponse, mockGetProposalRespondents,
-  mockIsProposalVisibleToUser,
+  mockIsProposalVisibleToUser, mockListProposalOptions, mockGetVenueName,
   mockGetLikeState, mockToggleLike, mockListComments, mockCreateComment, mockDeleteOwnComment, mockModerateComment,
   mockGetCommentCountsBatch, mockGetLikeCountsBatch, mockResolveProposalAuthor,
   mockNotifyProposalCommented, mockNotifyCommentReplied, mockGetProposalCommunityIds,
@@ -39,6 +39,8 @@ const {
   mockGetUserResponse: vi.fn(),
   mockGetProposalRespondents: vi.fn(),
   mockIsProposalVisibleToUser: vi.fn(),
+  mockListProposalOptions: vi.fn(),
+  mockGetVenueName: vi.fn(),
   mockGetLikeState: vi.fn(),
   mockToggleLike: vi.fn(),
   mockListComments: vi.fn(),
@@ -90,6 +92,7 @@ vi.mock("../segolife/community/communityDb", async (importOriginal) => {
     ...actual, getProposalById: mockGetProposalById, isInProposalAudience: mockIsInProposalAudience,
     computeResultsVisible: mockComputeResultsVisible, isProposalVisibleToUser: mockIsProposalVisibleToUser,
     getProposalCommunityIds: mockGetProposalCommunityIds,
+    listProposalOptions: mockListProposalOptions, getVenueName: mockGetVenueName,
   };
 });
 vi.mock("../segolife/community/communityResponseService", async (importOriginal) => {
@@ -487,6 +490,56 @@ describe("getPublicRespondents — avatar-stack de respondientes (petición del 
   });
 });
 
+describe("COM-02B — getPublicById: scoping por comunidad (gap preexistente corregido) + ficha social tras participar en propuesta activa", () => {
+  beforeEach(() => {
+    mockGetProposalById.mockReset().mockResolvedValue({ id: 10, status: "closed", venueId: null, endsAt: null, resultsVisibility: "immediate" });
+    mockIsProposalVisibleToUser.mockReset().mockResolvedValue(true);
+    mockListProposalOptions.mockReset().mockResolvedValue([]);
+    mockGetVenueName.mockReset().mockResolvedValue(null);
+    mockGetUserResponse.mockReset().mockResolvedValue(null);
+    mockComputeResultsVisible.mockReset().mockReturnValue(false); // evita tocar getProposalResults real en estos tests
+    mockResolveProposalAuthor.mockReset().mockResolvedValue(null);
+    mockGetLikeState.mockReset().mockResolvedValue({ liked: false, count: 0 });
+    mockGetCommentCountsBatch.mockReset().mockResolvedValue(new Map());
+  });
+
+  it("Student de una comunidad que no es la de la propuesta -> FORBIDDEN (spec §25, gap documentado en el informe COM-02 ahora corregido)", async () => {
+    mockIsProposalVisibleToUser.mockResolvedValue(false);
+    await expect(callerAs(42).getPublicById({ id: 10 })).rejects.toThrow(/no tienes acceso/i);
+  });
+
+  it("Admin puede abrirla aunque isProposalVisibleToUser diga false — no 'pertenece' a una comunidad como un Student", async () => {
+    mockIsProposalVisibleToUser.mockResolvedValue(false);
+    const result = await callerAsAdmin(1).getPublicById({ id: 10 });
+    expect(result.proposal.id).toBe(10);
+  });
+
+  it("propuesta ACTIVA + Student SIN responder -> showSocialLayer=false (sigue siendo el VoteForm de siempre)", async () => {
+    mockGetProposalById.mockResolvedValue({ id: 10, status: "active", venueId: null, endsAt: null, resultsVisibility: "immediate" });
+    mockGetUserResponse.mockResolvedValue(null);
+    const result = await callerAs(42).getPublicById({ id: 10 });
+    expect(result.showSocialLayer).toBe(false);
+    expect(result.hasResponded).toBe(false);
+    expect(mockResolveProposalAuthor).not.toHaveBeenCalled();
+  });
+
+  it("propuesta ACTIVA + Student YA respondió -> showSocialLayer=true (spec COM-02B §2.B, fix de producto), resuelve autor/like/comentarios", async () => {
+    mockGetProposalById.mockResolvedValue({ id: 10, status: "active", venueId: null, endsAt: null, resultsVisibility: "immediate" });
+    mockGetUserResponse.mockResolvedValue({ response: { id: 1 }, values: [] });
+    const result = await callerAs(42).getPublicById({ id: 10 });
+    expect(result.showSocialLayer).toBe(true);
+    expect(result.hasResponded).toBe(true);
+    expect(mockResolveProposalAuthor).toHaveBeenCalled();
+    expect(mockGetLikeState).toHaveBeenCalledWith(10, 42);
+  });
+
+  it("propuesta CERRADA -> showSocialLayer=true siempre, con o sin respuesta propia (regresión COM-02)", async () => {
+    mockGetUserResponse.mockResolvedValue(null); // ni siquiera respondió, y aun así está cerrada
+    const result = await callerAs(42).getPublicById({ id: 10 });
+    expect(result.showSocialLayer).toBe(true);
+  });
+});
+
 describe("COM-02 — Community Social Results: likes/comentarios, siempre re-autorizados server-side (spec §18/§19/§27)", () => {
   beforeEach(() => {
     mockGetProposalById.mockReset().mockResolvedValue({ id: 10, status: "closed" });
@@ -508,22 +561,16 @@ describe("COM-02 — Community Social Results: likes/comentarios, siempre re-aut
     expect(mockToggleLike).toHaveBeenCalledWith(10, 42);
   });
 
-  it("listComments: propuesta inexistente -> NOT_FOUND, nunca llega a tocar la tabla de comentarios", async () => {
-    mockGetProposalById.mockResolvedValue(null);
-    await expect(callerAs(42).listComments({ proposalId: 999 })).rejects.toThrow(/no encontrada/i);
-    expect(mockListComments).not.toHaveBeenCalled();
-  });
-
-  it("listComments: propuesta de otra comunidad (isProposalVisibleToUser=false) -> FORBIDDEN, nunca expone comentarios (spec §18, cross-community)", async () => {
-    mockIsProposalVisibleToUser.mockResolvedValue(false);
-    await expect(callerAs(42).listComments({ proposalId: 10 })).rejects.toThrow(/no tienes acceso/i);
-    expect(mockListComments).not.toHaveBeenCalled();
-  });
-
-  it("listComments: visible -> delega con el userId real del caller (nunca uno del cliente)", async () => {
+  it("listComments: delega con el userId real del caller (nunca uno del cliente) — la re-autorización real (NOT_FOUND/FORBIDDEN/COM-02B activa-sin-responder) vive en communitySocialDb.listComments, ya probada en su propio módulo", async () => {
     const result = await callerAs(42).listComments({ proposalId: 10, limit: 5, offset: 0 });
     expect(result.total).toBe(1);
     expect(mockListComments).toHaveBeenCalledWith(10, 42, { limit: 5, offset: 0 });
+  });
+
+  it("listComments: propaga un error de negocio (p.ej. NOT_CLOSED de una propuesta activa sin responder) como error de cliente, nunca un 500 crudo", async () => {
+    const { CommunitySocialError } = await vi.importActual<typeof import("../segolife/community/communitySocialDb")>("../segolife/community/communitySocialDb");
+    mockListComments.mockRejectedValue(new CommunitySocialError("NOT_CLOSED", "Los comentarios y likes se habilitan al participar en la propuesta, o cuando esta finaliza."));
+    await expect(callerAs(42).listComments({ proposalId: 10 })).rejects.toThrow(/se habilitan al participar/i);
   });
 
   it("createComment: comentario raíz -> notifica al autor de la propuesta (notifyProposalCommented), nunca notifyCommentReplied", async () => {

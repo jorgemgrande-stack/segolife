@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { isProposalOpenForResponses, getVenueName, isInProposalAudience, computeResultsVisible } from "./communityDb";
+import { isProposalOpenForResponses, getVenueName, isInProposalAudience, computeResultsVisible, isProposalVisibleToUser, canAccessSocialLayer } from "./communityDb";
+import { communityProposalCommunities, userCommunities } from "../../../drizzle/schema";
 import type { CommunityProposal } from "../../../drizzle/schema";
 
 const NOW = new Date("2026-08-12T12:00:00.000Z");
@@ -129,5 +130,72 @@ describe("computeResultsVisible — MISMA política para getPublicById y getPubl
 
   it("never: nunca visible bajo ningún criterio", () => {
     expect(computeResultsVisible(proposal({ resultsVisibility: "never", status: "closed" }), true, NOW)).toBe(false);
+  });
+});
+
+describe("isProposalVisibleToUser — scoping REAL por comunidad (spec COM-02B §25: IE-only/UVA-only/IE+UVA/global)", () => {
+  const IE = 1, UVA = 2;
+  function fakeDb(opts: { proposalCommunityLinks: Array<{ communityId: number }>; userMemberships: Array<{ communityId: number }> }) {
+    return {
+      select: () => ({
+        from: (table: unknown) => ({
+          where: () => ({
+            limit: async () => (table === communityProposalCommunities ? opts.proposalCommunityLinks : []),
+            then: (resolve: (v: unknown) => void) => {
+              const rows = table === communityProposalCommunities ? opts.proposalCommunityLinks : opts.userMemberships;
+              return Promise.resolve(rows).then(resolve);
+            },
+          }),
+        }),
+      }),
+    } as never;
+  }
+
+  it("propuesta global (sin fila de scoping) -> visible para cualquier Student", async () => {
+    const db = fakeDb({ proposalCommunityLinks: [], userMemberships: [] });
+    expect(await isProposalVisibleToUser(10, 42, db)).toBe(true);
+  });
+
+  it("propuesta exclusiva de IE + Student de IE -> visible", async () => {
+    const db = fakeDb({ proposalCommunityLinks: [{ communityId: IE }], userMemberships: [{ communityId: IE }] });
+    expect(await isProposalVisibleToUser(10, 42, db)).toBe(true);
+  });
+
+  it("propuesta exclusiva de IE + Student de UVA -> NO visible", async () => {
+    const db = fakeDb({ proposalCommunityLinks: [{ communityId: IE }], userMemberships: [{ communityId: UVA }] });
+    expect(await isProposalVisibleToUser(10, 42, db)).toBe(false);
+  });
+
+  it("propuesta exclusiva de UVA + Student de IE -> NO visible (misma comprobación, dirección inversa)", async () => {
+    const db = fakeDb({ proposalCommunityLinks: [{ communityId: UVA }], userMemberships: [{ communityId: IE }] });
+    expect(await isProposalVisibleToUser(10, 42, db)).toBe(false);
+  });
+
+  it("propuesta compartida IE+UVA + Student de cualquiera de las dos -> visible", async () => {
+    const dbIE = fakeDb({ proposalCommunityLinks: [{ communityId: IE }, { communityId: UVA }], userMemberships: [{ communityId: IE }] });
+    expect(await isProposalVisibleToUser(10, 42, dbIE)).toBe(true);
+    const dbUVA = fakeDb({ proposalCommunityLinks: [{ communityId: IE }, { communityId: UVA }], userMemberships: [{ communityId: UVA }] });
+    expect(await isProposalVisibleToUser(10, 42, dbUVA)).toBe(true);
+  });
+});
+
+describe("canAccessSocialLayer — COM-02B §3: 'ya voté' != 'la votación terminó' (dos dimensiones independientes)", () => {
+  it("cerrada -> siempre true, haya respondido o no", () => {
+    expect(canAccessSocialLayer("closed", false)).toBe(true);
+    expect(canAccessSocialLayer("closed", true)).toBe(true);
+  });
+
+  it("activa + no ha respondido -> false (sigue siendo VoteForm)", () => {
+    expect(canAccessSocialLayer("active", false)).toBe(false);
+  });
+
+  it("activa + ya respondió -> true (entra en la ficha social sin esperar al cierre)", () => {
+    expect(canAccessSocialLayer("active", true)).toBe(true);
+  });
+
+  it("draft/scheduled/cancelled -> siempre false (nunca ficha social fuera de active/closed)", () => {
+    expect(canAccessSocialLayer("draft", true)).toBe(false);
+    expect(canAccessSocialLayer("scheduled", true)).toBe(false);
+    expect(canAccessSocialLayer("cancelled", true)).toBe(false);
   });
 });

@@ -515,6 +515,10 @@
     "loadMore": "Ver más",
     "social": {
       "votingFinished": "Votación finalizada",
+      "votingOpen": "Votación abierta",
+      "alreadyParticipated": "Ya has participado",
+      "yourResponse": "Tu respuesta: {{value}}",
+      "yourRating": "Tu valoración: {{value}}/5",
       "brandAuthor": "SEGOLIFE",
       "adminCreated": "Elegido por la comunidad",
       "like": "Me gusta",
