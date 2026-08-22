@@ -27,6 +27,7 @@ scripts/push-enum-changes.mjs
 artifacts/pre16-17-browser/
 artifacts/mg03b-mg04-visual-qa/
 artifacts/final-zero-debt-qa/
+artifacts/com02-local/
 playwright-report/
 test-results/
 

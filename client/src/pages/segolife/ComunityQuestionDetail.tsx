@@ -769,7 +769,7 @@ function CommentsSheet({ proposalId, open, onOpenChange }: { proposalId: number;
 function CommentRow({ comment, onReply, onDelete }: { comment: CommentShape; onReply?: () => void; onDelete: () => void }) {
   const { t, i18n } = useTranslation();
   return (
-    <div className="flex gap-2.5">
+    <div className="flex gap-2.5" data-testid={`comment-row-${comment.id}`}>
       <Avatar className="size-8 shrink-0">
         {comment.author.hasAvatar && <img src={`/api/community/proposals/${comment.proposalId}/respondents/${comment.author.userId}/photo`} alt="" className="size-full object-cover" />}
         <AvatarFallback className="text-xs">{initials(comment.author.name)}</AvatarFallback>
