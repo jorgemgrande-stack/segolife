@@ -10,9 +10,9 @@ import { describe, it, expect } from "vitest";
 import {
   createComment, deleteOwnComment, moderateComment,
   toggleLike, getLikeCountsBatch, getCommentCountsBatch,
-  resolveProposalAuthor, listComments,
+  resolveProposalAuthor, listComments, recordShare, getShareCountsBatch,
 } from "./communitySocialDb";
-import { communityProposals, communityProposalComments, communityProposalLikes, communityStudentProposals, users, userCommunities, communityProposalCommunities, communityResponses } from "../../../drizzle/schema";
+import { communityProposals, communityProposalComments, communityProposalLikes, communityProposalShares, communityStudentProposals, users, userCommunities, communityProposalCommunities, communityResponses } from "../../../drizzle/schema";
 
 const NOW = new Date("2026-08-22T12:00:00.000Z");
 
@@ -30,6 +30,7 @@ function fakeDb(opts: {
   usersTable?: Array<{ id: number; name: string | null; avatarStorageKey: string | null }>;
   studentProposals?: Array<{ id: number; studentUserId: number }>;
   responses?: Array<{ id: number; proposalId: number; userId: number }>;
+  shares?: Array<{ id: number; proposalId: number; userId: number; method: string }>;
 }) {
   const proposals = opts.proposals ?? [proposalRow()];
   const comments = opts.comments ?? [];
@@ -39,6 +40,7 @@ function fakeDb(opts: {
   const usersTable = opts.usersTable ?? [];
   const studentProposals = opts.studentProposals ?? [];
   const responses = opts.responses ?? [];
+  const shares = opts.shares ?? [];
   let nextCommentId = (comments.reduce((max, c) => Math.max(max, c.id as number), 0)) + 1;
   const inserted: Array<Record<string, unknown>> = [];
   const updates: Array<{ table: unknown; values: Record<string, unknown>; where: unknown }> = [];
@@ -52,6 +54,7 @@ function fakeDb(opts: {
     if (table === users) return usersTable as unknown as Record<string, unknown>[];
     if (table === communityStudentProposals) return studentProposals as unknown as Record<string, unknown>[];
     if (table === communityResponses) return responses as unknown as Record<string, unknown>[];
+    if (table === communityProposalShares) return shares as unknown as Record<string, unknown>[];
     return [];
   }
 
@@ -90,6 +93,11 @@ function fakeDb(opts: {
         if (table === communityProposalLikes) {
           const row = { id: likes.length + 1, ...values };
           likes.push(row as never);
+          return [{ insertId: row.id }];
+        }
+        if (table === communityProposalShares) {
+          const row = { id: shares.length + 1, ...values };
+          shares.push(row as never);
           return [{ insertId: row.id }];
         }
         return [{ insertId: 1 }];
@@ -297,5 +305,47 @@ describe("resolveProposalAuthor — spec §33: nunca expone la identidad persona
     });
     const author = await resolveProposalAuthor({ sourceStudentProposalId: 3 }, db);
     expect(author).toMatchObject({ userId: 77, name: "Antonio Ruiz" });
+  });
+});
+
+describe("recordShare — UX móvil: Bottom Sheets globales + Share (spec §7/§8/§11)", () => {
+  it("registra un share sobre una propuesta cerrada y devuelve el conteo real actualizado", async () => {
+    const db = fakeDb({ proposals: [proposalRow()] });
+    const result = await recordShare(10, 42, "copy_link", db);
+    expect(result.count).toBe(1);
+  });
+
+  it("un mismo usuario puede compartir la misma propuesta varias veces (spec: sin UNIQUE, a diferencia de like)", async () => {
+    const db = fakeDb({ proposals: [proposalRow()] });
+    await recordShare(10, 42, "native", db);
+    const second = await recordShare(10, 42, "whatsapp", db);
+    expect(second.count).toBe(2);
+  });
+
+  it("propuesta activa y el usuario NO ha respondido -> NOT_CLOSED, misma puerta que comentarios/likes (spec §11, nunca confiar en el frontend)", async () => {
+    const db = fakeDb({ proposals: [proposalRow({ status: "active" })] });
+    await expect(recordShare(10, 42, "email", db)).rejects.toMatchObject({ code: "NOT_CLOSED" });
+  });
+
+  it("propuesta de otra comunidad -> FORBIDDEN (spec §11, cross-community)", async () => {
+    const db = fakeDb({
+      proposals: [proposalRow()],
+      proposalCommunityLinks: [{ proposalId: 10, communityId: 2 }],
+      userCommunityMemberships: [{ userId: 42, communityId: 1 }],
+    });
+    await expect(recordShare(10, 42, "copy_link", db)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("propuesta activa y el usuario YA respondió -> permitido (misma política que comentarios/likes, spec COM-02B)", async () => {
+    const db = fakeDb({ proposals: [proposalRow({ status: "active" })], responses: [{ id: 1, proposalId: 10, userId: 42 }] });
+    const result = await recordShare(10, 42, "telegram", db);
+    expect(result.count).toBe(1);
+  });
+});
+
+describe("getShareCountsBatch — batch sin N+1 (spec §11/§13, feed + detalle)", () => {
+  it("vacío si no se piden ids", async () => {
+    const db = fakeDb({});
+    expect((await getShareCountsBatch([], db)).size).toBe(0);
   });
 });

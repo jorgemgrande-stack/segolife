@@ -15,7 +15,7 @@ import { eq, and, inArray, desc, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import {
-  communityProposalComments, communityProposalLikes,
+  communityProposalComments, communityProposalLikes, communityProposalShares,
   communityStudentProposals, users,
   type CommunityProposalComment,
 } from "../../../drizzle/schema";
@@ -120,6 +120,40 @@ function isDuplicateKeyError(err: unknown): boolean {
   if (hasErrno1062(err)) return true;
   const cause = err && typeof err === "object" ? (err as { cause?: unknown }).cause : undefined;
   return hasErrno1062(cause);
+}
+
+// ─── SHARES (bottom sheets + Share) ────────────────────────────────────────
+// Auditado antes de crear (spec §7/§11): sin arquitectura de engagement
+// genérica reutilizable en el repo para esto — se extiende el mismo módulo
+// social ya existente (likes/comments), mismo criterio "conteo siempre en
+// vivo" y misma puerta de acceso (assertCanInteract) que el resto: un share
+// nunca se registra sobre una propuesta a la que el usuario no tenga acceso
+// (spec §11, "no confiar en communityId del frontend").
+
+export type ShareMethod = "native" | "copy_link" | "whatsapp" | "telegram" | "email";
+
+/**
+ * Registra UN share real (spec §8: nunca al abrir el panel, solo ante una
+ * acción con intención efectiva — navigator.share() resuelto con éxito,
+ * click en "copiar enlace", o click en una opción concreta del fallback).
+ * Sin UNIQUE — a diferencia de like, un mismo Student puede compartir la
+ * misma propuesta varias veces y cada una cuenta.
+ */
+export async function recordShare(proposalId: number, userId: number, method: ShareMethod, db?: AnyDbHandle): Promise<{ count: number }> {
+  const conn = (db ?? (await getDb())) as DbHandle;
+  await assertCanInteract(proposalId, userId, conn);
+  await conn.insert(communityProposalShares).values({ proposalId, userId, method });
+  const [countRow] = await conn.select({ count: sql<number>`COUNT(*)` }).from(communityProposalShares).where(eq(communityProposalShares.proposalId, proposalId));
+  return { count: Number(countRow?.count ?? 0) };
+}
+
+/** Batch, sin N+1 — mismo criterio que getLikeCountsBatch/getCommentCountsBatch (spec §11/§13, feed + detalle). */
+export async function getShareCountsBatch(proposalIds: number[], db?: AnyDbHandle): Promise<Map<number, number>> {
+  if (proposalIds.length === 0) return new Map();
+  const conn = (db ?? (await getDb())) as DbHandle;
+  const rows = await conn.select({ proposalId: communityProposalShares.proposalId, count: sql<number>`COUNT(*)` })
+    .from(communityProposalShares).where(inArray(communityProposalShares.proposalId, proposalIds)).groupBy(communityProposalShares.proposalId);
+  return new Map(rows.map(r => [r.proposalId, Number(r.count)]));
 }
 
 // ─── COMENTARIOS ────────────────────────────────────────────────────────────

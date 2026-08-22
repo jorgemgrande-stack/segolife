@@ -12,9 +12,9 @@ import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { SegolifeBottomSheet } from "@/components/segolife/SegolifeBottomSheet";
 import { toast } from "sonner";
-import { ArrowUp, ArrowDown, Loader2, CheckCircle2, Coins, MapPin, Heart, MessageCircle, Share2, X } from "lucide-react";
+import { ArrowUp, ArrowDown, Loader2, CheckCircle2, Coins, MapPin, Heart, MessageCircle, Share2, X, Link2, Mail, Send } from "lucide-react";
 import { initials, relativeTimeLabel, resultHeadline, myResponseSummary } from "@/lib/comunitySocial";
 
 type QuestionType =
@@ -107,6 +107,7 @@ export default function ComunityQuestionDetail() {
             liked={data.liked}
             likeCount={data.likeCount}
             commentCount={data.commentCount}
+            shareCount={data.shareCount}
             results={results}
             myResponse={myResponse}
             options={options}
@@ -497,28 +498,29 @@ function AllRespondentsDialog({ proposalId, total, open, onOpenChange }: { propo
   const items = data?.items ?? [];
 
   return (
-    <Dialog open={open} onOpenChange={v => { onOpenChange(v); if (!v) setLoadedPages(1); }}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader><DialogTitle>{t("comunity.countJoining", { count: total })}</DialogTitle></DialogHeader>
-        {isLoading ? (
-          <div className="flex justify-center py-6"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
-        ) : (
-          <div className="max-h-96 space-y-1 overflow-y-auto">
-            {items.map(r => (
-              <div key={r.userId} className="flex items-center gap-3 rounded-xl px-2 py-1.5">
-                <RespondentAvatar proposalId={proposalId} userId={r.userId} name={r.name} hasAvatar={r.hasAvatar} className="size-9" />
-                <p className="text-sm text-foreground">{r.name ?? t("comunity.someone")}</p>
-              </div>
-            ))}
-            {items.length < total && (
-              <Button variant="ghost" size="sm" className="w-full" onClick={() => setLoadedPages(p => p + 1)}>
-                {t("comunity.loadMore")}
-              </Button>
-            )}
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
+    <SegolifeBottomSheet
+      open={open}
+      onClose={() => { onOpenChange(false); setLoadedPages(1); }}
+      title={t("comunity.countJoining", { count: total })}
+    >
+      {isLoading ? (
+        <div className="flex justify-center py-6"><Loader2 className="size-5 animate-spin text-neutral-400" /></div>
+      ) : (
+        <div className="space-y-1">
+          {items.map(r => (
+            <div key={r.userId} className="flex items-center gap-3 rounded-xl px-2 py-1.5">
+              <RespondentAvatar proposalId={proposalId} userId={r.userId} name={r.name} hasAvatar={r.hasAvatar} className="size-9" />
+              <p className="text-sm text-neutral-900">{r.name ?? t("comunity.someone")}</p>
+            </div>
+          ))}
+          {items.length < total && (
+            <Button variant="ghost" size="sm" className="w-full text-neutral-500" onClick={() => setLoadedPages(p => p + 1)}>
+              {t("comunity.loadMore")}
+            </Button>
+          )}
+        </div>
+      )}
+    </SegolifeBottomSheet>
   );
 }
 
@@ -557,11 +559,63 @@ function ExpandableDescription({ text }: { text: string }) {
   );
 }
 
-function SocialProposalView({ proposal, author, liked, likeCount, commentCount, results, myResponse, options, latestComment, qType, proposalId, slug }: {
+/**
+ * Fallback de Share (spec §9) — solo se monta cuando `navigator.share` no
+ * existe (desktop principalmente). Cada opción ejecuta la acción real
+ * (copiar/abrir WhatsApp·Telegram/mailto) Y registra el share con SU
+ * método real (spec §8: nunca "native" para estas — el sistema nunca puede
+ * confirmar que WhatsApp/Telegram/Email se enviaron de verdad fuera de
+ * nuestra app, así que el evento aquí es "el Student eligió este canal",
+ * la señal de intención más fuerte que podemos observar honestamente).
+ */
+function ShareFallbackSheet({ open, onClose, title, url, onShared }: {
+  open: boolean; onClose: () => void; title: string; url: string; onShared: (method: "copy_link" | "whatsapp" | "telegram" | "email") => void;
+}) {
+  const { t } = useTranslation();
+
+  const copyLink = async () => {
+    await navigator.clipboard.writeText(url);
+    toast.success(t("comunity.social.linkCopied"));
+    onShared("copy_link");
+    onClose();
+  };
+  const openChannel = (method: "whatsapp" | "telegram" | "email") => {
+    const href = method === "whatsapp"
+      ? `https://wa.me/?text=${encodeURIComponent(`${title} ${url}`)}`
+      : method === "telegram"
+        ? `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(title)}`
+        : `mailto:?subject=${encodeURIComponent(title)}&body=${encodeURIComponent(url)}`;
+    window.open(href, "_blank", "noopener,noreferrer");
+    onShared(method);
+    onClose();
+  };
+
+  return (
+    <SegolifeBottomSheet open={open} onClose={onClose} title={t("comunity.social.sharePost")}>
+      <div className="space-y-1">
+        <button type="button" onClick={copyLink} className="flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left hover:bg-neutral-50">
+          <Link2 className="size-5 text-neutral-500" aria-hidden="true" /> <span className="text-sm text-neutral-900">{t("comunity.social.copyLink")}</span>
+        </button>
+        <button type="button" onClick={() => openChannel("whatsapp")} className="flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left hover:bg-neutral-50">
+          <MessageCircle className="size-5 text-neutral-500" aria-hidden="true" /> <span className="text-sm text-neutral-900">WhatsApp</span>
+        </button>
+        <button type="button" onClick={() => openChannel("telegram")} className="flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left hover:bg-neutral-50">
+          <Send className="size-5 text-neutral-500" aria-hidden="true" /> <span className="text-sm text-neutral-900">Telegram</span>
+        </button>
+        <button type="button" onClick={() => openChannel("email")} className="flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left hover:bg-neutral-50">
+          <Mail className="size-5 text-neutral-500" aria-hidden="true" /> <span className="text-sm text-neutral-900">Email</span>
+        </button>
+      </div>
+    </SegolifeBottomSheet>
+  );
+}
+
+function SocialProposalView({ proposal, author, liked, likeCount, commentCount, shareCount, results, myResponse, options, latestComment, qType, proposalId, slug }: {
   proposal: { status: string; title: string; description: string | null; coverImageUrl: string | null; venueName: string | null; endsAt: Date | string | null };
   author: ProposalAuthor;
   liked: boolean;
   likeCount: number;
+  shareCount: number;
   commentCount: number;
   results: any;
   myResponse: { response: unknown; values: { optionId: number | null; valueText: string | null; valueNumber: number | null }[] } | null;
@@ -576,6 +630,7 @@ function SocialProposalView({ proposal, author, liked, likeCount, commentCount, 
   const responseSummary = myResponseSummary(t, qType, myResponse, options);
   const utils = trpc.useUtils();
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [shareSheetOpen, setShareSheetOpen] = useState(false);
 
   const likeMut = trpc.community.toggleLike.useMutation({
     onMutate: async () => {
@@ -599,18 +654,37 @@ function SocialProposalView({ proposal, author, liked, likeCount, commentCount, 
   const authorName = author?.name ?? t("comunity.social.brandAuthor");
   const authorSubtitle = author ? relativeTimeLabel(proposal.endsAt ?? new Date(), i18n.language) : t("comunity.social.adminCreated");
 
+  // Registro persistente de share (spec §7/§8) — optimista sobre el propio
+  // caché de getPublicById (mismo patrón que likeMut arriba), nunca una
+  // segunda fuente de verdad: el contador SIEMPRE viene de
+  // community_proposal_shares (COUNT en vivo), esto solo adelanta la UI.
+  const recordShareMut = trpc.community.recordShare.useMutation({
+    onSuccess: () => {
+      const prev = utils.community.getPublicById.getData({ id: proposalId });
+      if (prev) utils.community.getPublicById.setData({ id: proposalId }, { ...prev, shareCount: prev.shareCount + 1 });
+    },
+  });
+
+  const shareUrl = `${window.location.origin}/${slug}/comunity/${proposalId}`;
+
   const handleShare = async () => {
-    const url = `${window.location.origin}/${slug}/comunity/${proposalId}`;
+    // Web Share API primero (spec §9) — SOLO cuenta como share si el
+    // usuario realmente completa la acción: navigator.share() resuelve con
+    // éxito. Si cancela, rechaza con AbortError y NUNCA se registra (spec
+    // §8, "evitar fraude de métricas" — abrir el share sheet nativo del SO
+    // no es en sí una intención confirmada).
     if (navigator.share) {
       try {
-        await navigator.share({ title: proposal.title, url });
+        await navigator.share({ title: proposal.title, url: shareUrl });
+        recordShareMut.mutate({ proposalId, method: "native" });
       } catch {
-        // El usuario canceló el share sheet — no es un error a reportar.
+        // Cancelado por el usuario — no es un error a reportar, no se registra.
       }
       return;
     }
-    await navigator.clipboard.writeText(url);
-    toast.success(t("comunity.social.linkCopied"));
+    // Sin Web Share API (desktop/navegadores sin soporte, spec §9): fallback
+    // propio en el nuevo bottom sheet, nunca un silencioso copiar-y-listo.
+    setShareSheetOpen(true);
   };
 
   return (
@@ -662,8 +736,16 @@ function SocialProposalView({ proposal, author, liked, likeCount, commentCount, 
         </button>
         <button type="button" onClick={handleShare} className="-m-2 ml-auto flex items-center gap-1.5 p-2" aria-label={t("comunity.social.share")}>
           <Share2 className="size-6 text-foreground" />
+          {shareCount > 0 && <span className="text-sm tabular-nums text-muted-foreground">{shareCount}</span>}
         </button>
       </div>
+      <ShareFallbackSheet
+        open={shareSheetOpen}
+        onClose={() => setShareSheetOpen(false)}
+        title={proposal.title}
+        url={shareUrl}
+        onShared={method => recordShareMut.mutate({ proposalId, method })}
+      />
 
       {isClosed ? (
         <>
@@ -761,62 +843,68 @@ function CommentsSheet({ proposalId, open, onOpenChange }: { proposalId: number;
     createMut.mutate({ proposalId, content: trimmed, parentCommentId: replyTo?.id });
   };
 
+  const footer = (
+    <>
+      {replyTo && (
+        <div className="mb-2 flex items-center justify-between rounded-lg bg-neutral-100 px-3 py-1.5 text-xs text-neutral-500">
+          <span>{t("comunity.social.reply")}: {replyTo.authorName}</span>
+          <button type="button" onClick={() => setReplyTo(null)} aria-label={t("common.cancel")}><X className="size-3.5" /></button>
+        </div>
+      )}
+      <div className="flex items-end gap-2">
+        <Textarea
+          rows={1}
+          value={content}
+          onChange={e => setContent(e.target.value)}
+          maxLength={1000}
+          placeholder={t("comunity.social.writeComment")}
+          aria-label={t("comunity.social.writeComment")}
+          className="min-h-0 resize-none border-neutral-200 bg-white text-neutral-900 placeholder:text-neutral-400"
+        />
+        <Button size="sm" disabled={!content.trim() || createMut.isPending} onClick={submit}>
+          {createMut.isPending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.social.post")}
+        </Button>
+      </div>
+    </>
+  );
+
   return (
     <>
-      <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="bottom" className="flex h-[85vh] flex-col p-0 sm:mx-auto sm:max-w-lg">
-          <SheetHeader className="border-b border-border px-4 py-3">
-            <SheetTitle>{t("comunity.social.commentsTitle")}{data ? ` (${data.total})` : ""}</SheetTitle>
-          </SheetHeader>
-
-          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3">
-            {isLoading ? (
-              <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
-            ) : items.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-1 py-10 text-center">
-                <MessageCircle className="size-8 text-muted-foreground" aria-hidden="true" />
-                <p className="text-sm font-medium text-foreground">{t("comunity.social.noCommentsYet")}</p>
-                <p className="text-xs text-muted-foreground">{t("comunity.social.beFirstToComment")}</p>
-              </div>
-            ) : (
-              items.map(c => (
-                <div key={c.id} className="space-y-3">
-                  <CommentRow comment={c} onReply={() => setReplyTo({ id: c.id, authorName: c.author.name ?? t("comunity.someone") })} onDelete={() => setConfirmDeleteId(c.id)} />
-                  {c.replies.map(r => (
-                    <div key={r.id} className="ml-9 border-l-2 border-border pl-3">
-                      <CommentRow comment={r} onDelete={() => setConfirmDeleteId(r.id)} />
-                    </div>
-                  ))}
-                </div>
-              ))
-            )}
-          </div>
-
-          <div className="border-t border-border p-3">
-            {replyTo && (
-              <div className="mb-2 flex items-center justify-between rounded-lg bg-secondary px-3 py-1.5 text-xs text-muted-foreground">
-                <span>{t("comunity.social.reply")}: {replyTo.authorName}</span>
-                <button type="button" onClick={() => setReplyTo(null)} aria-label={t("common.cancel")}><X className="size-3.5" /></button>
-              </div>
-            )}
-            <div className="flex items-end gap-2">
-              <Textarea
-                rows={1}
-                value={content}
-                onChange={e => setContent(e.target.value)}
-                maxLength={1000}
-                placeholder={t("comunity.social.writeComment")}
-                aria-label={t("comunity.social.writeComment")}
-                className="min-h-0 resize-none"
-              />
-              <Button size="sm" disabled={!content.trim() || createMut.isPending} onClick={submit}>
-                {createMut.isPending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.social.post")}
-              </Button>
+      <SegolifeBottomSheet
+        open={open}
+        onClose={() => onOpenChange(false)}
+        title={`${t("comunity.social.commentsTitle")}${data ? ` (${data.total})` : ""}`}
+        stickyFooter={footer}
+      >
+        <div className="space-y-4">
+          {isLoading ? (
+            <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-neutral-400" /></div>
+          ) : items.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-1 py-10 text-center">
+              <MessageCircle className="size-8 text-neutral-300" aria-hidden="true" />
+              <p className="text-sm font-medium text-neutral-900">{t("comunity.social.noCommentsYet")}</p>
+              <p className="text-xs text-neutral-500">{t("comunity.social.beFirstToComment")}</p>
             </div>
-          </div>
-        </SheetContent>
-      </Sheet>
+          ) : (
+            items.map(c => (
+              <div key={c.id} className="space-y-3">
+                <CommentRow comment={c} onReply={() => setReplyTo({ id: c.id, authorName: c.author.name ?? t("comunity.someone") })} onDelete={() => setConfirmDeleteId(c.id)} />
+                {c.replies.map(r => (
+                  <div key={r.id} className="ml-9 border-l-2 border-neutral-100 pl-3">
+                    <CommentRow comment={r} onDelete={() => setConfirmDeleteId(r.id)} />
+                  </div>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+      </SegolifeBottomSheet>
 
+      {/* Confirmación de borrado — diálogo centrado clásico a propósito
+          (spec "UX móvil: Bottom Sheets globales" §5: no migrar
+          indiscriminadamente diálogos críticos donde un bottom sheet no
+          aporta nada — un "¿seguro?" de 2 botones es exactamente ese caso,
+          mismo patrón que Profile.tsx/RewardsMarketplaceDetail.tsx). */}
       <Dialog open={confirmDeleteId != null} onOpenChange={v => !v && setConfirmDeleteId(null)}>
         <DialogContent className="max-w-xs">
           <DialogHeader><DialogTitle>{t("comunity.social.confirmDeleteComment")}</DialogTitle></DialogHeader>
@@ -846,12 +934,12 @@ function CommentRow({ comment, onReply, onDelete }: { comment: CommentShape; onR
       </Avatar>
       <div className="min-w-0 flex-1">
         <p className="text-sm">
-          <span className="font-semibold text-foreground">{comment.author.name ?? t("comunity.someone")}</span>{" "}
-          <span className="text-foreground">{comment.content}</span>
+          <span className="font-semibold text-neutral-900">{comment.author.name ?? t("comunity.someone")}</span>{" "}
+          <span className="text-neutral-900">{comment.content}</span>
         </p>
-        <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
+        <div className="mt-0.5 flex items-center gap-3 text-xs text-neutral-500">
           <span>{relativeTimeLabel(comment.createdAt, i18n.language)}</span>
-          {onReply && <button type="button" onClick={onReply} className="font-medium hover:text-foreground">{t("comunity.social.reply")}</button>}
+          {onReply && <button type="button" onClick={onReply} className="font-medium hover:text-neutral-900">{t("comunity.social.reply")}</button>}
           {comment.isOwn && <button type="button" onClick={onDelete} className="font-medium hover:text-destructive">{t("comunity.social.delete")}</button>}
         </div>
       </div>

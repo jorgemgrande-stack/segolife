@@ -6318,6 +6318,38 @@ export const communityProposalComments = mysqlTable("community_proposal_comments
 export type CommunityProposalComment = typeof communityProposalComments.$inferSelect;
 export type InsertCommunityProposalComment = typeof communityProposalComments.$inferInsert;
 
+// ─── COMMUNITY_PROPOSAL_SHARES (bottom sheets + Share) ─────────────────────
+// Registro de cada "share" real de una propuesta social (spec §7/§8):
+// auditado antes de crear — ni community_proposal_likes (toggle único por
+// usuario, aquí un mismo usuario puede compartir varias veces) ni ninguna
+// tabla de analytics existente encajan (studentAnalytics.ts es
+// deliberadamente solo logging, sin persistencia — spec §12, "el contador
+// visible debe proceder de la fuente persistente de Community, no de
+// Analytics"). Tabla nueva, mínima, SIN unique constraint (a propósito).
+//
+// `method` — canal por el que se compartió, solo lo que el sistema puede
+// determinar REALMENTE (spec §8: "no inventar el canal cuando el SO no lo
+// comunique"): 'native' cuando navigator.share() resuelve con éxito (nunca
+// al cancelar — AbortError no cuenta), 'copy_link' al pulsar copiar enlace,
+// 'whatsapp'/'telegram'/'email' al pulsar esa opción concreta del fallback
+// (proxy razonable de intención — no podemos confirmar el envío real fuera
+// de nuestra app, documentado como limitación conocida).
+//
+// Conteo SIEMPRE agregado en vivo (COUNT(*)), mismo criterio que
+// community_proposal_likes/comments — nunca un contador denormalizado.
+export const communityProposalShares = mysqlTable("community_proposal_shares", {
+  id:           int("id").autoincrement().primaryKey(),
+  proposalId:   int("proposal_id").notNull(),
+  userId:       int("user_id").notNull(),
+  method:       mysqlEnum("method", ["native", "copy_link", "whatsapp", "telegram", "email"]).notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  proposalIdx:  index("community_proposal_shares_proposal_id_idx").on(table.proposalId),
+  userIdx:      index("community_proposal_shares_user_id_idx").on(table.userId),
+}));
+export type CommunityProposalShare = typeof communityProposalShares.$inferSelect;
+export type InsertCommunityProposalShare = typeof communityProposalShares.$inferInsert;
+
 // ─── SEGOLIFE: REFERRAL & INVITE REWARDS ENGINE (Fase 8) ───────────────────────
 // Auditado antes de crearse (spec §76-79): dominio de referidos genuinamente
 // nuevo, sin tabla previa equivalente — el único "invite"/"invitation" del

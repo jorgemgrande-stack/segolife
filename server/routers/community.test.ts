@@ -23,6 +23,7 @@ const {
   mockGetLikeState, mockToggleLike, mockListComments, mockCreateComment, mockDeleteOwnComment, mockModerateComment,
   mockGetCommentCountsBatch, mockGetLikeCountsBatch, mockResolveProposalAuthor,
   mockNotifyProposalCommented, mockNotifyCommentReplied, mockGetProposalCommunityIds,
+  mockRecordShare, mockGetShareCountsBatch,
 } = vi.hoisted(() => ({
   mockGetUserCommunities: vi.fn(),
   mockSubmitStudentProposal: vi.fn(),
@@ -53,6 +54,8 @@ const {
   mockNotifyProposalCommented: vi.fn().mockResolvedValue(undefined),
   mockNotifyCommentReplied: vi.fn().mockResolvedValue(undefined),
   mockGetProposalCommunityIds: vi.fn(),
+  mockRecordShare: vi.fn(),
+  mockGetShareCountsBatch: vi.fn(),
 }));
 vi.mock("../db/communitiesDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../db/communitiesDb")>();
@@ -114,6 +117,7 @@ vi.mock("../segolife/community/communitySocialDb", async (importOriginal) => {
     createComment: mockCreateComment, deleteOwnComment: mockDeleteOwnComment, moderateComment: mockModerateComment,
     getCommentCountsBatch: mockGetCommentCountsBatch, getLikeCountsBatch: mockGetLikeCountsBatch,
     resolveProposalAuthor: mockResolveProposalAuthor,
+    recordShare: mockRecordShare, getShareCountsBatch: mockGetShareCountsBatch,
   };
 });
 vi.mock("../segolife/community/communityCommentNotifier", () => ({
@@ -182,6 +186,7 @@ describe("community router — ningún endpoint admin es accesible sin sesión",
     await expect(callerWithoutSession().createComment({ proposalId: 1, content: "hola" })).rejects.toThrow(/please login/i);
     await expect(callerWithoutSession().deleteComment({ commentId: 1 })).rejects.toThrow(/please login/i);
     await expect(callerWithoutSession().listResultsFeed()).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().recordShare({ proposalId: 1, method: "copy_link" })).rejects.toThrow(/please login/i);
   });
 
   it("COM-02: moderateComment (admin) rechaza sin sesión", async () => {
@@ -501,6 +506,7 @@ describe("COM-02B — getPublicById: scoping por comunidad (gap preexistente cor
     mockResolveProposalAuthor.mockReset().mockResolvedValue(null);
     mockGetLikeState.mockReset().mockResolvedValue({ liked: false, count: 0 });
     mockGetCommentCountsBatch.mockReset().mockResolvedValue(new Map());
+    mockGetShareCountsBatch.mockReset().mockResolvedValue(new Map());
     mockListComments.mockReset().mockResolvedValue({ total: 0, items: [] });
   });
 
@@ -563,6 +569,21 @@ describe("COM-02B — getPublicById: scoping por comunidad (gap preexistente cor
     const result = await callerAs(42).getPublicById({ id: 10 });
     expect(result.latestComment).toBeNull();
   });
+
+  it("Bottom sheets + Share: showSocialLayer=true -> shareCount se resuelve vía getShareCountsBatch (batch, sin N+1)", async () => {
+    mockGetShareCountsBatch.mockResolvedValue(new Map([[10, 7]]));
+    const result = await callerAs(42).getPublicById({ id: 10 });
+    expect(mockGetShareCountsBatch).toHaveBeenCalledWith([10]);
+    expect(result.shareCount).toBe(7);
+  });
+
+  it("Bottom sheets + Share: showSocialLayer=false (activa, sin responder) -> shareCount=0, getShareCountsBatch NUNCA se llama", async () => {
+    mockGetProposalById.mockResolvedValue({ id: 10, status: "active", venueId: null, endsAt: null, resultsVisibility: "immediate" });
+    mockGetUserResponse.mockResolvedValue(null);
+    const result = await callerAs(42).getPublicById({ id: 10 });
+    expect(result.shareCount).toBe(0);
+    expect(mockGetShareCountsBatch).not.toHaveBeenCalled();
+  });
 });
 
 describe("COM-02 — Community Social Results: likes/comentarios, siempre re-autorizados server-side (spec §18/§19/§27)", () => {
@@ -578,6 +599,19 @@ describe("COM-02 — Community Social Results: likes/comentarios, siempre re-aut
     mockGetProposalCommunityIds.mockReset().mockResolvedValue([]);
     mockNotifyProposalCommented.mockReset().mockResolvedValue(undefined);
     mockNotifyCommentReplied.mockReset().mockResolvedValue(undefined);
+    mockRecordShare.mockReset().mockResolvedValue({ count: 1 });
+  });
+
+  it("recordShare delega directamente (la re-autorización real vive en communitySocialDb.assertCanInteract, ya probada en su propio módulo)", async () => {
+    const result = await callerAs(42).recordShare({ proposalId: 10, method: "copy_link" });
+    expect(result).toEqual({ count: 1 });
+    expect(mockRecordShare).toHaveBeenCalledWith(10, 42, "copy_link");
+  });
+
+  it("recordShare propaga un error de negocio (p.ej. NOT_CLOSED de una propuesta activa sin responder) como error de cliente, nunca un 500 crudo", async () => {
+    const { CommunitySocialError } = await vi.importActual<typeof import("../segolife/community/communitySocialDb")>("../segolife/community/communitySocialDb");
+    mockRecordShare.mockRejectedValue(new CommunitySocialError("NOT_CLOSED", "Los comentarios y likes se habilitan al participar en la propuesta, o cuando esta finaliza."));
+    await expect(callerAs(42).recordShare({ proposalId: 10, method: "native" })).rejects.toThrow(/se habilitan al participar/i);
   });
 
   it("toggleLike delega directamente (la re-autorización real vive en communitySocialDb.assertCanInteract, ya probado en su propio módulo)", async () => {

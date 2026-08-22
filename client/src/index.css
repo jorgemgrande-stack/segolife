@@ -393,6 +393,13 @@ html:not(.dark) .text-gray-400  { color: oklch(0.50 0.04 230) !important; }
 
 /* ─── SUPERFICIES BLANCAS/CLARAS en dark mode ─────────────────────────────── */
 .dark .bg-white         { background-color: var(--card) !important; }
+
+/* SegolifeBottomSheet ("UX móvil: Bottom Sheets globales") es blanco SIEMPRE
+   por decisión de producto, independiente del tema activo — a diferencia del
+   `bg-white` heredado que la regla de arriba normaliza (blancos hardcodeados
+   de una época sin dark mode). Clase dedicada, nunca `bg-white`, para que
+   esa regla no la alcance. */
+.segolife-sheet-surface { background-color: #fff; }
 .dark .bg-gray-50,
 .dark .bg-slate-50      { background-color: oklch(0.13 0.02 240) !important; }
 .dark .bg-gray-100,

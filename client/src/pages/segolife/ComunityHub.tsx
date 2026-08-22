@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
-import { Vote, Coins, Heart, Loader2, Send, Flame, ImagePlus, X, Plus, MapPin, MessageCircle } from "lucide-react";
+import { Vote, Coins, Heart, Loader2, Send, Flame, ImagePlus, X, Plus, MapPin, MessageCircle, Share2 } from "lucide-react";
 import { QUESTION_TYPES_WITH_OPTIONS, type ComunityQuestionType } from "@/lib/comunity";
 import { initials, relativeTimeLabel, resultHeadline } from "@/lib/comunitySocial";
 
@@ -194,6 +194,7 @@ function ResultFeedCard({ slug, item }: { slug: string; item: {
   results: any;
   likeCount: number;
   commentCount: number;
+  shareCount: number;
 } }) {
   const { t, i18n } = useTranslation();
   const { proposal, author, results } = item;
@@ -234,6 +235,7 @@ function ResultFeedCard({ slug, item }: { slug: string; item: {
         <div className="flex items-center gap-4 pt-1 text-xs text-muted-foreground">
           <span className="flex items-center gap-1"><Heart className="size-3.5" /> {item.likeCount}</span>
           <span className="flex items-center gap-1"><MessageCircle className="size-3.5" /> {item.commentCount}</span>
+          <span className="flex items-center gap-1"><Share2 className="size-3.5" /> {item.shareCount}</span>
         </div>
       </div>
     </Link>

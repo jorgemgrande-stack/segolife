@@ -34,6 +34,7 @@ import { validateQuestionTypeOptions } from "../segolife/community/communityQues
 import {
   getLikeState, toggleLike, listComments, createComment, deleteOwnComment, moderateComment,
   getCommentCountsBatch, getLikeCountsBatch, resolveProposalAuthor, CommunitySocialError,
+  recordShare, getShareCountsBatch, type ShareMethod,
 } from "../segolife/community/communitySocialDb";
 import { notifyProposalCommented, notifyCommentReplied } from "../segolife/community/communityCommentNotifier";
 
@@ -545,14 +546,15 @@ export const communityRouter = router({
       // o de una propuesta a la que no se puede acceder. Solo se pide cuando
       // showSocialLayer ya es true (evita una query extra en el camino
       // caliente de VoteForm, spec §32 "no descargar de más").
-      const [author, likeState, commentCounts, latestCommentsPage] = showSocialLayer
+      const [author, likeState, commentCounts, latestCommentsPage, shareCounts] = showSocialLayer
         ? await Promise.all([
             resolveProposalAuthor(proposal),
             getLikeState(input.id, ctx.user.id),
             getCommentCountsBatch([input.id]),
             listComments(input.id, ctx.user.id, { limit: 1, offset: 0 }),
+            getShareCountsBatch([input.id]),
           ])
-        : [null, { liked: false, count: 0 }, new Map<number, number>(), { total: 0, items: [] }];
+        : [null, { liked: false, count: 0 }, new Map<number, number>(), { total: 0, items: [] }, new Map<number, number>()];
 
       return {
         proposal: { ...proposal, description: proposal.description, venueName }, // sin campos admin sensibles adicionales
@@ -567,6 +569,7 @@ export const communityRouter = router({
         likeCount: likeState.count,
         commentCount: commentCounts.get(input.id) ?? 0,
         latestComment: latestCommentsPage.items[0] ?? null,
+        shareCount: shareCounts.get(input.id) ?? 0,
       };
     }),
 
@@ -621,7 +624,7 @@ export const communityRouter = router({
     if (closed.length === 0) return [];
 
     const ids = closed.map(p => p.id);
-    const [likeCounts, commentCounts] = await Promise.all([getLikeCountsBatch(ids), getCommentCountsBatch(ids)]);
+    const [likeCounts, commentCounts, shareCounts] = await Promise.all([getLikeCountsBatch(ids), getCommentCountsBatch(ids), getShareCountsBatch(ids)]);
 
     return Promise.all(closed.map(async proposal => ({
       proposal: { ...proposal, venueName: await getVenueName(proposal.venueId, undefined) },
@@ -629,6 +632,7 @@ export const communityRouter = router({
       results: await getProposalResults(proposal.id, false),
       likeCount: likeCounts.get(proposal.id) ?? 0,
       commentCount: commentCounts.get(proposal.id) ?? 0,
+      shareCount: shareCounts.get(proposal.id) ?? 0,
     })));
   }),
 
@@ -639,6 +643,23 @@ export const communityRouter = router({
     .mutation(async ({ input, ctx }) => {
       try {
         return await toggleLike(input.proposalId, ctx.user.id);
+      } catch (err) {
+        mapCommunitySocialError(err);
+      }
+    }),
+
+  // ─── Bottom sheets + Share: registro de shares ─────────────────────────────
+  // Nunca se llama al abrir el panel (spec §8) — el cliente solo invoca esto
+  // tras una intención efectiva real (navigator.share() resuelto, click en
+  // "copiar enlace", o click en una opción concreta del fallback). Misma
+  // puerta de acceso que like/comment (recordShare -> assertCanInteract):
+  // nunca se registra un share sobre una propuesta a la que el usuario no
+  // tenga acceso, pase lo que pase con el communityId que mande el cliente.
+  recordShare: protectedProcedure
+    .input(z.object({ proposalId: z.number().int().positive(), method: z.enum(["native", "copy_link", "whatsapp", "telegram", "email"]) }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await recordShare(input.proposalId, ctx.user.id, input.method as ShareMethod);
       } catch (err) {
         mapCommunitySocialError(err);
       }

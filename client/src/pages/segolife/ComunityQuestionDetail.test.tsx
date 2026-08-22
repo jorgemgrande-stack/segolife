@@ -14,17 +14,15 @@ import i18n from "@/lib/i18n";
  * y no se toca en esta fase — un test de regresión mínimo confirma que
  * sigue intacto.
  */
-if (!Element.prototype.hasPointerCapture) {
-  Element.prototype.hasPointerCapture = () => false;
-}
-if (!Element.prototype.scrollIntoView) {
-  Element.prototype.scrollIntoView = () => {};
-}
+// Polyfills de Pointer Events API (hasPointerCapture/setPointerCapture/
+// releasePointerCapture) y scrollIntoView movidos a client/src/test/setup.ts
+// (global, spec "UX móvil: Bottom Sheets globales" — cualquier test que
+// toque un SegolifeBottomSheet/vaul los necesita, no solo este archivo).
 
 const {
   mockAuthMe, mockHomeSummary, mockStudentsMe, mockUseCommunity,
   mockGetPublicById, mockToggleLike, mockListComments, mockCreateComment, mockDeleteComment, mockRespond,
-  mockGetPublicRespondents, mockPreviewMyReward,
+  mockGetPublicRespondents, mockPreviewMyReward, mockRecordShare,
   noopQuery,
 } = vi.hoisted(() => ({
   mockAuthMe: vi.fn(),
@@ -39,6 +37,7 @@ const {
   mockRespond: vi.fn(),
   mockGetPublicRespondents: vi.fn(),
   mockPreviewMyReward: vi.fn(),
+  mockRecordShare: vi.fn(),
   noopQuery: () => ({ data: undefined, isLoading: false }),
 }));
 
@@ -62,6 +61,7 @@ vi.mock("@/lib/trpc", () => ({
       createComment: { useMutation: mockCreateComment },
       deleteComment: { useMutation: mockDeleteComment },
       respond: { useMutation: mockRespond },
+      recordShare: { useMutation: mockRecordShare },
       myActive: { invalidate: vi.fn() },
       myResponded: { invalidate: vi.fn() },
     },
@@ -110,6 +110,7 @@ function proposalFixture(overrides: Partial<Record<string, unknown>> = {}) {
     liked: false,
     likeCount: 0,
     commentCount: 0,
+    shareCount: 0,
     latestComment: null,
     ...overrides,
   };
@@ -137,6 +138,7 @@ beforeEach(async () => {
   mockCreateComment.mockReturnValue({ mutate: vi.fn(), isPending: false });
   mockDeleteComment.mockReturnValue({ mutate: vi.fn(), isPending: false });
   mockRespond.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockRecordShare.mockReturnValue({ mutate: vi.fn(), isPending: false });
   mockListComments.mockReturnValue({ data: { total: 0, items: [] }, isLoading: false });
 });
 
