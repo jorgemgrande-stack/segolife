@@ -5452,6 +5452,13 @@ export const eventIntegrations = mysqlTable("event_integrations", {
   credentialsLast4:      varchar("credentials_last4", { length: 8 }),
   syncEnabled:           boolean("sync_enabled").notNull().default(false),
   syncIntervalMinutes:   int("sync_interval_minutes"),
+  // F71 (Weezevent) — mismo gate DESACOPLADO que venue_integrations.loyaltyEnabled
+  // (ver comentario gemelo arriba): los datos (tickets/asistencia) pueden
+  // sincronizarse en vivo con loyaltyEnabled=false (default) sin conceder ni
+  // un SegoToken/Benefit. Activarlo es siempre un flip explícito posterior,
+  // nunca un efecto colateral de habilitar sync — ver integrationSyncService.ts.
+  loyaltyEnabled:        boolean("loyalty_enabled").notNull().default(false),
+  loyaltyCutoffOverrideAt: timestamp("loyalty_cutoff_override_at"),
   lastSyncAt:            timestamp("last_sync_at"),
   lastSuccessAt:         timestamp("last_success_at"),
   lastErrorAt:           timestamp("last_error_at"),

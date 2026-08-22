@@ -171,7 +171,8 @@ para dudas puntuales, sin necesidad de formación programada.
 | **Brevo (email)** | ✅ Configurada — `BREVO_API_KEY` y `BREVO_WEBHOOK_TOKEN` presentes en producción | — | — | Confirmar con un envío real de prueba desde Communication Center que la entrega y el webhook de estado funcionan de extremo a extremo |
 | **VAPI (agente de voz IA)** | ⚪ No configurada, y **fuera del alcance actual de Segolife** — módulo oculto del menú de Admin (heredado de Náyade, 0 llamadas reales registradas) | Nada del producto Segolife actual | Todo — no es una dependencia de la operación real de Segolife hoy | No aplica salvo que se decida incorporar esta capacidad al producto en el futuro |
 | **GHL / WhatsApp comercial** | ⚪ No configurada, y **fuera del alcance actual de Segolife** — mismo criterio que VAPI (0 conversaciones reales registradas) | Nada del producto Segolife actual | Todo | No aplica salvo decisión futura de producto |
-| **Fourvenues / Weezevent** | ✅ Configurada y activa — 3 locales conectados (Casanova, Limoncello, Tía Felisa) | — | — | Vigilar `/admin/integrations/unresolved` durante la primera semana |
+| **Fourvenues** | ✅ Configurada y activa — 3 locales conectados (Casanova, Limoncello, Tía Felisa) | — | — | Vigilar `/admin/integrations/unresolved` durante la primera semana |
+| **Weezevent** | ❌ Sin credenciales reales en ningún entorno, sin sandbox documentado (F71, 2026-08-23) | Sync real Weezevent (orquestación ya implementada y testeada con mocks) | Fourvenues, ni el resto de la plataforma | Dar de alta credenciales reales de una cuenta Weezevent y probar "Preview"/"Sync now" en `/admin/integrations` contra un evento real |
 
 ---
 

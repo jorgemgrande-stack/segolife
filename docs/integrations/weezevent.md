@@ -151,3 +151,58 @@ UNKNOWN explícito:
 ## Resumen operativo
 
 API de solo lectura (eventos/fechas/tickets/participantes/respuestas + config de escaneo), sin sandbox y sin webhooks documentados (requiere polling propio respetando el fair-use: 600 req/min, bans por 429). Hallazgo clave: **sí hay asistencia individual confirmada** (`control_status` con `scan_date`/`scan_user`), no solo agregada — a diferencia de lo que el spec de este proyecto consideraba posible. Lo que queda UNKNOWN real es si ese campo guarda solo el último escaneo o el histórico completo de reentradas, y si existe algún endpoint de venta programática.
+
+## F71 — Estado de implementación (2026-08-23)
+
+Orquestación de sync real construida y testeada (18 tests nuevos,
+`syncEventIntegration.test.ts`) sobre el adapter ya existente
+(`weezeventAdapter.ts`), reutilizando la infraestructura genérica de
+Fourvenues (`ticketPurchasePipeline.ts`/`attendancePipeline.ts`,
+idempotencia, identity resolver) sin cambios en ninguna de ellas.
+
+**Implementado:**
+- `syncEventIntegration()`/`dryRunEventIntegration()`
+  (`integrationSyncService.ts`) — mismo criterio de kill switch/lock/
+  aislamiento de fallos que Fourvenues, pero SIN `eventCatalogSync` (el
+  evento ya es 1:1 vía `event_integrations.eventId`+`externalEventId`, no
+  hay catálogo que descubrir).
+- Auth de dos pasos REALMENTE conectada: antes de F71,
+  `getWeezeventAccessToken()` existía pero ningún camino real la invocaba
+  (`testConnection`/`listEvents`/etc. asumían `accessToken` ya presente en
+  las credenciales). Ahora, si solo hay `username`+`password`+`apiKey`, el
+  sync intercambia un `access_token` real antes de la primera llamada.
+- `previewEventSync`/`syncEventNow` (tRPC) + botones "Preview"/"Sync now" y
+  toggle de Loyalty en `/admin/integrations` (antes solo existían para
+  Fourvenues).
+- Campos de usuario/contraseña + ID de evento externo en el formulario de
+  alta de una integración Weezevent (antes solo pedía la API key, pese a
+  que el router ya aceptaba username/password).
+- `event_integrations.loyaltyEnabled`/`loyaltyCutoffOverrideAt` (migración
+  0171) — mismo gate desacoplado que `venue_integrations`: los datos
+  pueden sincronizarse en vivo sin conceder ni un SegoToken hasta que un
+  admin lo active explícitamente.
+
+**Decisión arquitectónica real (no un límite de esta implementación):**
+Weezevent no tiene endpoint de pedidos (`listOrders` lanza
+`CapabilityNotSupportedError`) — cada "participant" se ingiere vía
+`ingestPaymentlessTicket` (nunca `ticketPurchasePipeline`, que exige un
+`NormalizedOrder`). Consecuencia: el reward de COMPRA
+(`origin="ticket"`) **nunca puede dispararse** para un evento Weezevent —
+solo el de ASISTENCIA (`origin="attendance"`, gateado por
+`loyaltyEnabled`).
+
+**Decisión deliberada — sin scheduler automático:** a diferencia de
+Fourvenues (`integrationScheduler.ts`), Weezevent queda sync manual-only
+("Preview"/"Sync now" en el admin). Motivo: sin webhooks confirmados y
+sin credenciales reales contra las que validar una cadencia seria, un
+scheduler automático sería una suposición no verificada. Extensible más
+adelante con el mismo patrón `conditionallyStartJob`/default-false que ya
+usan `community_lifecycle_scheduler_enabled`/`benefit_expiry_reminder_enabled`
+si se confirma que hace falta.
+
+**Bloqueo real restante (no resoluble con código/repo/Railway/docs):**
+no existen credenciales reales de Weezevent en ningún entorno, y no hay
+sandbox documentado — la primera prueba real contra la API tendría que
+ser directamente en producción, con un evento real, una vez el negocio
+decida activar el proveedor y las obtenga. Toda la orquestación de arriba
+está lista y testeada con mocks; lo único que falta es la credencial.

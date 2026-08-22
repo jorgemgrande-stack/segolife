@@ -18,10 +18,11 @@ import { eq, and, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { venues, communityVenues, eventTickets, type VenueIntegration, type EventIntegration } from "../../../drizzle/schema";
-import { startSyncRun, finishSyncRun, recordVenueIntegrationResult, getVenueIntegrationRaw, getProviderById, setSyncCursor, findInternalIdForExternal, tryAcquireSyncLock, isDueForScheduledSync, getCurrentLockStatus } from "./integrationsDb";
-import { CapabilityNotSupportedError, type ExternalTicketingProvider, type NormalizedOrder, type NormalizedTicket } from "./externalTicketingProvider";
+import { startSyncRun, finishSyncRun, recordVenueIntegrationResult, recordEventIntegrationResult, getVenueIntegrationRaw, getEventIntegrationRaw, getProviderById, setSyncCursor, findInternalIdForExternal, tryAcquireSyncLock, isDueForScheduledSync, getCurrentLockStatus } from "./integrationsDb";
+import { CapabilityNotSupportedError, type ExternalTicketingProvider, type NormalizedOrder, type NormalizedTicket, type ProviderCredentials } from "./externalTicketingProvider";
 import { decryptCredentials } from "./integrationCredentialCrypto";
 import { createFourvenuesIntegrationsAdapter, FOURVENUES_INTEGRATIONS_BASE_URL } from "./fourvenuesIntegrationsAdapter";
+import { createWeezeventAdapter, getWeezeventAccessToken, WEEZEVENT_BASE_URL } from "./weezeventAdapter";
 import { createHttpTransport } from "./httpTransport";
 import { resolveIdentity } from "./identityResolver";
 import { syncEventCatalog, syncTicketTypes } from "./eventCatalogSync";
@@ -203,10 +204,15 @@ export interface VenueSyncOptions {
  * por columna DEFAULT) nunca concede tokens aunque el scheduler ya esté
  * sincronizando datos en vivo.
  */
-function resolveSuppressLoyalty(opts: VenueSyncOptions, integration: Pick<VenueIntegration, "loyaltyEnabled">): boolean {
+/** Compartida con syncEventIntegration (F71) — misma precedencia exacta, sin duplicar la lógica. */
+function resolveSuppressLoyaltyFlag(opts: { suppressLoyalty?: boolean; historicalImport?: boolean }, loyaltyEnabled: boolean): boolean {
   if (opts.suppressLoyalty !== undefined) return opts.suppressLoyalty;
   if (opts.historicalImport) return true;
-  return !integration.loyaltyEnabled;
+  return !loyaltyEnabled;
+}
+
+function resolveSuppressLoyalty(opts: VenueSyncOptions, integration: Pick<VenueIntegration, "loyaltyEnabled">): boolean {
+  return resolveSuppressLoyaltyFlag(opts, integration.loyaltyEnabled);
 }
 
 export interface DryRunEventPreview {
@@ -646,4 +652,251 @@ export async function getIntegrationSchedulerStatus(
     nextDueAt,
     loyaltyEnabled: integration.loyaltyEnabled,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WEEZEVENT SYNC — orquestador (event_integration) — F71
+// ═══════════════════════════════════════════════════════════════════════════
+// Mismo patrón que la sección Fourvenues de arriba (canSync/tryAcquireSyncLock/
+// finishSyncRun/decryptCredentials ya existentes en este archivo), pero MÁS
+// SIMPLE porque el modelo de Weezevent es distinto (spec F71):
+//  - event_integration es 1:1 con un evento YA CONOCIDO (integration.eventId +
+//    integration.externalEventId) — nunca hay un catálogo que descubrir/mapear
+//    como en eventCatalogSync.ts, así que este sync no lo usa.
+//  - Weezevent no tiene endpoint de pedidos (listOrders lanza
+//    CapabilityNotSupportedError, ver weezeventAdapter.ts — "API de solo
+//    lectura, sin checkout/orders programáticos") — TODO ticket ("participant")
+//    se ingiere vía ingestPaymentlessTicket, nunca ticketPurchasePipeline (que
+//    exige un NormalizedOrder real). Consecuencia arquitectónica real, no una
+//    limitación de esta implementación: el reward de COMPRA (origin="ticket")
+//    NUNCA puede dispararse para un evento Weezevent — solo el de ASISTENCIA
+//    (origin="attendance", vía ingestAttendance más abajo), gateado por el
+//    mismo loyaltyEnabled desacoplado que Fourvenues (ver migración 0171).
+//  - Sin scheduler automático (a diferencia de Fourvenues): Weezevent no tiene
+//    webhooks confirmados (docs/integrations/weezevent.md) y no hay
+//    credenciales reales para validar la cadencia correcta — decisión
+//    deliberada F71, documentada en docs/integrations/weezevent.md: sync
+//    manual únicamente ("Sync now"/"Preview" en el admin), extensible más
+//    adelante con el mismo patrón conditionallyStartJob si se confirma que
+//    hace falta.
+
+/**
+ * Auth de dos pasos de Weezevent (spec doc): si las credenciales ya traen un
+ * `accessToken` (guardado tal cual por el admin, o de un sync anterior en la
+ * misma ejecución), se usa directamente. Si solo hay username+password+apiKey,
+ * se intercambia AQUÍ por un access_token real vía getWeezeventAccessToken() —
+ * antes de este cambio (F71) esa función existía pero nunca se invocaba desde
+ * ningún camino real (testConnection/listEvents/etc. asumían accessToken ya
+ * presente). El token no se persiste de vuelta en credentialsEncrypted — se
+ * resuelve en memoria para esta sola ejecución (más simple y más seguro sin
+ * credenciales reales contra las que validar que persistirlo no tiene efectos
+ * secundarios inesperados); el coste es una llamada extra por sync, aceptable
+ * al ser manual-only.
+ */
+async function resolveWeezeventCredentials(credentials: ProviderCredentials): Promise<ProviderCredentials> {
+  if (credentials.accessToken) return credentials;
+  if (!credentials.username || !credentials.password || !credentials.apiKey) return credentials; // datos insuficientes — se deja igual, el propio adapter devolverá el error real de Weezevent
+  const transport = createHttpTransport(WEEZEVENT_BASE_URL);
+  const accessToken = await getWeezeventAccessToken(transport, credentials);
+  return { ...credentials, accessToken };
+}
+
+export interface EventSyncOptions {
+  /** spec §39 (mismo criterio que VenueSyncOptions) — asistencias anteriores a esta fecha se persisten pero nunca generan tokens/Benefits. */
+  loyaltyEffectiveFrom?: Date | null;
+  /** Import histórico deliberado — nunca concede tokens/Benefits, sea cual sea occurredAt. */
+  historicalImport?: boolean;
+  /** Override explícito por encima de historicalImport/integration.loyaltyEnabled — misma precedencia que Fourvenues, ver resolveSuppressLoyaltyFlag. */
+  suppressLoyalty?: boolean;
+  /** Solo observabilidad (integration_sync_runs.metadata) — sin scheduler automático todavía, siempre "manual" en la práctica. */
+  trigger?: "manual";
+}
+
+export interface DryRunEventResult {
+  status: "ok" | "blocked";
+  message?: string;
+  eventId: number | null;
+  externalEventId: string | null;
+  ratesFound: number;
+  ticketsFound: number;
+  attendanceFound: number;
+  identitiesResolvable: number;
+  identitiesUnresolved: number;
+}
+
+function blockedDryRunEvent(eventId: number | null, externalEventId: string | null, message: string): DryRunEventResult {
+  return { status: "blocked", message, eventId, externalEventId, ratesFound: 0, ticketsFound: 0, attendanceFound: 0, identitiesResolvable: 0, identitiesUnresolved: 0 };
+}
+
+/** PREVIEW / DRY RUN — Weezevent → normalize, SIN persistir ningún dato de negocio (mismo criterio que dryRunVenueIntegration: resolveIdentity() es de solo lectura, seguro llamarla aquí). No exige syncEnabled, igual que su equivalente de venue. */
+export async function dryRunEventIntegration(eventIntegrationId: number, db?: DbHandle): Promise<DryRunEventResult> {
+  const integration = await getEventIntegrationRaw(eventIntegrationId);
+  if (!integration) return blockedDryRunEvent(null, null, "Integración no encontrada");
+  if (!isExternalIntegrationsGloballyEnabled()) return blockedDryRunEvent(integration.eventId, integration.externalEventId, "Kill switch global desactivado (EXTERNAL_INTEGRATIONS_ENABLED)");
+  if (!integration.credentialsEncrypted) return blockedDryRunEvent(integration.eventId, integration.externalEventId, "Sin credenciales configuradas");
+  if (!integration.externalEventId) return blockedDryRunEvent(integration.eventId, null, "Falta el ID de evento externo (externalEventId) en la configuración");
+  const rawCredentials = decryptCredentials(integration.credentialsEncrypted);
+  if (!rawCredentials) return blockedDryRunEvent(integration.eventId, integration.externalEventId, "No se pudieron descifrar las credenciales");
+  const provider = await getProviderById(integration.providerId);
+  if (provider?.key !== "weezevent") {
+    return blockedDryRunEvent(integration.eventId, integration.externalEventId, `Proveedor "${provider?.key ?? "desconocido"}" no soportado por el sync de eventos — solo weezevent`);
+  }
+
+  const externalEventId = integration.externalEventId;
+  const credentials = await resolveWeezeventCredentials(rawCredentials);
+  const adapter = createWeezeventAdapter(createHttpTransport(WEEZEVENT_BASE_URL));
+  const conn = db ?? (await getDb());
+
+  let ratesFound = 0, attendanceFound = 0;
+  let identitiesResolvable = 0, identitiesUnresolved = 0;
+  let tickets: NormalizedTicket[] = [];
+
+  try {
+    ratesFound = (await adapter.listTicketTypes(credentials, externalEventId)).length;
+  } catch (err) { if (!(err instanceof CapabilityNotSupportedError)) throw err; }
+  try {
+    tickets = await adapter.listTickets(credentials, externalEventId);
+  } catch (err) { if (!(err instanceof CapabilityNotSupportedError)) throw err; }
+  try {
+    attendanceFound = (await adapter.listAttendance(credentials, externalEventId)).length;
+  } catch (err) { if (!(err instanceof CapabilityNotSupportedError)) throw err; }
+
+  for (const t of tickets) {
+    const identity = await resolveIdentity({ provider: "weezevent", participant: t.participant, buyer: null }, conn);
+    if (identity.userId) identitiesResolvable++; else identitiesUnresolved++;
+  }
+
+  return { status: "ok", eventId: integration.eventId, externalEventId, ratesFound, ticketsFound: tickets.length, attendanceFound, identitiesResolvable, identitiesUnresolved };
+}
+
+export interface EventSyncResult {
+  status: "success" | "partial" | "failed" | "skipped_disabled" | "skipped_locked";
+  message?: string;
+  eventId: number | null;
+  ratesSynced: number;
+  ticketsFound: number;
+  paymentlessCreated: number;
+  paymentlessAlreadyExists: number;
+  paymentlessUnresolved: number;
+  attendanceProcessed: number;
+  attendanceUnresolved: number;
+  failedCount: number;
+}
+
+function emptyEventSyncResult(status: EventSyncResult["status"], eventId: number | null, message?: string): EventSyncResult {
+  return {
+    status, message, eventId, ratesSynced: 0, ticketsFound: 0,
+    paymentlessCreated: 0, paymentlessAlreadyExists: 0, paymentlessUnresolved: 0,
+    attendanceProcessed: 0, attendanceUnresolved: 0, failedCount: 0,
+  };
+}
+
+/** SYNC REAL de escritura — 1 event_integration (Weezevent). Aislamiento de fallos igual que syncVenueIntegration: un ticket/asistencia concreta irrecuperable se cuenta y se continúa; solo un error antes de poder listar tipos de entrada (auth/credenciales/red) aborta el run completo. */
+export async function syncEventIntegration(eventIntegrationId: number, opts: EventSyncOptions = {}, db?: DbHandle): Promise<EventSyncResult> {
+  const integration = await getEventIntegrationRaw(eventIntegrationId);
+  if (!integration) return emptyEventSyncResult("failed", null, "Integración no encontrada");
+  if (!canSync(integration)) {
+    return emptyEventSyncResult("skipped_disabled", integration.eventId, "Integración deshabilitada (kill switch) — ver EXTERNAL_INTEGRATIONS_ENABLED / integration.enabled / credenciales / syncEnabled");
+  }
+  if (!integration.externalEventId) {
+    return emptyEventSyncResult("failed", integration.eventId, "Falta el ID de evento externo (externalEventId) en la configuración");
+  }
+
+  const rawCredentials = decryptCredentials(integration.credentialsEncrypted);
+  if (!rawCredentials) return emptyEventSyncResult("failed", integration.eventId, "No se pudieron descifrar las credenciales");
+
+  const provider = await getProviderById(integration.providerId);
+  if (provider?.key !== "weezevent") {
+    return emptyEventSyncResult("failed", integration.eventId, `Proveedor "${provider?.key ?? "desconocido"}" no soportado por syncEventIntegration`);
+  }
+
+  const lock = await tryAcquireSyncLock("event_integration", integration.id, "incremental", { trigger: opts.trigger ?? "manual" });
+  if (!lock.acquired || !lock.run) {
+    return emptyEventSyncResult("skipped_locked", integration.eventId, lock.reason ?? "sync already running");
+  }
+  const run = lock.run;
+  const suppressLoyalty = resolveSuppressLoyaltyFlag(opts, integration.loyaltyEnabled);
+  const conn = db ?? (await getDb());
+  const externalEventId = integration.externalEventId;
+
+  let failedCount = 0;
+  let ratesSynced = 0, ticketsFound = 0;
+  let paymentlessCreated = 0, paymentlessAlreadyExists = 0, paymentlessUnresolved = 0;
+  let attendanceProcessed = 0, attendanceUnresolved = 0;
+
+  try {
+    const credentials = await resolveWeezeventCredentials(rawCredentials);
+    const adapter = createWeezeventAdapter(createHttpTransport(WEEZEVENT_BASE_URL));
+
+    const rateTypes = await adapter.listTicketTypes(credentials, externalEventId);
+    const rateResult = await syncTicketTypes({
+      provider: "weezevent", integrationType: "event_integration", integrationId: integration.id,
+      eventId: integration.eventId, normalizedTicketTypes: rateTypes,
+    }, conn);
+    ratesSynced = rateResult.createdCount + rateResult.updatedCount;
+
+    const tickets = await adapter.listTickets(credentials, externalEventId);
+    ticketsFound = tickets.length;
+
+    for (const t of tickets) {
+      try {
+        const result = await ingestPaymentlessTicket({
+          provider: "weezevent", integrationType: "event_integration", integrationId: integration.id,
+          eventId: integration.eventId, venueId: null,
+          ticket: t,
+          resolveTicketTypeId: (externalId) => (externalId ? rateResult.ticketTypeIdByExternalId.get(externalId) ?? null : null),
+        }, conn);
+        if (result.status === "created") {
+          paymentlessCreated++;
+          if (!result.identityResolved) paymentlessUnresolved++;
+        } else {
+          paymentlessAlreadyExists++;
+        }
+      } catch {
+        failedCount++;
+      }
+    }
+
+    const attendanceList = await adapter.listAttendance(credentials, externalEventId);
+    const allExternalTicketIds = tickets.map(t => t.externalId);
+    const ticketIdByExternalId = new Map<string, number>();
+    if (allExternalTicketIds.length > 0) {
+      const rows = await conn.select({ id: eventTickets.id, externalTicketId: eventTickets.externalTicketId })
+        .from(eventTickets)
+        .where(and(eq(eventTickets.provider, "weezevent"), inArray(eventTickets.externalTicketId, allExternalTicketIds)));
+      for (const r of rows) if (r.externalTicketId) ticketIdByExternalId.set(r.externalTicketId, r.id);
+    }
+
+    for (const a of attendanceList) {
+      try {
+        const result = await ingestAttendance({
+          provider: "weezevent", integrationType: "event_integration", integrationId: integration.id,
+          eventId: integration.eventId, venueId: null,
+          ticketId: a.externalTicketId ? ticketIdByExternalId.get(a.externalTicketId) ?? null : null,
+          suppressLoyalty,
+          isHistoricalImport: opts.historicalImport === true,
+          attendance: a,
+        }, conn);
+        if (result.status === "processed") attendanceProcessed++;
+        else if (result.status === "unresolved") attendanceUnresolved++;
+      } catch {
+        failedCount++;
+      }
+    }
+
+    await setSyncCursor("event_integration", integration.id, null, new Date(), conn);
+    const status: EventSyncResult["status"] = failedCount > 0 ? "partial" : "success";
+    await finishSyncRun(run.id, {
+      fetchedCount: ticketsFound + attendanceList.length, createdCount: paymentlessCreated, updatedCount: 0,
+      unresolvedCount: paymentlessUnresolved + attendanceUnresolved, failedCount,
+    }, status);
+    await recordEventIntegrationResult(integration.id, true, null);
+
+    return { status, eventId: integration.eventId, ratesSynced, ticketsFound, paymentlessCreated, paymentlessAlreadyExists, paymentlessUnresolved, attendanceProcessed, attendanceUnresolved, failedCount };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await finishSyncRun(run.id, { fetchedCount: 0, createdCount: 0, updatedCount: 0, unresolvedCount: 0, failedCount: failedCount || 1 }, "failed", message);
+    await recordEventIntegrationResult(integration.id, false, message);
+    return emptyEventSyncResult("failed", integration.eventId, message);
+  }
 }

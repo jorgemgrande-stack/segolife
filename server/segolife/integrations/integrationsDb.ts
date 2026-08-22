@@ -45,7 +45,7 @@ export interface SafeIntegration {
   credentialsConfigured: boolean;
   credentialsLast4: string | null;
   syncEnabled: boolean;
-  /** Production Scheduler — solo real en venue_integrations (event_integrations no lo tiene todavía, no hay necesidad hoy); siempre false para "event". */
+  /** Production Scheduler / F71 — mismo gate real para venue_integrations Y event_integrations (Weezevent) desde que ambas tablas tienen la columna. */
   loyaltyEnabled: boolean;
   syncIntervalMinutes: number | null;
   lastSyncAt: Date | null;
@@ -67,7 +67,7 @@ function toSafeIntegration(row: VenueIntegration | EventIntegration, providerKey
     credentialsConfigured: !!row.credentialsEncrypted,
     credentialsLast4: row.credentialsLast4,
     syncEnabled: row.syncEnabled,
-    loyaltyEnabled: kind === "venue" ? (row as VenueIntegration).loyaltyEnabled : false,
+    loyaltyEnabled: row.loyaltyEnabled,
     syncIntervalMinutes: row.syncIntervalMinutes,
     lastSyncAt: row.lastSyncAt,
     lastSuccessAt: row.lastSuccessAt,
@@ -244,6 +244,22 @@ export async function createEventIntegration(input: CreateEventIntegrationInput,
 export async function setEventIntegrationEnabled(id: number, enabled: boolean, db?: DbHandle): Promise<void> {
   const conn = db ?? (await getDb());
   await conn.update(eventIntegrations).set({ enabled }).where(eq(eventIntegrations.id, id));
+}
+
+/** F71 — mismo criterio que setVenueIntegrationLoyaltyEnabled: flip explícito, nunca efecto colateral de habilitar sync. */
+export async function setEventIntegrationLoyaltyEnabled(id: number, loyaltyEnabled: boolean, db?: DbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  await conn.update(eventIntegrations).set({ loyaltyEnabled }).where(eq(eventIntegrations.id, id));
+}
+
+export async function recordEventIntegrationResult(id: number, ok: boolean, message: string | null, db?: DbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  const now = new Date();
+  await conn.update(eventIntegrations).set(
+    ok
+      ? { status: "connected", lastSyncAt: now, lastSuccessAt: now, lastErrorMessage: null }
+      : { status: "error", lastSyncAt: now, lastErrorAt: now, lastErrorMessage: message?.slice(0, 512) ?? null }
+  ).where(eq(eventIntegrations.id, id));
 }
 
 // ─── MAPPINGS / SYNC RUNS / SYNC STATE ────────────────────────────────────────

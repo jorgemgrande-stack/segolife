@@ -4,7 +4,7 @@ import { router, permissionProcedure } from "../_core/trpc";
 import {
   listProviders, listVenueIntegrations, listEventIntegrations,
   createVenueIntegration, createEventIntegration,
-  setVenueIntegrationEnabled, setEventIntegrationEnabled,
+  setVenueIntegrationEnabled, setEventIntegrationEnabled, setEventIntegrationLoyaltyEnabled,
   updateVenueIntegrationCredentials,
   getVenueIntegrationRaw, getEventIntegrationRaw, getProviderById,
   listSyncRuns,
@@ -15,7 +15,7 @@ import { createFourvenuesIntegrationsAdapter, FOURVENUES_INTEGRATIONS_BASE_URL }
 import { createWeezeventAdapter, WEEZEVENT_BASE_URL } from "../segolife/integrations/weezeventAdapter";
 import { createHttpTransport } from "../segolife/integrations/httpTransport";
 import { decryptCredentials } from "../segolife/integrations/integrationCredentialCrypto";
-import { isExternalIntegrationsGloballyEnabled, syncVenueIntegration, dryRunVenueIntegration, getIntegrationSchedulerStatus } from "../segolife/integrations/integrationSyncService";
+import { isExternalIntegrationsGloballyEnabled, syncVenueIntegration, dryRunVenueIntegration, syncEventIntegration, dryRunEventIntegration, getIntegrationSchedulerStatus } from "../segolife/integrations/integrationSyncService";
 import { isFourvenuesSchedulerRunning, DEFAULT_INCREMENTAL_INTERVAL_MINUTES } from "../segolife/integrations/integrationScheduler";
 import { processCommerceLoyalty } from "../segolife/commerce/commercePipeline";
 import { ingestAttendance } from "../segolife/ticketing/attendancePipeline";
@@ -98,6 +98,11 @@ export const integrationsRouter = router({
   setEventIntegrationEnabled: integrationsManageProcedure
     .input(z.object({ id: z.number().int().positive(), enabled: z.boolean() }))
     .mutation(({ input }) => setEventIntegrationEnabled(input.id, input.enabled)),
+
+  // F71 — mismo gate desacoplado que setVenueIntegrationLoyaltyEnabled (migración 0171).
+  setEventIntegrationLoyaltyEnabled: integrationsManageProcedure
+    .input(z.object({ id: z.number().int().positive(), loyaltyEnabled: z.boolean() }))
+    .mutation(({ input }) => setEventIntegrationLoyaltyEnabled(input.id, input.loyaltyEnabled)),
 
   updateVenueIntegrationCredentials: integrationsManageProcedure
     .input(z.object({ id: z.number().int().positive(), apiKey: z.string().min(1).max(512) }))
@@ -183,6 +188,27 @@ export const integrationsRouter = router({
   getSchedulerStatus: integrationsViewProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .query(({ input }) => getIntegrationSchedulerStatus(input.id, isFourvenuesSchedulerRunning(), DEFAULT_INCREMENTAL_INTERVAL_MINUTES)),
+
+  // ── Weezevent Sync (F71) — mismo criterio que Fourvenues arriba: nunca
+  // acepta credenciales del frontend ni un provider arbitrario, todo se
+  // resuelve server-side a partir de `eventIntegrationId`. Sin scheduler
+  // automático todavía (Weezevent sin webhooks confirmados/sin credenciales
+  // reales para validar cadencia) — solo manual, ver integrationSyncService.ts.
+  previewEventSync: integrationsManageProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(({ input }) => dryRunEventIntegration(input.id)),
+
+  syncEventNow: integrationsManageProcedure
+    .input(z.object({
+      id: z.number().int().positive(),
+      loyaltyEffectiveFrom: z.string().datetime().optional(),
+      historicalImport: z.boolean().optional(),
+    }))
+    .mutation(({ input }) => syncEventIntegration(input.id, {
+      loyaltyEffectiveFrom: input.loyaltyEffectiveFrom ? new Date(input.loyaltyEffectiveFrom) : null,
+      historicalImport: input.historicalImport,
+      trigger: "manual",
+    })),
 
   // ── Unresolved operations (spec punto 56) ────────────────────────────────
   listUnresolved: integrationsViewProcedure
