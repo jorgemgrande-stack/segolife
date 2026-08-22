@@ -4,6 +4,7 @@ import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LabelWithInfo } from "@/components/ui/info-tooltip";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -184,7 +185,7 @@ function IssueTab() {
           )}
         </div>
         <div>
-          <Label>Caducidad desde</Label>
+          <LabelWithInfo info="Momento a partir del cual empieza a contar la caducidad del QR. 'Desde la emisión' es el comportamiento de siempre. 'Desde el inicio del evento' fija la caducidad al arranque de un evento concreto (útil para QR de acceso). 'Al asignarse a un estudiante' deja el QR sin caducar hasta que lo asignes explícitamente desde el Listado — y a partir de ahí solo ese estudiante puede canjearlo.">Caducidad desde</LabelWithInfo>
           <Select value={expiryMode} onValueChange={v => setExpiryMode(v as QrExpiryMode)}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>

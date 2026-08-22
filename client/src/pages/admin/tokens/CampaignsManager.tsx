@@ -4,6 +4,7 @@ import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LabelWithInfo } from "@/components/ui/info-tooltip";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -188,12 +189,21 @@ export default function CampaignsManager() {
             <div><Label>Nombre *</Label><Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ej: x2 esta noche" /></div>
             <div><Label>Descripción</Label><Textarea rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></div>
             <div className="grid grid-cols-2 gap-4">
-              <div><Label>Multiplicador</Label><Input value={form.multiplier} onChange={e => setForm(f => ({ ...f, multiplier: e.target.value }))} placeholder="2.00" /></div>
-              <div><Label>Bonus fijo</Label><Input type="number" value={form.bonusTokens} onChange={e => setForm(f => ({ ...f, bonusTokens: e.target.value }))} /></div>
+              <div>
+                <LabelWithInfo info="Multiplica el resultado de la regla base (2 = el doble de tokens). Se aplica ANTES del bonus fijo — si pones multiplicador Y bonus, primero se multiplica y luego se suma el bonus, nunca al revés. Vacío = no multiplica (x1).">Multiplicador</LabelWithInfo>
+                <Input value={form.multiplier} onChange={e => setForm(f => ({ ...f, multiplier: e.target.value }))} placeholder="2.00" />
+              </div>
+              <div>
+                <LabelWithInfo info="Tokens extra que se SUMAN al resultado ya multiplicado (nunca en vez del multiplicador — los dos pueden combinarse a la vez).">Bonus fijo</LabelWithInfo>
+                <Input type="number" value={form.bonusTokens} onChange={e => setForm(f => ({ ...f, bonusTokens: e.target.value }))} />
+              </div>
               <div><Label>Presupuesto total (tokens)</Label><Input type="number" value={form.maxTotalTokens} onChange={e => setForm(f => ({ ...f, maxTotalTokens: e.target.value }))} placeholder="Sin límite" /></div>
               <div><Label>Inicio</Label><Input type="datetime-local" value={form.startsAt} onChange={e => setForm(f => ({ ...f, startsAt: e.target.value }))} /></div>
               <div><Label>Fin</Label><Input type="datetime-local" value={form.endsAt} onChange={e => setForm(f => ({ ...f, endsAt: e.target.value }))} /></div>
-              <div><Label>Prioridad</Label><Input type="number" value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} /></div>
+              <div>
+                <LabelWithInfo info="Si varias campañas activas podrían aplicar a la misma acción a la vez, gana la de mayor prioridad numérica (nunca se combinan dos campañas entre sí, solo campaña + regla base).">Prioridad</LabelWithInfo>
+                <Input type="number" value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} />
+              </div>
             </div>
             <div>
               <Label className="block mb-2">Alcance (vacío = global)</Label>

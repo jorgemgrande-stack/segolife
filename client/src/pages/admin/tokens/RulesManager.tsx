@@ -4,6 +4,7 @@ import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LabelWithInfo } from "@/components/ui/info-tooltip";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -360,7 +361,7 @@ export default function RulesManager() {
               </div>
 
               <div>
-                <Label>Alcance</Label>
+                <LabelWithInfo info="Sobre qué se aplica la regla. Global = toda Segolife. Comunidad/Venue/Evento/Producto = solo cuando la acción ocurre ahí. Cuanto más específico el alcance, más prioridad tiene en un empate exacto (Evento > Producto > Venue > Comunidad > Global) frente a una regla más general con la misma prioridad numérica.">Alcance</LabelWithInfo>
                 <Select value={form.scope} onValueChange={v => setForm(f => ({ ...f, scope: v as RuleForm["scope"] }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -399,7 +400,10 @@ export default function RulesManager() {
                 <Input type="number" value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} />
                 <p className="mt-1 text-xs text-muted-foreground">Mayor número = más prioridad. Si dos reglas activas pueden aplicar a la misma acción, gana una sola — nunca se suman. En caso de empate exacto, decide primero el alcance más específico (evento &gt; producto &gt; venue &gt; comunidad &gt; global) y, si aun así empatan, la regla creada primero. Evita depender de esto: pon prioridades distintas cuando quieras que una gane siempre — revisa "Salud" en Economía para ver si hay reglas en conflicto.</p>
               </div>
-              <div><Label>Inicio (opcional)</Label><Input type="datetime-local" value={form.startsAt} onChange={e => setForm(f => ({ ...f, startsAt: e.target.value }))} /></div>
+              <div>
+                <LabelWithInfo info="Vacío = sin fecha de inicio/fin (la regla vale desde ya y para siempre, mientras siga Activa). Con fechas, la regla solo aplica dentro de esa ventana — fuera de ella se comporta como si no existiera, aunque siga marcada Activa. Hora del servidor, no la del navegador del estudiante.">Inicio (opcional)</LabelWithInfo>
+                <Input type="datetime-local" value={form.startsAt} onChange={e => setForm(f => ({ ...f, startsAt: e.target.value }))} />
+              </div>
               <div><Label>Fin (opcional)</Label><Input type="datetime-local" value={form.endsAt} onChange={e => setForm(f => ({ ...f, endsAt: e.target.value }))} /></div>
 
               {form.calcMethod === "fixed" && (
@@ -413,6 +417,10 @@ export default function RulesManager() {
               )}
               <div><Label>Gasto mínimo (€)</Label><Input value={form.minSpend} onChange={e => setForm(f => ({ ...f, minSpend: e.target.value }))} /></div>
               <div><Label>Máx. tokens por operación</Label><Input type="number" value={form.maxTokens} onChange={e => setForm(f => ({ ...f, maxTokens: e.target.value }))} /></div>
+
+              <div className="col-span-2">
+                <LabelWithInfo info="Todos vacíos = sin tope, la regla concede siempre que se cumpla. Los 4 son independientes y se comprueban todos (diario, semanal, mensual, de por vida) — basta con que UNO se alcance para que ese estudiante deje de recibir más por esta regla hasta que el periodo correspondiente se reinicie (o para siempre, en el caso del límite de por vida).">Límites de recompensa (opcionales)</LabelWithInfo>
+              </div>
               <div><Label>Límite diario</Label><Input type="number" value={form.dailyLimit} onChange={e => setForm(f => ({ ...f, dailyLimit: e.target.value }))} /></div>
               <div><Label>Límite semanal</Label><Input type="number" value={form.weeklyLimit} onChange={e => setForm(f => ({ ...f, weeklyLimit: e.target.value }))} /></div>
               <div><Label>Límite mensual</Label><Input type="number" value={form.monthlyLimit} onChange={e => setForm(f => ({ ...f, monthlyLimit: e.target.value }))} /></div>

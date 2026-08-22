@@ -5,6 +5,7 @@ import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LabelWithInfo } from "@/components/ui/info-tooltip";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -210,7 +211,7 @@ export default function ComunityWizard() {
           {step === 3 && (
             <>
               <div>
-                <Label className="mb-2 block">Urgencia</Label>
+                <LabelWithInfo info="Programada = ventana normal, sin más efecto. Flash = se muestra destacada y PRIORIZADA por delante de las propuestas programadas en el feed del estudiante, con cuenta atrás en vivo. Flash nunca cambia el tipo de voto ni concede tokens extra por sí sola — cualquier recompensa adicional se gestiona aparte, vía reglas/campañas de SegoTokens.">Urgencia</LabelWithInfo>
                 <div className="flex flex-wrap gap-2">
                   {FLASH_PRESETS.map(p => (
                     <Button key={p.label} type="button" variant={urgencyType === "flash" ? "default" : "outline"} size="sm" onClick={() => applyFlashPreset(p.minutes)}>

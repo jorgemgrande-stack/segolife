@@ -4,6 +4,7 @@ import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LabelWithInfo } from "@/components/ui/info-tooltip";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -213,13 +214,13 @@ export default function RedemptionPoliciesManager() {
               </div>
             </div>
 
-            <p className="text-xs font-semibold text-muted-foreground uppercase pt-1">Tasa de canje</p>
+            <LabelWithInfo info="Cuántos céntimos de valor real da 1 SegoToken al aplicarse contra un precio (equivalencia SegoTokens↔euros). Esta es la decisión económica más sensible de todo SegoTokens — nunca se fija sola, revísala con criterio de negocio antes de cambiarla: afecta al poder de gasto de TODOS los saldos existentes.">Tasa de canje</LabelWithInfo>
             <div className="grid grid-cols-2 gap-4">
               <div><Label>SegoTokens</Label><Input type="number" min={1} value={form.tokensPerUnit} onChange={e => setForm(f => ({ ...f, tokensPerUnit: e.target.value }))} /></div>
               <div><Label>Valen (céntimos €)</Label><Input type="number" min={1} value={form.valueCentsPerUnit} onChange={e => setForm(f => ({ ...f, valueCentsPerUnit: e.target.value }))} /></div>
             </div>
 
-            <p className="text-xs font-semibold text-muted-foreground uppercase pt-1">Límites</p>
+            <LabelWithInfo info="Acotan cuánto puede canjear un estudiante en una sola operación — nunca cuánto puede acumular en su saldo. Vacíos = sin tope propio (solo limita el precio real de lo que compra).">Límites</LabelWithInfo>
             <div className="grid grid-cols-3 gap-4">
               <div><Label>Mín. ST</Label><Input type="number" value={form.minTokenSpend} onChange={e => setForm(f => ({ ...f, minTokenSpend: e.target.value }))} /></div>
               <div><Label>Máx. ST</Label><Input type="number" value={form.maxTokenSpend} onChange={e => setForm(f => ({ ...f, maxTokenSpend: e.target.value }))} /></div>

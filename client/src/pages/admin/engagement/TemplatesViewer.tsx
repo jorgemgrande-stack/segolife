@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Loader2, Mail, MessageSquare, Bell, Smartphone, Search } from "lucide-react";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 
 const ADMIN_CATEGORIES = ["ACCOUNT", "SECURITY", "COMMUNITY", "EVENTS", "TICKETING", "SEGOTOKENS", "BENEFITS", "PLAN_AND_PLAY", "ENGAGEMENT", "SYSTEM"] as const;
 
@@ -61,6 +62,13 @@ export default function TemplatesViewer() {
         </div>
 
         {/* ── Filtros ── */}
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span>
+            Cada plantilla es <strong>Transaccional</strong> (siempre se envía, el estudiante nunca puede desactivarla) o <strong>Marketing</strong>{" "}
+            (respeta su preferencia de opt-out por canal). "Preparada" = contenido listo pero sin ningún disparador real conectado todavía — nunca se envía.
+          </span>
+          <InfoTooltip text="Categorías (badge morado): agrupan las plantillas por área de producto para navegar más fácil, es solo presentación — nunca cambia cómo se envía nada. Canal In-App siempre se intenta; Email solo si hay remitente configurado; WhatsApp/Push muestran '(futuro)' mientras no haya proveedor real activado." />
+        </div>
         <div className="flex flex-wrap gap-2">
           <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
