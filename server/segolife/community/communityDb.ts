@@ -149,6 +149,29 @@ export async function getVenueName(venueId: number | null, db?: AnyDbHandle): Pr
 }
 
 /**
+ * ¿Puede userId ver esta propuesta por pertenencia de COMUNIDAD? (COM-02
+ * §18: "Un Student solo puede ver/comentar propuestas permitidas para su
+ * comunidad" — un IDOR real ya se corrigió con este MISMO criterio en
+ * submitProposal/trending, ver community.ts — nunca confiar solo en que el
+ * cliente no muestre el botón). DISTINTO de isInProposalAudience (más abajo):
+ * esa exige haber sido parte del snapshot de audiencia en el momento de
+ * publicar (para el avatar-stack de respondientes); esta exige solo
+ * pertenecer a la MISMA comunidad de la propuesta (para comentarios/likes,
+ * spec COM-02) — sin filas en community_proposal_communities = propuesta
+ * global, visible para cualquier Student autenticado (mismo criterio que
+ * assertProposalAccessible, lado admin).
+ */
+export async function isProposalVisibleToUser(proposalId: number, userId: number, db?: AnyDbHandle): Promise<boolean> {
+  const conn = db ?? (await getDb());
+  const communityIds = await getProposalCommunityIds(proposalId, conn);
+  if (communityIds.length === 0) return true;
+  const { userCommunities } = await import("../../../drizzle/schema");
+  const memberships = await conn.select({ communityId: userCommunities.communityId }).from(userCommunities).where(eq(userCommunities.userId, userId));
+  const myCommunityIds = new Set(memberships.map(m => m.communityId));
+  return communityIds.some(id => myCommunityIds.has(id));
+}
+
+/**
  * ¿Pertenece userId a la audiencia snapshoteada de esta propuesta? — mismo
  * criterio de autorización que ya usa myActive() en community.ts, extraído
  * aquí para que getRespondents (petición del cliente, "quién respondió",

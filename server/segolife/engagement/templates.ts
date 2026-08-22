@@ -521,6 +521,30 @@ export const ENGAGEMENT_TEMPLATES: Record<string, EngagementTemplate> = {
     bodyEn: "{{title}}", bodyEs: "{{title}}",
     allowedVariables: ["title"],
   },
+  // COM-02 (Community Social Results, spec §25): solo in_app, nunca email
+  // (mismo criterio que el resto de plantillas COMMUNITY de arriba) —
+  // "evitar tormentas de notificaciones" (spec §25) por un canal de bajo
+  // compromiso como un comentario social. Solo se dispara cuando la
+  // propuesta tiene un autor personal real (viene de una idea de Student,
+  // ver resolveProposalAuthor en communitySocialDb.ts) — una propuesta
+  // creada directamente por un admin nunca genera esta notificación (no hay
+  // una identidad personal a quien avisar).
+  community_comment_new: {
+    key: "community_comment_new", version: 1, category: "events", adminCategory: "COMMUNITY",
+    audienceType: "transactional", channels: ["in_app"], status: "active",
+    description: "Alguien comentó tu propuesta convertida en COMUNITY.", triggerEvent: "CommunityProposalCommented",
+    titleEn: "💬 New comment on your idea", titleEs: "💬 Nuevo comentario en tu idea",
+    bodyEn: "Someone commented on \"{{proposalTitle}}\"", bodyEs: "Alguien comentó en \"{{proposalTitle}}\"",
+    allowedVariables: ["proposalTitle"],
+  },
+  community_comment_reply: {
+    key: "community_comment_reply", version: 1, category: "events", adminCategory: "COMMUNITY",
+    audienceType: "transactional", channels: ["in_app"], status: "active",
+    description: "Alguien respondió a tu comentario en COMUNITY.", triggerEvent: "CommunityCommentReplied",
+    titleEn: "💬 New reply to your comment", titleEs: "💬 Nueva respuesta a tu comentario",
+    bodyEn: "Someone replied to your comment on \"{{proposalTitle}}\"", bodyEs: "Alguien respondió a tu comentario en \"{{proposalTitle}}\"",
+    allowedVariables: ["proposalTitle"],
+  },
   // Community Proposals (backlog, spec §15.B) — plantilla NUEVA, nunca
   // reutiliza planplay_proposal_approved (adminCategory PLAN_AND_PLAY,
   // status "prepared" — módulo deprecado, instrucción permanente: no

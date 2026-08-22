@@ -11,7 +11,7 @@ import { getCommunityAccess, resolveCommunityFilter, type CommunityAccess } from
 import {
   createProposal, updateProposal, setProposalStatus, getProposalById, listProposals,
   setProposalOptions, listProposalOptions, getProposalCommunityIds, setProposalCommunities,
-  isProposalOpenForResponses, getVenueName, computeResultsVisible, isInProposalAudience,
+  isProposalOpenForResponses, getVenueName, computeResultsVisible, isInProposalAudience, isProposalVisibleToUser,
 } from "../segolife/community/communityDb";
 import { previewProposalAudience, publishProposal, CommunityPublishError } from "../segolife/community/communityAudienceService";
 import { submitResponse, getUserResponse, CommunityResponseError, type ResponsePayload } from "../segolife/community/communityResponseService";
@@ -30,6 +30,11 @@ import { eq, sql } from "drizzle-orm";
 import { getUserCommunities } from "../db/communitiesDb";
 import { notifyStudentProposalSubmitted, notifyStudentProposalApproved, notifyStudentProposalRejected } from "../segolife/community/communityProposalNotifier";
 import { validateQuestionTypeOptions } from "../segolife/community/communityQuestionTypeValidation";
+import {
+  getLikeState, toggleLike, listComments, createComment, deleteOwnComment, moderateComment,
+  getCommentCountsBatch, getLikeCountsBatch, resolveProposalAuthor, CommunitySocialError,
+} from "../segolife/community/communitySocialDb";
+import { notifyProposalCommented, notifyCommentReplied } from "../segolife/community/communityCommentNotifier";
 
 const communityViewProcedure = permissionProcedure("community.view", ["admin"]);
 const communityManageProcedure = permissionProcedure("community.manage", ["admin"]);
@@ -49,6 +54,17 @@ async function assertProposalAccessible(access: CommunityAccess, proposalId: num
   // Sin filas = propuesta global, visible/gestionable por cualquier admin con el permiso.
   if (communityIds.length === 0) return;
   assertCommunityIdsWithinAccess(access, communityIds);
+}
+
+/** COM-02 — mapea CommunitySocialError (communitySocialDb.ts) al mismo criterio que CommunityResponseError más abajo — nunca expone el error crudo de servicio al cliente. */
+function mapCommunitySocialError(err: unknown): never {
+  if (err instanceof CommunitySocialError) {
+    const code =
+      err.code === "NOT_FOUND" ? "NOT_FOUND" :
+      err.code === "FORBIDDEN" ? "FORBIDDEN" : "BAD_REQUEST";
+    throw new TRPCError({ code, message: err.message });
+  }
+  throw err;
 }
 
 const questionTypeEnum = z.enum([
@@ -503,12 +519,29 @@ export const communityRouter = router({
       // el admin, ver listProposals/ProposalListItem.venueName).
       const venueName = await getVenueName(proposal.venueId, undefined);
 
+      // COM-02 — Community Social Results: autor + like/comment counts SOLO
+      // para propuestas ya finalizadas (spec §4/§19, "no romper Active") —
+      // evita 3 queries extra en el camino caliente de una propuesta activa,
+      // donde la experiencia social todavía no aplica.
+      const isClosed = proposal.status === "closed";
+      const [author, likeState, commentCounts] = isClosed
+        ? await Promise.all([
+            resolveProposalAuthor(proposal),
+            getLikeState(input.id, ctx.user.id),
+            getCommentCountsBatch([input.id]),
+          ])
+        : [null, { liked: false, count: 0 }, new Map<number, number>()];
+
       return {
         proposal: { ...proposal, description: proposal.description, venueName }, // sin campos admin sensibles adicionales
         options: options.map(o => ({ id: o.id, label: o.label, sortOrder: o.sortOrder })), // sin isPositiveIntent (interno)
         myResponse: myResponse ? { response: myResponse.response, values: myResponse.values } : null,
         results: showResults ? await getProposalResults(input.id, false) : null,
         isOpen: isProposalOpenForResponses(proposal, now),
+        author,
+        liked: likeState.liked,
+        likeCount: likeState.count,
+        commentCount: commentCounts.get(input.id) ?? 0,
       };
     }),
 
@@ -536,6 +569,137 @@ export const communityRouter = router({
       if (!showResults) throw new TRPCError({ code: "FORBIDDEN", message: "Los resultados de esta propuesta todavía no son visibles" });
 
       return getProposalRespondents(input.proposalId, { limit: input.limit, offset: input.offset });
+    }),
+
+  /**
+   * Feed social de Results (COM-02, spec §5) — MISMO conjunto base que
+   * myResponded (propuestas donde el Student ya respondió) filtrado
+   * server-side a status="closed" (spec §4: reutiliza el lifecycle real,
+   * "finalizada" = closed, igual que ya filtraba ResultadosTab en cliente),
+   * enriquecido en batch (venueName/author/like+comment counts, sin N+1) con
+   * el resultado agregado completo de cada una (getProposalResults ya
+   * calcula agregados server-side, spec punto 63 de MG-05 — nunca se
+   * recalcula aquí).
+   */
+  listResultsFeed: protectedProcedure.query(async ({ ctx }) => {
+    const { communityProposals } = await import("../../drizzle/schema");
+    const { eq: eqOp } = await import("drizzle-orm");
+    const { getDb } = await import("../db");
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "BD no disponible" });
+
+    const rows = await db.select({ response: communityResponses, proposal: communityProposals })
+      .from(communityResponses)
+      .innerJoin(communityProposals, eqOp(communityResponses.proposalId, communityProposals.id))
+      .where(eqOp(communityResponses.userId, ctx.user.id));
+    const closed = rows.map(r => r.proposal).filter(p => p.status === "closed");
+    if (closed.length === 0) return [];
+
+    const ids = closed.map(p => p.id);
+    const [likeCounts, commentCounts] = await Promise.all([getLikeCountsBatch(ids), getCommentCountsBatch(ids)]);
+
+    return Promise.all(closed.map(async proposal => ({
+      proposal: { ...proposal, venueName: await getVenueName(proposal.venueId, undefined) },
+      author: await resolveProposalAuthor(proposal),
+      results: await getProposalResults(proposal.id, false),
+      likeCount: likeCounts.get(proposal.id) ?? 0,
+      commentCount: commentCounts.get(proposal.id) ?? 0,
+    })));
+  }),
+
+  // ─── COM-02 — Community Social Results: likes ──────────────────────────────
+
+  toggleLike: protectedProcedure
+    .input(z.object({ proposalId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await toggleLike(input.proposalId, ctx.user.id);
+      } catch (err) {
+        mapCommunitySocialError(err);
+      }
+    }),
+
+  // ─── COM-02 — Community Social Results: comentarios ────────────────────────
+
+  listComments: protectedProcedure
+    .input(z.object({ proposalId: z.number().int().positive(), limit: z.number().int().min(1).max(50).default(20), offset: z.number().int().min(0).default(0) }))
+    .query(async ({ input, ctx }) => {
+      try {
+        // list en sí no lanza si la propuesta no es visible — se comprueba
+        // aquí explícitamente para no filtrar comentarios de una propuesta
+        // ajena (spec §18/§27) antes de tocar la tabla de comentarios.
+        const proposal = await getProposalById(input.proposalId);
+        if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Propuesta no encontrada" });
+        if (!(await isProposalVisibleToUser(input.proposalId, ctx.user.id))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "No tienes acceso a esta propuesta" });
+        }
+        return await listComments(input.proposalId, ctx.user.id, { limit: input.limit, offset: input.offset });
+      } catch (err) {
+        if (err instanceof TRPCError) throw err;
+        mapCommunitySocialError(err);
+      }
+    }),
+
+  createComment: protectedProcedure
+    .input(z.object({ proposalId: z.number().int().positive(), content: z.string().min(1).max(1000), parentCommentId: z.number().int().positive().optional() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const proposal = await getProposalById(input.proposalId);
+        if (!proposal) throw new TRPCError({ code: "NOT_FOUND", message: "Propuesta no encontrada" });
+        const comment = await createComment({
+          proposalId: input.proposalId, userId: ctx.user.id, content: input.content, parentCommentId: input.parentCommentId ?? null,
+        });
+        const communityIds = await getProposalCommunityIds(input.proposalId);
+        const communityId = communityIds[0] ?? null;
+        // Best-effort — spec §25, nunca bloquea la creación del comentario ya guardado.
+        if (comment.parentCommentId != null) {
+          notifyCommentReplied(proposal, comment, communityId).catch(() => {});
+        } else {
+          notifyProposalCommented(proposal, comment, communityId).catch(() => {});
+        }
+        return comment;
+      } catch (err) {
+        if (err instanceof TRPCError) throw err;
+        mapCommunitySocialError(err);
+      }
+    }),
+
+  deleteComment: protectedProcedure
+    .input(z.object({ commentId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        await deleteOwnComment(input.commentId, ctx.user.id);
+        return { success: true };
+      } catch (err) {
+        mapCommunitySocialError(err);
+      }
+    }),
+
+  /**
+   * Moderación Admin (spec §17): listado COMPLETO de comentarios de una
+   * propuesta, incluidos los ya ocultos (includeHidden=true) — para que el
+   * admin pueda ver qué se moderó y cuándo. Mismo permiso de solo-lectura
+   * que getRespondents/getResults (community.view) — moderar de verdad
+   * (ocultar) sigue exigiendo community.moderate en moderateComment.
+   */
+  adminListComments: communityViewProcedure
+    .input(z.object({ proposalId: z.number().int().positive(), limit: z.number().int().min(1).max(100).default(50), offset: z.number().int().min(0).default(0) }))
+    .query(async ({ input, ctx }) => {
+      const access = await getCommunityAccess(ctx.user.id, ctx.user.role as string);
+      await assertProposalAccessible(access, input.proposalId);
+      return listComments(input.proposalId, ctx.user.id, { limit: input.limit, offset: input.offset }, true);
+    }),
+
+  /** Moderación admin (spec §17) — mismo permiso que setResponseValueVisibility (community.moderate). */
+  moderateComment: communityModerateProcedure
+    .input(z.object({ commentId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        await moderateComment(input.commentId, ctx.user.id);
+        return { success: true };
+      } catch (err) {
+        mapCommunitySocialError(err);
+      }
     }),
 
   respond: protectedProcedure

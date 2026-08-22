@@ -12,8 +12,10 @@ import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { toast } from "sonner";
-import { ArrowUp, ArrowDown, Loader2, CheckCircle2, Coins, MapPin } from "lucide-react";
+import { ArrowUp, ArrowDown, Loader2, CheckCircle2, Coins, MapPin, Heart, MessageCircle, Share2, X } from "lucide-react";
+import { initials, relativeTimeLabel, resultHeadline } from "@/lib/comunitySocial";
 
 type QuestionType =
   | "single_choice" | "yes_no" | "percentage_scale" | "scale_1_5"
@@ -86,6 +88,33 @@ export default function ComunityQuestionDetail() {
   const qType = proposal.questionType as QuestionType;
   const alreadyResponded = !!myResponse;
   const canRespond = isOpen && (!alreadyResponded || proposal.allowChangeResponse);
+
+  // COM-02 — Community Social Results (spec §4/§19): el diseño social se
+  // aplica EXACTAMENTE cuando la propuesta está finalizada, reutilizando el
+  // lifecycle real (status="closed", mismo criterio que ya filtraba
+  // ResultadosTab en ComunityHub.tsx) — nunca un estado nuevo. Una propuesta
+  // activa sigue exactamente el flujo de siempre (VoteForm/resultados
+  // simples), sin ningún cambio.
+  if (proposal.status === "closed") {
+    return (
+      <SegolifeAppShell requireAuth title={proposal.title}>
+        <SegolifePageContainer className="space-y-4">
+          <Button variant="ghost" size="sm" className="-ml-2" onClick={() => navigate(`/${slug}/comunity`)}>{t("comunity.backToComunity")}</Button>
+          <SocialProposalView
+            proposal={proposal}
+            author={data.author}
+            liked={data.liked}
+            likeCount={data.likeCount}
+            commentCount={data.commentCount}
+            results={results}
+            qType={qType}
+            proposalId={proposalId}
+            slug={slug}
+          />
+        </SegolifePageContainer>
+      </SegolifeAppShell>
+    );
+  }
 
   return (
     <SegolifeAppShell requireAuth title={proposal.title}>
@@ -419,12 +448,6 @@ function PublicResults({ qType, results, proposalId }: { qType: QuestionType; re
 
 const AVATAR_STACK_LIMIT = 5;
 
-function initials(name: string | null): string {
-  if (!name) return "?";
-  const parts = name.trim().split(/\s+/);
-  return (parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "");
-}
-
 function RespondentAvatar({ proposalId, userId, name, hasAvatar, className }: { proposalId: number; userId: number; name: string | null; hasAvatar: boolean; className?: string }) {
   return (
     <Avatar className={className ?? "size-8 border-2 border-card"}>
@@ -493,5 +516,275 @@ function AllRespondentsDialog({ proposalId, total, open, onOpenChange }: { propo
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─── COM-02 — Community Social Results ─────────────────────────────────────
+// Ficha social de una propuesta FINALIZADA (spec §6): autor, imagen
+// protagonista (o fallback de marca si no hay portada, spec §32 — NUNCA una
+// foto ficticia), acciones (like/comentarios/compartir), resultado
+// destacado (spec §34, generado a partir del `results` REAL ya calculado por
+// MG-05 — nunca un algoritmo universal inventado) + el desglose completo
+// (PublicResults, reutilizado sin cambios — spec §7, no perder información)
+// + preview/acceso a comentarios.
+
+type ProposalAuthor = { userId: number; name: string | null; hasAvatar: boolean } | null;
+
+function SocialProposalView({ proposal, author, liked, likeCount, commentCount, results, qType, proposalId, slug }: {
+  proposal: { title: string; description: string | null; coverImageUrl: string | null; venueName: string | null; endsAt: Date | string | null };
+  author: ProposalAuthor;
+  liked: boolean;
+  likeCount: number;
+  commentCount: number;
+  results: any;
+  qType: QuestionType;
+  proposalId: number;
+  slug: string | null;
+}) {
+  const { t, i18n } = useTranslation();
+  const utils = trpc.useUtils();
+  const [commentsOpen, setCommentsOpen] = useState(false);
+
+  const likeMut = trpc.community.toggleLike.useMutation({
+    onMutate: async () => {
+      await utils.community.getPublicById.cancel({ id: proposalId });
+      const prev = utils.community.getPublicById.getData({ id: proposalId });
+      if (prev) {
+        utils.community.getPublicById.setData({ id: proposalId }, {
+          ...prev, liked: !prev.liked, likeCount: prev.liked ? prev.likeCount - 1 : prev.likeCount + 1,
+        });
+      }
+      return { prev };
+    },
+    onError: (err, _vars, ctx) => {
+      if (ctx?.prev) utils.community.getPublicById.setData({ id: proposalId }, ctx.prev);
+      toast.error(err.message);
+    },
+    onSettled: () => utils.community.getPublicById.invalidate({ id: proposalId }),
+  });
+
+  const headline = resultHeadline(t, qType, results);
+  const authorName = author?.name ?? t("comunity.social.brandAuthor");
+  const authorSubtitle = author ? relativeTimeLabel(proposal.endsAt ?? new Date(), i18n.language) : t("comunity.social.adminCreated");
+
+  const handleShare = async () => {
+    const url = `${window.location.origin}/${slug}/comunity/${proposalId}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: proposal.title, url });
+      } catch {
+        // El usuario canceló el share sheet — no es un error a reportar.
+      }
+      return;
+    }
+    await navigator.clipboard.writeText(url);
+    toast.success(t("comunity.social.linkCopied"));
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <Avatar className="size-11">
+          {author?.hasAvatar && <img src={`/api/community/proposals/${proposalId}/respondents/${author.userId}/photo`} alt="" className="size-full object-cover" />}
+          <AvatarFallback className={author ? "text-sm" : "bg-primary text-primary-foreground text-sm font-bold"}>
+            {author ? initials(author.name) : "S"}
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0">
+          <p className="truncate font-semibold text-foreground">{authorName}</p>
+          <p className="text-xs text-muted-foreground">{authorSubtitle}</p>
+        </div>
+      </div>
+
+      {proposal.coverImageUrl ? (
+        <img src={proposal.coverImageUrl} alt="" className="aspect-square w-full rounded-2xl object-cover sm:aspect-video" loading="lazy" />
+      ) : (
+        <div className="flex aspect-square w-full items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 via-accent/10 to-primary/5 p-6 text-center sm:aspect-video">
+          <p className="text-lg font-bold text-foreground">{proposal.title}</p>
+        </div>
+      )}
+
+      <div className="flex items-center gap-5">
+        <button
+          type="button"
+          onClick={() => likeMut.mutate({ proposalId })}
+          disabled={likeMut.isPending}
+          className="flex items-center gap-1.5"
+          aria-label={t("comunity.social.like")}
+          aria-pressed={liked}
+        >
+          <Heart className={`size-6 ${liked ? "fill-destructive text-destructive" : "text-foreground"}`} />
+          {likeCount > 0 && <span className="text-sm tabular-nums text-muted-foreground">{likeCount}</span>}
+        </button>
+        <button type="button" onClick={() => setCommentsOpen(true)} className="flex items-center gap-1.5" aria-label={t("comunity.social.comments")}>
+          <MessageCircle className="size-6 text-foreground" />
+          {commentCount > 0 && <span className="text-sm tabular-nums text-muted-foreground">{commentCount}</span>}
+        </button>
+        <button type="button" onClick={handleShare} className="ml-auto flex items-center gap-1.5" aria-label={t("comunity.social.share")}>
+          <Share2 className="size-6 text-foreground" />
+        </button>
+      </div>
+
+      {headline && <p className="text-lg font-bold text-foreground">{headline}</p>}
+
+      <div>
+        <p className="font-semibold text-foreground">{proposal.title}</p>
+        {proposal.description && <p className="mt-1 text-sm text-muted-foreground">{proposal.description}</p>}
+        {proposal.venueName && (
+          <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><MapPin className="size-3.5" /> {proposal.venueName}</p>
+        )}
+      </div>
+
+      {results && (
+        <div className="rounded-2xl border border-border bg-card p-4">
+          <p className="mb-3 text-sm font-semibold text-foreground">{t("comunity.results")} ({results.totalResponses})</p>
+          <PublicResults qType={qType} results={results} proposalId={proposalId} />
+        </div>
+      )}
+
+      <button type="button" onClick={() => setCommentsOpen(true)} className="text-left text-sm text-muted-foreground hover:text-foreground">
+        {commentCount > 0 ? t("comunity.social.viewAllComments", { count: commentCount }) : t("comunity.social.beFirstToComment")}
+      </button>
+
+      <CommentsSheet proposalId={proposalId} open={commentsOpen} onOpenChange={setCommentsOpen} />
+    </div>
+  );
+}
+
+// ─── Comentarios (spec §10-23) ──────────────────────────────────────────────
+
+interface CommentAuthorShape { userId: number; name: string | null; hasAvatar: boolean }
+interface CommentShape {
+  id: number; proposalId: number; content: string; createdAt: Date | string; isOwn: boolean;
+  author: CommentAuthorShape; replies: CommentShape[];
+}
+
+function CommentsSheet({ proposalId, open, onOpenChange }: { proposalId: number; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { t } = useTranslation();
+  const utils = trpc.useUtils();
+  const [content, setContent] = useState("");
+  const [replyTo, setReplyTo] = useState<{ id: number; authorName: string } | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+
+  const { data, isLoading } = trpc.community.listComments.useQuery({ proposalId, limit: 30, offset: 0 }, { enabled: open });
+
+  const invalidateAll = () => {
+    utils.community.listComments.invalidate({ proposalId });
+    utils.community.getPublicById.invalidate({ id: proposalId });
+  };
+
+  const createMut = trpc.community.createComment.useMutation({
+    onSuccess: () => { setContent(""); setReplyTo(null); invalidateAll(); },
+    onError: e => toast.error(e.message),
+  });
+  const deleteMut = trpc.community.deleteComment.useMutation({
+    onSuccess: () => { toast.success(t("comunity.social.commentDeleted")); setConfirmDeleteId(null); invalidateAll(); },
+    onError: e => toast.error(e.message),
+  });
+
+  const items = (data?.items ?? []) as CommentShape[];
+
+  const submit = () => {
+    const trimmed = content.trim();
+    // Doble-click/doble-submit (spec §14) — createMut.isPending ya bloquea un segundo envío mientras el primero sigue en vuelo.
+    if (!trimmed || createMut.isPending) return;
+    createMut.mutate({ proposalId, content: trimmed, parentCommentId: replyTo?.id });
+  };
+
+  return (
+    <>
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent side="bottom" className="flex h-[85vh] flex-col p-0 sm:mx-auto sm:max-w-lg">
+          <SheetHeader className="border-b border-border px-4 py-3">
+            <SheetTitle>{t("comunity.social.commentsTitle")}{data ? ` (${data.total})` : ""}</SheetTitle>
+          </SheetHeader>
+
+          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3">
+            {isLoading ? (
+              <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
+            ) : items.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-1 py-10 text-center">
+                <MessageCircle className="size-8 text-muted-foreground" aria-hidden="true" />
+                <p className="text-sm font-medium text-foreground">{t("comunity.social.noCommentsYet")}</p>
+                <p className="text-xs text-muted-foreground">{t("comunity.social.beFirstToComment")}</p>
+              </div>
+            ) : (
+              items.map(c => (
+                <div key={c.id} className="space-y-3">
+                  <CommentRow comment={c} onReply={() => setReplyTo({ id: c.id, authorName: c.author.name ?? t("comunity.someone") })} onDelete={() => setConfirmDeleteId(c.id)} />
+                  {c.replies.map(r => (
+                    <div key={r.id} className="ml-9 border-l-2 border-border pl-3">
+                      <CommentRow comment={r} onDelete={() => setConfirmDeleteId(r.id)} />
+                    </div>
+                  ))}
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="border-t border-border p-3">
+            {replyTo && (
+              <div className="mb-2 flex items-center justify-between rounded-lg bg-secondary px-3 py-1.5 text-xs text-muted-foreground">
+                <span>{t("comunity.social.reply")}: {replyTo.authorName}</span>
+                <button type="button" onClick={() => setReplyTo(null)} aria-label={t("common.cancel")}><X className="size-3.5" /></button>
+              </div>
+            )}
+            <div className="flex items-end gap-2">
+              <Textarea
+                rows={1}
+                value={content}
+                onChange={e => setContent(e.target.value)}
+                maxLength={1000}
+                placeholder={t("comunity.social.writeComment")}
+                aria-label={t("comunity.social.writeComment")}
+                className="min-h-0 resize-none"
+              />
+              <Button size="sm" disabled={!content.trim() || createMut.isPending} onClick={submit}>
+                {createMut.isPending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.social.post")}
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Dialog open={confirmDeleteId != null} onOpenChange={v => !v && setConfirmDeleteId(null)}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader><DialogTitle>{t("comunity.social.confirmDeleteComment")}</DialogTitle></DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmDeleteId(null)}>{t("common.cancel")}</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteMut.isPending}
+              onClick={() => confirmDeleteId != null && deleteMut.mutate({ commentId: confirmDeleteId })}
+            >
+              {deleteMut.isPending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.social.delete")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function CommentRow({ comment, onReply, onDelete }: { comment: CommentShape; onReply?: () => void; onDelete: () => void }) {
+  const { t, i18n } = useTranslation();
+  return (
+    <div className="flex gap-2.5">
+      <Avatar className="size-8 shrink-0">
+        {comment.author.hasAvatar && <img src={`/api/community/proposals/${comment.proposalId}/respondents/${comment.author.userId}/photo`} alt="" className="size-full object-cover" />}
+        <AvatarFallback className="text-xs">{initials(comment.author.name)}</AvatarFallback>
+      </Avatar>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm">
+          <span className="font-semibold text-foreground">{comment.author.name ?? t("comunity.someone")}</span>{" "}
+          <span className="text-foreground">{comment.content}</span>
+        </p>
+        <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
+          <span>{relativeTimeLabel(comment.createdAt, i18n.language)}</span>
+          {onReply && <button type="button" onClick={onReply} className="font-medium hover:text-foreground">{t("comunity.social.reply")}</button>}
+          {comment.isOwn && <button type="button" onClick={onDelete} className="font-medium hover:text-destructive">{t("comunity.social.delete")}</button>}
+        </div>
+      </div>
+    </div>
   );
 }

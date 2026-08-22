@@ -6253,6 +6253,71 @@ export const communitySupports = mysqlTable("community_supports", {
 export type CommunitySupport = typeof communitySupports.$inferSelect;
 export type InsertCommunitySupport = typeof communitySupports.$inferInsert;
 
+// ─── COMMUNITY_PROPOSAL_LIKES (COM-02) ─────────────────────────────────────
+// LIKE social sobre una propuesta COMUNITY YA FINALIZADA (community_proposals,
+// no una idea de estudiante) — auditado antes de crear: mismo patrón EXACTO
+// que community_supports de arriba (apoyar una idea), pero deliberadamente
+// una tabla SEPARADA porque son dos tablas de origen distintas
+// (community_student_proposals vs community_proposals) y dos momentos del
+// lifecycle distintos (apoyar una idea sin decidir todavía vs valorar un
+// resultado ya cerrado) — nunca la misma fila ambigua entre ambas. Conteo
+// SIEMPRE agregado en vivo, mismo criterio que community_supports/
+// token_wallets: sin contador denormalizado que pueda desincronizarse.
+// CRÍTICO (spec COM-02 §35): un LIKE social nunca es un voto — no toca
+// community_responses/community_response_values ni ningún SegoToken.
+
+export const communityProposalLikes = mysqlTable("community_proposal_likes", {
+  id:           int("id").autoincrement().primaryKey(),
+  proposalId:   int("proposal_id").notNull(),
+  userId:       int("user_id").notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  proposalUserUnique: unique("community_proposal_likes_unique").on(table.proposalId, table.userId),
+  userIdx:      index("community_proposal_likes_user_id_idx").on(table.userId),
+}));
+export type CommunityProposalLike = typeof communityProposalLikes.$inferSelect;
+export type InsertCommunityProposalLike = typeof communityProposalLikes.$inferInsert;
+
+// ─── COMMUNITY_PROPOSAL_COMMENTS (COM-02) ──────────────────────────────────
+// Comentarios sociales sobre una propuesta COMUNITY ya finalizada (spec COM-02
+// §11): auditado antes de crear — el único modelo de "conversación" previo en
+// el repo es conversations/conversation_messages (COM-01, Admin↔Student
+// PRIVADO, 1 hilo por Student) y reviews/reviewsDb.ts (legado Náyade, reseñas
+// de hotel/spa/experiencia, dominio ajeno) — ninguno encaja: esto es
+// PÚBLICO dentro de la comunidad (N estudiantes comentando la misma
+// propuesta), nunca 1:1. Tabla nueva, mínima, mismo criterio de "conteo
+// siempre en vivo" que el resto de este módulo.
+//
+// `parentCommentId` NULL = comentario raíz; no-NULL = respuesta — máximo 1
+// nivel de profundidad (spec §12), impuesto en la app (nunca se permite crear
+// una respuesta CUYO parent ya sea a su vez una respuesta), nunca en el
+// schema (permitir NULL en cualquier fila es lo más simple y aditivo).
+//
+// `isHidden`+`hiddenByUserId` es el ÚNICO mecanismo de borrado — soft-delete
+// unificado para "el propio autor borra su comentario" Y "un admin modera un
+// comentario ajeno" (mismo campo, mismo criterio de trazabilidad/moderación
+// que community_response_values.isHidden ya usa para open_text) — nunca hard
+// delete (spec §15: "prioriza trazabilidad y moderación"), nunca una segunda
+// tabla de auditoría separada para algo de este tamaño.
+export const communityProposalComments = mysqlTable("community_proposal_comments", {
+  id:               int("id").autoincrement().primaryKey(),
+  proposalId:       int("proposal_id").notNull(),
+  userId:           int("user_id").notNull(),
+  parentCommentId:  int("parent_comment_id"),
+  content:          varchar("content", { length: 1000 }).notNull(),
+  isHidden:         boolean("is_hidden").notNull().default(false),
+  hiddenByUserId:   int("hidden_by_user_id"),
+  hiddenAt:         timestamp("hidden_at"),
+  createdAt:        timestamp("created_at", { fsp: 3 }).defaultNow().notNull(),
+  updatedAt:        timestamp("updated_at", { fsp: 3 }).defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  proposalIdx:    index("community_proposal_comments_proposal_id_idx").on(table.proposalId),
+  parentIdx:      index("community_proposal_comments_parent_id_idx").on(table.parentCommentId),
+  userIdx:        index("community_proposal_comments_user_id_idx").on(table.userId),
+}));
+export type CommunityProposalComment = typeof communityProposalComments.$inferSelect;
+export type InsertCommunityProposalComment = typeof communityProposalComments.$inferInsert;
+
 // ─── SEGOLIFE: REFERRAL & INVITE REWARDS ENGINE (Fase 8) ───────────────────────
 // Auditado antes de crearse (spec §76-79): dominio de referidos genuinamente
 // nuevo, sin tabla previa equivalente — el único "invite"/"invitation" del

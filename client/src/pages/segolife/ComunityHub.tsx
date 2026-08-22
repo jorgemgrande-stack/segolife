@@ -13,9 +13,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
-import { Vote, Coins, Heart, Loader2, Send, Flame, ImagePlus, X, Plus, MapPin } from "lucide-react";
+import { Vote, Coins, Heart, Loader2, Send, Flame, ImagePlus, X, Plus, MapPin, MessageCircle } from "lucide-react";
 import { QUESTION_TYPES_WITH_OPTIONS, type ComunityQuestionType } from "@/lib/comunity";
+import { initials, relativeTimeLabel, resultHeadline } from "@/lib/comunitySocial";
 
 /**
  * Hub de COMUNITY — /:community/comunity (spec puntos 22-23). Secciones
@@ -166,15 +168,76 @@ function RespondidasTab({ slug }: { slug: string }) {
   return <ProposalLinkList slug={slug} items={data} />;
 }
 
+/**
+ * COM-02 — Community Social Results (spec §5): feed de propuestas
+ * finalizadas consumible como contenido social, especialmente en mobile.
+ * Reutiliza community.listResultsFeed (mismo conjunto base que myResponded,
+ * filtrado server-side a status="closed" — nunca un estado nuevo, spec §4).
+ */
 function ResultadosTab({ slug }: { slug: string }) {
   const { t } = useTranslation();
-  const { data, isLoading } = trpc.community.myResponded.useQuery();
-  const closed = (data ?? []).filter(p => p.status === "closed");
+  const { data, isLoading } = trpc.community.listResultsFeed.useQuery();
   if (isLoading) return <Loader2 className="size-5 animate-spin text-muted-foreground" />;
-  if (closed.length === 0) {
+  if (!data || data.length === 0) {
     return <SegolifeEmptyState icon={<Vote className="size-6" />} title={t("comunity.noResultsYet")} description={t("comunity.noResultsYetDescription")} />;
   }
-  return <ProposalLinkList slug={slug} items={closed} />;
+  return (
+    <div className="space-y-3">
+      {data.map(item => <ResultFeedCard key={item.proposal.id} slug={slug} item={item} />)}
+    </div>
+  );
+}
+
+function ResultFeedCard({ slug, item }: { slug: string; item: {
+  proposal: { id: number; title: string; coverImageUrl: string | null; venueName: string | null; endsAt: Date | string | null; questionType: string };
+  author: { userId: number; name: string | null; hasAvatar: boolean } | null;
+  results: any;
+  likeCount: number;
+  commentCount: number;
+} }) {
+  const { t, i18n } = useTranslation();
+  const { proposal, author, results } = item;
+  const qType = proposal.questionType as ComunityQuestionType;
+  const authorName = author?.name ?? t("comunity.social.brandAuthor");
+  const headline = resultHeadline(t, qType, results);
+
+  return (
+    <Link
+      href={`/${slug}/comunity/${proposal.id}`}
+      className="segolife-card-shadow block overflow-hidden rounded-2xl bg-card"
+    >
+      {proposal.coverImageUrl ? (
+        <img src={proposal.coverImageUrl} alt="" className="aspect-video w-full object-cover" loading="lazy" />
+      ) : (
+        <div className="flex aspect-video w-full items-center justify-center bg-gradient-to-br from-primary/20 via-accent/10 to-primary/5 p-4 text-center">
+          <p className="line-clamp-2 font-semibold text-foreground">{proposal.title}</p>
+        </div>
+      )}
+      <div className="space-y-2 p-3">
+        <div className="flex items-center gap-2">
+          <Avatar className="size-6 shrink-0">
+            {author?.hasAvatar && <img src={`/api/community/proposals/${proposal.id}/respondents/${author.userId}/photo`} alt="" className="size-full object-cover" />}
+            <AvatarFallback className={author ? "text-[10px]" : "bg-primary text-[10px] font-bold text-primary-foreground"}>
+              {author ? initials(author.name) : "S"}
+            </AvatarFallback>
+          </Avatar>
+          <p className="truncate text-xs font-medium text-foreground">{authorName}</p>
+          <span className="shrink-0 text-xs text-muted-foreground">· {relativeTimeLabel(proposal.endsAt ?? new Date(), i18n.language)}</span>
+        </div>
+
+        <p className="text-sm font-semibold text-foreground">{proposal.title}</p>
+        {proposal.venueName && (
+          <p className="flex items-center gap-1 text-xs text-muted-foreground"><MapPin className="size-3" /> {proposal.venueName}</p>
+        )}
+        {headline && <p className="text-sm font-medium text-primary">{headline}</p>}
+
+        <div className="flex items-center gap-4 pt-1 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1"><Heart className="size-3.5" /> {item.likeCount}</span>
+          <span className="flex items-center gap-1"><MessageCircle className="size-3.5" /> {item.commentCount}</span>
+        </div>
+      </div>
+    </Link>
+  );
 }
 
 function ProposalLinkList({ slug, items }: { slug: string; items: { id: number; title: string; questionType: string; endsAt: Date | string | null; status: string }[] }) {

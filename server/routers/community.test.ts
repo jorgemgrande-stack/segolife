@@ -19,6 +19,10 @@ const {
   mockGetCommunityAccess, mockListTrendingStudentProposals,
   mockGetProposalById, mockIsInProposalAudience, mockComputeResultsVisible,
   mockGetUserResponse, mockGetProposalRespondents,
+  mockIsProposalVisibleToUser,
+  mockGetLikeState, mockToggleLike, mockListComments, mockCreateComment, mockDeleteOwnComment, mockModerateComment,
+  mockGetCommentCountsBatch, mockGetLikeCountsBatch, mockResolveProposalAuthor,
+  mockNotifyProposalCommented, mockNotifyCommentReplied, mockGetProposalCommunityIds,
 } = vi.hoisted(() => ({
   mockGetUserCommunities: vi.fn(),
   mockSubmitStudentProposal: vi.fn(),
@@ -34,6 +38,19 @@ const {
   mockComputeResultsVisible: vi.fn(),
   mockGetUserResponse: vi.fn(),
   mockGetProposalRespondents: vi.fn(),
+  mockIsProposalVisibleToUser: vi.fn(),
+  mockGetLikeState: vi.fn(),
+  mockToggleLike: vi.fn(),
+  mockListComments: vi.fn(),
+  mockCreateComment: vi.fn(),
+  mockDeleteOwnComment: vi.fn(),
+  mockModerateComment: vi.fn(),
+  mockGetCommentCountsBatch: vi.fn(),
+  mockGetLikeCountsBatch: vi.fn(),
+  mockResolveProposalAuthor: vi.fn(),
+  mockNotifyProposalCommented: vi.fn().mockResolvedValue(undefined),
+  mockNotifyCommentReplied: vi.fn().mockResolvedValue(undefined),
+  mockGetProposalCommunityIds: vi.fn(),
 }));
 vi.mock("../db/communitiesDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../db/communitiesDb")>();
@@ -69,7 +86,11 @@ vi.mock("../segolife/community/communityProposalNotifier", () => ({
 // arriba en community.ts, así que sí se puede aislar de BD real mockeándolas.
 vi.mock("../segolife/community/communityDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/community/communityDb")>();
-  return { ...actual, getProposalById: mockGetProposalById, isInProposalAudience: mockIsInProposalAudience, computeResultsVisible: mockComputeResultsVisible };
+  return {
+    ...actual, getProposalById: mockGetProposalById, isInProposalAudience: mockIsInProposalAudience,
+    computeResultsVisible: mockComputeResultsVisible, isProposalVisibleToUser: mockIsProposalVisibleToUser,
+    getProposalCommunityIds: mockGetProposalCommunityIds,
+  };
 });
 vi.mock("../segolife/community/communityResponseService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/community/communityResponseService")>();
@@ -79,6 +100,23 @@ vi.mock("../segolife/community/communityResultsService", async (importOriginal) 
   const actual = await importOriginal<typeof import("../segolife/community/communityResultsService")>();
   return { ...actual, getProposalRespondents: mockGetProposalRespondents };
 });
+// COM-02 — Community Social Results: mismo criterio que getPublicRespondents
+// arriba — este router usa exclusivamente dependencias importadas
+// estáticamente, así que se puede aislar de BD real mockeándolas.
+vi.mock("../segolife/community/communitySocialDb", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../segolife/community/communitySocialDb")>();
+  return {
+    ...actual,
+    getLikeState: mockGetLikeState, toggleLike: mockToggleLike, listComments: mockListComments,
+    createComment: mockCreateComment, deleteOwnComment: mockDeleteOwnComment, moderateComment: mockModerateComment,
+    getCommentCountsBatch: mockGetCommentCountsBatch, getLikeCountsBatch: mockGetLikeCountsBatch,
+    resolveProposalAuthor: mockResolveProposalAuthor,
+  };
+});
+vi.mock("../segolife/community/communityCommentNotifier", () => ({
+  notifyProposalCommented: mockNotifyProposalCommented,
+  notifyCommentReplied: mockNotifyCommentReplied,
+}));
 
 import { communityRouter } from "./community";
 
@@ -133,6 +171,18 @@ describe("community router — ningún endpoint admin es accesible sin sesión",
 
   it("setResponseValueVisibility (moderación de texto libre) rechaza sin sesión", async () => {
     await expect(callerWithoutSession().setResponseValueVisibility({ responseValueId: 1, isHidden: true })).rejects.toThrow(/please login/i);
+  });
+
+  it("COM-02: toggleLike/listComments/createComment/deleteComment rechazan sin sesión", async () => {
+    await expect(callerWithoutSession().toggleLike({ proposalId: 1 })).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().listComments({ proposalId: 1 })).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().createComment({ proposalId: 1, content: "hola" })).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().deleteComment({ commentId: 1 })).rejects.toThrow(/please login/i);
+    await expect(callerWithoutSession().listResultsFeed()).rejects.toThrow(/please login/i);
+  });
+
+  it("COM-02: moderateComment (admin) rechaza sin sesión", async () => {
+    await expect(callerWithoutSession().moderateComment({ commentId: 1 })).rejects.toThrow(/please login/i);
   });
 
   it("listStudentProposals / approveStudentProposal / rejectStudentProposal rechazan sin sesión", async () => {
@@ -434,5 +484,99 @@ describe("getPublicRespondents — avatar-stack de respondientes (petición del 
     mockGetUserResponse.mockResolvedValue({ response: { id: 1 }, values: [] });
     await callerAs(42).getPublicRespondents({ proposalId: 10 });
     expect(mockComputeResultsVisible).toHaveBeenCalledWith(expect.objectContaining({ id: 10 }), true, expect.any(Date));
+  });
+});
+
+describe("COM-02 — Community Social Results: likes/comentarios, siempre re-autorizados server-side (spec §18/§19/§27)", () => {
+  beforeEach(() => {
+    mockGetProposalById.mockReset().mockResolvedValue({ id: 10, status: "closed" });
+    mockIsProposalVisibleToUser.mockReset().mockResolvedValue(true);
+    mockGetLikeState.mockReset().mockResolvedValue({ liked: false, count: 3 });
+    mockToggleLike.mockReset().mockResolvedValue({ liked: true, count: 4 });
+    mockListComments.mockReset().mockResolvedValue({ total: 1, items: [{ id: 1, author: { userId: 4, name: "Cristina", hasAvatar: false }, isOwn: false, content: "x", replies: [] }] });
+    mockCreateComment.mockReset().mockResolvedValue({ id: 5, proposalId: 10, userId: 42, parentCommentId: null, content: "hola" });
+    mockDeleteOwnComment.mockReset().mockResolvedValue(undefined);
+    mockModerateComment.mockReset().mockResolvedValue(undefined);
+    mockGetProposalCommunityIds.mockReset().mockResolvedValue([]);
+    mockNotifyProposalCommented.mockReset().mockResolvedValue(undefined);
+    mockNotifyCommentReplied.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("toggleLike delega directamente (la re-autorización real vive en communitySocialDb.assertCanInteract, ya probado en su propio módulo)", async () => {
+    const result = await callerAs(42).toggleLike({ proposalId: 10 });
+    expect(result).toEqual({ liked: true, count: 4 });
+    expect(mockToggleLike).toHaveBeenCalledWith(10, 42);
+  });
+
+  it("listComments: propuesta inexistente -> NOT_FOUND, nunca llega a tocar la tabla de comentarios", async () => {
+    mockGetProposalById.mockResolvedValue(null);
+    await expect(callerAs(42).listComments({ proposalId: 999 })).rejects.toThrow(/no encontrada/i);
+    expect(mockListComments).not.toHaveBeenCalled();
+  });
+
+  it("listComments: propuesta de otra comunidad (isProposalVisibleToUser=false) -> FORBIDDEN, nunca expone comentarios (spec §18, cross-community)", async () => {
+    mockIsProposalVisibleToUser.mockResolvedValue(false);
+    await expect(callerAs(42).listComments({ proposalId: 10 })).rejects.toThrow(/no tienes acceso/i);
+    expect(mockListComments).not.toHaveBeenCalled();
+  });
+
+  it("listComments: visible -> delega con el userId real del caller (nunca uno del cliente)", async () => {
+    const result = await callerAs(42).listComments({ proposalId: 10, limit: 5, offset: 0 });
+    expect(result.total).toBe(1);
+    expect(mockListComments).toHaveBeenCalledWith(10, 42, { limit: 5, offset: 0 });
+  });
+
+  it("createComment: comentario raíz -> notifica al autor de la propuesta (notifyProposalCommented), nunca notifyCommentReplied", async () => {
+    await callerAs(42).createComment({ proposalId: 10, content: "Qué buena idea" });
+    expect(mockNotifyProposalCommented).toHaveBeenCalled();
+    expect(mockNotifyCommentReplied).not.toHaveBeenCalled();
+  });
+
+  it("createComment: respuesta (parentCommentId presente) -> notifica al autor del comentario padre (notifyCommentReplied), nunca notifyProposalCommented", async () => {
+    mockCreateComment.mockResolvedValue({ id: 6, proposalId: 10, userId: 42, parentCommentId: 1, content: "respuesta" });
+    await callerAs(42).createComment({ proposalId: 10, content: "respuesta", parentCommentId: 1 });
+    expect(mockNotifyCommentReplied).toHaveBeenCalled();
+    expect(mockNotifyProposalCommented).not.toHaveBeenCalled();
+  });
+
+  it("createComment: propaga un error de negocio (p.ej. NOT_CLOSED) como error de cliente, nunca un 500 crudo", async () => {
+    const { CommunitySocialError } = await vi.importActual<typeof import("../segolife/community/communitySocialDb")>("../segolife/community/communitySocialDb");
+    mockCreateComment.mockRejectedValue(new CommunitySocialError("NOT_CLOSED", "Los comentarios se habilitan cuando la propuesta finaliza."));
+    await expect(callerAs(42).createComment({ proposalId: 10, content: "hola" })).rejects.toThrow(/se habilitan cuando/i);
+  });
+
+  it("deleteComment: se resuelve SIEMPRE con el userId real del caller — nunca uno enviado por el cliente (IDOR)", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (callerAs(42).deleteComment as any)({ commentId: 1, userId: 999 });
+    expect(mockDeleteOwnComment).toHaveBeenCalledWith(1, 42);
+    expect(mockDeleteOwnComment).not.toHaveBeenCalledWith(1, 999);
+  });
+
+  it("deleteComment: propaga FORBIDDEN si communitySocialDb rechaza borrar el comentario de otro", async () => {
+    const { CommunitySocialError } = await vi.importActual<typeof import("../segolife/community/communitySocialDb")>("../segolife/community/communitySocialDb");
+    mockDeleteOwnComment.mockRejectedValue(new CommunitySocialError("FORBIDDEN", "No puedes borrar el comentario de otro estudiante."));
+    await expect(callerAs(42).deleteComment({ commentId: 1 })).rejects.toThrow(/no puedes borrar/i);
+  });
+
+  it("moderateComment: Student normal (role='user') NUNCA puede moderar — solo admin (community.moderate)", async () => {
+    await expect(callerAs(42).moderateComment({ commentId: 1 })).rejects.toThrow(/acceso denegado|forbidden/i);
+    expect(mockModerateComment).not.toHaveBeenCalled();
+  });
+
+  it("moderateComment: admin sí puede moderar cualquier comentario", async () => {
+    const result = await callerAsAdmin(1).moderateComment({ commentId: 1 });
+    expect(result.success).toBe(true);
+    expect(mockModerateComment).toHaveBeenCalledWith(1, 1);
+  });
+
+  it("adminListComments: Student normal (role='user') NUNCA puede acceder a la vista de moderación", async () => {
+    await expect(callerAs(42).adminListComments({ proposalId: 10 })).rejects.toThrow(/acceso denegado|forbidden/i);
+    expect(mockListComments).not.toHaveBeenCalled();
+  });
+
+  it("adminListComments: admin sí puede, e incluye los ocultos (includeHidden=true, spec §15/§17)", async () => {
+    mockGetCommunityAccess.mockResolvedValue("all");
+    await callerAsAdmin(1).adminListComments({ proposalId: 10, limit: 50, offset: 0 });
+    expect(mockListComments).toHaveBeenCalledWith(10, 1, { limit: 50, offset: 0 }, true);
   });
 });

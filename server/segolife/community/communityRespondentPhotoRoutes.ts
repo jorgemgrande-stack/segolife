@@ -13,10 +13,13 @@
  * (isInProposalAudience — mismo criterio que community.myActive/
  * getRespondents), (c) los resultados de esa propuesta son visibles ahora
  * mismo (computeResultsVisible, misma política que getPublicById), y (d)
- * userId realmente respondió a ESA propuesta (isProposalRespondent — nunca
- * se sirve la foto de alguien que ni siquiera participó, aunque comparta
- * audiencia). Revalida las 4 condiciones en CADA petición, nunca cachea la
- * autorización.
+ * userId realmente respondió a ESA propuesta (isProposalRespondent) O ES SU
+ * AUTOR (resolveProposalAuthor — COM-02, Social Results: el autor de una
+ * idea convertida no necesariamente votó su propia propuesta ya cerrada,
+ * pero su foto en la cabecera social es un objetivo legítimo igual). Nunca
+ * se sirve la foto de alguien que ni participó ni es el autor, aunque
+ * comparta audiencia. Revalida las condiciones en CADA petición, nunca
+ * cachea la autorización.
  */
 import { Router, Request, Response } from "express";
 import { getUserFromRequest } from "../../localAuth";
@@ -24,6 +27,7 @@ import { getMyPhotoBytes } from "../students/studentPhotoService";
 import { getProposalById, isInProposalAudience, computeResultsVisible } from "./communityDb";
 import { getUserResponse } from "./communityResponseService";
 import { isProposalRespondent } from "./communityResultsService";
+import { resolveProposalAuthor } from "./communitySocialDb";
 
 const router = Router();
 
@@ -60,8 +64,14 @@ router.get("/api/community/proposals/:proposalId/respondents/:userId/photo", asy
     return;
   }
 
+  // COM-02 — el autor de una propuesta (idea de Student convertida, ver
+  // resolveProposalAuthor) no necesariamente respondió/votó su propia
+  // propuesta ya cerrada — su foto en la cabecera social también es un
+  // objetivo legítimo de esta ruta, no solo un respondiente.
   const targetResponded = await isProposalRespondent(proposalId, targetUserId);
-  if (!targetResponded) {
+  const author = targetResponded ? null : await resolveProposalAuthor(proposal);
+  const targetIsAuthor = author?.userId === targetUserId;
+  if (!targetResponded && !targetIsAuthor) {
     res.status(403).json({ error: "No autorizado." });
     return;
   }

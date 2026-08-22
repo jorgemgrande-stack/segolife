@@ -230,6 +230,24 @@ const communitySupportRateLimit = rateLimit({
   message: { error: "Demasiados apoyos. Espera 1 minuto.", code: "RATE_LIMIT_EXCEEDED" },
 });
 
+/** COM-02 — comentar una propuesta COMUNITY finalizada: protegido también por la validación real de contenido/scoping, límite bajo (spec §28: "evitar que una cuenta pueda crear cientos de comentarios inmediatamente"), mismo criterio/infraestructura que communityRespondRateLimit. */
+const communityCommentRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados comentarios. Espera 1 minuto.", code: "RATE_LIMIT_EXCEEDED" },
+});
+
+/** COM-02 — dar/quitar like a una propuesta finalizada: protegido también por UNIQUE(proposal,user), límite generoso como communitySupportRateLimit (un estudiante puede recorrer varias propuestas del feed dando like seguido, legítimo). */
+const communityLikeRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados likes. Espera 1 minuto.", code: "RATE_LIMIT_EXCEEDED" },
+});
+
 /** COM-01 — respuesta de Student en una conversación: generoso (una conversación real puede tener varios mensajes seguidos) pero acotado, nunca spam de cientos/segundo. */
 const studentMessagesReplyRateLimit = rateLimit({
   windowMs: 60 * 1000,
@@ -374,6 +392,9 @@ async function startServer() {
   app.use("/api/trpc/community.respond", communityRespondRateLimit);
   app.use("/api/trpc/community.submitProposal", communitySubmitProposalRateLimit);
   app.use("/api/trpc/community.support", communitySupportRateLimit);
+  // COM-02 — Community Social Results: comentar/dar like a una propuesta finalizada.
+  app.use("/api/trpc/community.createComment", communityCommentRateLimit);
+  app.use("/api/trpc/community.toggleLike", communityLikeRateLimit);
 
   // Rate limiting en COM-01 (Student Messages) — envío de mensajes Student/Admin.
   app.use("/api/trpc/studentMessages.reply", studentMessagesReplyRateLimit);

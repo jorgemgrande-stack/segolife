@@ -175,6 +175,9 @@ export default function ComunityDetail() {
           )}
         </div>
 
+        {/* ── Comentarios (COM-02) — solo tiene sentido con la propuesta finalizada, mismo criterio que la ficha social del Student. ── */}
+        {status === "closed" && <ComentariosModeration proposalId={proposalId} />}
+
         {/* ── Acciones ── */}
         <div className="bg-card border border-border rounded-lg p-4 flex flex-wrap gap-2">
           {status !== "cancelled" && status !== "converted" && (
@@ -377,4 +380,66 @@ function ResultsView({ results, qType, onSelectOption, onModerate }: {
   }
 
   return null;
+}
+
+/**
+ * COM-02 — Moderación de comentarios (spec §17): extensión natural de la
+ * ficha de propuesta ya existente, nunca un CMS de comentarios aparte.
+ * adminListComments (community.view) trae TODOS los comentarios, incluidos
+ * los ya ocultos (para trazabilidad — spec §15, "prioriza moderación"), y
+ * moderateComment (community.moderate) oculta uno — mismo mecanismo de
+ * soft-delete que usa el propio Student para borrar el suyo.
+ */
+function ComentariosModeration({ proposalId }: { proposalId: number }) {
+  const utils = trpc.useUtils();
+  const { data, isLoading } = trpc.community.adminListComments.useQuery({ proposalId, limit: 50, offset: 0 });
+  const moderateMut = trpc.community.moderateComment.useMutation({
+    onSuccess: () => { toast.success("Comentario ocultado"); utils.community.adminListComments.invalidate({ proposalId }); },
+    onError: e => toast.error(e.message),
+  });
+
+  return (
+    <div className="bg-card border border-border rounded-lg p-5">
+      <p className="text-sm font-semibold text-foreground mb-3">Comentarios{data ? ` (${data.total})` : ""}</p>
+      {isLoading ? (
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      ) : !data || data.items.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Sin comentarios todavía.</p>
+      ) : (
+        <div className="space-y-3">
+          {data.items.map(c => (
+            <div key={c.id} className="space-y-2">
+              <CommentModerationRow comment={c} onModerate={() => moderateMut.mutate({ commentId: c.id })} pending={moderateMut.isPending} />
+              {c.replies.map(r => (
+                <div key={r.id} className="ml-8 border-l border-border pl-3">
+                  <CommentModerationRow comment={r} onModerate={() => moderateMut.mutate({ commentId: r.id })} pending={moderateMut.isPending} />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CommentModerationRow({ comment, onModerate, pending }: {
+  comment: { id: number; content: string; createdAt: string | Date; isHidden: boolean; author: { name: string | null } };
+  onModerate: () => void;
+  pending: boolean;
+}) {
+  return (
+    <div className={`flex items-start justify-between gap-3 rounded-md border border-border p-3 ${comment.isHidden ? "opacity-50" : ""}`}>
+      <div className="min-w-0">
+        <p className="text-sm text-foreground"><span className="font-medium">{comment.author.name ?? "—"}</span> · <span className="text-xs text-muted-foreground">{fmtDateTime(comment.createdAt)}</span></p>
+        <p className="text-sm text-muted-foreground mt-0.5">{comment.content}</p>
+        {comment.isHidden && <Badge variant="outline" className="mt-1">Oculto</Badge>}
+      </div>
+      {!comment.isHidden && (
+        <Button variant="ghost" size="sm" className="shrink-0 text-destructive hover:text-destructive" disabled={pending} onClick={onModerate}>
+          <EyeOff className="size-4 mr-1" /> Ocultar
+        </Button>
+      )}
+    </div>
+  );
 }
