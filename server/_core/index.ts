@@ -17,6 +17,7 @@ import lostFoundReportRouter from "../segolife/lostFound/lostFoundReportRoutes";
 import studentMessageImageRouter from "../segolife/messaging/studentMessageImageRoutes";
 import communityProposalImageRouter from "../segolife/community/communityProposalImageRoutes";
 import communityRespondentPhotoRouter from "../segolife/community/communityRespondentPhotoRoutes";
+import eventCommentAuthorPhotoRouter from "../segolife/events/eventCommentAuthorPhotoRoutes";
 import redsysRouter from "../redsysRoutes";
 import ticketPaymentWebhookRouter from "../ticketPaymentWebhookRoutes";
 import brevoWebhookRouter from "../brevoWebhookRoutes";
@@ -434,6 +435,8 @@ async function startServer() {
   app.use(communityProposalImageRouter);
   // Avatar-stack de respondientes de una propuesta COMUNITY (petición del cliente, 2026-08-22)
   app.use(communityRespondentPhotoRouter);
+  // Social Layer para Events — foto de quien comentó en un evento (2026-08-23)
+  app.use(eventCommentAuthorPhotoRouter);
 
   // Redsys IPN notification endpoint
   app.use(redsysRouter);

@@ -26,6 +26,11 @@ import { madridDateRangeToUtcBounds } from "../../shared/segolife/eventTiming";
 import { computePurchaseAction } from "../segolife/ticketing/purchaseAction";
 import { requireVenueAccess } from "../segolife/benefits/venueStaffAccess";
 import { getVenueEventsView, getEventLiveStats } from "../segolife/venues/venueAppService";
+import {
+  getEventLikeState, getEventLikeCountsBatch, getEventCommentCountsBatch,
+  toggleEventLike, listEventComments, createEventComment, deleteOwnEventComment,
+  EventSocialError,
+} from "../segolife/events/eventSocialDb";
 
 // Lectura: ver el listado/fichas de eventos.
 const eventsViewProcedure = permissionProcedure("events.view", ["admin"]);
@@ -36,6 +41,17 @@ const communityFilterInput = z.union([z.number().int().positive(), z.literal("al
 
 /** FIX-06 — día calendario "YYYY-MM-DD" (Europe/Madrid). Nunca z.coerce.date(): un Date crudo del cliente perdería la intención de "día calendario" (ver madridDateRangeToUtcBounds). */
 const calendarDateInput = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();
+
+/** Social Layer para Events (2026-08-23) — mapea EventSocialError (eventSocialDb.ts) al mismo criterio que mapCommunitySocialError en community.ts: nunca expone el error crudo de servicio al cliente. */
+function mapEventSocialError(err: unknown): never {
+  if (err instanceof EventSocialError) {
+    const code =
+      err.code === "NOT_FOUND" ? "NOT_FOUND" :
+      err.code === "FORBIDDEN" ? "FORBIDDEN" : "BAD_REQUEST";
+    throw new TRPCError({ code, message: err.message });
+  }
+  throw err;
+}
 
 /** Lanza FORBIDDEN si el alcance del admin no cubre ninguna comunidad del evento. */
 function assertEventAccessible(access: CommunityAccess, eventCommunityIds: number[]) {
@@ -292,7 +308,7 @@ export const eventsRouter = router({
    */
   publicGetBySlug: publicProcedure
     .input(z.object({ slug: z.string().min(1).max(128), communityId: z.number().int().positive().optional() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const detail = await getEventBySlug(input.slug);
       // FIX-04 — antes solo comprobaba status==="active"; un borrador de
       // Fourvenues (active local, pero unpublished/unknown en origen) podía
@@ -305,6 +321,72 @@ export const eventsRouter = router({
         return null;
       }
       const purchaseAction = await computePurchaseAction(detail.event.id, detail.event);
-      return { ...detail, purchaseAction };
+      // Social Layer para Events (2026-08-23) — publicGetBySlug es
+      // publicProcedure (ficha visible sin sesión, como Explore): likeCount/
+      // commentCount son públicos (mismo criterio que el resto de esta
+      // página), `liked` solo se resuelve si hay sesión real — nunca falso
+      // "true"/"false" inventado para un visitante anónimo, `null` en su
+      // lugar. La interacción (dar like/comentar) sigue exigiendo login,
+      // igual que "Buy Tickets" nativo ya exige (ver EventDetail.tsx).
+      const liked = ctx.user ? (await getEventLikeState(detail.event.id, ctx.user.id)).liked : null;
+      const [likeCounts, commentCounts] = await Promise.all([
+        getEventLikeCountsBatch([detail.event.id]),
+        getEventCommentCountsBatch([detail.event.id]),
+      ]);
+      return {
+        ...detail, purchaseAction,
+        liked, likeCount: likeCounts.get(detail.event.id) ?? 0, commentCount: commentCounts.get(detail.event.id) ?? 0,
+      };
+    }),
+
+  // ─── Social Layer para Events (2026-08-23) — ❤️ like + 💬 comentarios ─────
+  // Mismo patrón que community.toggleLike/listComments/createComment/
+  // deleteComment (COM-02) — ver server/segolife/events/eventSocialDb.ts
+  // para la puerta de acceso real (assertCanInteractWithEvent, server-side
+  // siempre). Nunca toca SegoTokens/Loyalty/attendance — exclusivamente
+  // social. Nunca opera sobre un external_event_id de Weezevent/Fourvenues,
+  // siempre sobre events.id interno.
+
+  toggleEventLike: protectedProcedure
+    .input(z.object({ eventId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await toggleEventLike(input.eventId, ctx.user.id);
+      } catch (err) {
+        mapEventSocialError(err);
+      }
+    }),
+
+  listEventComments: protectedProcedure
+    .input(z.object({ eventId: z.number().int().positive(), limit: z.number().int().min(1).max(50).default(20), offset: z.number().int().min(0).default(0) }))
+    .query(async ({ input, ctx }) => {
+      try {
+        return await listEventComments(input.eventId, ctx.user.id, { limit: input.limit, offset: input.offset });
+      } catch (err) {
+        mapEventSocialError(err);
+      }
+    }),
+
+  createEventComment: protectedProcedure
+    .input(z.object({ eventId: z.number().int().positive(), content: z.string().min(1).max(1000), parentCommentId: z.number().int().positive().optional() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await createEventComment({
+          eventId: input.eventId, userId: ctx.user.id, content: input.content, parentCommentId: input.parentCommentId ?? null,
+        });
+      } catch (err) {
+        mapEventSocialError(err);
+      }
+    }),
+
+  deleteEventComment: protectedProcedure
+    .input(z.object({ commentId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        await deleteOwnEventComment(input.commentId, ctx.user.id);
+        return { success: true };
+      } catch (err) {
+        mapEventSocialError(err);
+      }
     }),
 });

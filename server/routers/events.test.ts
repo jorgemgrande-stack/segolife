@@ -61,6 +61,23 @@ vi.mock("../db/eventsDb", async (importOriginal) => {
 const { mockComputePurchaseAction } = vi.hoisted(() => ({ mockComputePurchaseAction: vi.fn() }));
 vi.mock("../segolife/ticketing/purchaseAction", () => ({ computePurchaseAction: mockComputePurchaseAction }));
 
+// Social Layer para Events (2026-08-23) — publicGetBySlug ahora también
+// resuelve likeCount/commentCount (públicos, siempre) — ninguna prueba de
+// este archivo usa un caller autenticado sobre publicGetBySlug (ver
+// callerWithoutSession() más abajo), así que solo los batch de conteo
+// necesitan mock. Sin esto, la query real intentaría abrir una conexión
+// MySQL real fuera de alcance de este test.
+vi.mock("../segolife/events/eventSocialDb", () => ({
+  getEventLikeState: vi.fn(),
+  getEventLikeCountsBatch: vi.fn().mockResolvedValue(new Map()),
+  getEventCommentCountsBatch: vi.fn().mockResolvedValue(new Map()),
+  toggleEventLike: vi.fn(),
+  listEventComments: vi.fn(),
+  createEventComment: vi.fn(),
+  deleteOwnEventComment: vi.fn(),
+  EventSocialError: class EventSocialError extends Error {},
+}));
+
 // FIX-06 — IDOR: comunidad del admin controlada de forma determinista, sin BD real.
 const { mockGetCommunityAccess } = vi.hoisted(() => ({ mockGetCommunityAccess: vi.fn() }));
 vi.mock("../_core/communityAccess", async (importOriginal) => {

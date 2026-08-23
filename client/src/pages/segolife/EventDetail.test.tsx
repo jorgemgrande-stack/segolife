@@ -1,21 +1,42 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { Route } from "wouter";
 import "@/lib/i18n";
 import i18n from "@/lib/i18n";
 
-const { mockEventQuery, mockRewardQuery, mockCheckoutMutation, mockAuthMe } = vi.hoisted(() => ({
+const {
+  mockEventQuery, mockRewardQuery, mockCheckoutMutation, mockUseAuth,
+  mockToggleLikeMutation, mockListCommentsQuery, mockCreateCommentMutation, mockDeleteCommentMutation,
+  mockUtils,
+} = vi.hoisted(() => ({
   mockEventQuery: vi.fn(),
   mockRewardQuery: vi.fn(),
   mockCheckoutMutation: vi.fn(),
-  mockAuthMe: vi.fn(),
+  mockUseAuth: vi.fn(),
+  mockToggleLikeMutation: vi.fn(),
+  mockListCommentsQuery: vi.fn(),
+  mockCreateCommentMutation: vi.fn(),
+  mockDeleteCommentMutation: vi.fn(),
+  mockUtils: {
+    events: {
+      publicGetBySlug: { cancel: vi.fn(), getData: vi.fn(), setData: vi.fn(), invalidate: vi.fn() },
+      listEventComments: { invalidate: vi.fn() },
+    },
+  },
 }));
 
 vi.mock("@/lib/trpc", () => ({
   trpc: {
-    events: { publicGetBySlug: { useQuery: mockEventQuery } },
+    events: {
+      publicGetBySlug: { useQuery: mockEventQuery },
+      toggleEventLike: { useMutation: mockToggleLikeMutation },
+      listEventComments: { useQuery: mockListCommentsQuery },
+      createEventComment: { useMutation: mockCreateCommentMutation },
+      deleteEventComment: { useMutation: mockDeleteCommentMutation },
+    },
     tokens: { previewMyEventReward: { useQuery: mockRewardQuery } },
     ticketPurchase: { startCheckout: { useMutation: mockCheckoutMutation } },
+    useUtils: () => mockUtils,
   },
 }));
 
@@ -24,7 +45,7 @@ vi.mock("@/contexts/CommunityContext", () => ({
 }));
 
 vi.mock("@/_core/hooks/useAuth", () => ({
-  useAuth: () => ({ user: null, loading: false }),
+  useAuth: () => mockUseAuth(),
 }));
 
 vi.mock("@/components/segolife/SegolifeAppShell", () => ({
@@ -65,6 +86,9 @@ function mockDetail(input: {
   venue?: { id: number; name: string; slug: string } | null;
   communities?: Array<{ id: number; name: string }>;
   purchaseAction?: unknown;
+  liked?: boolean | null;
+  likeCount?: number;
+  commentCount?: number;
 } = {}) {
   mockEventQuery.mockReturnValue({
     data: {
@@ -72,6 +96,9 @@ function mockDetail(input: {
       venue: input.venue === undefined ? { id: 5, name: "Tía Felisa", slug: "tia-felisa" } : input.venue,
       communities: input.communities ?? [{ id: 1, name: "Segolife IE" }, { id: 2, name: "Segolife UVA" }],
       purchaseAction: input.purchaseAction ?? { type: "external_url", url: "https://tickets.example.invalid/felisa" },
+      liked: input.liked ?? null,
+      likeCount: input.likeCount ?? 0,
+      commentCount: input.commentCount ?? 0,
     },
     isLoading: false,
     error: null,
@@ -92,7 +119,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockRewardQuery.mockReturnValue({ data: undefined, isLoading: false });
   mockCheckoutMutation.mockReturnValue({ mutate: vi.fn(), isPending: false });
-  mockAuthMe.mockReturnValue({ data: null, isLoading: false });
+  mockUseAuth.mockReturnValue({ user: null, loading: false });
+  mockToggleLikeMutation.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockListCommentsQuery.mockReturnValue({ data: { total: 0, items: [] }, isLoading: false });
+  mockCreateCommentMutation.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  mockDeleteCommentMutation.mockReturnValue({ mutate: vi.fn(), isPending: false });
   i18n.changeLanguage("en");
 });
 
@@ -255,5 +286,210 @@ describe("EventDetail — estado no encontrado", () => {
     mockEventQuery.mockReturnValue({ data: null, isLoading: false, error: null, refetch: vi.fn() });
     renderAt("/ie/events/no-existe");
     expect(screen.getByText("Event not found")).toBeInTheDocument();
+  });
+});
+
+// ─── SOCIAL LAYER PARA EVENTS (2026-08-23) — ❤️ like + 💬 comentarios ──────
+describe("EventDetail — ❤️ like (spec §2/§7)", () => {
+  it("liked=false/null → corazón en outline (no relleno)", () => {
+    mockDetail({ liked: null });
+    renderAt("/ie/events/felisas-been-expecting-you");
+    const likeBtn = screen.getByRole("button", { name: "Like" });
+    expect(likeBtn).toHaveAttribute("aria-pressed", "false");
+    expect(likeBtn.querySelector("svg")).not.toHaveClass("fill-destructive");
+  });
+
+  it("liked=true → corazón relleno, aria-pressed=true", () => {
+    mockDetail({ liked: true, likeCount: 5 });
+    renderAt("/ie/events/felisas-been-expecting-you");
+    const likeBtn = screen.getByRole("button", { name: "Like" });
+    expect(likeBtn).toHaveAttribute("aria-pressed", "true");
+    expect(likeBtn.querySelector("svg")).toHaveClass("fill-destructive");
+  });
+
+  it("likeCount=0 → no muestra ningún número junto al corazón (mismo criterio que Community)", () => {
+    mockDetail({ likeCount: 0 });
+    renderAt("/ie/events/felisas-been-expecting-you");
+    const likeBtn = screen.getByRole("button", { name: "Like" });
+    expect(likeBtn.querySelector("span")).toBeNull();
+  });
+
+  it("likeCount=128 → muestra el contador real junto al corazón", () => {
+    mockDetail({ likeCount: 128 });
+    renderAt("/ie/events/felisas-been-expecting-you");
+    expect(screen.getByText("128")).toBeInTheDocument();
+  });
+
+  it("sin sesión, click en el corazón → NUNCA llama a la mutación (se manda a login, spec §7 'no confiar en el frontend')", () => {
+    mockUseAuth.mockReturnValue({ user: null, loading: false });
+    const mutate = vi.fn();
+    mockToggleLikeMutation.mockReturnValue({ mutate, isPending: false });
+    mockDetail();
+    renderAt("/ie/events/felisas-been-expecting-you");
+    fireEvent.click(screen.getByRole("button", { name: "Like" }));
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("con sesión, click en el corazón → llama a toggleEventLike con el eventId real", () => {
+    mockUseAuth.mockReturnValue({ user: { id: 14, name: "QA Student" }, loading: false });
+    const mutate = vi.fn();
+    mockToggleLikeMutation.mockReturnValue({ mutate, isPending: false });
+    mockDetail();
+    renderAt("/ie/events/felisas-been-expecting-you");
+    fireEvent.click(screen.getByRole("button", { name: "Like" }));
+    expect(mutate).toHaveBeenCalledWith({ eventId: 200 });
+  });
+});
+
+describe("EventDetail — 💬 comments (spec §2/§4)", () => {
+  it("commentCount=0 → no muestra ningún número junto al icono de comentarios", () => {
+    mockDetail({ commentCount: 0 });
+    renderAt("/ie/events/felisas-been-expecting-you");
+    const commentsBtn = screen.getByRole("button", { name: "Comments" });
+    expect(commentsBtn.querySelector("span")).toBeNull();
+  });
+
+  it("commentCount=24 → muestra el contador real junto al icono de comentarios", () => {
+    mockDetail({ commentCount: 24 });
+    renderAt("/ie/events/felisas-been-expecting-you");
+    expect(screen.getByText("24")).toBeInTheDocument();
+  });
+
+  it("sin sesión, click en comentarios → nunca abre el sheet (se manda a login)", () => {
+    mockUseAuth.mockReturnValue({ user: null, loading: false });
+    mockDetail();
+    renderAt("/ie/events/felisas-been-expecting-you");
+    fireEvent.click(screen.getByRole("button", { name: "Comments" }));
+    expect(screen.queryByText(/^Comments \(/)).not.toBeInTheDocument();
+  });
+
+  it("con sesión, click en comentarios → abre el MISMO patrón SegolifeBottomSheet que Community, con el título 'Comments (N)'", () => {
+    mockUseAuth.mockReturnValue({ user: { id: 14, name: "QA Student" }, loading: false });
+    mockListCommentsQuery.mockReturnValue({ data: { total: 2, items: [] }, isLoading: false });
+    mockDetail();
+    renderAt("/ie/events/felisas-been-expecting-you");
+    fireEvent.click(screen.getByRole("button", { name: "Comments" }));
+    expect(screen.getByText("Comments (2)")).toBeInTheDocument();
+  });
+
+  it("sin comentarios todavía → 'No comments yet' / 'Be the first to comment'", () => {
+    mockUseAuth.mockReturnValue({ user: { id: 14, name: "QA Student" }, loading: false });
+    mockListCommentsQuery.mockReturnValue({ data: { total: 0, items: [] }, isLoading: false });
+    mockDetail();
+    renderAt("/ie/events/felisas-been-expecting-you");
+    fireEvent.click(screen.getByRole("button", { name: "Comments" }));
+    expect(screen.getByText("No comments yet")).toBeInTheDocument();
+    expect(screen.getByText("Be the first to comment")).toBeInTheDocument();
+  });
+
+  it("con comentarios reales → renderiza autor, contenido y, si isOwn, el botón Delete (nunca en el ajeno)", () => {
+    mockUseAuth.mockReturnValue({ user: { id: 14, name: "QA Student" }, loading: false });
+    mockListCommentsQuery.mockReturnValue({
+      data: {
+        total: 2,
+        items: [
+          { id: 1, eventId: 200, parentCommentId: null, content: "Qué ganas!", createdAt: new Date(), isOwn: true, isHidden: false, author: { userId: 14, name: "QA Student", hasAvatar: false }, replies: [] },
+          { id: 2, eventId: 200, parentCommentId: null, content: "Nos vemos allí", createdAt: new Date(), isOwn: false, isHidden: false, author: { userId: 99, name: "Otro Student", hasAvatar: false }, replies: [] },
+        ],
+      },
+      isLoading: false,
+    });
+    mockDetail();
+    renderAt("/ie/events/felisas-been-expecting-you");
+    fireEvent.click(screen.getByRole("button", { name: "Comments" }));
+
+    expect(screen.getByText("Qué ganas!")).toBeInTheDocument();
+    expect(screen.getByText("Nos vemos allí")).toBeInTheDocument();
+    const ownRow = screen.getByTestId("event-comment-row-1");
+    const otherRow = screen.getByTestId("event-comment-row-2");
+    expect(ownRow.querySelector("button.hover\\:text-destructive")).not.toBeNull(); // Delete visible en el propio
+    expect(otherRow.querySelector("button.hover\\:text-destructive")).toBeNull(); // nunca en el ajeno
+  });
+
+  it("respuestas anidadas — se renderizan bajo su comentario raíz", () => {
+    mockUseAuth.mockReturnValue({ user: { id: 14, name: "QA Student" }, loading: false });
+    mockListCommentsQuery.mockReturnValue({
+      data: {
+        total: 1,
+        items: [
+          {
+            id: 1, eventId: 200, parentCommentId: null, content: "Raíz", createdAt: new Date(), isOwn: false, isHidden: false,
+            author: { userId: 99, name: "Otro Student", hasAvatar: false },
+            replies: [
+              { id: 2, eventId: 200, parentCommentId: 1, content: "Una respuesta", createdAt: new Date(), isOwn: true, isHidden: false, author: { userId: 14, name: "QA Student", hasAvatar: false }, replies: [] },
+            ],
+          },
+        ],
+      },
+      isLoading: false,
+    });
+    mockDetail();
+    renderAt("/ie/events/felisas-been-expecting-you");
+    fireEvent.click(screen.getByRole("button", { name: "Comments" }));
+    expect(screen.getByText("Raíz")).toBeInTheDocument();
+    expect(screen.getByText("Una respuesta")).toBeInTheDocument();
+  });
+
+  it("escribir y pulsar Post → llama a createEventComment con el eventId y contenido reales", () => {
+    mockUseAuth.mockReturnValue({ user: { id: 14, name: "QA Student" }, loading: false });
+    const mutate = vi.fn();
+    mockCreateCommentMutation.mockReturnValue({ mutate, isPending: false });
+    mockDetail();
+    renderAt("/ie/events/felisas-been-expecting-you");
+    fireEvent.click(screen.getByRole("button", { name: "Comments" }));
+
+    const textarea = screen.getByPlaceholderText("Write a comment…");
+    fireEvent.change(textarea, { target: { value: "Qué ganas de este evento" } });
+    fireEvent.click(screen.getByRole("button", { name: "Post" }));
+
+    expect(mutate).toHaveBeenCalledWith({ eventId: 200, content: "Qué ganas de este evento", parentCommentId: undefined });
+  });
+
+  it("Reply activa el modo respuesta e incluye el parentCommentId al enviar", () => {
+    mockUseAuth.mockReturnValue({ user: { id: 14, name: "QA Student" }, loading: false });
+    const mutate = vi.fn();
+    mockCreateCommentMutation.mockReturnValue({ mutate, isPending: false });
+    mockListCommentsQuery.mockReturnValue({
+      data: {
+        total: 1,
+        items: [{ id: 1, eventId: 200, parentCommentId: null, content: "Raíz", createdAt: new Date(), isOwn: false, isHidden: false, author: { userId: 99, name: "Otro Student", hasAvatar: false }, replies: [] }],
+      },
+      isLoading: false,
+    });
+    mockDetail();
+    renderAt("/ie/events/felisas-been-expecting-you");
+    fireEvent.click(screen.getByRole("button", { name: "Comments" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(screen.getByText(/Reply: Otro Student/)).toBeInTheDocument();
+
+    const textarea = screen.getByPlaceholderText("Write a comment…");
+    fireEvent.change(textarea, { target: { value: "Yo también voy" } });
+    fireEvent.click(screen.getByRole("button", { name: "Post" }));
+    expect(mutate).toHaveBeenCalledWith({ eventId: 200, content: "Yo también voy", parentCommentId: 1 });
+  });
+
+  it("Delete del propio comentario abre confirmación y, al confirmar, llama a deleteEventComment", () => {
+    mockUseAuth.mockReturnValue({ user: { id: 14, name: "QA Student" }, loading: false });
+    const mutate = vi.fn();
+    mockDeleteCommentMutation.mockReturnValue({ mutate, isPending: false });
+    mockListCommentsQuery.mockReturnValue({
+      data: {
+        total: 1,
+        items: [{ id: 1, eventId: 200, parentCommentId: null, content: "Mi comentario", createdAt: new Date(), isOwn: true, isHidden: false, author: { userId: 14, name: "QA Student", hasAvatar: false }, replies: [] }],
+      },
+      isLoading: false,
+    });
+    mockDetail();
+    renderAt("/ie/events/felisas-been-expecting-you");
+    fireEvent.click(screen.getByRole("button", { name: "Comments" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(screen.getByText("Delete this comment?")).toBeInTheDocument();
+    // El diálogo modal de Radix marca el fondo (incluido el botón Delete de
+    // la fila de comentario) como aria-hidden mientras está abierto — solo
+    // queda un único botón "Delete" alcanzable por rol: el de confirmación.
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(mutate).toHaveBeenCalledWith({ commentId: 1 });
   });
 });

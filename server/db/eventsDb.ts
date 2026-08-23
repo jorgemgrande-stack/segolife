@@ -160,8 +160,15 @@ async function getEventIdsInCommunities(communityIds: number[], db: DbHandle): P
   return Array.from(new Set(rows.map(r => r.eventId)));
 }
 
-/** Comunidades de cada evento, agrupadas en memoria — mismo patrón que venuesDb.getCommunitiesByVenueId. */
-async function getCommunitiesByEventId(eventIds: number[], db: DbHandle): Promise<Map<number, EventCommunitySummary[]>> {
+/**
+ * Comunidades de cada evento, agrupadas en memoria — mismo patrón que
+ * venuesDb.getCommunitiesByVenueId. Exportada (2026-08-23, Social Layer para
+ * Events) para que eventSocialDb.ts reutilice exactamente esta misma query
+ * al comprobar acceso — mismo criterio que isProposalVisibleToUser en
+ * communityDb.ts, nunca una segunda copia de "¿a qué comunidades pertenece
+ * este recurso?".
+ */
+export async function getCommunitiesByEventId(eventIds: number[], db: DbHandle): Promise<Map<number, EventCommunitySummary[]>> {
   const map = new Map<number, EventCommunitySummary[]>();
   if (eventIds.length === 0) return map;
   const rows = await db

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useParams, useLocation, Link } from "wouter";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, CalendarDays, Clock, MapPin, Ticket, Minus, Plus, Loader2, ImageOff, Coins } from "lucide-react";
+import { ChevronLeft, CalendarDays, Clock, MapPin, Ticket, Minus, Plus, Loader2, ImageOff, Coins, Heart, MessageCircle, X } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useCommunity } from "@/contexts/CommunityContext";
@@ -11,10 +11,15 @@ import { SegolifeAppShell } from "@/components/segolife/SegolifeAppShell";
 import { SegolifePageContainer } from "@/components/segolife/SegolifePageContainer";
 import { SegolifeErrorState } from "@/components/segolife/SegolifeErrorState";
 import { SegolifeEmptyState } from "@/components/segolife/SegolifeEmptyState";
+import { SegolifeBottomSheet } from "@/components/segolife/SegolifeBottomSheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { isEventPast } from "@shared/segolife/eventTiming";
+import { initials, relativeTimeLabel } from "@/lib/comunitySocial";
 
 /**
  * Event Detail UI Refresh (2026-08-23) — el evento SIEMPRE ocurre en un
@@ -56,17 +61,55 @@ export default function EventDetail() {
   const [, navigate] = useLocation();
   const eventSlug = params.slug;
   const { user } = useAuth();
+  const utils = trpc.useUtils();
 
   // Fase 15 (spec §16/§43) — pasa la comunidad real de la URL para que el
   // backend pueda ocultar un evento restringido a otra comunidad (nunca
   // solo un filtro de frontend, ver publicGetBySlug en events.ts).
+  const queryInput = { slug: eventSlug, communityId: community?.id };
   const { data, isLoading, error, refetch } = trpc.events.publicGetBySlug.useQuery(
-    { slug: eventSlug, communityId: community?.id },
+    queryInput,
     { enabled: !!eventSlug }
   );
 
   const [posterFailed, setPosterFailed] = useState(false);
   const [quantities, setQuantities] = useState<Record<number, number>>({});
+  const [commentsOpen, setCommentsOpen] = useState(false);
+
+  // SOCIAL LAYER PARA EVENTS (2026-08-23) — mismo patrón exacto de optimistic
+  // update que community.toggleLike en ComunityQuestionDetail.tsx: parchea
+  // el caché de publicGetBySlug al instante, revierte si el servidor
+  // rechaza (nunca confía solo en el frontend — la puerta real vive en
+  // eventSocialDb.ts). Requiere sesión — un visitante anónimo se manda a
+  // login, mismo criterio que "Buy Tickets" nativo más abajo.
+  const likeMut = trpc.events.toggleEventLike.useMutation({
+    onMutate: async () => {
+      await utils.events.publicGetBySlug.cancel(queryInput);
+      const prev = utils.events.publicGetBySlug.getData(queryInput);
+      if (prev) {
+        utils.events.publicGetBySlug.setData(queryInput, {
+          ...prev, liked: !prev.liked, likeCount: prev.liked ? prev.likeCount - 1 : prev.likeCount + 1,
+        });
+      }
+      return { prev };
+    },
+    onError: (err, _vars, ctx) => {
+      if (ctx?.prev) utils.events.publicGetBySlug.setData(queryInput, ctx.prev);
+      toast.error(err.message);
+    },
+    onSettled: () => utils.events.publicGetBySlug.invalidate(queryInput),
+  });
+
+  const handleLikeClick = () => {
+    if (!user) { window.location.href = getLoginUrl(); return; }
+    if (!data?.event.id) return;
+    likeMut.mutate({ eventId: data.event.id });
+  };
+
+  const handleCommentsClick = () => {
+    if (!user) { window.location.href = getLoginUrl(); return; }
+    setCommentsOpen(true);
+  };
   const startCheckoutMut = trpc.ticketPurchase.startCheckout.useMutation({
     onSuccess: res => navigate(`/${slug}/checkout/${res.order.id}`),
     onError: e => toast.error(e.message),
@@ -160,28 +203,68 @@ export default function EventDetail() {
           // ninguna clase `xl:`) sea el mismo flujo vertical de siempre —
           // solo con más aire (spec §4/§20), nunca menos información.
           <div className="space-y-6 xl:grid xl:grid-cols-[minmax(340px,440px)_1fr] xl:items-start xl:gap-x-12 xl:space-y-0">
-            <div className="relative overflow-hidden rounded-3xl bg-muted">
-              <div className="aspect-[4/5] w-full">
-                {posterFailed || !data.event.imageUrl ? (
-                  <div className="flex h-full w-full items-center justify-center bg-secondary/60">
-                    <ImageOff className="size-6 text-muted-foreground" aria-hidden="true" />
-                  </div>
-                ) : (
-                  <img
-                    src={data.event.imageUrl}
-                    alt={data.event.name}
-                    loading="lazy"
-                    decoding="async"
-                    onError={() => setPosterFailed(true)}
-                    className="h-full w-full object-cover"
-                  />
+            {/* Columna del cartel — envuelve poster + fila social JUNTOS en
+                un único hijo del grid (xl:col-start-1), para que la fila
+                social quede bajo la imagen en la MISMA columna estrecha en
+                desktop, en vez de que el auto-placement del grid de 2
+                columnas la cuele en la columna derecha (3er hijo directo del
+                grid con solo 2 columnas definidas). En móvil es flujo normal
+                (space-y-3), sin ningún efecto del grid. */}
+            <div className="space-y-3 xl:col-start-1">
+              <div className="relative overflow-hidden rounded-3xl bg-muted">
+                <div className="aspect-[4/5] w-full">
+                  {posterFailed || !data.event.imageUrl ? (
+                    <div className="flex h-full w-full items-center justify-center bg-secondary/60">
+                      <ImageOff className="size-6 text-muted-foreground" aria-hidden="true" />
+                    </div>
+                  ) : (
+                    <img
+                      src={data.event.imageUrl}
+                      alt={data.event.name}
+                      loading="lazy"
+                      decoding="async"
+                      onError={() => setPosterFailed(true)}
+                      className="h-full w-full object-cover"
+                    />
+                  )}
+                </div>
+                {data.event.isFeatured && (
+                  <Badge className="absolute left-3 top-3 border-none bg-accent text-accent-foreground shadow-sm">
+                    {t("eventDetail.featuredBadge")}
+                  </Badge>
                 )}
               </div>
-              {data.event.isFeatured && (
-                <Badge className="absolute left-3 top-3 border-none bg-accent text-accent-foreground shadow-sm">
-                  {t("eventDetail.featuredBadge")}
-                </Badge>
-              )}
+
+              {/* FILA SOCIAL (❤️ + 💬) — Social Layer para Events
+                  (2026-08-23, spec §2/§3): mismo orden visual "foto →
+                  iconos" que Community (ComunityQuestionDetail.tsx),
+                  directamente bajo el cartel — nunca un panel de
+                  comentarios permanentemente abierto, siempre
+                  SegolifeBottomSheet (mismo patrón exacto que Community,
+                  spec §5). Área táctil ampliada (-m-2 p-2) sin alterar el
+                  espaciado visual, mismo criterio que Community. */}
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={handleLikeClick}
+                  disabled={likeMut.isPending}
+                  className="-m-2 flex items-center gap-1.5 p-2"
+                  aria-label={t("comunity.social.like")}
+                  aria-pressed={!!data.liked}
+                >
+                  <Heart className={`size-6 ${data.liked ? "fill-destructive text-destructive" : "text-foreground"}`} aria-hidden="true" />
+                  {data.likeCount > 0 && <span className="text-sm tabular-nums text-muted-foreground">{data.likeCount}</span>}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCommentsClick}
+                  className="-m-2 flex items-center gap-1.5 p-2"
+                  aria-label={t("comunity.social.comments")}
+                >
+                  <MessageCircle className="size-6 text-foreground" aria-hidden="true" />
+                  {data.commentCount > 0 && <span className="text-sm tabular-nums text-muted-foreground">{data.commentCount}</span>}
+                </button>
+              </div>
             </div>
 
             <div className="space-y-6">
@@ -355,6 +438,161 @@ export default function EventDetail() {
           </div>
         )}
       </SegolifePageContainer>
+
+      {data && <EventCommentsSheet eventId={data.event.id} open={commentsOpen} onOpenChange={setCommentsOpen} />}
     </SegolifeAppShell>
+  );
+}
+
+// ─── COMENTARIOS — Social Layer para Events (2026-08-23) ───────────────────
+// Mismo patrón EXACTO que CommentsSheet/CommentRow en ComunityQuestionDetail.tsx
+// (COM-02): SegolifeBottomSheet global, listado raíz+respuestas, composer con
+// Reply activo, confirmación de borrado en Dialog centrado clásico (spec §5:
+// un "¿seguro?" de 2 botones no se beneficia de un bottom sheet). Reutiliza
+// las claves i18n `comunity.social.*` ya existentes (comments/reply/delete/
+// writeComment/post/etc., spec §14 "reutiliza claves existentes") — son
+// genéricas, sin ningún texto específico de Community en su valor.
+
+interface EventCommentShape {
+  id: number;
+  eventId: number;
+  parentCommentId: number | null;
+  content: string;
+  createdAt: Date | string;
+  isOwn: boolean;
+  isHidden: boolean;
+  author: { userId: number; name: string | null; hasAvatar: boolean };
+  replies: EventCommentShape[];
+}
+
+function EventCommentsSheet({ eventId, open, onOpenChange }: { eventId: number; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { t } = useTranslation();
+  const utils = trpc.useUtils();
+  const [content, setContent] = useState("");
+  const [replyTo, setReplyTo] = useState<{ id: number; authorName: string } | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+
+  const { data, isLoading } = trpc.events.listEventComments.useQuery({ eventId, limit: 30, offset: 0 }, { enabled: open });
+
+  const invalidateAll = () => {
+    utils.events.listEventComments.invalidate({ eventId });
+    utils.events.publicGetBySlug.invalidate();
+  };
+
+  const createMut = trpc.events.createEventComment.useMutation({
+    onSuccess: () => { setContent(""); setReplyTo(null); invalidateAll(); },
+    onError: e => toast.error(e.message),
+  });
+  const deleteMut = trpc.events.deleteEventComment.useMutation({
+    onSuccess: () => { toast.success(t("comunity.social.commentDeleted")); setConfirmDeleteId(null); invalidateAll(); },
+    onError: e => toast.error(e.message),
+  });
+
+  const items = (data?.items ?? []) as EventCommentShape[];
+
+  const submit = () => {
+    const trimmed = content.trim();
+    if (!trimmed || createMut.isPending) return; // doble-click ya bloqueado por isPending mientras el primero sigue en vuelo
+    createMut.mutate({ eventId, content: trimmed, parentCommentId: replyTo?.id });
+  };
+
+  const footer = (
+    <>
+      {replyTo && (
+        <div className="mb-2 flex items-center justify-between rounded-lg bg-neutral-100 px-3 py-1.5 text-xs text-neutral-500">
+          <span>{t("comunity.social.reply")}: {replyTo.authorName}</span>
+          <button type="button" onClick={() => setReplyTo(null)} aria-label={t("common.cancel")}><X className="size-3.5" /></button>
+        </div>
+      )}
+      <div className="flex items-end gap-2">
+        <Textarea
+          rows={1}
+          value={content}
+          onChange={e => setContent(e.target.value)}
+          maxLength={1000}
+          placeholder={t("comunity.social.writeComment")}
+          aria-label={t("comunity.social.writeComment")}
+          className="segolife-sheet-input min-h-0 resize-none"
+        />
+        <Button size="sm" disabled={!content.trim() || createMut.isPending} onClick={submit}>
+          {createMut.isPending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.social.post")}
+        </Button>
+      </div>
+    </>
+  );
+
+  return (
+    <>
+      <SegolifeBottomSheet
+        open={open}
+        onClose={() => onOpenChange(false)}
+        title={`${t("comunity.social.commentsTitle")}${data ? ` (${data.total})` : ""}`}
+        stickyFooter={footer}
+      >
+        <div className="space-y-4">
+          {isLoading ? (
+            <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-neutral-400" /></div>
+          ) : items.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-1 py-10 text-center">
+              <MessageCircle className="size-8 text-neutral-300" aria-hidden="true" />
+              <p className="text-sm font-medium text-neutral-900">{t("comunity.social.noCommentsYet")}</p>
+              <p className="text-xs text-neutral-500">{t("comunity.social.beFirstToComment")}</p>
+            </div>
+          ) : (
+            items.map(c => (
+              <div key={c.id} className="space-y-3">
+                <EventCommentRow eventId={eventId} comment={c} onReply={() => setReplyTo({ id: c.id, authorName: c.author.name ?? t("comunity.someone") })} onDelete={() => setConfirmDeleteId(c.id)} />
+                {c.replies.map(r => (
+                  <div key={r.id} className="ml-9 border-l-2 border-neutral-100 pl-3">
+                    <EventCommentRow eventId={eventId} comment={r} onDelete={() => setConfirmDeleteId(r.id)} />
+                  </div>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+      </SegolifeBottomSheet>
+
+      {/* Confirmación de borrado — diálogo centrado clásico a propósito (spec §5), mismo patrón que Community. */}
+      <Dialog open={confirmDeleteId != null} onOpenChange={v => !v && setConfirmDeleteId(null)}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader><DialogTitle>{t("comunity.social.confirmDeleteComment")}</DialogTitle></DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmDeleteId(null)}>{t("common.cancel")}</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteMut.isPending}
+              onClick={() => confirmDeleteId != null && deleteMut.mutate({ commentId: confirmDeleteId })}
+            >
+              {deleteMut.isPending ? <Loader2 className="size-4 animate-spin" /> : t("comunity.social.delete")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function EventCommentRow({ eventId, comment, onReply, onDelete }: { eventId: number; comment: EventCommentShape; onReply?: () => void; onDelete: () => void }) {
+  const { t, i18n } = useTranslation();
+
+  return (
+    <div className="flex gap-2.5" data-testid={`event-comment-row-${comment.id}`}>
+      <Avatar className="size-8 shrink-0">
+        {comment.author.hasAvatar && <img src={`/api/events/${eventId}/comment-authors/${comment.author.userId}/photo`} alt="" className="size-full object-cover" />}
+        <AvatarFallback className="text-xs">{initials(comment.author.name)}</AvatarFallback>
+      </Avatar>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm">
+          <span className="font-semibold text-neutral-900">{comment.author.name ?? t("comunity.someone")}</span>{" "}
+          <span className="text-neutral-900">{comment.content}</span>
+        </p>
+        <div className="mt-0.5 flex items-center gap-3 text-xs text-neutral-500">
+          <span>{relativeTimeLabel(comment.createdAt, i18n.language)}</span>
+          {onReply && <button type="button" onClick={onReply} className="font-medium hover:text-neutral-900">{t("comunity.social.reply")}</button>}
+          {comment.isOwn && <button type="button" onClick={onDelete} className="font-medium hover:text-destructive">{t("comunity.social.delete")}</button>}
+        </div>
+      </div>
+    </div>
   );
 }

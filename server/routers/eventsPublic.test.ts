@@ -42,6 +42,22 @@ vi.mock("../segolife/ticketing/purchaseAction", () => ({
   computePurchaseAction: mockComputePurchaseAction,
 }));
 
+// Social Layer para Events (2026-08-23) — publicGetBySlug ahora también
+// resuelve likeCount/commentCount (públicos, siempre) y liked (solo con
+// sesión — ninguna prueba de este archivo usa un caller autenticado, ver
+// publicCaller() más abajo). Sin este mock, la query real de conteo
+// intentaría abrir una conexión MySQL real fuera de alcance de este test.
+vi.mock("../segolife/events/eventSocialDb", () => ({
+  getEventLikeState: vi.fn(),
+  getEventLikeCountsBatch: vi.fn().mockResolvedValue(new Map()),
+  getEventCommentCountsBatch: vi.fn().mockResolvedValue(new Map()),
+  toggleEventLike: vi.fn(),
+  listEventComments: vi.fn(),
+  createEventComment: vi.fn(),
+  deleteOwnEventComment: vi.fn(),
+  EventSocialError: class EventSocialError extends Error {},
+}));
+
 import { eventsRouter } from "./events";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

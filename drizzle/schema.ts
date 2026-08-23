@@ -4049,6 +4049,54 @@ export const events = mysqlTable("events", {
 export type SegolifeEvent = typeof events.$inferSelect;
 export type InsertSegolifeEvent = typeof events.$inferInsert;
 
+// ─── EVENT_LIKES / EVENT_COMMENTS (Social Layer para Events, 2026-08-23) ────
+// Auditado antes de crear: mismo patrón EXACTO que community_proposal_likes/
+// community_proposal_comments (ver comentario de cabecera de esas tablas más
+// abajo) — deliberadamente tablas SEPARADAS (nunca reutilizar las de
+// Community): el like/comentario pertenece al EVENTO INTERNO de SEGOLIFE
+// (events.id), nunca a una propuesta Community ni a un external_event_id de
+// Weezevent/Fourvenues — así la interacción social sobrevive
+// independientemente del proveedor de ticketing. Sin like a nivel de
+// comentario individual (a diferencia de community_comment_likes) — fuera de
+// alcance explícito de esta fase (solo ❤️ evento + 💬 comentarios).
+// Conteo SIEMPRE agregado en vivo (COUNT), nunca un contador denormalizado.
+
+export const eventLikes = mysqlTable("event_likes", {
+  id:           int("id").autoincrement().primaryKey(),
+  eventId:      int("event_id").notNull(),
+  userId:       int("user_id").notNull(),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  eventUserUnique: unique("event_likes_unique").on(table.eventId, table.userId),
+  userIdx:      index("event_likes_user_id_idx").on(table.userId),
+}));
+export type EventLike = typeof eventLikes.$inferSelect;
+export type InsertEventLike = typeof eventLikes.$inferInsert;
+
+// `parentCommentId` NULL = comentario raíz; no-NULL = respuesta — máximo 1
+// nivel de profundidad (mismo límite que Community, impuesto en la app,
+// nunca en el schema). `isHidden`+`hiddenByUserId`+`hiddenAt` = único
+// mecanismo de borrado (soft-delete, mismo criterio de trazabilidad que
+// Community — nunca hard delete).
+export const eventComments = mysqlTable("event_comments", {
+  id:               int("id").autoincrement().primaryKey(),
+  eventId:          int("event_id").notNull(),
+  userId:           int("user_id").notNull(),
+  parentCommentId:  int("parent_comment_id"),
+  content:          varchar("content", { length: 1000 }).notNull(),
+  isHidden:         boolean("is_hidden").notNull().default(false),
+  hiddenByUserId:   int("hidden_by_user_id"),
+  hiddenAt:         timestamp("hidden_at"),
+  createdAt:        timestamp("created_at", { fsp: 3 }).defaultNow().notNull(),
+  updatedAt:        timestamp("updated_at", { fsp: 3 }).defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  eventIdx:     index("event_comments_event_id_idx").on(table.eventId),
+  parentIdx:    index("event_comments_parent_id_idx").on(table.parentCommentId),
+  userIdx:      index("event_comments_user_id_idx").on(table.userId),
+}));
+export type EventComment = typeof eventComments.$inferSelect;
+export type InsertEventComment = typeof eventComments.$inferInsert;
+
 // ─── SEGOLIFE: COMMUNITY_EVENTS (Fase 1D) ──────────────────────────────────────
 // Tabla puente M2M entre `communities` y `events` — mismo patrón que
 // community_venues/community_universities. unique(community_id, event_id).
