@@ -406,9 +406,19 @@ export async function linkWeezeventEvent(input: LinkWeezeventEventInput, db?: Db
   return toSafeEventIntegration(row!, provider[0]?.key ?? "unknown", connectionRow);
 }
 
+/**
+ * Bug real encontrado al probar el primer Sync contra Weezevent real
+ * (2026-08-23): esta función solo tocaba `enabled`, nunca `syncEnabled` —
+ * canSync() exige AMBOS a true, así que activar "Enabled" en el admin
+ * nunca habría permitido sincronizar de verdad. Mismo criterio que
+ * setVenueIntegrationEnabled: sin scheduler automático para Weezevent
+ * (igual que Fourvenues cuando se escribió ese comentario), no hay ningún
+ * automatismo que deba activarse por separado — el día que exista un
+ * scheduler real para Weezevent, syncEnabled debe desacoplarse aquí.
+ */
 export async function setEventIntegrationEnabled(id: number, enabled: boolean, db?: DbHandle): Promise<void> {
   const conn = db ?? (await getDb());
-  await conn.update(eventIntegrations).set({ enabled }).where(eq(eventIntegrations.id, id));
+  await conn.update(eventIntegrations).set({ enabled, syncEnabled: enabled }).where(eq(eventIntegrations.id, id));
 }
 
 /** F71 — mismo criterio que setVenueIntegrationLoyaltyEnabled: flip explícito, nunca efecto colateral de habilitar sync. */
