@@ -25,6 +25,7 @@ const {
   mockNotifyProposalCommented, mockNotifyCommentReplied, mockGetProposalCommunityIds,
   mockRecordShare, mockGetShareCountsBatch, mockSubmitResponse,
   mockCreateProposal, mockGetStudentProposalById, mockMarkStudentProposalConverted,
+  mockGetRespondedProposalIds, mockDbSelect, mockGetProposalResults,
 } = vi.hoisted(() => ({
   mockGetUserCommunities: vi.fn(),
   mockSubmitStudentProposal: vi.fn(),
@@ -61,6 +62,9 @@ const {
   mockCreateProposal: vi.fn(),
   mockGetStudentProposalById: vi.fn(),
   mockMarkStudentProposalConverted: vi.fn(),
+  mockGetRespondedProposalIds: vi.fn(),
+  mockDbSelect: vi.fn(),
+  mockGetProposalResults: vi.fn(),
 }));
 vi.mock("../db/communitiesDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../db/communitiesDb")>();
@@ -108,11 +112,19 @@ vi.mock("../segolife/community/communityDb", async (importOriginal) => {
 });
 vi.mock("../segolife/community/communityResponseService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/community/communityResponseService")>();
-  return { ...actual, getUserResponse: mockGetUserResponse, submitResponse: mockSubmitResponse };
+  return { ...actual, getUserResponse: mockGetUserResponse, submitResponse: mockSubmitResponse, getRespondedProposalIds: mockGetRespondedProposalIds };
+});
+// listResultsFeed (bug real corregido 2026-08-24) hace sus propias queries
+// crudas vía `await import("../db")` — se mockea getDb() con un `select`
+// configurable por test (mockDbSelect) para poder devolver la fila de
+// audiencia y las propuestas candidatas sin abrir una conexión real.
+vi.mock("../db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../db")>();
+  return { ...actual, getDb: async () => ({ select: mockDbSelect }) };
 });
 vi.mock("../segolife/community/communityResultsService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../segolife/community/communityResultsService")>();
-  return { ...actual, getProposalRespondents: mockGetProposalRespondents };
+  return { ...actual, getProposalRespondents: mockGetProposalRespondents, getProposalResults: mockGetProposalResults };
 });
 // COM-02 — Community Social Results: mismo criterio que getPublicRespondents
 // arriba — este router usa exclusivamente dependencias importadas
@@ -529,6 +541,82 @@ describe("community router — convertStudentProposalToFormal: traslada el timin
       callerAsAdmin(1).convertStudentProposalToFormal({ studentProposalId: 44, questionType: "yes_no" })
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(mockCreateProposal).not.toHaveBeenCalled();
+  });
+});
+
+// Bug real corregido (2026-08-24, caso "HILLS TUESDAY"): listResultsFeed
+// filtraba a status="closed" entre propuestas ya respondidas, ignorando
+// resultsVisibility por completo — un admin que cambiaba la visibilidad a
+// "immediate" a mitad de votación nunca se reflejaba en el feed de
+// Resultados del Student. Helper: fake db mínima por-tabla (mismo patrón
+// que otros archivos de este repo con `select().from(table).where()`).
+function makeResultsFeedDb({ audienceRows, proposalRows }: { audienceRows: { proposalId: number }[]; proposalRows: unknown[] }) {
+  mockDbSelect.mockReset();
+  mockDbSelect.mockImplementation((cols?: object) => {
+    const isAudienceQuery = !!cols && Object.keys(cols).length > 0;
+    return { from: () => ({ where: async () => (isAudienceQuery ? audienceRows : proposalRows) }) };
+  });
+}
+
+describe("community router — listResultsFeed: usa la audiencia real (nunca solo 'ya respondidas') y respeta resultsVisibility en vivo", () => {
+  beforeEach(() => {
+    mockGetRespondedProposalIds.mockReset();
+    mockComputeResultsVisible.mockReset();
+  });
+
+  it("sin propuestas en mi audiencia, devuelve [] sin más queries", async () => {
+    makeResultsFeedDb({ audienceRows: [], proposalRows: [] });
+    const result = await callerAs(7).listResultsFeed();
+    expect(result).toEqual([]);
+  });
+
+  it("una propuesta ACTIVA (no cerrada) y AÚN NO respondida por mí SÍ aparece cuando computeResultsVisible dice que sí (resultsVisibility='immediate', el caso real de HILLS TUESDAY)", async () => {
+    const proposal = { id: 8, title: "HILLS TUESDAY", status: "active", venueId: null, resultsVisibility: "immediate" };
+    makeResultsFeedDb({ audienceRows: [{ proposalId: 8 }], proposalRows: [proposal] });
+    mockGetRespondedProposalIds.mockResolvedValue(new Set()); // nunca respondí
+    mockComputeResultsVisible.mockReturnValue(true);
+    mockGetVenueName.mockResolvedValue(null);
+    mockResolveProposalAuthor.mockResolvedValue(null);
+    mockGetProposalResults.mockResolvedValue({ total: 0, breakdown: [] });
+    mockGetLikeCountsBatch.mockResolvedValue(new Map());
+    mockGetCommentCountsBatch.mockResolvedValue(new Map());
+    mockGetShareCountsBatch.mockResolvedValue(new Map());
+
+    const result = await callerAs(7).listResultsFeed();
+
+    // La candidata se saca de la AUDIENCIA (communityProposalAudiences), no
+    // de "propuestas que ya respondí" — por eso hasResponded=false no impide
+    // que aparezca cuando resultsVisibility='immediate' lo permite.
+    expect(mockComputeResultsVisible).toHaveBeenCalledWith(proposal, false, expect.any(Date));
+    expect(result).toHaveLength(1);
+    expect(result[0].proposal.id).toBe(8);
+  });
+
+  it("una propuesta en mi audiencia se EXCLUYE cuando computeResultsVisible dice que no (p.ej. resultsVisibility='after_close' y todavía activa)", async () => {
+    const proposal = { id: 9, title: "Otra idea", status: "active", venueId: null, resultsVisibility: "after_close" };
+    makeResultsFeedDb({ audienceRows: [{ proposalId: 9 }], proposalRows: [proposal] });
+    mockGetRespondedProposalIds.mockResolvedValue(new Set());
+    mockComputeResultsVisible.mockReturnValue(false);
+
+    const result = await callerAs(7).listResultsFeed();
+    expect(result).toEqual([]);
+  });
+
+  it("una propuesta CERRADA sigue apareciendo cuando computeResultsVisible lo permite (comportamiento previo preservado)", async () => {
+    const proposal = { id: 10, title: "Ya cerrada", status: "closed", venueId: null, resultsVisibility: "after_close" };
+    makeResultsFeedDb({ audienceRows: [{ proposalId: 10 }], proposalRows: [proposal] });
+    mockGetRespondedProposalIds.mockResolvedValue(new Set([10]));
+    mockComputeResultsVisible.mockReturnValue(true);
+    mockGetVenueName.mockResolvedValue(null);
+    mockResolveProposalAuthor.mockResolvedValue(null);
+    mockGetProposalResults.mockResolvedValue({ total: 0, breakdown: [] });
+    mockGetLikeCountsBatch.mockResolvedValue(new Map());
+    mockGetCommentCountsBatch.mockResolvedValue(new Map());
+    mockGetShareCountsBatch.mockResolvedValue(new Map());
+
+    const result = await callerAs(7).listResultsFeed();
+    expect(mockComputeResultsVisible).toHaveBeenCalledWith(proposal, true, expect.any(Date));
+    expect(result).toHaveLength(1);
   });
 });
 

@@ -653,33 +653,43 @@ export const communityRouter = router({
     }),
 
   /**
-   * Feed social de Results (COM-02, spec §5) — MISMO conjunto base que
-   * myResponded (propuestas donde el Student ya respondió) filtrado
-   * server-side a status="closed" (spec §4: reutiliza el lifecycle real,
-   * "finalizada" = closed, igual que ya filtraba ResultadosTab en cliente),
-   * enriquecido en batch (venueName/author/like+comment counts, sin N+1) con
-   * el resultado agregado completo de cada una (getProposalResults ya
-   * calcula agregados server-side, spec punto 63 de MG-05 — nunca se
-   * recalcula aquí).
+   * Feed social de Results (COM-02, spec §5) — BUG REAL CORREGIDO
+   * (2026-08-24, caso "HILLS TUESDAY"): la versión anterior filtraba
+   * server-side a status="closed" y solo entre propuestas donde el Student
+   * ya había respondido, ignorando resultsVisibility por completo — un
+   * admin que cambiaba la visibilidad a "Inmediata" a mitad de votación
+   * nunca se reflejaba aquí (computeResultsVisible ni siquiera se
+   * importaba en este procedure). Ahora usa el mismo universo de
+   * candidatas que myActive (audiencia snapshoteada, communityProposalAudiences
+   * — nunca solo "las que ya respondí", porque "immediate" no exige haber
+   * respondido) y la MISMA fuente de verdad que getPublicById/
+   * getPublicRespondents (computeResultsVisible) para decidir cuáles
+   * mostrar, evaluada en vivo contra el estado actual de la propuesta.
    */
   listResultsFeed: protectedProcedure.query(async ({ ctx }) => {
-    const { communityProposals } = await import("../../drizzle/schema");
-    const { eq: eqOp } = await import("drizzle-orm");
+    const { communityProposalAudiences, communityProposals } = await import("../../drizzle/schema");
+    const { inArray, eq: eqOp } = await import("drizzle-orm");
     const { getDb } = await import("../db");
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "BD no disponible" });
 
-    const rows = await db.select({ response: communityResponses, proposal: communityProposals })
-      .from(communityResponses)
-      .innerJoin(communityProposals, eqOp(communityResponses.proposalId, communityProposals.id))
-      .where(eqOp(communityResponses.userId, ctx.user.id));
-    const closed = rows.map(r => r.proposal).filter(p => p.status === "closed");
-    if (closed.length === 0) return [];
+    const audienceRows = await db.select({ proposalId: communityProposalAudiences.proposalId })
+      .from(communityProposalAudiences).where(eqOp(communityProposalAudiences.userId, ctx.user.id));
+    const proposalIds = audienceRows.map(r => r.proposalId);
+    if (proposalIds.length === 0) return [];
 
-    const ids = closed.map(p => p.id);
+    const candidates = await db.select().from(communityProposals).where(inArray(communityProposals.id, proposalIds));
+    if (candidates.length === 0) return [];
+
+    const now = new Date();
+    const respondedIds = await getRespondedProposalIds(candidates.map(p => p.id), ctx.user.id);
+    const visible = candidates.filter(p => computeResultsVisible(p, respondedIds.has(p.id), now));
+    if (visible.length === 0) return [];
+
+    const ids = visible.map(p => p.id);
     const [likeCounts, commentCounts, shareCounts] = await Promise.all([getLikeCountsBatch(ids), getCommentCountsBatch(ids), getShareCountsBatch(ids)]);
 
-    return Promise.all(closed.map(async proposal => ({
+    return Promise.all(visible.map(async proposal => ({
       proposal: { ...proposal, venueName: await getVenueName(proposal.venueId, undefined) },
       author: await resolveProposalAuthor(proposal),
       results: await getProposalResults(proposal.id, false),
