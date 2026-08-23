@@ -5,11 +5,12 @@
 > configurar, entender o resolver una incidencia relacionada con SegoTokens.
 >
 > **Nota sobre alcance de verificación:** este manual describe el
-> comportamiento REAL del sistema tal y como quedó tras la ronda de trabajo
-> F60–F68 (2026-08-22/23) — se ha escrito leyendo el código y las pantallas
-> reales, nunca copiando un manual anterior. Si algo descrito aquí no
-> coincide con lo que ves en pantalla, prevalece siempre lo que ves en
-> producción, y conviene avisar para corregir este documento.
+> comportamiento REAL del sistema, verificado pantalla a pantalla el
+> 2026-08-23 (ronda de cierre posterior a F60–F71) — se ha escrito leyendo
+> el código y las pantallas reales, nunca copiando un manual anterior. Si
+> algo descrito aquí no coincide con lo que ves en pantalla, prevalece
+> siempre lo que ves en producción, y conviene avisar para corregir este
+> documento.
 >
 > Este manual está escrito para una persona sin conocimientos técnicos.
 > Nunca vas a encontrar aquí palabras como "base de datos", "tabla",
@@ -30,7 +31,7 @@ saldo que sube cuando el estudiante participa y baja cuando los usa.
 
 ## 2. El Dashboard de SegoTokens
 
-Desde **SegoTokens → Panel de control** ves de un vistazo el estado general
+Desde **SegoTokens → Dashboard** ves de un vistazo el estado general
 del sistema: cuántos tokens se han concedido, cuántos se han gastado,
 cuántos estudiantes tienen saldo activo y la evolución en el tiempo. Es una
 pantalla de solo lectura — para actuar sobre algo concreto (una regla, un
@@ -58,8 +59,8 @@ Una **Regla** es la configuración que dice "cuándo se ganan tokens, cuántos,
 y con qué condiciones". Se gestionan desde **SegoTokens → Reglas**.
 
 Al crear una regla eliges:
-- **Motivo** (qué acción la dispara): consumición, asistencia, participación
-  en Community, etc.
+- **Origen** (qué acción la dispara): Consumición (QR/TPV), Asistencia a
+  evento, Participación en Community, etc.
 - **Cuántos tokens** da: una cantidad fija, un importe por cada euro
   gastado, un porcentaje del gasto, o un multiplicador.
 - El **Alcance** (punto 6) y la **Prioridad** (punto 5).
@@ -141,7 +142,7 @@ Puedes usar solo uno de los dos, o ambos a la vez.
 ## 10. QR de consumición
 
 El QR de consumición es la forma de conceder SegoTokens cuando un
-estudiante consume algo en un local físico. Se genera desde **QR de
+estudiante consume algo en un local físico. Se genera desde **QR
 consumición → Generar**, se imprime o se enseña, y el estudiante lo escanea
 para recibir sus tokens al momento.
 
@@ -159,18 +160,21 @@ Puedes elegir cuándo caduca cada QR:
 - **Fecha y hora personalizada** o **sin caducidad**, para casos concretos.
 
 Un QR solo puede canjearse una vez. Si alguien lo intenta una segunda vez,
-el sistema lo rechaza automáticamente.
+el sistema lo rechaza automáticamente. Y si un QR está asignado a un
+estudiante concreto, cualquier otra persona que intente canjearlo recibe un
+mensaje indicando que ese QR pertenece a otro estudiante.
 
 Puedes generar QR de uno en uno o en lote (varios de golpe, por ejemplo
-para un evento con muchas entradas) desde la pestaña **Lotes**, donde
-también ves cuántos de ese lote ya se usaron, cuántos siguen pendientes y
-cuántos caducaron.
+para un evento con muchas entradas) desde la pestaña **Batches**, donde
+también ves cuántos de ese lote se generaron, cuántos siguen pendientes de
+asignar, cuántos ya están asignados, cuántos se usaron, cuántos caducaron y
+cuántos se cancelaron.
 
 ## 11. Canjes (pagar con SegoTokens)
 
 Además de conceder tokens, Segolife permite que un estudiante los use para
 pagar parte o todo un consumo real, según la política de canje que
-configures en **SegoTokens → Política de canje**. Ahí decides:
+configures en **SegoTokens → Políticas de canje**. Ahí decides:
 
 - Cuántos céntimos de valor real da 1 SegoToken (la tasa de canje — la
   decisión más delicada de todo el sistema, porque afecta al valor real de
@@ -186,21 +190,32 @@ nada — solo se acumulan. Esto es el comportamiento seguro por defecto.
 
 El Marketplace es donde un estudiante puede gastar sus SegoTokens en
 recompensas concretas que tú publiques (una entrada gratis, una experiencia,
-un producto). Se gestiona desde **SegoTokens → Marketplace**: das de alta la
-recompensa, le pones un precio en SegoTokens y, si quieres, un stock
-limitado o un límite de compras por estudiante.
+un producto). **No es una sección aparte dentro de SegoTokens** — vive
+dentro de **Benefits → Definiciones**: das de alta el beneficio igual que
+cualquier otro (ver punto 13), y activas la casilla **"Canjeable con
+SegoTokens (marketplace)"**. Ahí mismo le pones el coste en SegoTokens y,
+si quieres, un stock máximo o un límite de canjes por estudiante.
 
-Si dos estudiantes intentan comprar la última unidad disponible al mismo
-tiempo, el sistema garantiza que solo uno se la lleve — nunca se vende de
+Si dos estudiantes intentan canjear la última unidad disponible al mismo
+tiempo, el sistema garantiza que solo uno se la lleve — nunca se concede de
 más por una coincidencia de tiempos.
 
 ## 13. Beneficios
 
-Un Beneficio es una recompensa que se concede automáticamente cuando se
-cumple una condición que tú definas (por ejemplo, "al consumir en el local
-A, se desbloquea una entrada gratis para el local B"). Se gestionan desde
-**SegoTokens → Beneficios**. A diferencia del Marketplace, el estudiante no
-lo "compra" — se le concede solo, y él lo canjea después con su propio QR.
+Un Beneficio es una recompensa asociada a una condición. Hay dos formas de
+que un estudiante llegue a tenerlo:
+
+- **Automática**: se concede sola cuando se cumple una condición que tú
+  definas (por ejemplo, "al consumir en el local A, se desbloquea una
+  entrada gratis para el local B"). El estudiante no lo "compra" — se le
+  concede solo, y él lo canjea después con su propio QR.
+- **Marketplace**: el estudiante lo compra pagando con sus SegoTokens (ver
+  punto 12).
+
+Se gestionan desde **Benefits** — un apartado propio del menú, independiente
+de SegoTokens (aunque el pago con SegoTokens de sus recompensas de
+Marketplace sí depende de que tengas una política de canje activa, ver
+punto 11).
 
 ## 14. Ajustes manuales
 
@@ -214,12 +229,21 @@ siempre quede claro de dónde salió cada token.
 ## 15. Reversión
 
 Si un movimiento de SegoTokens ya concedido resulta que no debía haberse
-producido (por ejemplo, se anula la compra o el consumo que lo generó),
-puedes revertirlo desde el historial de ese movimiento. La reversión nunca
-"deshace" el hecho original (por ejemplo, un QR ya canjeado sigue figurando
-como canjeado) — solo retira los tokens que ese movimiento concreto había
-concedido. Revertir el mismo movimiento dos veces nunca duplica el efecto:
-la segunda vez simplemente no hace nada, porque ya estaba revertido.
+producido, puedes revertirlo — pero desde un sitio distinto según de dónde
+vino ese movimiento:
+
+- Si vino de un **Ajuste manual** (punto 14), revierte desde el **Historial
+  de movimientos** de la ficha del estudiante — junto a ese movimiento
+  concreto verás un botón **"Revertir"**.
+- Si vino de un **QR de consumición** ya canjeado, revierte desde **QR
+  consumición → Listado**, buscando ese QR y usando su botón **"Revertir
+  tokens"** (te pedirá un motivo).
+
+En ambos casos, la reversión nunca "deshace" el hecho original (por
+ejemplo, un QR ya canjeado sigue figurando como canjeado) — solo retira los
+tokens que ese movimiento concreto había concedido. Revertir el mismo
+movimiento dos veces nunca duplica el efecto: la segunda vez simplemente no
+hace nada, porque ya estaba revertido.
 
 ## 16. Economía (vista de conjunto)
 
@@ -255,9 +279,10 @@ pensabas (ver el caso práctico correspondiente al final de este manual).
 ## 19. Historial
 
 Cada estudiante tiene su propio historial de SegoTokens, visible desde su
-ficha: cada movimiento (ganado, gastado, ajustado, revertido), con fecha,
-motivo y saldo resultante. Es la fuente de verdad ante cualquier duda sobre
-"por qué mi saldo es este número".
+ficha: cada movimiento (ganado, gastado, ajustado, o revertido — con un
+distintivo que indica que fue una reversión), con fecha, motivo e importe.
+Es la fuente de verdad ante cualquier duda sobre "por qué mi saldo es este
+número".
 
 ## 20. Modo Shadow (diagnóstico)
 
@@ -271,18 +296,19 @@ ya están funcionando con normalidad.
 
 ## 21. Permisos
 
-No todo el mundo con acceso al panel de Administración puede tocar
-SegoTokens de la misma manera. Según tu rol, puede que veas estas pantallas
-en modo solo lectura, o que ni siquiera te aparezcan en el menú. Si
-necesitas un permiso que no tienes, pídelo a quien gestione los accesos del
-equipo — nunca se puede "forzar" desde la propia pantalla.
+Hoy el acceso a SegoTokens, QR de consumición y Benefits es todo o nada:
+solo el rol de **Administrador global** puede ver y usar estas pantallas.
+Cualquier otro rol (por ejemplo, un responsable de un local concreto) ni
+siquiera las ve en su menú — no existe un modo "solo lectura" intermedio
+para estas tres secciones. Si alguien de tu equipo necesita acceso, tiene
+que tener el rol de Administrador global asignado.
 
 ## 22. Casos prácticos
 
 **"Quiero dar 10 ST por asistir a un evento."**
-Ve a Reglas → Nueva regla. Motivo: Asistencia. Cálculo: cantidad fija = 10.
-Alcance: Evento (elige el evento concreto) o Global si quieres que aplique
-a todos. Guarda y actívala.
+Ve a Reglas → Nueva regla. Origen: Asistencia a evento. Cálculo: cantidad
+fija = 10. Alcance: Evento (elige el evento concreto) o Global si quieres
+que aplique a todos. Guarda y actívala.
 
 **"Quiero dar el doble esta noche."**
 No toques la regla base. Ve a Campañas → Nueva campaña. Multiplicador: 2.
@@ -295,15 +321,16 @@ cantidad variable, pon el límite en tokens (por ejemplo, si cada acción da
 10 ST, un límite diario de 10 equivale a "una vez al día").
 
 **"Quiero regalar una consumición."**
-Genera un QR de consumición desde QR de consumición → Generar, indicando
+Genera un QR de consumición desde QR consumición → Generar, indicando
 el local y, si aplica, el producto e importe. Imprímelo o entrégalo — al
 escanearlo, el estudiante recibe los tokens correspondientes según la regla
 activa para ese local.
 
 **"Quiero crear una recompensa de 500 ST."**
-Ve a Marketplace → Nueva recompensa. Ponle nombre, descripción, precio en
-SegoTokens (500) y, si quieres, un stock máximo o un límite de compras por
-estudiante.
+Ve a Benefits → Definiciones → Nueva definición. Ponle nombre y
+descripción, activa "Canjeable con SegoTokens (marketplace)", y ponle un
+coste en SegoTokens (500) y, si quieres, un stock máximo o un límite de
+canjes por estudiante.
 
 **"Quiero corregir el saldo de un estudiante."**
 Entra en su ficha (Estudiantes → busca su nombre) y usa Ajuste manual.
