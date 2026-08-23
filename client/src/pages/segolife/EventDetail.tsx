@@ -208,21 +208,27 @@ export default function EventDetail() {
                 )}
               </div>
 
-              {/* FECHA / HORA — dos bloques visuales, no una fila de tabla (spec §7). */}
+              {/* FECHA / HORA — dos bloques visuales, no una fila de tabla
+                  (spec §7). text-sm (no text-[15px]) en móvil a propósito —
+                  con grid-cols-2 en una pantalla de 390px cada tarjeta tiene
+                  ~140px útiles, y "Tuesday, September 1"/"12:00 AM – 04:30
+                  AM" a 15px partían en 2 líneas de forma poco cuidada
+                  (verificado con captura real) — a 14px + leading-snug el
+                  wrap, cuando ocurre, se ve intencional. */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="segolife-card-shadow rounded-2xl bg-card p-4">
+                <div className="segolife-card-shadow rounded-2xl bg-card p-3.5 sm:p-4">
                   <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     <CalendarDays className="size-3.5" aria-hidden="true" /> {t("eventDetail.dateLabel")}
                   </p>
-                  <p className="mt-1.5 text-[15px] font-semibold text-foreground sm:text-base">
+                  <p className="mt-1.5 text-sm font-semibold leading-snug text-foreground sm:text-base">
                     {new Date(data.event.startsAt).toLocaleDateString(i18n.language, { weekday: "long", day: "numeric", month: "long", timeZone: MADRID_TZ })}
                   </p>
                 </div>
-                <div className="segolife-card-shadow rounded-2xl bg-card p-4">
+                <div className="segolife-card-shadow rounded-2xl bg-card p-3.5 sm:p-4">
                   <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     <Clock className="size-3.5" aria-hidden="true" /> {t("eventDetail.timeLabel")}
                   </p>
-                  <p className="mt-1.5 text-[15px] font-semibold tabular-nums text-foreground sm:text-base">
+                  <p className="mt-1.5 text-sm font-semibold leading-snug tabular-nums text-foreground sm:text-base">
                     {data.event.endsAt
                       ? `${new Date(data.event.startsAt).toLocaleTimeString(i18n.language, { hour: "2-digit", minute: "2-digit", timeZone: MADRID_TZ })} – ${new Date(data.event.endsAt).toLocaleTimeString(i18n.language, { hour: "2-digit", minute: "2-digit", timeZone: MADRID_TZ })}`
                       : new Date(data.event.startsAt).toLocaleTimeString(i18n.language, { hour: "2-digit", minute: "2-digit", timeZone: MADRID_TZ })}
