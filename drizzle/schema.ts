@@ -5439,11 +5439,54 @@ export type InsertVenueIntegration = typeof venueIntegrations.$inferInsert;
 
 // Weezevent se configura POR EVENTO — no exige venue (Tankers/Mambo no
 // necesitan existir como venue permanente). NO se siembran estos eventos.
+/**
+ * weezeventConnections — cierre F71 (2026-08-23): UNA cuenta Weezevent
+ * (api_key + access_token) autentica y da acceso a TODOS sus eventos vía
+ * GET /events (confirmado contra la doc oficial, api.weezevent.com/ — ningún
+ * endpoint exige credenciales distintas por evento). Antes de este cambio,
+ * event_integrations guardaba sus propias credenciales por fila, obligando a
+ * repetir API Key/Access Token por cada evento vinculado — con 0 filas reales
+ * en producción, se corrige el modelo ahora: la conexión vive aquí UNA vez,
+ * event_integrations.connection_id apunta a ella y nunca vuelve a guardar
+ * credenciales propias. Sin fila = "No conectado" (nunca username/password
+ * si ya hay un access_token — ver connectWeezevent en routers/integrations.ts).
+ */
+export const weezeventConnections = mysqlTable("weezevent_connections", {
+  id:                       int("id").autoincrement().primaryKey(),
+  status:                   mysqlEnum("status", ["not_configured", "connected", "error"]).notNull().default("not_configured"),
+  credentialsEncrypted:     text("credentials_encrypted"),
+  credentialsLast4:         varchar("credentials_last4", { length: 8 }),
+  lastTestedAt:             timestamp("last_tested_at"),
+  lastErrorMessage:         varchar("last_error_message", { length: 512 }),
+  eventsAccessibleCount:    int("events_accessible_count"),
+  // Cache de GET /events (fair use — nunca se re-consulta en cada render del
+  // selector de "Vincular evento", solo al conectar/Test connection/
+  // Actualizar eventos). Cada entrada: { externalId, name, startsAt, endsAt, multipleDates }.
+  discoveredEventsCache:    json("discovered_events_cache").$type<Array<{ externalId: string; name: string; startsAt: string | null; endsAt: string | null; multipleDates: boolean }>>(),
+  discoveredEventsCachedAt: timestamp("discovered_events_cached_at"),
+  createdAt:                timestamp("created_at").defaultNow().notNull(),
+  updatedAt:                timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type WeezeventConnection = typeof weezeventConnections.$inferSelect;
+export type InsertWeezeventConnection = typeof weezeventConnections.$inferInsert;
+
 export const eventIntegrations = mysqlTable("event_integrations", {
   id:                    int("id").autoincrement().primaryKey(),
   eventId:               int("event_id").notNull(),
   providerId:            int("provider_id").notNull(),
+  // Refactor de conexión (2026-08-23) — las credenciales viven en
+  // weezeventConnections, nunca aquí. Cada vínculo de evento apunta a LA
+  // conexión (hoy siempre la misma fila, el modelo asume una única cuenta
+  // Weezevent). credentialsEncrypted/credentialsLast4/environment de abajo
+  // se conservan en el schema por compatibilidad estructural pero NUNCA se
+  // rellenan para Weezevent desde este refactor en adelante.
+  connectionId:          int("connection_id").notNull(),
   externalEventId:       varchar("external_event_id", { length: 128 }),
+  // Nombre cacheado del evento Weezevent en el momento de vincular — para
+  // mostrarlo en el listado de Admin sin depender de que siga presente en
+  // el cache de discoveredEventsCache de la conexión (p.ej. si Weezevent
+  // deja de listarlo por include_closed/include_not_published).
+  externalEventName:     varchar("external_event_name", { length: 256 }),
   environment:           mysqlEnum("environment", ["sandbox", "production"]).notNull().default("sandbox"),
   enabled:               boolean("enabled").notNull().default(false),
   status:                mysqlEnum("status", ["not_configured", "configured", "connected", "error", "disabled"]).notNull().default("not_configured"),
@@ -5467,6 +5510,12 @@ export const eventIntegrations = mysqlTable("event_integrations", {
   updatedAt:             timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
   eventProviderUnique: unique("event_integrations_event_provider_unique").on(table.eventId, table.providerId),
+  // Restricción de vinculación (cierre F71, punto 10) — el MISMO evento
+  // externo de Weezevent nunca puede vincularse dos veces (a dos eventos
+  // Segolife distintos) por accidente. MySQL permite varios NULL en un
+  // UNIQUE index, así que no molesta a ningún otro provider futuro que no
+  // rellene external_event_id.
+  externalEventUnique: unique("event_integrations_provider_external_unique").on(table.providerId, table.externalEventId),
 }));
 export type EventIntegration = typeof eventIntegrations.$inferSelect;
 export type InsertEventIntegration = typeof eventIntegrations.$inferInsert;

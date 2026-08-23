@@ -10,13 +10,14 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 
 const {
-  mockGetEventIntegrationRaw, mockGetProviderById, mockDecryptCredentials,
+  mockGetEventIntegrationRaw, mockGetWeezeventConnectionRaw, mockGetProviderById, mockDecryptCredentials,
   mockFinishSyncRun, mockRecordEventIntegrationResult, mockSetSyncCursor,
   mockTryAcquireSyncLock,
   mockCreateAdapter, mockGetWeezeventAccessToken,
   mockSyncTicketTypes, mockIngestPaymentlessTicket, mockIngestAttendance, mockResolveIdentity,
 } = vi.hoisted(() => ({
   mockGetEventIntegrationRaw: vi.fn(),
+  mockGetWeezeventConnectionRaw: vi.fn(),
   mockGetProviderById: vi.fn(),
   mockDecryptCredentials: vi.fn(),
   mockFinishSyncRun: vi.fn(),
@@ -33,6 +34,7 @@ const {
 
 vi.mock("./integrationsDb", () => ({
   getEventIntegrationRaw: mockGetEventIntegrationRaw,
+  getWeezeventConnectionRaw: mockGetWeezeventConnectionRaw,
   getProviderById: mockGetProviderById,
   finishSyncRun: mockFinishSyncRun,
   recordEventIntegrationResult: mockRecordEventIntegrationResult,
@@ -69,11 +71,16 @@ afterEach(() => {
 
 function baseIntegration(overrides: Partial<Record<string, unknown>> = {}) {
   return {
-    id: 1, eventId: 77, providerId: 9, environment: "production" as const,
-    enabled: true, credentialsEncrypted: "blob", syncEnabled: true,
+    id: 1, eventId: 77, providerId: 9, connectionId: 5, environment: "production" as const,
+    enabled: true, syncEnabled: true,
     externalEventId: "wz_evt_001", loyaltyEnabled: false,
     ...overrides,
   };
+}
+
+/** Refactor de conexión (2026-08-23) — las credenciales viven aquí, nunca en la propia fila de event_integrations. */
+function baseConnection(overrides: Partial<Record<string, unknown>> = {}) {
+  return { id: 5, credentialsEncrypted: "blob", ...overrides };
 }
 
 /** Mismo fake mínimo que syncVenueIntegration.test.ts — cubre la única query directa que hace este orquestador (eventTickets por externalTicketId). */
@@ -100,6 +107,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.EXTERNAL_INTEGRATIONS_ENABLED = "true";
   mockGetProviderById.mockResolvedValue({ key: "weezevent" });
+  mockGetWeezeventConnectionRaw.mockResolvedValue(baseConnection());
   mockDecryptCredentials.mockReturnValue({ apiKey: "wz_fixture", accessToken: "already-exchanged" });
   mockTryAcquireSyncLock.mockResolvedValue({ acquired: true, run: { id: 900 } });
   mockSyncTicketTypes.mockResolvedValue({ createdCount: 1, updatedCount: 0, ticketTypeIdByExternalId: new Map([["wz_rate_001", 55]]) });
@@ -144,6 +152,22 @@ describe("syncEventIntegration — kill switch", () => {
     const result = await syncEventIntegration(1, {}, fakeConn());
     expect(result.status).toBe("failed");
     expect(result.message).toContain("no soportado");
+  });
+
+  it("sin conexión Weezevent asociada (connectionId no resuelve) → skipped_disabled, nunca llama al adapter", async () => {
+    mockGetEventIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockGetWeezeventConnectionRaw.mockResolvedValue(null);
+    const result = await syncEventIntegration(1, {}, fakeConn());
+    expect(result.status).toBe("skipped_disabled");
+    expect(mockCreateAdapter).not.toHaveBeenCalled();
+  });
+
+  it("conexión existe pero sin credenciales guardadas (nunca conectada) → skipped_disabled", async () => {
+    mockGetEventIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockGetWeezeventConnectionRaw.mockResolvedValue(baseConnection({ credentialsEncrypted: null }));
+    const result = await syncEventIntegration(1, {}, fakeConn());
+    expect(result.status).toBe("skipped_disabled");
+    expect(mockCreateAdapter).not.toHaveBeenCalled();
   });
 
   it("lock ya ocupado → skipped_locked, nunca llama al adapter", async () => {
@@ -295,6 +319,14 @@ describe("dryRunEventIntegration — nunca escribe", () => {
     const result = await dryRunEventIntegration(1, fakeConn());
     expect(result.status).toBe("blocked");
     expect(result.message).toContain("externalEventId");
+  });
+
+  it("sin conexión Weezevent asociada → blocked, nunca llama al adapter", async () => {
+    mockGetEventIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockGetWeezeventConnectionRaw.mockResolvedValue(null);
+    const result = await dryRunEventIntegration(1, fakeConn());
+    expect(result.status).toBe("blocked");
+    expect(mockCreateAdapter).not.toHaveBeenCalled();
   });
 
   it("SÍ funciona aunque syncEnabled=false — el dry run decide si activar el sync real, no puede depender de que ya lo esté", async () => {

@@ -11,9 +11,10 @@ import { render, screen, cleanup } from "@testing-library/react";
  * HistoricalIdentities.tsx).
  */
 
-const { mockVenueIntegrations, mockEventIntegrations, mockVenuesList, mockEventsList } = vi.hoisted(() => ({
+const { mockVenueIntegrations, mockEventIntegrations, mockWeezeventConnection, mockVenuesList, mockEventsList } = vi.hoisted(() => ({
   mockVenueIntegrations: vi.fn(),
   mockEventIntegrations: vi.fn(),
+  mockWeezeventConnection: vi.fn(),
   mockVenuesList: vi.fn(),
   mockEventsList: vi.fn(),
 }));
@@ -29,11 +30,10 @@ vi.mock("@/lib/trpc", () => ({
       listProviders: { useQuery: () => ({ data: [{ id: 1, key: "fourvenues_integrations", name: "Fourvenues Integrations API" }] }) },
       listVenueIntegrations: { useQuery: mockVenueIntegrations },
       listEventIntegrations: { useQuery: mockEventIntegrations },
+      getWeezeventConnection: { useQuery: mockWeezeventConnection },
       getSchedulerStatus: { useQuery: () => ({ data: undefined }) },
       createVenueIntegration: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
-      createEventIntegration: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
       testVenueConnection: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
-      testEventConnection: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
       setVenueIntegrationEnabled: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
       updateVenueIntegrationCredentials: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
       setEventIntegrationEnabled: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
@@ -42,6 +42,11 @@ vi.mock("@/lib/trpc", () => ({
       syncVenueNow: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
       previewEventSync: { useMutation: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }) },
       syncEventNow: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+      connectWeezevent: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+      testWeezeventConnection: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+      refreshWeezeventEvents: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+      disconnectWeezevent: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+      linkWeezeventEvent: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
     },
     venues: { list: { useQuery: mockVenuesList } },
     events: { list: { useQuery: mockEventsList } },
@@ -49,6 +54,7 @@ vi.mock("@/lib/trpc", () => ({
       integrations: {
         listVenueIntegrations: { invalidate: vi.fn() },
         listEventIntegrations: { invalidate: vi.fn() },
+        getWeezeventConnection: { invalidate: vi.fn() },
       },
     }),
   },
@@ -59,6 +65,7 @@ import IntegrationsManager from "./IntegrationsManager";
 beforeEach(() => {
   vi.clearAllMocks();
   mockEventIntegrations.mockReturnValue({ data: [], isLoading: false });
+  mockWeezeventConnection.mockReturnValue({ data: null, isLoading: false });
   mockEventsList.mockReturnValue({ data: { items: [] } });
   mockVenuesList.mockReturnValue({
     data: { items: [{ id: 1, name: "Casanova" }, { id: 3, name: "La Finca Club" }] },

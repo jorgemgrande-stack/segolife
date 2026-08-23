@@ -18,7 +18,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { venues, communityVenues, eventTickets, type VenueIntegration, type EventIntegration } from "../../../drizzle/schema";
-import { startSyncRun, finishSyncRun, recordVenueIntegrationResult, recordEventIntegrationResult, getVenueIntegrationRaw, getEventIntegrationRaw, getProviderById, setSyncCursor, findInternalIdForExternal, tryAcquireSyncLock, isDueForScheduledSync, getCurrentLockStatus } from "./integrationsDb";
+import { startSyncRun, finishSyncRun, recordVenueIntegrationResult, recordEventIntegrationResult, getVenueIntegrationRaw, getEventIntegrationRaw, getWeezeventConnectionRaw, getProviderById, setSyncCursor, findInternalIdForExternal, tryAcquireSyncLock, isDueForScheduledSync, getCurrentLockStatus } from "./integrationsDb";
 import { CapabilityNotSupportedError, type ExternalTicketingProvider, type NormalizedOrder, type NormalizedTicket, type ProviderCredentials } from "./externalTicketingProvider";
 import { decryptCredentials } from "./integrationCredentialCrypto";
 import { createFourvenuesIntegrationsAdapter, FOURVENUES_INTEGRATIONS_BASE_URL } from "./fourvenuesIntegrationsAdapter";
@@ -733,10 +733,12 @@ export async function dryRunEventIntegration(eventIntegrationId: number, db?: Db
   const integration = await getEventIntegrationRaw(eventIntegrationId);
   if (!integration) return blockedDryRunEvent(null, null, "Integración no encontrada");
   if (!isExternalIntegrationsGloballyEnabled()) return blockedDryRunEvent(integration.eventId, integration.externalEventId, "Kill switch global desactivado (EXTERNAL_INTEGRATIONS_ENABLED)");
-  if (!integration.credentialsEncrypted) return blockedDryRunEvent(integration.eventId, integration.externalEventId, "Sin credenciales configuradas");
   if (!integration.externalEventId) return blockedDryRunEvent(integration.eventId, null, "Falta el ID de evento externo (externalEventId) en la configuración");
-  const rawCredentials = decryptCredentials(integration.credentialsEncrypted);
-  if (!rawCredentials) return blockedDryRunEvent(integration.eventId, integration.externalEventId, "No se pudieron descifrar las credenciales");
+  // Refactor de conexión (2026-08-23) — las credenciales viven en la conexión Weezevent, nunca en la propia fila (ver integrationsDb.ts).
+  const connection = await getWeezeventConnectionRaw(integration.connectionId);
+  if (!connection?.credentialsEncrypted) return blockedDryRunEvent(integration.eventId, integration.externalEventId, "Sin conexión Weezevent configurada — conecta la cuenta primero");
+  const rawCredentials = decryptCredentials(connection.credentialsEncrypted);
+  if (!rawCredentials) return blockedDryRunEvent(integration.eventId, integration.externalEventId, "No se pudieron descifrar las credenciales de la conexión");
   const provider = await getProviderById(integration.providerId);
   if (provider?.key !== "weezevent") {
     return blockedDryRunEvent(integration.eventId, integration.externalEventId, `Proveedor "${provider?.key ?? "desconocido"}" no soportado por el sync de eventos — solo weezevent`);
@@ -795,15 +797,21 @@ function emptyEventSyncResult(status: EventSyncResult["status"], eventId: number
 export async function syncEventIntegration(eventIntegrationId: number, opts: EventSyncOptions = {}, db?: DbHandle): Promise<EventSyncResult> {
   const integration = await getEventIntegrationRaw(eventIntegrationId);
   if (!integration) return emptyEventSyncResult("failed", null, "Integración no encontrada");
-  if (!canSync(integration)) {
-    return emptyEventSyncResult("skipped_disabled", integration.eventId, "Integración deshabilitada (kill switch) — ver EXTERNAL_INTEGRATIONS_ENABLED / integration.enabled / credenciales / syncEnabled");
-  }
   if (!integration.externalEventId) {
     return emptyEventSyncResult("failed", integration.eventId, "Falta el ID de evento externo (externalEventId) en la configuración");
   }
 
-  const rawCredentials = decryptCredentials(integration.credentialsEncrypted);
-  if (!rawCredentials) return emptyEventSyncResult("failed", integration.eventId, "No se pudieron descifrar las credenciales");
+  // Refactor de conexión (2026-08-23) — canSync() sigue siendo el kill switch
+  // compartido con Fourvenues, pero las credenciales que comprueba ya no
+  // viven en la propia fila: se sustituyen por las de la conexión Weezevent
+  // asociada (integration.connectionId), nunca duplicadas en event_integrations.
+  const connection = await getWeezeventConnectionRaw(integration.connectionId);
+  if (!canSync({ ...integration, credentialsEncrypted: connection?.credentialsEncrypted ?? null })) {
+    return emptyEventSyncResult("skipped_disabled", integration.eventId, "Integración deshabilitada (kill switch) — ver EXTERNAL_INTEGRATIONS_ENABLED / integration.enabled / conexión Weezevent / syncEnabled");
+  }
+
+  const rawCredentials = decryptCredentials(connection!.credentialsEncrypted);
+  if (!rawCredentials) return emptyEventSyncResult("failed", integration.eventId, "No se pudieron descifrar las credenciales de la conexión");
 
   const provider = await getProviderById(integration.providerId);
   if (provider?.key !== "weezevent") {

@@ -221,9 +221,9 @@ function EventIntegrationsTab({ eventId }: { eventId: number }) {
         <div className="space-y-1.5">
           {data.map(i => (
             <div key={i.id} className="flex items-center justify-between text-sm border border-border rounded-lg px-3 py-2">
-              <span>{i.providerKey} · {i.environment}</span>
+              <span>{i.providerKey} · {i.externalEventName ?? `evento externo #${i.externalEventId}`}</span>
               <div className="flex items-center gap-2">
-                {!i.credentialsConfigured && <Badge variant="outline">Awaiting credentials</Badge>}
+                {!i.connectionCredentialsConfigured && <Badge variant="outline">Sin conexión Weezevent</Badge>}
                 <Badge variant={i.status === "connected" ? "default" : i.status === "error" ? "destructive" : "secondary"}>{i.status}</Badge>
               </div>
             </div>

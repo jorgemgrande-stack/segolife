@@ -13,10 +13,11 @@ import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import {
   integrationProviders, venueIntegrations, eventIntegrations, externalEntityMappings,
-  integrationSyncRuns, integrationSyncState,
+  integrationSyncRuns, integrationSyncState, weezeventConnections,
   type IntegrationProviderRow, type VenueIntegration, type EventIntegration,
   type InsertVenueIntegration, type InsertEventIntegration,
   type IntegrationSyncRun, type InsertIntegrationSyncRun,
+  type WeezeventConnection, type InsertWeezeventConnection,
 } from "../../../drizzle/schema";
 import { encryptCredentials, last4 } from "./integrationCredentialCrypto";
 import type { ProviderCapabilities } from "./capabilities";
@@ -35,7 +36,6 @@ async function getDb(): Promise<DbHandle> {
 export interface SafeIntegration {
   id: number;
   venueId?: number;
-  eventId?: number;
   providerId: number;
   providerKey: string;
   environment: "sandbox" | "production";
@@ -45,7 +45,6 @@ export interface SafeIntegration {
   credentialsConfigured: boolean;
   credentialsLast4: string | null;
   syncEnabled: boolean;
-  /** Production Scheduler / F71 — mismo gate real para venue_integrations Y event_integrations (Weezevent) desde que ambas tablas tienen la columna. */
   loyaltyEnabled: boolean;
   syncIntervalMinutes: number | null;
   lastSyncAt: Date | null;
@@ -54,10 +53,11 @@ export interface SafeIntegration {
   lastErrorMessage: string | null;
 }
 
-function toSafeIntegration(row: VenueIntegration | EventIntegration, providerKey: string, kind: "venue" | "event"): SafeIntegration {
+/** Solo venue_integrations (Fourvenues) — event_integrations (Weezevent) usa toSafeEventIntegration() desde el refactor de conexión (2026-08-23), porque sus credenciales ya no viven en la fila. */
+function toSafeIntegration(row: VenueIntegration, providerKey: string): SafeIntegration {
   return {
     id: row.id,
-    ...(kind === "venue" ? { venueId: (row as VenueIntegration).venueId } : { eventId: (row as EventIntegration).eventId }),
+    venueId: row.venueId,
     providerId: row.providerId,
     providerKey,
     environment: row.environment,
@@ -104,7 +104,7 @@ export async function listVenueIntegrations(venueId?: number, db?: DbHandle): Pr
     : await conn.select().from(venueIntegrations);
   const providers = await listProviders(conn);
   const byId = new Map(providers.map(p => [p.id, p.key]));
-  return rows.map(r => toSafeIntegration(r, byId.get(r.providerId) ?? "unknown", "venue"));
+  return rows.map(r => toSafeIntegration(r, byId.get(r.providerId) ?? "unknown"));
 }
 
 export async function getVenueIntegrationRaw(id: number, db?: DbHandle): Promise<VenueIntegration | null> {
@@ -142,7 +142,7 @@ export async function createVenueIntegration(input: CreateVenueIntegrationInput,
   const insertId = (result as unknown as { insertId: number }).insertId;
   const row = await getVenueIntegrationRaw(insertId, conn);
   const provider = await conn.select().from(integrationProviders).where(eq(integrationProviders.id, input.providerId)).limit(1);
-  return toSafeIntegration(row!, provider[0]?.key ?? "unknown", "venue");
+  return toSafeIntegration(row!, provider[0]?.key ?? "unknown");
 }
 
 // `syncEnabled` se mueve junto con `enabled` — hoy no existe ningún worker/
@@ -193,16 +193,162 @@ export async function recordVenueIntegrationResult(id: number, ok: boolean, mess
   ).where(eq(venueIntegrations.id, id));
 }
 
-// ─── EVENT INTEGRATIONS (Weezevent) ───────────────────────────────────────────
+// ─── WEEZEVENT CONNECTION (cierre F71, 2026-08-23) ────────────────────────────
+// UNA cuenta Weezevent (api_key + access_token) autentica y da acceso a
+// TODOS sus eventos (confirmado contra la doc oficial: ningún endpoint exige
+// credenciales por evento) — antes cada event_integration guardaba sus
+// propias credenciales, obligando a repetirlas por cada evento. El modelo
+// asume una única conexión activa (no hay negocio real hoy que necesite dos
+// cuentas Weezevent a la vez); `getTheWeezeventConnection()` siempre
+// devuelve la más reciente si existe más de una.
 
-export async function listEventIntegrations(eventId?: number, db?: DbHandle): Promise<SafeIntegration[]> {
+export interface SafeWeezeventConnection {
+  id: number;
+  status: "not_configured" | "connected" | "error";
+  credentialsConfigured: boolean;
+  credentialsLast4: string | null;
+  lastTestedAt: Date | null;
+  lastErrorMessage: string | null;
+  eventsAccessibleCount: number | null;
+  discoveredEvents: Array<{ externalId: string; name: string; startsAt: string | null; endsAt: string | null; multipleDates: boolean }>;
+  discoveredEventsCachedAt: Date | null;
+}
+
+function toSafeWeezeventConnection(row: WeezeventConnection): SafeWeezeventConnection {
+  return {
+    id: row.id,
+    status: row.status,
+    credentialsConfigured: !!row.credentialsEncrypted,
+    credentialsLast4: row.credentialsLast4,
+    lastTestedAt: row.lastTestedAt,
+    lastErrorMessage: row.lastErrorMessage,
+    eventsAccessibleCount: row.eventsAccessibleCount,
+    discoveredEvents: row.discoveredEventsCache ?? [],
+    discoveredEventsCachedAt: row.discoveredEventsCachedAt,
+  };
+}
+
+export async function getWeezeventConnectionRaw(id: number, db?: DbHandle): Promise<WeezeventConnection | null> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select().from(weezeventConnections).where(eq(weezeventConnections.id, id)).limit(1);
+  return row ?? null;
+}
+
+/** La única conexión Weezevent (o null si nunca se ha conectado nada) — ver nota de cabecera de esta sección. */
+export async function getTheWeezeventConnection(db?: DbHandle): Promise<SafeWeezeventConnection | null> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select().from(weezeventConnections).orderBy(desc(weezeventConnections.id)).limit(1);
+  return row ? toSafeWeezeventConnection(row) : null;
+}
+
+export async function createWeezeventConnection(input: { credentials: Record<string, string | undefined>; credentialsDisplayValue?: string }, db?: DbHandle): Promise<SafeWeezeventConnection> {
+  const conn = db ?? (await getDb());
+  const values: InsertWeezeventConnection = {
+    status: "not_configured",
+    credentialsEncrypted: encryptCredentials(input.credentials),
+    credentialsLast4: last4(input.credentialsDisplayValue),
+  };
+  const [result] = await conn.insert(weezeventConnections).values(values);
+  const insertId = (result as unknown as { insertId: number }).insertId;
+  const row = await getWeezeventConnectionRaw(insertId, conn);
+  return toSafeWeezeventConnection(row!);
+}
+
+export async function updateWeezeventConnectionCredentials(id: number, credentials: Record<string, string | undefined>, displayValue?: string, db?: DbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  await conn.update(weezeventConnections).set({
+    credentialsEncrypted: encryptCredentials(credentials),
+    credentialsLast4: last4(displayValue),
+    status: "not_configured", // vuelve a "not_configured" hasta que se re-teste con las credenciales nuevas — nunca hereda el "connected" de las anteriores
+  }).where(eq(weezeventConnections.id, id));
+}
+
+/** [Disconnect] — limpia credenciales y cache de eventos, pero NUNCA borra la fila ni los event_integrations que la referencian (conservar trazabilidad). */
+export async function disconnectWeezeventConnection(id: number, db?: DbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  await conn.update(weezeventConnections).set({
+    credentialsEncrypted: null, credentialsLast4: null, status: "not_configured",
+    eventsAccessibleCount: null, discoveredEventsCache: null, discoveredEventsCachedAt: null,
+  }).where(eq(weezeventConnections.id, id));
+}
+
+export async function recordWeezeventConnectionTestResult(id: number, ok: boolean, message: string | null, eventsAccessibleCount: number | null, db?: DbHandle): Promise<void> {
+  const conn = db ?? (await getDb());
+  await conn.update(weezeventConnections).set(
+    ok
+      ? { status: "connected", lastTestedAt: new Date(), lastErrorMessage: null, eventsAccessibleCount }
+      : { status: "error", lastTestedAt: new Date(), lastErrorMessage: message?.slice(0, 512) ?? null }
+  ).where(eq(weezeventConnections.id, id));
+}
+
+export async function updateWeezeventDiscoveredEvents(
+  id: number,
+  events: Array<{ externalId: string; name: string; startsAt: string | null; endsAt: string | null; multipleDates: boolean }>,
+  db?: DbHandle
+): Promise<void> {
+  const conn = db ?? (await getDb());
+  await conn.update(weezeventConnections).set({
+    discoveredEventsCache: events, discoveredEventsCachedAt: new Date(),
+  }).where(eq(weezeventConnections.id, id));
+}
+
+// ─── EVENT INTEGRATIONS (Weezevent — vínculos evento↔evento) ─────────────────
+// Cada fila es un VÍNCULO (Weezevent event ↔ Segolife event), nunca guarda
+// credenciales propias — siempre apunta a connectionId (ver sección de
+// arriba). Preview/Sync/Loyalty/last sync/cursor siguen siendo por vínculo
+// (spec cierre F71, punto 17: nunca "sincronizar toda la cuenta").
+
+export interface SafeEventIntegration {
+  id: number;
+  eventId: number;
+  providerId: number;
+  providerKey: string;
+  connectionId: number;
+  externalEventId: string | null;
+  externalEventName: string | null;
+  enabled: boolean;
+  status: "not_configured" | "configured" | "connected" | "error" | "disabled";
+  syncEnabled: boolean;
+  loyaltyEnabled: boolean;
+  lastSyncAt: Date | null;
+  lastSuccessAt: Date | null;
+  lastErrorAt: Date | null;
+  lastErrorMessage: string | null;
+  /** Derivado de la conexión (nunca de la propia fila, que ya no guarda credenciales) — así el admin ve si este vínculo puede sincronizar de verdad. */
+  connectionCredentialsConfigured: boolean;
+}
+
+function toSafeEventIntegration(row: EventIntegration, providerKey: string, connection: WeezeventConnection | null): SafeEventIntegration {
+  return {
+    id: row.id,
+    eventId: row.eventId,
+    providerId: row.providerId,
+    providerKey,
+    connectionId: row.connectionId,
+    externalEventId: row.externalEventId,
+    externalEventName: row.externalEventName,
+    enabled: row.enabled,
+    status: row.status,
+    syncEnabled: row.syncEnabled,
+    loyaltyEnabled: row.loyaltyEnabled,
+    lastSyncAt: row.lastSyncAt,
+    lastSuccessAt: row.lastSuccessAt,
+    lastErrorAt: row.lastErrorAt,
+    lastErrorMessage: row.lastErrorMessage,
+    connectionCredentialsConfigured: !!connection?.credentialsEncrypted,
+  };
+}
+
+export async function listEventIntegrations(eventId?: number, db?: DbHandle): Promise<SafeEventIntegration[]> {
   const conn = db ?? (await getDb());
   const rows = eventId != null
     ? await conn.select().from(eventIntegrations).where(eq(eventIntegrations.eventId, eventId))
     : await conn.select().from(eventIntegrations);
   const providers = await listProviders(conn);
   const byId = new Map(providers.map(p => [p.id, p.key]));
-  return rows.map(r => toSafeIntegration(r, byId.get(r.providerId) ?? "unknown", "event"));
+  const connections = await conn.select().from(weezeventConnections);
+  const connById = new Map(connections.map(c => [c.id, c]));
+  return rows.map(r => toSafeEventIntegration(r, byId.get(r.providerId) ?? "unknown", connById.get(r.connectionId) ?? null));
 }
 
 export async function getEventIntegrationRaw(id: number, db?: DbHandle): Promise<EventIntegration | null> {
@@ -211,34 +357,53 @@ export async function getEventIntegrationRaw(id: number, db?: DbHandle): Promise
   return row ?? null;
 }
 
-export interface CreateEventIntegrationInput {
-  eventId: number;
-  providerId: number;
-  externalEventId?: string | null;
-  environment: "sandbox" | "production";
-  credentials?: Record<string, string | undefined>;
-  credentialsDisplayValue?: string;
+export class WeezeventLinkError extends Error {
+  constructor(public readonly code: "CONNECTION_NOT_FOUND" | "EXTERNAL_ALREADY_LINKED" | "SEGOLIFE_EVENT_ALREADY_LINKED", message: string) {
+    super(message);
+    this.name = "WeezeventLinkError";
+  }
 }
 
-export async function createEventIntegration(input: CreateEventIntegrationInput, db?: DbHandle): Promise<SafeIntegration> {
+export interface LinkWeezeventEventInput {
+  connectionId: number;
+  eventId: number;
+  providerId: number;
+  externalEventId: string;
+  externalEventName?: string | null;
+}
+
+/** Vincula un evento Weezevent (ya descubierto vía GET /events) a un evento Segolife — nunca acepta credenciales, siempre reutiliza la conexión existente. */
+export async function linkWeezeventEvent(input: LinkWeezeventEventInput, db?: DbHandle): Promise<SafeEventIntegration> {
   const conn = db ?? (await getDb());
-  const credentialsEncrypted = input.credentials ? encryptCredentials(input.credentials) : null;
+  const connectionRow = await getWeezeventConnectionRaw(input.connectionId, conn);
+  if (!connectionRow) throw new WeezeventLinkError("CONNECTION_NOT_FOUND", "La conexión Weezevent no existe");
+
+  const [dupExternal] = await conn.select({ id: eventIntegrations.id }).from(eventIntegrations)
+    .where(and(eq(eventIntegrations.providerId, input.providerId), eq(eventIntegrations.externalEventId, input.externalEventId))).limit(1);
+  if (dupExternal) throw new WeezeventLinkError("EXTERNAL_ALREADY_LINKED", "Este evento de Weezevent ya está vinculado a otro evento de Segolife");
+
+  const [dupSegolife] = await conn.select({ id: eventIntegrations.id }).from(eventIntegrations)
+    .where(and(eq(eventIntegrations.eventId, input.eventId), eq(eventIntegrations.providerId, input.providerId))).limit(1);
+  if (dupSegolife) throw new WeezeventLinkError("SEGOLIFE_EVENT_ALREADY_LINKED", "Este evento de Segolife ya tiene una integración Weezevent");
+
   const values: InsertEventIntegration = {
     eventId: input.eventId,
     providerId: input.providerId,
-    externalEventId: input.externalEventId ?? null,
-    environment: input.environment,
+    connectionId: input.connectionId,
+    externalEventId: input.externalEventId,
+    externalEventName: input.externalEventName ?? null,
+    environment: "production", // Weezevent sin sandbox documentado — siempre producción, ver docs/integrations/weezevent.md
     enabled: false,
-    status: credentialsEncrypted ? "configured" : "not_configured",
-    credentialsEncrypted,
-    credentialsLast4: last4(input.credentialsDisplayValue),
+    status: "configured",
+    credentialsEncrypted: null,
+    credentialsLast4: null,
     syncEnabled: false,
   };
   const [result] = await conn.insert(eventIntegrations).values(values);
   const insertId = (result as unknown as { insertId: number }).insertId;
   const row = await getEventIntegrationRaw(insertId, conn);
   const provider = await conn.select().from(integrationProviders).where(eq(integrationProviders.id, input.providerId)).limit(1);
-  return toSafeIntegration(row!, provider[0]?.key ?? "unknown", "event");
+  return toSafeEventIntegration(row!, provider[0]?.key ?? "unknown", connectionRow);
 }
 
 export async function setEventIntegrationEnabled(id: number, enabled: boolean, db?: DbHandle): Promise<void> {

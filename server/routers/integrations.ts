@@ -3,17 +3,21 @@ import { TRPCError } from "@trpc/server";
 import { router, permissionProcedure } from "../_core/trpc";
 import {
   listProviders, listVenueIntegrations, listEventIntegrations,
-  createVenueIntegration, createEventIntegration,
+  createVenueIntegration,
   setVenueIntegrationEnabled, setEventIntegrationEnabled, setEventIntegrationLoyaltyEnabled,
   updateVenueIntegrationCredentials,
-  getVenueIntegrationRaw, getEventIntegrationRaw, getProviderById,
+  getVenueIntegrationRaw, getProviderById, getProviderByKey,
   listSyncRuns,
+  getTheWeezeventConnection, getWeezeventConnectionRaw, createWeezeventConnection,
+  updateWeezeventConnectionCredentials, disconnectWeezeventConnection,
+  recordWeezeventConnectionTestResult, updateWeezeventDiscoveredEvents,
+  linkWeezeventEvent as linkWeezeventEventDb, WeezeventLinkError,
 } from "../segolife/integrations/integrationsDb";
 import { listUnresolvedOperations, linkUnresolvedOperation, ignoreUnresolvedOperation, UnresolvedOperationError } from "../segolife/integrations/unresolvedOperationsService";
 import { createFourvenuesAdapter, FOURVENUES_BASE_URL } from "../segolife/integrations/fourvenuesAdapter";
 import { createFourvenuesIntegrationsAdapter, FOURVENUES_INTEGRATIONS_BASE_URL } from "../segolife/integrations/fourvenuesIntegrationsAdapter";
-import { createWeezeventAdapter, WEEZEVENT_BASE_URL } from "../segolife/integrations/weezeventAdapter";
-import { createHttpTransport } from "../segolife/integrations/httpTransport";
+import { createWeezeventAdapter, getWeezeventAccessToken, WEEZEVENT_BASE_URL } from "../segolife/integrations/weezeventAdapter";
+import { createHttpTransport, HttpTransportError } from "../segolife/integrations/httpTransport";
 import { decryptCredentials } from "../segolife/integrations/integrationCredentialCrypto";
 import { isExternalIntegrationsGloballyEnabled, syncVenueIntegration, dryRunVenueIntegration, syncEventIntegration, dryRunEventIntegration, getIntegrationSchedulerStatus } from "../segolife/integrations/integrationSyncService";
 import { isFourvenuesSchedulerRunning, DEFAULT_INCREMENTAL_INTERVAL_MINUTES } from "../segolife/integrations/integrationScheduler";
@@ -35,6 +39,55 @@ function mapUnresolvedError(err: unknown): never {
     throw new TRPCError({ code: err.code === "NOT_FOUND" ? "NOT_FOUND" : "CONFLICT", message: err.message, cause: err });
   }
   throw err;
+}
+
+/**
+ * Clasificación de errores de Weezevent (cierre F71, spec §6/§20/§29) — nunca
+ * expone el body crudo del proveedor (podría llevar datos no pensados para
+ * mostrar), solo un mensaje comprensible por status HTTP real.
+ */
+function classifyWeezeventError(err: unknown): string {
+  if (err instanceof HttpTransportError) {
+    if (err.status === 401) return "Credenciales incorrectas o Access Token inválido/caducado";
+    if (err.status === 403) return "Sin permisos suficientes para esta API key";
+    if (err.status === 429) return "Límite de peticiones de Weezevent alcanzado (fair use) — inténtalo más tarde";
+    if (err.status >= 500) return "Weezevent no está disponible ahora mismo (error del servidor)";
+    return `Weezevent devolvió un error (HTTP ${err.status})`;
+  }
+  if (err instanceof Error) return `No se pudo conectar con Weezevent: ${err.message}`;
+  return "No se pudo conectar con Weezevent";
+}
+
+/**
+ * Único punto real de "hablar con Weezevent" para la conexión (cierre F71):
+ * usado tanto por [Test connection] (creación y comprobación manual) como
+ * por [Actualizar eventos] — son la MISMA operación (auth real + GET
+ * /events), nunca una lógica duplicada. Cachea la lista de eventos
+ * descubiertos en la conexión (fair use — nunca se re-consulta en cada
+ * render del selector de vinculación).
+ */
+async function testAndCacheWeezeventConnection(connectionId: number): Promise<{ ok: boolean; message: string; eventsAccessibleCount?: number }> {
+  const row = await getWeezeventConnectionRaw(connectionId);
+  if (!row) return { ok: false, message: "Conexión no encontrada" };
+  const credentials = decryptCredentials(row.credentialsEncrypted);
+  if (!credentials) return { ok: false, message: "No se pudieron descifrar las credenciales" };
+  const adapter = createWeezeventAdapter(createHttpTransport(WEEZEVENT_BASE_URL));
+  try {
+    const events = await adapter.listEvents(credentials);
+    await recordWeezeventConnectionTestResult(connectionId, true, null, events.length);
+    await updateWeezeventDiscoveredEvents(connectionId, events.map(e => ({
+      externalId: e.externalId,
+      name: e.name,
+      startsAt: e.startsAt ? e.startsAt.toISOString() : null,
+      endsAt: e.endsAt ? e.endsAt.toISOString() : null,
+      multipleDates: !!(e.raw as { multipleDates?: boolean } | undefined)?.multipleDates,
+    })));
+    return { ok: true, message: `Weezevent conectado — ${events.length} evento${events.length === 1 ? "" : "s"} accesible${events.length === 1 ? "" : "s"}`, eventsAccessibleCount: events.length };
+  } catch (err) {
+    const message = classifyWeezeventError(err);
+    await recordWeezeventConnectionTestResult(connectionId, false, message, null);
+    return { ok: false, message };
+  }
 }
 
 export const integrationsRouter = router({
@@ -69,25 +122,6 @@ export const integrationsRouter = router({
       externalVenueId: input.externalVenueId,
       environment: input.environment,
       credentials: input.apiKey ? { apiKey: input.apiKey } : undefined,
-      credentialsDisplayValue: input.apiKey ?? undefined,
-    })),
-
-  createEventIntegration: integrationsManageProcedure
-    .input(z.object({
-      eventId: z.number().int().positive(),
-      providerId: z.number().int().positive(),
-      externalEventId: z.string().max(128).nullish(),
-      environment: z.enum(["sandbox", "production"]),
-      apiKey: z.string().max(512).nullish(),
-      username: z.string().max(256).nullish(),
-      password: z.string().max(256).nullish(),
-    }))
-    .mutation(({ input }) => createEventIntegration({
-      eventId: input.eventId,
-      providerId: input.providerId,
-      externalEventId: input.externalEventId,
-      environment: input.environment,
-      credentials: (input.apiKey || input.username) ? { apiKey: input.apiKey ?? undefined, username: input.username ?? undefined, password: input.password ?? undefined } : undefined,
       credentialsDisplayValue: input.apiKey ?? undefined,
     })),
 
@@ -137,16 +171,97 @@ export const integrationsRouter = router({
       return adapter.testConnection(credentials);
     }),
 
-  testEventConnection: integrationsManageProcedure
-    .input(z.object({ id: z.number().int().positive() }))
+  // ── Weezevent CONNECTION (cierre F71, 2026-08-23) — UNA cuenta, MUCHOS
+  // eventos vinculados. Nunca acepta credenciales por evento; todo lo que
+  // sigue en este bloque opera sobre la conexión única, no sobre un event
+  // Integration concreto. ────────────────────────────────────────────────
+  getWeezeventConnection: integrationsViewProcedure.query(() => getTheWeezeventConnection()),
+
+  /**
+   * Conecta (o reconecta) la cuenta Weezevent. Acepta api_key + accessToken
+   * directo, O api_key + username/password para intercambiarlo aquí mismo —
+   * en ese caso el username/password se usa SOLO en memoria para esta
+   * llamada y NUNCA se guarda (spec cierre F71, punto 16: "una vez obtenido
+   * el Access Token... si no [hace falta username/password], NO los
+   * guardes"). Tras guardar, prueba la conexión real inmediatamente
+   * (GET /events) para no dejar nunca un estado "guardado pero sin probar".
+   */
+  connectWeezevent: integrationsManageProcedure
+    .input(z.object({
+      apiKey: z.string().min(1).max(512),
+      accessToken: z.string().min(1).max(512).nullish(),
+      username: z.string().min(1).max(256).nullish(),
+      password: z.string().min(1).max(256).nullish(),
+    }))
     .mutation(async ({ input }) => {
-      const integration = await getEventIntegrationRaw(input.id);
-      if (!integration) throw new TRPCError({ code: "NOT_FOUND" });
-      if (!integration.credentialsEncrypted) return { ok: false, message: "Awaiting credentials" };
-      const credentials = decryptCredentials(integration.credentialsEncrypted);
-      if (!credentials) return { ok: false, message: "No se pudieron descifrar las credenciales" };
-      const adapter = createWeezeventAdapter(createHttpTransport(WEEZEVENT_BASE_URL));
-      return adapter.testConnection(credentials);
+      let accessToken = input.accessToken ?? null;
+      if (!accessToken) {
+        if (!input.username || !input.password) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Indica un Access Token, o tu usuario y contraseña de Weezevent para generarlo" });
+        }
+        try {
+          accessToken = await getWeezeventAccessToken(createHttpTransport(WEEZEVENT_BASE_URL), { apiKey: input.apiKey, username: input.username, password: input.password });
+        } catch (err) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: classifyWeezeventError(err) });
+        }
+      }
+      // Solo api_key + accessToken llegan a guardarse — username/password ya cumplieron su propósito arriba y se descartan aquí.
+      const credentials = { apiKey: input.apiKey, accessToken };
+      const existing = await getTheWeezeventConnection();
+      let connectionId: number;
+      if (existing) {
+        await updateWeezeventConnectionCredentials(existing.id, credentials, input.apiKey);
+        connectionId = existing.id;
+      } else {
+        connectionId = (await createWeezeventConnection({ credentials, credentialsDisplayValue: input.apiKey })).id;
+      }
+      return testAndCacheWeezeventConnection(connectionId);
+    }),
+
+  /** Mismo resultado que "Actualizar eventos" (§8 del cierre) — Test connection ya refresca la lista, ambos botones llaman aquí para no duplicar lógica. */
+  testWeezeventConnection: integrationsManageProcedure
+    .mutation(async () => {
+      const existing = await getTheWeezeventConnection();
+      if (!existing) return { ok: false, message: "Sin conexión configurada" };
+      return testAndCacheWeezeventConnection(existing.id);
+    }),
+
+  refreshWeezeventEvents: integrationsManageProcedure
+    .mutation(async () => {
+      const existing = await getTheWeezeventConnection();
+      if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Sin conexión Weezevent" });
+      return testAndCacheWeezeventConnection(existing.id);
+    }),
+
+  /** Limpia credenciales/cache — nunca borra la fila ni los vínculos de evento existentes (conservar trazabilidad). */
+  disconnectWeezevent: integrationsManageProcedure
+    .mutation(async () => {
+      const existing = await getTheWeezeventConnection();
+      if (existing) await disconnectWeezeventConnection(existing.id);
+      return { ok: true };
+    }),
+
+  /** Vincula un evento YA DESCUBIERTO (via GET /events, cacheado en la conexión) a un evento Segolife — nunca acepta credenciales ni un ID escrito a mano sin pasar por el descubrimiento. */
+  linkWeezeventEvent: integrationsManageProcedure
+    .input(z.object({
+      eventId: z.number().int().positive(),
+      externalEventId: z.string().min(1).max(128),
+      externalEventName: z.string().max(256).nullish(),
+    }))
+    .mutation(async ({ input }) => {
+      const provider = await getProviderByKey("weezevent");
+      if (!provider) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Provider weezevent no está sembrado" });
+      const connection = await getTheWeezeventConnection();
+      if (!connection) throw new TRPCError({ code: "BAD_REQUEST", message: "Conecta primero tu cuenta Weezevent" });
+      try {
+        return await linkWeezeventEventDb({
+          connectionId: connection.id, eventId: input.eventId, providerId: provider.id,
+          externalEventId: input.externalEventId, externalEventName: input.externalEventName,
+        });
+      } catch (err) {
+        if (err instanceof WeezeventLinkError) throw new TRPCError({ code: "CONFLICT", message: err.message });
+        throw err;
+      }
     }),
 
   listSyncRuns: integrationsViewProcedure

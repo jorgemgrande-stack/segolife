@@ -24,6 +24,7 @@ export default function IntegrationsManager() {
   const { data: providers } = trpc.integrations.listProviders.useQuery();
   const { data: venueIntegrations, isLoading: loadingVenue } = trpc.integrations.listVenueIntegrations.useQuery({});
   const { data: eventIntegrations, isLoading: loadingEvent } = trpc.integrations.listEventIntegrations.useQuery({});
+  const { data: weezeventConnection, isLoading: loadingWeezeventConnection } = trpc.integrations.getWeezeventConnection.useQuery();
   const { data: venuesResult } = trpc.venues.list.useQuery({});
   const { data: eventsResult } = trpc.events.list.useQuery({});
   const venues = venuesResult?.items;
@@ -32,23 +33,33 @@ export default function IntegrationsManager() {
   // contra la fuente canónica (venues.list), nunca un mapa hardcodeado
   // (soporta cualquier venue futuro sin tocar este componente).
   const venueNameById: Record<number, string> = Object.fromEntries((venues ?? []).map((v: { id: number; name: string }) => [v.id, v.name]));
+  const eventNameById: Record<number, string> = Object.fromEntries((events ?? []).map((e: { id: number; name: string }) => [e.id, e.name]));
+  // §11 del cierre F71 — un evento Weezevent ya vinculado nunca vuelve a aparecer como opción para vincular de nuevo.
+  const linkedWeezeventExternalIds = new Set((eventIntegrations ?? []).map(i => i.externalEventId).filter((id): id is string => !!id));
+  const availableWeezeventEvents = (weezeventConnection?.discoveredEvents ?? []).filter(e => !linkedWeezeventExternalIds.has(e.externalId));
 
-  const [showCreate, setShowCreate] = useState<"venue" | "event" | null>(null);
+  const [showCreate, setShowCreate] = useState<"venue" | null>(null);
   const [venueId, setVenueId] = useState<string>("");
-  const [eventId, setEventId] = useState<string>("");
   const [providerId, setProviderId] = useState<string>("");
   const [fourvenuesProviderId, setFourvenuesProviderId] = useState<string>("");
   const [environment, setEnvironment] = useState<"sandbox" | "production">("sandbox");
   const [apiKey, setApiKey] = useState("");
   const [editingVenueCredsId, setEditingVenueCredsId] = useState<number | null>(null);
   const [editVenueApiKey, setEditVenueApiKey] = useState("");
-  // F71 (Weezevent) — auth de dos pasos (api_key + username/password →
-  // access_token, ver getWeezeventAccessToken en weezeventAdapter.ts) y el ID
-  // de evento externo, imprescindible para que el sync sepa qué evento de
-  // Weezevent leer (event_integration es 1:1, sin catálogo que descubrir).
-  const [weezeventExternalEventId, setWeezeventExternalEventId] = useState("");
+
+  // ── Weezevent CONNECTION (cierre F71, 2026-08-23) — UNA cuenta reutilizable,
+  // MUCHOS eventos vinculados. Ya no hay formulario "crear integración" por
+  // evento con sus propias credenciales — ver connectWeezevent en el router.
+  const [showWeezeventConnectForm, setShowWeezeventConnectForm] = useState(false);
+  const [weezeventApiKey, setWeezeventApiKey] = useState("");
+  const [weezeventAccessToken, setWeezeventAccessToken] = useState("");
+  const [weezeventNoAccessToken, setWeezeventNoAccessToken] = useState(false);
   const [weezeventUsername, setWeezeventUsername] = useState("");
   const [weezeventPassword, setWeezeventPassword] = useState("");
+  const [showLinkEventDialog, setShowLinkEventDialog] = useState(false);
+  const [linkExternalEventId, setLinkExternalEventId] = useState("");
+  const [linkSegolifeEventId, setLinkSegolifeEventId] = useState("");
+  const [linkLoyaltyEnabled, setLinkLoyaltyEnabled] = useState(false);
 
   // ── Weezevent Sync — Preview (Dry Run) + Sync now (F71) ──
   interface EventDryRunPreview {
@@ -86,14 +97,38 @@ export default function IntegrationsManager() {
   const createVenueMut = trpc.integrations.createVenueIntegration.useMutation({
     onSuccess: () => { toast.success("Integración creada (deshabilitada por defecto)"); utils.integrations.listVenueIntegrations.invalidate(); setShowCreate(null); },
   });
-  const createEventMut = trpc.integrations.createEventIntegration.useMutation({
-    onSuccess: () => { toast.success("Integración creada (deshabilitada por defecto)"); utils.integrations.listEventIntegrations.invalidate(); setShowCreate(null); },
-  });
   const testVenueMut = trpc.integrations.testVenueConnection.useMutation({
     onSuccess: (r) => toast[r.ok ? "success" : "error"](r.message),
   });
-  const testEventMut = trpc.integrations.testEventConnection.useMutation({
-    onSuccess: (r) => toast[r.ok ? "success" : "error"](r.message),
+
+  // ── Weezevent CONNECTION mutations (cierre F71) ──
+  const connectWeezeventMut = trpc.integrations.connectWeezevent.useMutation({
+    onSuccess: (r) => {
+      toast[r.ok ? "success" : "error"](r.message);
+      if (r.ok) {
+        setShowWeezeventConnectForm(false);
+        setWeezeventApiKey(""); setWeezeventAccessToken(""); setWeezeventUsername(""); setWeezeventPassword(""); setWeezeventNoAccessToken(false);
+      }
+      utils.integrations.getWeezeventConnection.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+  const testWeezeventMut = trpc.integrations.testWeezeventConnection.useMutation({
+    onSuccess: (r) => { toast[r.ok ? "success" : "error"](r.message); utils.integrations.getWeezeventConnection.invalidate(); },
+  });
+  const refreshWeezeventEventsMut = trpc.integrations.refreshWeezeventEvents.useMutation({
+    onSuccess: (r) => { toast[r.ok ? "success" : "error"](r.message); utils.integrations.getWeezeventConnection.invalidate(); },
+  });
+  const disconnectWeezeventMut = trpc.integrations.disconnectWeezevent.useMutation({
+    onSuccess: () => { toast.success("Weezevent desconectado"); utils.integrations.getWeezeventConnection.invalidate(); },
+  });
+  const linkWeezeventEventMut = trpc.integrations.linkWeezeventEvent.useMutation({
+    onSuccess: () => {
+      toast.success("Evento vinculado (deshabilitado por defecto)");
+      utils.integrations.listEventIntegrations.invalidate();
+      setShowLinkEventDialog(false); setLinkExternalEventId(""); setLinkSegolifeEventId(""); setLinkLoyaltyEnabled(false);
+    },
+    onError: e => toast.error(e.message),
   });
   const setVenueEnabledMut = trpc.integrations.setVenueIntegrationEnabled.useMutation({ onSuccess: () => utils.integrations.listVenueIntegrations.invalidate() });
   const updateVenueCredsMut = trpc.integrations.updateVenueIntegrationCredentials.useMutation({
@@ -148,8 +183,6 @@ export default function IntegrationsManager() {
   const selectedFourvenuesProvider = fourvenuesProviders.find(p => String(p.id) === fourvenuesProviderId)
     ?? fourvenuesProviders.find(p => p.key === "fourvenues_integrations")
     ?? fourvenuesProviders[0];
-  const weezeventProvider = providers?.find(p => p.key === "weezevent");
-
   return (
     <AdminLayout>
       <div className="max-w-4xl mx-auto py-6 space-y-6">
@@ -310,108 +343,216 @@ export default function IntegrationsManager() {
           </DialogContent>
         </Dialog>
 
-        <section className="bg-card border border-border rounded-lg p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Weezevent — integraciones por evento</h2>
-            <Button size="sm" variant="outline" onClick={() => setShowCreate(showCreate === "event" ? null : "event")}>+ Nueva</Button>
+        <section className="bg-card border border-border rounded-lg p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold">Weezevent</h2>
+            <p className="text-xs text-muted-foreground">Conecta tu cuenta de Weezevent para sincronizar entradas y asistencia con Segolife.</p>
           </div>
-          {showCreate === "event" && (
-            <div className="grid grid-cols-2 gap-3 p-3 border border-dashed border-border rounded-lg">
+
+          <div className="border border-border rounded-lg p-3 space-y-3">
+            {loadingWeezeventConnection ? <Loader2 className="w-4 h-4 animate-spin" /> : (
+              <>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2 text-sm flex-wrap">
+                    <Badge variant={weezeventConnection?.status === "connected" ? "default" : weezeventConnection?.status === "error" ? "destructive" : "secondary"}>
+                      {weezeventConnection?.status === "connected" ? "Conectado" : weezeventConnection?.status === "error" ? "Error de autenticación" : "No conectado"}
+                    </Badge>
+                    {weezeventConnection?.credentialsConfigured && (
+                      <span className="text-muted-foreground">API Key ····{weezeventConnection.credentialsLast4 ?? ""}</span>
+                    )}
+                    {weezeventConnection?.status === "connected" && weezeventConnection.eventsAccessibleCount != null && (
+                      <span className="text-muted-foreground">
+                        {weezeventConnection.eventsAccessibleCount} evento{weezeventConnection.eventsAccessibleCount === 1 ? "" : "s"} disponible{weezeventConnection.eventsAccessibleCount === 1 ? "" : "s"}
+                      </span>
+                    )}
+                    {weezeventConnection?.status === "error" && weezeventConnection.lastErrorMessage && (
+                      <span className="text-destructive">{weezeventConnection.lastErrorMessage}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {!weezeventConnection?.credentialsConfigured ? (
+                      <Button size="sm" onClick={() => setShowWeezeventConnectForm(v => !v)}>
+                        {showWeezeventConnectForm ? "Cancelar" : "Conectar Weezevent"}
+                      </Button>
+                    ) : (
+                      <>
+                        <Button size="sm" variant="outline" onClick={() => testWeezeventMut.mutate()} disabled={testWeezeventMut.isPending}>
+                          {testWeezeventMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null} Test connection
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setShowWeezeventConnectForm(v => !v)}>
+                          {showWeezeventConnectForm ? "Cancelar" : "Editar conexión"}
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => disconnectWeezeventMut.mutate()} disabled={disconnectWeezeventMut.isPending}>Disconnect</Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {showWeezeventConnectForm && (
+                  <div className="grid grid-cols-2 gap-3 p-3 border border-dashed border-border rounded-lg">
+                    <div className="col-span-2">
+                      <Label>API Key</Label>
+                      <Input type="password" value={weezeventApiKey} onChange={e => setWeezeventApiKey(e.target.value)} />
+                    </div>
+                    {!weezeventNoAccessToken ? (
+                      <div className="col-span-2">
+                        <Label>Access Token</Label>
+                        <Input type="password" value={weezeventAccessToken} onChange={e => setWeezeventAccessToken(e.target.value)} />
+                        <button type="button" className="text-xs text-primary hover:underline mt-1" onClick={() => setWeezeventNoAccessToken(true)}>
+                          No tengo Access Token
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <Label>Usuario</Label>
+                          <Input value={weezeventUsername} onChange={e => setWeezeventUsername(e.target.value)} />
+                        </div>
+                        <div>
+                          <Label>Contraseña</Label>
+                          <Input type="password" value={weezeventPassword} onChange={e => setWeezeventPassword(e.target.value)} />
+                        </div>
+                        <div className="col-span-2">
+                          <button type="button" className="text-xs text-primary hover:underline" onClick={() => setWeezeventNoAccessToken(false)}>
+                            Ya tengo un Access Token
+                          </button>
+                        </div>
+                      </>
+                    )}
+                    <div className="col-span-2">
+                      <Button
+                        disabled={
+                          !weezeventApiKey
+                          || (!weezeventNoAccessToken && !weezeventAccessToken)
+                          || (weezeventNoAccessToken && (!weezeventUsername || !weezeventPassword))
+                          || connectWeezeventMut.isPending
+                        }
+                        onClick={() => connectWeezeventMut.mutate({
+                          apiKey: weezeventApiKey,
+                          accessToken: weezeventNoAccessToken ? undefined : weezeventAccessToken,
+                          username: weezeventNoAccessToken ? weezeventUsername : undefined,
+                          password: weezeventNoAccessToken ? weezeventPassword : undefined,
+                        })}
+                      >
+                        {connectWeezeventMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null} Conectar
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {weezeventConnection?.credentialsConfigured && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Eventos Weezevent</h3>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => refreshWeezeventEventsMut.mutate()} disabled={refreshWeezeventEventsMut.isPending}>
+                    {refreshWeezeventEventsMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
+                    Actualizar eventos
+                  </Button>
+                  <Button size="sm" onClick={() => setShowLinkEventDialog(true)} disabled={availableWeezeventEvents.length === 0}>
+                    + Vincular evento
+                  </Button>
+                </div>
+              </div>
+
+              {loadingEvent ? <Loader2 className="w-4 h-4 animate-spin" /> : !eventIntegrations?.length ? (
+                <p className="text-sm text-muted-foreground text-center py-3">Sin eventos vinculados todavía.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {eventIntegrations.map(i => (
+                    <div key={i.id} className="border border-border rounded-lg px-3 py-2 text-sm space-y-2">
+                      <div className="flex items-center justify-between flex-wrap gap-1">
+                        <span>{i.externalEventName ?? `evento externo #${i.externalEventId}`} → {eventNameById[i.eventId] ?? `evento #${i.eventId}`}</span>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={i.status === "connected" ? "default" : i.status === "error" ? "destructive" : "secondary"}>{i.status}</Badge>
+                          <Button size="sm" variant={i.enabled ? "default" : "outline"} onClick={() => setEventEnabledMut.mutate({ id: i.id, enabled: !i.enabled })}>{i.enabled ? "Enabled" : "Disabled"}</Button>
+                        </div>
+                      </div>
+                      <div className="pt-2 border-t border-border space-y-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Button size="sm" variant="outline" onClick={() => previewEventMut.mutate({ id: i.id })} disabled={previewEventMut.isPending || !i.connectionCredentialsConfigured}>
+                            {previewEventMut.isPending && previewEventMut.variables?.id === i.id ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Eye className="w-3.5 h-3.5 mr-1" />}
+                            Preview (dry run)
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => setConfirmEventSyncId(i.id)} disabled={!i.enabled || !i.connectionCredentialsConfigured}>
+                            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Sync now
+                          </Button>
+                          <span className="text-xs text-muted-foreground">Loyalty:</span>
+                          <Button size="sm" variant={i.loyaltyEnabled ? "default" : "outline"} onClick={() => setEventLoyaltyMut.mutate({ id: i.id, loyaltyEnabled: !i.loyaltyEnabled })}>
+                            {i.loyaltyEnabled ? "ON" : "OFF"}
+                          </Button>
+                        </div>
+                        {eventPreviewById[i.id] && (
+                          <p className="text-xs text-muted-foreground bg-muted/40 rounded px-2 py-1.5">
+                            {eventPreviewById[i.id].status === "blocked" ? eventPreviewById[i.id].message : (
+                              <>Preview: {eventPreviewById[i.id].ratesFound} tarifas · {eventPreviewById[i.id].ticketsFound} entradas ·
+                              {" "}{eventPreviewById[i.id].attendanceFound} asistencias · identidad resoluble: {eventPreviewById[i.id].identitiesResolvable}/{eventPreviewById[i.id].identitiesResolvable + eventPreviewById[i.id].identitiesUnresolved}</>
+                            )}
+                          </p>
+                        )}
+                        {eventSyncResultById[i.id] && (
+                          <p className="text-xs bg-muted/40 rounded px-2 py-1.5">
+                            Último sync: <Badge variant={eventSyncResultById[i.id].status === "failed" ? "destructive" : eventSyncResultById[i.id].status === "partial" ? "secondary" : "default"} className="mx-1">{eventSyncResultById[i.id].status}</Badge>
+                            entradas +{eventSyncResultById[i.id].paymentlessCreated} · asistencias {eventSyncResultById[i.id].attendanceProcessed} ·
+                            {" "}sin resolver {eventSyncResultById[i.id].paymentlessUnresolved + eventSyncResultById[i.id].attendanceUnresolved}
+                            {eventSyncResultById[i.id].failedCount > 0 ? ` · errores: ${eventSyncResultById[i.id].failedCount}` : ""}
+                            {eventSyncResultById[i.id].message ? ` · ${eventSyncResultById[i.id].message}` : ""}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+
+        <Dialog open={showLinkEventDialog} onOpenChange={setShowLinkEventDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Vincular evento Weezevent</DialogTitle>
+              <DialogDescription>Elige un evento de tu cuenta Weezevent y el evento Segolife al que corresponde. El ID externo se guarda automáticamente, nunca hace falta copiarlo a mano.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
               <div>
-                <Label>Evento</Label>
-                <Select value={eventId} onValueChange={setEventId}>
+                <Label>Evento Weezevent</Label>
+                <Select value={linkExternalEventId} onValueChange={setLinkExternalEventId}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona un evento" /></SelectTrigger>
+                  <SelectContent>
+                    {availableWeezeventEvents.map(e => (
+                      <SelectItem key={e.externalId} value={e.externalId}>
+                        {e.name}{e.startsAt ? ` — ${new Date(e.startsAt).toLocaleDateString()}` : ""} (ID {e.externalId}){e.multipleDates ? " · varias fechas" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Evento Segolife</Label>
+                <Select value={linkSegolifeEventId} onValueChange={setLinkSegolifeEventId}>
                   <SelectTrigger><SelectValue placeholder="Selecciona un evento" /></SelectTrigger>
                   <SelectContent>{(events ?? []).map((e: { id: number; name: string }) => <SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label>Entorno</Label>
-                <Select value={environment} onValueChange={v => setEnvironment(v as "sandbox" | "production")}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="production">Producción (Weezevent sin sandbox documentado)</SelectItem></SelectContent>
-                </Select>
-              </div>
-              <div className="col-span-2">
-                <Label>ID de evento en Weezevent (externalEventId)</Label>
-                <Input value={weezeventExternalEventId} onChange={e => setWeezeventExternalEventId(e.target.value)} placeholder="Imprescindible para poder sincronizar" />
-              </div>
-              <div>
-                <Label>API Key</Label>
-                <Input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} />
-              </div>
-              <div>
-                <Label>Usuario (para access_token, opcional si ya tienes uno)</Label>
-                <Input value={weezeventUsername} onChange={e => setWeezeventUsername(e.target.value)} />
-              </div>
-              <div className="col-span-2">
-                <Label>Contraseña</Label>
-                <Input type="password" value={weezeventPassword} onChange={e => setWeezeventPassword(e.target.value)} />
-              </div>
-              <div className="col-span-2">
-                <Button
-                  disabled={!eventId || !weezeventProvider || createEventMut.isPending}
-                  onClick={() => createEventMut.mutate({
-                    eventId: Number(eventId), providerId: weezeventProvider!.id, environment,
-                    externalEventId: weezeventExternalEventId || undefined,
-                    apiKey: apiKey || undefined, username: weezeventUsername || undefined, password: weezeventPassword || undefined,
-                  })}
-                >
-                  Crear integración
-                </Button>
-              </div>
             </div>
-          )}
-          {loadingEvent ? <Loader2 className="w-4 h-4 animate-spin" /> : !eventIntegrations?.length ? (
-            <p className="text-sm text-muted-foreground text-center py-3">Sin integraciones Weezevent configuradas.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {eventIntegrations.map(i => (
-                <div key={i.id} className="border border-border rounded-lg px-3 py-2 text-sm space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span>evento #{i.eventId} · {i.environment} · {i.credentialsConfigured ? `····${i.credentialsLast4 ?? ""}` : "Awaiting credentials"}</span>
-                    <div className="flex items-center gap-2">
-                      <Badge variant={i.status === "connected" ? "default" : i.status === "error" ? "destructive" : "secondary"}>{i.status}</Badge>
-                      <Button size="sm" variant="outline" onClick={() => testEventMut.mutate({ id: i.id })} disabled={testEventMut.isPending}>Test connection</Button>
-                      <Button size="sm" variant={i.enabled ? "default" : "outline"} onClick={() => setEventEnabledMut.mutate({ id: i.id, enabled: !i.enabled })}>{i.enabled ? "Enabled" : "Disabled"}</Button>
-                    </div>
-                  </div>
-                  <div className="pt-2 border-t border-border space-y-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Button size="sm" variant="outline" onClick={() => previewEventMut.mutate({ id: i.id })} disabled={previewEventMut.isPending || !i.credentialsConfigured}>
-                        {previewEventMut.isPending && previewEventMut.variables?.id === i.id ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Eye className="w-3.5 h-3.5 mr-1" />}
-                        Preview (dry run)
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => setConfirmEventSyncId(i.id)} disabled={!i.enabled || !i.credentialsConfigured}>
-                        <RefreshCw className="w-3.5 h-3.5 mr-1" /> Sync now
-                      </Button>
-                      <span className="text-xs text-muted-foreground">Loyalty:</span>
-                      <Button size="sm" variant={i.loyaltyEnabled ? "default" : "outline"} onClick={() => setEventLoyaltyMut.mutate({ id: i.id, loyaltyEnabled: !i.loyaltyEnabled })}>
-                        {i.loyaltyEnabled ? "ON" : "OFF"}
-                      </Button>
-                    </div>
-                    {eventPreviewById[i.id] && (
-                      <p className="text-xs text-muted-foreground bg-muted/40 rounded px-2 py-1.5">
-                        {eventPreviewById[i.id].status === "blocked" ? eventPreviewById[i.id].message : (
-                          <>Preview: {eventPreviewById[i.id].ratesFound} tarifas · {eventPreviewById[i.id].ticketsFound} entradas ·
-                          {" "}{eventPreviewById[i.id].attendanceFound} asistencias · identidad resoluble: {eventPreviewById[i.id].identitiesResolvable}/{eventPreviewById[i.id].identitiesResolvable + eventPreviewById[i.id].identitiesUnresolved}</>
-                        )}
-                      </p>
-                    )}
-                    {eventSyncResultById[i.id] && (
-                      <p className="text-xs bg-muted/40 rounded px-2 py-1.5">
-                        Último sync: <Badge variant={eventSyncResultById[i.id].status === "failed" ? "destructive" : eventSyncResultById[i.id].status === "partial" ? "secondary" : "default"} className="mx-1">{eventSyncResultById[i.id].status}</Badge>
-                        entradas +{eventSyncResultById[i.id].paymentlessCreated} · asistencias {eventSyncResultById[i.id].attendanceProcessed} ·
-                        {" "}sin resolver {eventSyncResultById[i.id].paymentlessUnresolved + eventSyncResultById[i.id].attendanceUnresolved}
-                        {eventSyncResultById[i.id].failedCount > 0 ? ` · errores: ${eventSyncResultById[i.id].failedCount}` : ""}
-                        {eventSyncResultById[i.id].message ? ` · ${eventSyncResultById[i.id].message}` : ""}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowLinkEventDialog(false)}>Cancel</Button>
+              <Button
+                disabled={!linkExternalEventId || !linkSegolifeEventId || linkWeezeventEventMut.isPending}
+                onClick={() => {
+                  const chosen = availableWeezeventEvents.find(e => e.externalId === linkExternalEventId);
+                  linkWeezeventEventMut.mutate({ eventId: Number(linkSegolifeEventId), externalEventId: linkExternalEventId, externalEventName: chosen?.name ?? null });
+                }}
+              >
+                {linkWeezeventEventMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null} Vincular evento
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={confirmEventSyncId != null} onOpenChange={open => !open && setConfirmEventSyncId(null)}>
           <DialogContent>
@@ -419,12 +560,12 @@ export default function IntegrationsManager() {
               <DialogTitle>Confirmar sincronización Weezevent</DialogTitle>
               <DialogDescription>
                 Se hará una llamada real a Weezevent y se escribirán entradas y asistencia en Segolife.
-                SegoTokens de asistencia solo se conceden si Loyalty está en ON para esta integración y existe una regla activa.
+                SegoTokens de asistencia solo se conceden si Loyalty está en ON para este vínculo y existe una regla activa.
               </DialogDescription>
             </DialogHeader>
             {confirmEventSyncId != null && (
               <div className="text-sm space-y-1.5 py-2">
-                <p><span className="text-muted-foreground">Integración:</span> #{confirmEventSyncId} — Weezevent</p>
+                <p><span className="text-muted-foreground">Vínculo:</span> #{confirmEventSyncId} — Weezevent</p>
                 {eventPreviewById[confirmEventSyncId] && eventPreviewById[confirmEventSyncId].status === "ok" && (
                   <p className="text-muted-foreground">Preview más reciente: {eventPreviewById[confirmEventSyncId].ticketsFound} entradas, {eventPreviewById[confirmEventSyncId].attendanceFound} asistencias.</p>
                 )}

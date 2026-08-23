@@ -25,6 +25,8 @@ interface WeezeventEventDto {
   start?: string;
   end?: string;
   site_url?: string;
+  participants?: number;
+  multiple_dates?: boolean | number | string;
 }
 
 interface WeezeventTicketRateDto {
@@ -90,12 +92,16 @@ function participantName(owner: WeezeventParticipantDto["owner"]): string | null
   return parts.length ? parts.join(" ") : null;
 }
 
-/** deleted "0"/"1" (string), 0/1 (number) o boolean real — nunca confiar en la truthiness JS de una string "0" (que es truthy). */
-function isDeletedFlag(v: WeezeventParticipantDto["deleted"]): boolean {
+/** "0"/"1" (string), 0/1 (number) o boolean real — nunca confiar en la truthiness JS de una string "0" (que es truthy). Weezevent devuelve varios flags booleanos así (deleted, multiple_dates...). */
+function toTolerantBoolean(v: boolean | string | number | null | undefined): boolean {
   if (v == null) return false;
   if (typeof v === "boolean") return v;
   if (typeof v === "number") return v !== 0;
   return v !== "0" && v !== "" && v.toLowerCase() !== "false";
+}
+
+function isDeletedFlag(v: WeezeventParticipantDto["deleted"]): boolean {
+  return toTolerantBoolean(v);
 }
 
 /** refund puede llegar como objeto {status}, o como escalar "0"/"1"/boolean/number según la doc oficial — se aceptan ambas formas. */
@@ -170,6 +176,11 @@ export function createWeezeventAdapter(transport: IntegrationTransport, capabili
         endsAt: e.end ? new Date(e.end) : null,
         externalUrl: e.site_url ?? null,
         sourcePublicationStatus: "unknown", // FIX-04 — Weezevent es event_integration (nunca pasa por eventCatalogSync, ver integrationSyncService.ts); sin señal real de publicación conocida
+        // Cierre F71 (2026-08-23) — participants/multiple_dates confirmados en
+        // la doc oficial de /events; se guardan en `raw` (nunca en el
+        // interface compartido con Fourvenues) para que el descubrimiento de
+        // eventos en /admin/integrations pueda mostrarlos sin inventar nada.
+        raw: { participants: e.participants ?? null, multipleDates: toTolerantBoolean(e.multiple_dates) },
       }));
     },
 
