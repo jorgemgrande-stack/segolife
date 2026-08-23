@@ -63,6 +63,27 @@ describe("WeezeventAdapter — contract tests (payload con forma oficial → obj
     expect(Number.isInteger(types[0].priceCents)).toBe(true);
   });
 
+  it("listTicketTypes navega events[].categories[].tickets[] ANIDADOS — regresión real: confirmado contra producción (5 categorías reales, decenas de tarifas) que la API nunca devuelve { tickets: [...] } plano", async () => {
+    const transport = createMockTransport({
+      "GET /tickets": {
+        events: [{
+          id: 501,
+          categories: [
+            { id: "c1", name: "GENERAL", tickets: [{ id: "t1", name: "Drop 1", price: 10, quotas: 100, participants: 5 }, { id: "t2", name: "Drop 2", price: 20, quotas: 50, participants: 0 }] },
+            { id: "c2", name: "VIP", tickets: [{ id: "t3", name: "VIP 1", price: 100, quotas: 1, participants: 0 }] },
+          ],
+        }],
+      },
+    });
+    const adapter = createWeezeventAdapter(transport);
+    const types = await adapter.listTicketTypes(credentials, "501");
+    expect(types).toHaveLength(3);
+    expect(types.map(t => t.externalId)).toEqual(["t1", "t2", "t3"]);
+    expect(types[0].capacity).toBe(100);
+    expect((types[0].raw as { categoryName?: string }).categoryName).toBe("GENERAL");
+    expect((types[2].raw as { categoryName?: string }).categoryName).toBe("VIP");
+  });
+
   it("listOrders lanza CapabilityNotSupportedError — sin endpoint de pedidos documentado", async () => {
     const transport = createMockTransport({});
     const adapter = createWeezeventAdapter(transport);

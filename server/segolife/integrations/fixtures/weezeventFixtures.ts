@@ -13,9 +13,22 @@ export const weezeventEventsFixture = {
   ],
 };
 
+// Cierre F71 (2026-08-23) — forma real confirmada contra producción:
+// { events: [{ id, categories: [{ id, name, tickets: [...] }] }] }, NUNCA
+// { tickets: [...] } plano.
 export const weezeventTicketsFixture = {
-  tickets: [
-    { id: 9001, id_event: 501, name: "Early Bird (fixture)", price: 25, start_sale: "2026-08-01T00:00:00.000Z", end_sale: "2026-09-30T23:59:00.000Z" },
+  events: [
+    {
+      id: 501,
+      categories: [
+        {
+          id: "9000", name: "GENERAL SALES (fixture)",
+          tickets: [
+            { id: "9001", name: "Early Bird (fixture)", price: 25, quotas: 100, participants: 10, start_sale: "2026-08-01T00:00:00.000Z", end_sale: "2026-09-30T23:59:00.000Z" },
+          ],
+        },
+      ],
+    },
   ],
 };
 

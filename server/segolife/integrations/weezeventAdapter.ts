@@ -40,13 +40,32 @@ interface WeezeventEventDto {
   sales_status?: { id_status?: number; libelle_status?: string };
 }
 
-interface WeezeventTicketRateDto {
-  id: number;
-  id_event: number;
+interface WeezeventTicketDto {
+  id: string | number;
   name: string;
   price?: number;
-  start_sale?: string;
-  end_sale?: string;
+  quotas?: number;
+  participants?: number;
+  start_sale?: string | null;
+  end_sale?: string | null;
+}
+
+interface WeezeventTicketCategoryDto {
+  id: string | number;
+  name: string;
+  tickets?: WeezeventTicketDto[];
+}
+
+/**
+ * GET /tickets — CONFIRMADO contra una respuesta real de producción que la
+ * forma real es `{ events: [{ id, name, categories: [{ id, name, tickets:
+ * [...] }] }] }` — NUNCA `{ tickets: [...] }` plano como se había asumido
+ * antes de tener credenciales reales (bug real: listTicketTypes devolvía
+ * SIEMPRE 0 tarifas, silenciosamente, para un evento con 5 categorías y
+ * decenas de tarifas reales configuradas).
+ */
+interface WeezeventTicketsResponseDto {
+  events?: Array<{ id: string | number; categories?: WeezeventTicketCategoryDto[] }>;
 }
 
 interface WeezeventParticipantDto {
@@ -139,14 +158,24 @@ const PARTICIPANT_MAX_PAGES = 200;
 async function fetchAllParticipants(
   transport: IntegrationTransport,
   credentials: ProviderCredentials,
-  filters: { id_event: string; last_update?: string }
+  filters: { externalEventId: string; since?: Date }
 ): Promise<WeezeventParticipantDto[]> {
   const all: WeezeventParticipantDto[] = [];
   for (let page = 1; page <= PARTICIPANT_MAX_PAGES; page++) {
     const result = await transport.request<{ participants: WeezeventParticipantDto[] }>({
       method: "GET",
       path: "/participant/list",
-      query: { ...authQuery(credentials), ...filters, max: PARTICIPANT_PAGE_SIZE, page },
+      query: {
+        ...authQuery(credentials),
+        // Confirmado contra producción (2026-08-23): /participant/list exige
+        // sintaxis de array `id_event[]` — un `id_event` escalar (que SÍ
+        // funciona en /tickets y /dates) devuelve HTTP 500 aquí. Bug real,
+        // nunca ejercitado hasta tener credenciales reales — habría roto
+        // TODA la ingesta de tickets/asistencia de Weezevent.
+        "id_event[]": filters.externalEventId,
+        last_update: filters.since?.toISOString(),
+        max: PARTICIPANT_PAGE_SIZE, page,
+      },
     });
     const batch = result.participants ?? [];
     all.push(...batch);
@@ -201,20 +230,30 @@ export function createWeezeventAdapter(transport: IntegrationTransport, capabili
     },
 
     async listTicketTypes(credentials, externalEventId) {
-      const result = await transport.request<{ tickets: WeezeventTicketRateDto[] }>({
+      const result = await transport.request<WeezeventTicketsResponseDto>({
         method: "GET",
         path: "/tickets",
         query: { ...authQuery(credentials), id_event: externalEventId },
       });
-      return (result.tickets ?? []).map((t): NormalizedTicketType => ({
-        externalId: String(t.id),
-        externalEventId: String(t.id_event),
-        name: t.name,
-        priceCents: Math.round((t.price ?? 0) * 100),
-        currency: "EUR",
-        salesStart: t.start_sale ? new Date(t.start_sale) : null,
-        salesEnd: t.end_sale ? new Date(t.end_sale) : null,
-      }));
+      const event = (result.events ?? []).find(ev => String(ev.id) === externalEventId) ?? (result.events ?? [])[0];
+      const categories = event?.categories ?? [];
+      const types: NormalizedTicketType[] = [];
+      for (const category of categories) {
+        for (const t of category.tickets ?? []) {
+          types.push({
+            externalId: String(t.id),
+            externalEventId,
+            name: t.name,
+            priceCents: Math.round((t.price ?? 0) * 100),
+            currency: "EUR",
+            capacity: t.quotas ?? null,
+            salesStart: t.start_sale ? new Date(t.start_sale) : null,
+            salesEnd: t.end_sale ? new Date(t.end_sale) : null,
+            raw: { categoryId: String(category.id), categoryName: category.name, participants: t.participants ?? null },
+          });
+        }
+      }
+      return types;
     },
 
     // Sin endpoint de escritura de pedidos documentado — API de solo lectura
@@ -226,9 +265,7 @@ export function createWeezeventAdapter(transport: IntegrationTransport, capabili
 
     // Cada "participant" de Weezevent ES una entrada individual emitida.
     async listTickets(credentials, externalEventId, since) {
-      const participants = await fetchAllParticipants(transport, credentials, {
-        id_event: externalEventId, last_update: since?.toISOString(),
-      });
+      const participants = await fetchAllParticipants(transport, credentials, { externalEventId, since });
       return participants
         .filter(p => !isDeletedFlag(p.deleted))
         .map((p): NormalizedTicket => ({
@@ -249,9 +286,7 @@ export function createWeezeventAdapter(transport: IntegrationTransport, capabili
     // distinto de '0' con scan_date real = asistencia" (heurística
     // conservadora, a confirmar con credenciales reales).
     async listAttendance(credentials, externalEventId, since) {
-      const participants = await fetchAllParticipants(transport, credentials, {
-        id_event: externalEventId, last_update: since?.toISOString(),
-      });
+      const participants = await fetchAllParticipants(transport, credentials, { externalEventId, since });
       return participants
         .filter(p => p.control_status && p.control_status.status !== "0" && p.control_status.scan_date && p.control_status.scan_date !== "0000-00-00 00:00:00")
         .map((p): NormalizedAttendance => ({
