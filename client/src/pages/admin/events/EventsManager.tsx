@@ -119,6 +119,15 @@ export default function EventsManager() {
     venueId: venueId !== ALL ? Number(venueId) : undefined,
     status: status !== ALL ? (status as "active" | "inactive") : undefined,
     isFeatured: featured !== ALL ? featured === "true" : undefined,
+    // Bug real corregido (2026-08-24): con más eventos históricos que el
+    // LIMIT de una página, el orden ascendente por defecto (el más antiguo
+    // primero) enterraba los eventos futuros/activos detrás de años de
+    // histórico — nunca llegaban a entrar en esta página fetcheada, así que
+    // ni "Próximos" ni el filtro temporal de abajo podían mostrarlos por
+    // muy correctos que fueran (no había datos que filtrar). startsAtDesc
+    // es un orderBy nuevo, de uso exclusivo de esta pantalla — no cambia
+    // ninguna otra superficie (ver comentario de EventListFilters.orderBy).
+    orderBy: "startsAtDesc",
     fromDate: dateRangeInvalid ? undefined : (fromDate || undefined),
     toDate: dateRangeInvalid ? undefined : (toDate || undefined),
     limit: 100,

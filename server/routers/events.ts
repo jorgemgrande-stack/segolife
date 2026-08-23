@@ -93,7 +93,7 @@ export const eventsRouter = router({
         venueId: z.number().int().positive().optional(),
         status: z.enum(["active", "inactive"]).optional(),
         isFeatured: z.boolean().optional(),
-        orderBy: z.enum(["startsAt", "homeSortOrder"]).optional(),
+        orderBy: z.enum(["startsAt", "homeSortOrder", "startsAtDesc"]).optional(),
         // FIX-06 — filtro de rango de fechas (Admin Events), día calendario
         // Europe/Madrid. `fromDate` ya existía a nivel de eventsDb.ts (nunca
         // expuesto en el router hasta ahora); `toDate` es nuevo del todo.

@@ -3,7 +3,8 @@
  * relación M2M con comunidades (Fase 1D). Mismo patrón de inyección de
  * dependencia que server/db/venuesDb.test.ts / studentsDb.test.ts.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { asc, desc } from "drizzle-orm";
 import {
   listEvents,
   getEventById,
@@ -711,6 +712,53 @@ describe("eventsDb — listEvents con toDate (FIX-06, rango de fechas del Admin)
       db as unknown as Parameters<typeof listEvents>[1]
     );
     expect(items).toHaveLength(1);
+  });
+});
+
+// Bug real corregido (2026-08-24, Admin Eventos): con más eventos
+// históricos que el LIMIT de una página, el orden ascendente por defecto
+// (el más antiguo primero) enterraba los eventos futuros/activos detrás de
+// años de histórico — nunca llegaban a entrar en la página fetcheada, así
+// que "Próximos" no tenía nada que mostrar aunque existieran eventos
+// próximos reales. orderBy="startsAtDesc" es un valor nuevo, de uso
+// exclusivo de EventsManager.tsx — nunca cambia el comportamiento por
+// defecto que ya esperan listUpcomingEvents/listActiveEvents/
+// listEventsByVenue/listEndedEvents (ver tests de más abajo, sin tocar).
+describe("eventsDb — listEvents con orderBy='startsAtDesc' (bug real corregido, Admin Eventos)", () => {
+  it("pide ORDER BY starts_at DESC cuando se pasa orderBy='startsAtDesc'", async () => {
+    const event = blankEvent(1);
+    const orderBySpy = vi.fn(() => db);
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: orderBySpy, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event, venue: null }]);
+        if (phase === 2) return resolve([{ event }]);
+        return resolve([]);
+      },
+    };
+    await listEvents({ communityIds: "all", orderBy: "startsAtDesc" }, db as unknown as Parameters<typeof listEvents>[1]);
+    expect(orderBySpy).toHaveBeenCalledWith(desc(events.startsAt));
+  });
+
+  it("sin orderBy explícito, sigue pidiendo ORDER BY starts_at ASC — el default no cambia para ninguna otra superficie", async () => {
+    const event = blankEvent(2);
+    const orderBySpy = vi.fn(() => db);
+    let phase = 0;
+    const db: Record<string, unknown> = {
+      select: () => db, from: () => db, innerJoin: () => db, leftJoin: () => db,
+      where: () => db, orderBy: orderBySpy, limit: () => db, offset: () => db,
+      then: (resolve: (v: unknown) => void) => {
+        phase++;
+        if (phase === 1) return resolve([{ event, venue: null }]);
+        if (phase === 2) return resolve([{ event }]);
+        return resolve([]);
+      },
+    };
+    await listEvents({ communityIds: "all" }, db as unknown as Parameters<typeof listEvents>[1]);
+    expect(orderBySpy).toHaveBeenCalledWith(asc(events.startsAt));
   });
 });
 

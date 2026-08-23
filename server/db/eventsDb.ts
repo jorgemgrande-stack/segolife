@@ -142,8 +142,18 @@ export interface EventListFilters {
   fromDate?: Date;
   /** FIX-06 — límite superior EXCLUSIVO (starts_at < toDate). Construir con madridDateRangeToUtcBounds (shared/segolife/eventTiming.ts), nunca un Date crudo del día "hasta" tal cual. */
   toDate?: Date;
-  /** "startsAt" (por defecto, cronológico) o "homeSortOrder" (orden curado a mano en /admin/cms/inicio). */
-  orderBy?: "startsAt" | "homeSortOrder";
+  /**
+   * "startsAt" (por defecto, cronológico ascendente — el que ya esperan
+   * listUpcomingEvents/listActiveEvents/listEventsByVenue/listEndedEvents,
+   * NUNCA tocado por lo de abajo), "homeSortOrder" (orden curado a mano en
+   * /admin/cms/inicio), o "startsAtDesc" (bug real corregido 2026-08-24,
+   * spec Eventos admin: con más eventos históricos que el LIMIT de una
+   * página, el orden ascendente por defecto enterraba los eventos futuros
+   * detrás de años de histórico — nunca llegaban a entrar en la página
+   * fetcheada. Uso EXCLUSIVO de EventsManager.tsx — nunca cambia el
+   * comportamiento de ninguna superficie pública existente).
+   */
+  orderBy?: "startsAt" | "homeSortOrder" | "startsAtDesc";
   /** FIX-04 — superficies PÚBLICAS únicamente: aplica fourvenuesPublicationSafeCondition además de cualquier filtro `status` ya pasado. Nunca usado por el Admin (que debe seguir viendo borradores Fourvenues, solo etiquetados). */
   studentSafe?: boolean;
   limit?: number;
@@ -260,6 +270,8 @@ export async function listEvents(
 
   const orderClauses = filters.orderBy === "homeSortOrder"
     ? [asc(events.homeSortOrder), asc(events.startsAt)]
+    : filters.orderBy === "startsAtDesc"
+    ? [desc(events.startsAt)]
     : [asc(events.startsAt)];
 
   const rows = await (whereClause ? baseQuery.where(whereClause) : baseQuery)
