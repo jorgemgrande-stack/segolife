@@ -22,11 +22,22 @@ export const WEEZEVENT_BASE_URL = "https://api.weezevent.com";
 interface WeezeventEventDto {
   id: number;
   name: string;
-  start?: string;
-  end?: string;
+  // Cierre F71 (2026-08-23) — CONFIRMADO contra una respuesta real de
+  // producción que las fechas van ANIDADAS bajo `date`, nunca como
+  // `start`/`end` planos (la doc pública resumía "date.start"/"date.end" y
+  // se había transcrito mal en la interfaz original — bug real, nunca
+  // ejercitado hasta tener credenciales reales: startsAt/endsAt salían
+  // `null` siempre). Formato real observado: "2025-09-13 15:00:00", SIN
+  // indicador de zona horaria — se interpreta con el parseo por defecto de
+  // Date() (implementación-dependiente); no confirmado si es local del
+  // organizador (Europe/Madrid) o UTC. Bajo impacto práctico hoy (solo se
+  // usa para mostrar fecha en el selector de vinculación admin, nunca en
+  // lógica de sync), pero queda documentado como UNKNOWN real, no asumido.
+  date?: { start?: string; end?: string };
   site_url?: string;
   participants?: number;
   multiple_dates?: boolean | number | string;
+  sales_status?: { id_status?: number; libelle_status?: string };
 }
 
 interface WeezeventTicketRateDto {
@@ -172,15 +183,20 @@ export function createWeezeventAdapter(transport: IntegrationTransport, capabili
       return (result.events ?? []).map((e): NormalizedEvent => ({
         externalId: String(e.id),
         name: e.name,
-        startsAt: e.start ? new Date(e.start) : null, // nunca epoch — ver NormalizedEvent.startsAt
-        endsAt: e.end ? new Date(e.end) : null,
+        startsAt: e.date?.start ? new Date(e.date.start) : null, // nunca epoch — ver NormalizedEvent.startsAt
+        endsAt: e.date?.end ? new Date(e.date.end) : null,
         externalUrl: e.site_url ?? null,
-        sourcePublicationStatus: "unknown", // FIX-04 — Weezevent es event_integration (nunca pasa por eventCatalogSync, ver integrationSyncService.ts); sin señal real de publicación conocida
-        // Cierre F71 (2026-08-23) — participants/multiple_dates confirmados en
-        // la doc oficial de /events; se guardan en `raw` (nunca en el
-        // interface compartido con Fourvenues) para que el descubrimiento de
-        // eventos en /admin/integrations pueda mostrarlos sin inventar nada.
-        raw: { participants: e.participants ?? null, multipleDates: toTolerantBoolean(e.multiple_dates) },
+        sourcePublicationStatus: "unknown", // FIX-04 — Weezevent es event_integration (nunca pasa por eventCatalogSync, ver integrationSyncService.ts); sin señal real de publicación conocida. `sales_status` SÍ trae una señal real (ver raw.salesStatusLabel) pero sin catálogo documentado de todos sus id_status posibles — no se usa para no inventar un mapeo no confirmado.
+        // Cierre F71 (2026-08-23) — participants/multiple_dates/sales_status
+        // confirmados contra una respuesta real de producción; se guardan en
+        // `raw` (nunca en el interface compartido con Fourvenues) para que el
+        // descubrimiento de eventos en /admin/integrations pueda mostrarlos
+        // sin inventar nada.
+        raw: {
+          participants: e.participants ?? null,
+          multipleDates: toTolerantBoolean(e.multiple_dates),
+          salesStatusLabel: e.sales_status?.libelle_status ?? null,
+        },
       }));
     },
 

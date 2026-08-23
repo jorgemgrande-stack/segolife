@@ -4,9 +4,12 @@
  */
 export const weezeventAuthFixture = { accessToken: "fixture-access-token" };
 
+// Cierre F71 (2026-08-23) — `date.start`/`date.end` ANIDADOS, confirmado
+// contra una respuesta real de producción (nunca campos planos start/end,
+// como se asumía antes de tener credenciales reales).
 export const weezeventEventsFixture = {
   events: [
-    { id: 501, name: "Tankers Festival (fixture)", start: "2026-10-03T18:00:00.000Z", end: "2026-10-04T04:00:00.000Z", site_url: "https://example.invalid/tankers" },
+    { id: 501, name: "Tankers Festival (fixture)", date: { start: "2026-10-03T18:00:00.000Z", end: "2026-10-04T04:00:00.000Z" }, site_url: "https://example.invalid/tankers" },
   ],
 };
 

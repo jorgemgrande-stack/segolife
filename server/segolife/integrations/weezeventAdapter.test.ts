@@ -37,6 +37,24 @@ describe("WeezeventAdapter — contract tests (payload con forma oficial → obj
     expect(events[0].name).toContain("Tankers");
   });
 
+  it("listEvents lee startsAt/endsAt de date.start/date.end ANIDADOS — regresión real: confirmado contra producción que Weezevent nunca los manda como campos planos", async () => {
+    const transport = createMockTransport({ "GET /events": weezeventEventsFixture });
+    const adapter = createWeezeventAdapter(transport);
+    const events = await adapter.listEvents(credentials);
+    expect(events[0].startsAt).toEqual(new Date("2026-10-03T18:00:00.000Z"));
+    expect(events[0].endsAt).toEqual(new Date("2026-10-04T04:00:00.000Z"));
+  });
+
+  it("listEvents captura sales_status.libelle_status en raw — señal real de publicación, aunque no se use para sourcePublicationStatus (sin catálogo confirmado de todos los id_status)", async () => {
+    const transport = createMockTransport({
+      "GET /events": { events: [{ id: 501, name: "Fixture", date: {}, sales_status: { id_status: 5, libelle_status: "Évènement non publié ou clôturé" } }] },
+    });
+    const adapter = createWeezeventAdapter(transport);
+    const events = await adapter.listEvents(credentials);
+    expect((events[0].raw as { salesStatusLabel?: string }).salesStatusLabel).toBe("Évènement non publié ou clôturé");
+    expect(events[0].sourcePublicationStatus).toBe("unknown");
+  });
+
   it("listTicketTypes convierte price (euros) a priceCents enteros", async () => {
     const transport = createMockTransport({ "GET /tickets": weezeventTicketsFixture });
     const adapter = createWeezeventAdapter(transport);
