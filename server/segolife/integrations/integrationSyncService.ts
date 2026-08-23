@@ -18,7 +18,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import { venues, communityVenues, eventTickets, type VenueIntegration, type EventIntegration } from "../../../drizzle/schema";
-import { startSyncRun, finishSyncRun, recordVenueIntegrationResult, recordEventIntegrationResult, getVenueIntegrationRaw, getEventIntegrationRaw, getWeezeventConnectionRaw, getProviderById, setSyncCursor, findInternalIdForExternal, tryAcquireSyncLock, isDueForScheduledSync, getCurrentLockStatus } from "./integrationsDb";
+import { startSyncRun, finishSyncRun, recordVenueIntegrationResult, recordEventIntegrationResult, getVenueIntegrationRaw, getEventIntegrationRaw, getWeezeventConnectionRaw, getProviderById, setSyncCursor, getSyncState, findInternalIdForExternal, tryAcquireSyncLock, isDueForScheduledSync, getCurrentLockStatus } from "./integrationsDb";
 import { CapabilityNotSupportedError, type ExternalTicketingProvider, type NormalizedOrder, type NormalizedTicket, type ProviderCredentials } from "./externalTicketingProvider";
 import { decryptCredentials } from "./integrationCredentialCrypto";
 import { createFourvenuesIntegrationsAdapter, FOURVENUES_INTEGRATIONS_BASE_URL } from "./fourvenuesIntegrationsAdapter";
@@ -836,6 +836,18 @@ export async function syncEventIntegration(eventIntegrationId: number, opts: Eve
     const credentials = await resolveWeezeventCredentials(rawCredentials);
     const adapter = createWeezeventAdapter(createHttpTransport(WEEZEVENT_BASE_URL));
 
+    // Incremental real (spec cierre F71, punto 14) — el cursor YA se
+    // guardaba (setSyncCursor al final de este mismo run) pero nunca se
+    // leía de vuelta: cada sync, incluido uno "incremental", hacía SIEMPRE
+    // una recarga completa de /participant/list. Confirmado real contra la
+    // cuenta de producción: sin esto, un evento de ~1800 participantes se
+    // vuelve a pedir entero cada vez, violando el fair use ("filtrar
+    // consultas, evitar llamadas innecesarias"). El primer sync de un
+    // vínculo nuevo (sin cursor previo) sigue haciendo la carga completa —
+    // `since` queda `undefined`, comportamiento idéntico al de antes.
+    const priorCursor = await getSyncState("event_integration", integration.id, conn);
+    const since = priorCursor?.updatedSince ?? undefined;
+
     const rateTypes = await adapter.listTicketTypes(credentials, externalEventId);
     const rateResult = await syncTicketTypes({
       provider: "weezevent", integrationType: "event_integration", integrationId: integration.id,
@@ -843,7 +855,7 @@ export async function syncEventIntegration(eventIntegrationId: number, opts: Eve
     }, conn);
     ratesSynced = rateResult.createdCount + rateResult.updatedCount;
 
-    const tickets = await adapter.listTickets(credentials, externalEventId);
+    const tickets = await adapter.listTickets(credentials, externalEventId, since);
     ticketsFound = tickets.length;
 
     for (const t of tickets) {
@@ -865,8 +877,12 @@ export async function syncEventIntegration(eventIntegrationId: number, opts: Eve
       }
     }
 
-    const attendanceList = await adapter.listAttendance(credentials, externalEventId);
-    const allExternalTicketIds = tickets.map(t => t.externalId);
+    const attendanceList = await adapter.listAttendance(credentials, externalEventId, since);
+    // Resuelto contra attendanceList, NUNCA contra `tickets` — con incremental
+    // real, un check-in nuevo puede pertenecer a un ticket sincronizado en un
+    // run ANTERIOR (fuera del batch `tickets` de este run concreto); buscar
+    // solo en `tickets` habría dejado `ticket_id` sin resolver para esos casos.
+    const allExternalTicketIds = attendanceList.map(a => a.externalTicketId).filter((id): id is string => !!id);
     const ticketIdByExternalId = new Map<string, number>();
     if (allExternalTicketIds.length > 0) {
       const rows = await conn.select({ id: eventTickets.id, externalTicketId: eventTickets.externalTicketId })

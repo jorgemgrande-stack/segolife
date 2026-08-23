@@ -11,7 +11,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 
 const {
   mockGetEventIntegrationRaw, mockGetWeezeventConnectionRaw, mockGetProviderById, mockDecryptCredentials,
-  mockFinishSyncRun, mockRecordEventIntegrationResult, mockSetSyncCursor,
+  mockFinishSyncRun, mockRecordEventIntegrationResult, mockSetSyncCursor, mockGetSyncState,
   mockTryAcquireSyncLock,
   mockCreateAdapter, mockGetWeezeventAccessToken,
   mockSyncTicketTypes, mockIngestPaymentlessTicket, mockIngestAttendance, mockResolveIdentity,
@@ -23,6 +23,7 @@ const {
   mockFinishSyncRun: vi.fn(),
   mockRecordEventIntegrationResult: vi.fn(),
   mockSetSyncCursor: vi.fn(),
+  mockGetSyncState: vi.fn(),
   mockTryAcquireSyncLock: vi.fn(),
   mockCreateAdapter: vi.fn(),
   mockGetWeezeventAccessToken: vi.fn(),
@@ -39,6 +40,7 @@ vi.mock("./integrationsDb", () => ({
   finishSyncRun: mockFinishSyncRun,
   recordEventIntegrationResult: mockRecordEventIntegrationResult,
   setSyncCursor: mockSetSyncCursor,
+  getSyncState: mockGetSyncState,
   tryAcquireSyncLock: mockTryAcquireSyncLock,
   // No usados por el sync de eventos, pero importados por integrationSyncService.ts (sección venue) — deben existir para no romper el módulo.
   getVenueIntegrationRaw: vi.fn(), startSyncRun: vi.fn(), recordVenueIntegrationResult: vi.fn(),
@@ -108,6 +110,7 @@ beforeEach(() => {
   process.env.EXTERNAL_INTEGRATIONS_ENABLED = "true";
   mockGetProviderById.mockResolvedValue({ key: "weezevent" });
   mockGetWeezeventConnectionRaw.mockResolvedValue(baseConnection());
+  mockGetSyncState.mockResolvedValue(null); // sin cursor previo por defecto — primer sync, carga completa
   mockDecryptCredentials.mockReturnValue({ apiKey: "wz_fixture", accessToken: "already-exchanged" });
   mockTryAcquireSyncLock.mockResolvedValue({ acquired: true, run: { id: 900 } });
   mockSyncTicketTypes.mockResolvedValue({ createdCount: 1, updatedCount: 0, ticketTypeIdByExternalId: new Map([["wz_rate_001", 55]]) });
@@ -218,10 +221,10 @@ describe("syncEventIntegration — RATES → TICKETS(paymentless) → ATTENDANCE
 
     expect(adapter.listTicketTypes).toHaveBeenCalledWith(expect.anything(), "wz_evt_001");
     expect(mockSyncTicketTypes).toHaveBeenCalledOnce();
-    expect(adapter.listTickets).toHaveBeenCalledWith(expect.anything(), "wz_evt_001");
+    expect(adapter.listTickets).toHaveBeenCalledWith(expect.anything(), "wz_evt_001", undefined);
     expect(mockIngestPaymentlessTicket).toHaveBeenCalledOnce();
     expect(mockIngestPaymentlessTicket.mock.calls[0][0]).toMatchObject({ provider: "weezevent", integrationType: "event_integration", eventId: 77, venueId: null });
-    expect(adapter.listAttendance).toHaveBeenCalledWith(expect.anything(), "wz_evt_001");
+    expect(adapter.listAttendance).toHaveBeenCalledWith(expect.anything(), "wz_evt_001", undefined);
     expect(mockIngestAttendance).toHaveBeenCalledOnce();
     expect(mockIngestAttendance.mock.calls[0][0]).toMatchObject({ provider: "weezevent", integrationType: "event_integration", eventId: 77 });
 
@@ -231,6 +234,46 @@ describe("syncEventIntegration — RATES → TICKETS(paymentless) → ATTENDANCE
     expect(result.attendanceProcessed).toBe(1);
     expect(mockFinishSyncRun).toHaveBeenCalledWith(900, expect.objectContaining({ failedCount: 0 }), "success");
     expect(mockRecordEventIntegrationResult).toHaveBeenCalledWith(1, true, null);
+  });
+
+  it("con un cursor previo (sync anterior real) → pasa ese `since` real a listTickets/listAttendance — cierre F71 punto 14: antes se ignoraba siempre, cada sync recargaba todo el evento entero", async () => {
+    mockGetEventIntegrationRaw.mockResolvedValue(baseIntegration());
+    const priorSince = new Date("2026-08-20T10:00:00.000Z");
+    mockGetSyncState.mockResolvedValue({ cursor: null, updatedSince: priorSince });
+    const adapter = fakeAdapter();
+    mockCreateAdapter.mockReturnValue(adapter);
+
+    await syncEventIntegration(1, {}, fakeConn());
+
+    expect(adapter.listTickets).toHaveBeenCalledWith(expect.anything(), "wz_evt_001", priorSince);
+    expect(adapter.listAttendance).toHaveBeenCalledWith(expect.anything(), "wz_evt_001", priorSince);
+  });
+
+  it("sin cursor previo (primer sync de este vínculo) → since=undefined, carga completa — comportamiento histórico intacto", async () => {
+    mockGetEventIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockGetSyncState.mockResolvedValue(null);
+    const adapter = fakeAdapter();
+    mockCreateAdapter.mockReturnValue(adapter);
+
+    await syncEventIntegration(1, {}, fakeConn());
+
+    expect(adapter.listTickets).toHaveBeenCalledWith(expect.anything(), "wz_evt_001", undefined);
+  });
+
+  it("un check-in nuevo de un ticket sincronizado en un run ANTERIOR resuelve su ticket_id igualmente — nunca se busca solo en el batch `tickets` de este run concreto", async () => {
+    mockGetEventIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockCreateAdapter.mockReturnValue(fakeAdapter({
+      listTickets: vi.fn().mockResolvedValue([]), // este run incremental no trae tickets nuevos...
+      listAttendance: vi.fn().mockResolvedValue([{ externalAttendanceId: "old_ticket:2026-08-22", externalEventId: "wz_evt_001", externalTicketId: "wz_ptc_viejo", participant: {}, occurredAt: new Date() }]), // ...pero SÍ una asistencia nueva de un ticket viejo
+    }));
+    const selectCalls: unknown[] = [];
+    const conn: any = {
+      select: (...args: unknown[]) => { selectCalls.push(args); return { from: () => ({ where: () => Promise.resolve([{ id: 999, externalTicketId: "wz_ptc_viejo" }]) }) }; },
+    };
+
+    await syncEventIntegration(1, {}, conn);
+
+    expect(mockIngestAttendance.mock.calls[0][0]).toMatchObject({ ticketId: 999 });
   });
 
   it("loyaltyEnabled=false (default) sin historicalImport/suppressLoyalty explícito → suppressLoyalty:true (NO default-on, mismo criterio que Fourvenues)", async () => {
