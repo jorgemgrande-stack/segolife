@@ -8,12 +8,13 @@
  * router sin pasar por `toSafeIntegration()`, que lo sustituye por un
  * booleano `credentialsConfigured` + `credentialsLast4`.
  */
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, isNotNull, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import {
   integrationProviders, venueIntegrations, eventIntegrations, externalEntityMappings,
   integrationSyncRuns, integrationSyncState, weezeventConnections,
+  eventTickets, eventAttendance, unresolvedOperations, events,
   type IntegrationProviderRow, type VenueIntegration, type EventIntegration,
   type InsertVenueIntegration, type InsertEventIntegration,
   type IntegrationSyncRun, type InsertIntegrationSyncRun,
@@ -621,4 +622,70 @@ export async function setSyncCursor(integrationType: "venue_integration" | "even
   const conn = db ?? (await getDb());
   await conn.insert(integrationSyncState).values({ integrationType, integrationId, cursor, updatedSince })
     .onDuplicateKeyUpdate({ set: { cursor, updatedSince } });
+}
+
+// ─── DIAGNÓSTICO DE MATCHING (Weezevent Live Operations, spec §10-11) ──────────
+// SOLO conteos agregados (COUNT(*)) — nunca una fila individual, nunca un
+// email/teléfono/nombre. Objetivo real (spec §10): que el admin entienda
+// "hay tickets sincronizados que aún no pertenecen a ningún Student
+// Segolife" sin exponer una lista masiva de participantes por defecto (spec
+// §11). `attendancePendingIdentity` es la capacidad técnica pedida en spec
+// §19 ("detectar attendance pendiente de identidad") — ya existe de forma
+// nativa vía unresolved_operations (ver attendancePipeline.ts: una
+// asistencia sin Student resuelto NUNCA crea event_attendance, solo
+// unresolved_operations), este conteo solo la hace visible.
+export interface EventIntegrationMatchStats {
+  ticketsTotal: number;
+  ticketsMatched: number;
+  ticketsUnmatched: number;
+  /** De los unmatched, cuántos SÍ tienen un email real capturado (unresolved_operations.identity_hint_email) — distingue "sin ningún indicio" de "email real, pero sin cuenta Segolife todavía". */
+  ticketsUnmatchedWithEmailHint: number;
+  attendanceMatched: number;
+  /** spec §19 — check-ins reales sin Student resuelto, pendientes de vincular manualmente (nunca automático). */
+  attendancePendingIdentity: number;
+}
+
+/** weezeventScheduler.ts (cadencia adaptativa, spec §4) — únicas fechas reales que decide la cadencia, nunca inventadas ni leídas de Weezevent. Función dedicada (en vez de una query inline en el scheduler) para que `tick()` sea 100% mockeable vía vi.mock("./integrationsDb", ...), mismo criterio que el resto de este archivo. */
+export async function getEventDatesForScheduler(eventId: number, db?: DbHandle): Promise<{ startsAt: Date; endsAt: Date | null } | null> {
+  const conn = db ?? (await getDb());
+  const [row] = await conn.select({ startsAt: events.startsAt, endsAt: events.endsAt }).from(events).where(eq(events.id, eventId)).limit(1);
+  return row ?? null;
+}
+
+export async function getEventIntegrationMatchStats(eventIntegrationId: number, db?: DbHandle): Promise<EventIntegrationMatchStats | null> {
+  const conn = db ?? (await getDb());
+  const integration = await getEventIntegrationRaw(eventIntegrationId, conn);
+  if (!integration || integration.eventId == null) return null;
+  const eventId = integration.eventId;
+
+  const [ticketsRow] = await conn.select({
+    total: sql<number>`count(*)`,
+    matched: sql<number>`sum(case when ${eventTickets.userId} is not null then 1 else 0 end)`,
+  }).from(eventTickets).where(and(eq(eventTickets.eventId, eventId), eq(eventTickets.provider, "weezevent")));
+
+  const [unmatchedWithEmailRow] = await conn.select({ n: sql<number>`count(*)` }).from(unresolvedOperations)
+    .where(and(
+      eq(unresolvedOperations.provider, "weezevent"), eq(unresolvedOperations.operationType, "order"),
+      eq(unresolvedOperations.eventId, eventId), isNotNull(unresolvedOperations.identityHintEmail),
+    ));
+
+  const [attendanceMatchedRow] = await conn.select({ n: sql<number>`count(*)` }).from(eventAttendance)
+    .where(and(eq(eventAttendance.eventId, eventId), eq(eventAttendance.provider, "weezevent")));
+
+  const [attendancePendingRow] = await conn.select({ n: sql<number>`count(*)` }).from(unresolvedOperations)
+    .where(and(
+      eq(unresolvedOperations.provider, "weezevent"), eq(unresolvedOperations.operationType, "attendance"),
+      eq(unresolvedOperations.eventId, eventId), eq(unresolvedOperations.status, "unresolved"),
+    ));
+
+  const total = Number(ticketsRow?.total ?? 0);
+  const matched = Number(ticketsRow?.matched ?? 0);
+  return {
+    ticketsTotal: total,
+    ticketsMatched: matched,
+    ticketsUnmatched: total - matched,
+    ticketsUnmatchedWithEmailHint: Number(unmatchedWithEmailRow?.n ?? 0),
+    attendanceMatched: Number(attendanceMatchedRow?.n ?? 0),
+    attendancePendingIdentity: Number(attendancePendingRow?.n ?? 0),
+  };
 }

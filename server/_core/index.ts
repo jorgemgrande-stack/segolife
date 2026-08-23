@@ -34,6 +34,7 @@ import { startTokenClawbackReconciliationJob } from "../segolife/tokens/tokenCla
 import { startEmailAutomationJob } from "../emailAutomationJob";
 import { startTaxReminderJob } from "../taxReminderJob";
 import { startFourvenuesScheduler } from "../segolife/integrations/integrationScheduler";
+import { startWeezeventScheduler } from "../segolife/integrations/weezeventScheduler";
 import { registerBenefitGrantedListener } from "../segolife/engagement/benefitGrantedListener";
 import { registerTicketPurchasedListener } from "../segolife/engagement/ticketPurchasedListener";
 import { registerOrderRefundedListener } from "../segolife/engagement/orderRefundedListener";
@@ -840,6 +841,11 @@ verifyDatabaseConnectivity()
   // solo controla si el proceso cron llega a registrarse. Default false: en
   // una BD nueva, o mientras no se decida activar el piloto, nunca arranca.
   .then(() => conditionallyStartJob("fourvenues_scheduler_enabled",   startFourvenuesScheduler, "Fourvenues Scheduler", false))
+  // Weezevent Live Operations (2026-08-23) — SKYLANDS 2026 piloto. Mismo
+  // kill switch global EXTERNAL_INTEGRATIONS_ENABLED (comprobado también
+  // dentro de canSync()/syncEventIntegration) — este flag solo controla si
+  // el proceso cron llega a registrarse. Default false: nunca arranca solo.
+  .then(() => conditionallyStartJob("weezevent_scheduler_enabled",   startWeezeventScheduler, "Weezevent Scheduler", false))
   // FIX-01 — red de seguridad para clawback de SegoTokens pendiente tras un
   // refund confirmado (fallo transitorio en el intento eager). El intento
   // eager en el momento del refund sigue siendo el camino principal; este

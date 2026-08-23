@@ -502,6 +502,7 @@ export default function IntegrationsManager() {
                             {eventSyncResultById[i.id].message ? ` · ${eventSyncResultById[i.id].message}` : ""}
                           </p>
                         )}
+                        <WeezeventEventStatusLine eventIntegrationId={i.id} />
                       </div>
                     </div>
                   ))}
@@ -604,5 +605,44 @@ function FourvenuesSchedulerStatusLine({ integrationId }: { integrationId: numbe
       <span>Loyalty: <Badge variant={status.loyaltyEnabled ? "default" : "secondary"} className="ml-1">{status.loyaltyEnabled ? "ON" : "OFF"}</Badge></span>
       {status.lastErrorMessage && <span className="text-destructive">Último error: {status.lastErrorMessage}</span>}
     </p>
+  );
+}
+
+/**
+ * Weezevent Live Operations (2026-08-23) — mismo criterio que
+ * FourvenuesSchedulerStatusLine (componente propio, no un useQuery en el
+ * .map() del padre): estado del scheduler + salud derivada (spec §13/§15) y,
+ * debajo, SOLO conteos de matching (spec §10/§11) — nunca una lista de
+ * participantes ni ningún dato de contacto individual.
+ */
+function WeezeventEventStatusLine({ eventIntegrationId }: { eventIntegrationId: number }) {
+  const { data: status } = trpc.integrations.getEventSchedulerStatus.useQuery({ id: eventIntegrationId }, { refetchInterval: 30_000 });
+  const { data: matchStats } = trpc.integrations.getEventMatchStats.useQuery({ id: eventIntegrationId }, { refetchInterval: 30_000 });
+  if (!status) return null;
+  const healthVariant = status.health === "healthy" ? "default" : status.health === "degraded" ? "secondary" : status.health === "error" ? "destructive" : "secondary";
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs text-muted-foreground bg-muted/30 rounded px-2 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span>Salud: <Badge variant={healthVariant} className="ml-1 uppercase">{status.health}</Badge></span>
+        <span>Scheduler: <Badge variant={status.schedulerProcessRunning ? "default" : "secondary"} className="ml-1">{status.schedulerProcessRunning ? "Active" : "Off"}</Badge></span>
+        {status.locked && <Badge variant="secondary">Sync en curso (run #{status.currentRun?.id})</Badge>}
+        <span>Último éxito: {status.lastSuccessAt ? new Date(status.lastSuccessAt).toLocaleString() : "nunca"}</span>
+        <span>Próximo debido: {status.due === null ? "— (fuera de ventana automática)" : status.due ? "ahora" : status.nextDueAt ? new Date(status.nextDueAt).toLocaleString() : "—"}</span>
+        <span>Cadencia: {status.effectiveIntervalMinutes != null ? `${status.effectiveIntervalMinutes} min` : "detenida"}</span>
+        <span>Loyalty: <Badge variant={status.loyaltyEnabled ? "default" : "secondary"} className="ml-1">{status.loyaltyEnabled ? "ON" : "OFF"}</Badge></span>
+        {status.lastErrorMessage && <span className="text-destructive">Último error ({status.lastErrorCategory}): {status.lastErrorMessage}</span>}
+      </p>
+      {matchStats && (
+        <p className="text-xs text-muted-foreground bg-muted/30 rounded px-2 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span>Tickets Weezevent: <strong>{matchStats.ticketsTotal}</strong></span>
+          <span>Students matched: <strong>{matchStats.ticketsMatched}</strong></span>
+          <span>Sin vincular: <strong>{matchStats.ticketsUnmatched}</strong> ({matchStats.ticketsUnmatchedWithEmailHint} con email real, pendientes de que ese Student se registre)</span>
+          <span>Asistencia registrada: <strong>{matchStats.attendanceMatched}</strong></span>
+          {matchStats.attendancePendingIdentity > 0 && (
+            <span>Check-ins pendientes de identidad: <strong>{matchStats.attendancePendingIdentity}</strong></span>
+          )}
+        </p>
+      )}
+    </div>
   );
 }

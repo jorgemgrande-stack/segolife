@@ -239,7 +239,7 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
     ? null
     : await evaluateAttendanceReward(input, userId, idempotencyKey, null, conn);
 
-  const [insertResult] = await conn.insert(eventAttendance).ignore().values({
+  await conn.insert(eventAttendance).ignore().values({
     eventId: input.eventId,
     ticketId: input.ticketId ?? null,
     userId,
@@ -253,8 +253,26 @@ export async function ingestAttendance(input: IngestAttendanceInput, db?: DbHand
     tokensLedgerId: attempt?.ledgerId ?? null,
     metadata: attempt ? { rewardAttempt: attempt } : {},
   });
-  const insertId = (insertResult as unknown as { insertId: number }).insertId;
-  const [row] = await conn.select().from(eventAttendance).where(eq(eventAttendance.id, insertId)).limit(1);
+  // Weezevent Live Operations (2026-08-23, spec §8 — idempotencia también a
+  // nivel BD, incluso con carrera concurrente real): releer por
+  // idempotencyKey (UNIQUE real, event_attendance_idempotency_key_unique),
+  // NUNCA por el insertId devuelto — con INSERT...IGNORE, si OTRA
+  // transacción concurrente ganó la carrera sobre la MISMA idempotencyKey
+  // (p.ej. dos vinculaciones manuales simultáneas de un mismo
+  // unresolved_operations), MySQL suprime nuestro insert y devuelve
+  // insertId=0; releer por ese id habría encontrado 0 filas y reventado más
+  // abajo (row.id de undefined) pese a que la asistencia SÍ quedó
+  // correctamente registrada por la transacción ganadora. Releer por
+  // idempotencyKey converge siempre a la fila real, gane o pierda esta
+  // llamada la carrera — mismo criterio que postLedgerMovementInTx
+  // (tokenLedgerService.ts) ante un duplicate key real.
+  const [row] = await conn.select().from(eventAttendance).where(eq(eventAttendance.idempotencyKey, idempotencyKey)).limit(1);
+  if (!row) {
+    // No debería ser alcanzable nunca (el insert propio, o el de la
+    // transacción ganadora de la carrera, garantiza que la fila existe) —
+    // fail loudly en vez de continuar con datos a medias.
+    throw new Error(`event_attendance no encontrada tras insert (idempotencyKey=${idempotencyKey}) — estado inesperado de BD`);
+  }
 
   // Shadow (spec §6/§9) — se evalúa incluso con suppressLoyalty=true (los 3
   // venues reales hoy tienen loyalty_enabled=0, Shadow existe para observar

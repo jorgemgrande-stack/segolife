@@ -309,6 +309,53 @@ describe("ingestAttendance", () => {
     expect(mockEvaluateBenefitsForOrigin).not.toHaveBeenCalled();
   });
 
+  // ─── Carrera concurrente real a nivel BD (Weezevent Live Operations, spec §8) ──
+  describe("carrera concurrente — DOS llamadas pasan el chequeo de idempotencia ANTES de que ninguna haga commit (nunca detectable con un retry secuencial)", () => {
+    /**
+     * Simula el caso real: dos llamadas a ingestAttendance() con la MISMA
+     * idempotencyKey (p.ej. dos vinculaciones manuales simultáneas de un
+     * mismo unresolved_operations) — AMBAS ven `existingAttendance: []` en
+     * su chequeo inicial (ninguna ha hecho commit todavía), así que AMBAS
+     * intentan `INSERT...IGNORE`. En MySQL real, la transacción B pierde la
+     * carrera: su INSERT se suprime (insertId=0) porque la unique real
+     * (event_attendance_idempotency_key_unique) ya la tiene A. Este fake
+     * simula exactamente esa pérdida — SIN insertar nada — y expone la fila
+     * "ganadora" (de A) al releer por idempotencyKey, que es justo lo que el
+     * fix (releer por idempotencyKey, no por insertId) debe encontrar.
+     */
+    function fakeRaceLoserDb(winnerRow: Record<string, unknown>) {
+      let idempotencyChecked = false;
+      return {
+        select: () => ({
+          from: () => ({
+            where: () => ({
+              limit: async () => {
+                if (!idempotencyChecked) { idempotencyChecked = true; return []; } // nadie ha hecho commit todavía — pasa el chequeo
+                return [winnerRow]; // releído por idempotencyKey tras el INSERT IGNORE suprimido → encuentra la fila de la transacción GANADORA
+              },
+            }),
+          }),
+        }),
+        insert: () => ({ ignore: () => ({ values: async () => [{ insertId: 0 }] }) }), // MySQL real: INSERT IGNORE suprimido por duplicate key → insertId=0
+      } as never;
+    }
+
+    it("la transacción PERDEDORA nunca revienta (row.id de undefined) — converge a la fila de la GANADORA en vez de fallar", async () => {
+      const winnerRow = { id: 900, userId: 77, eventId: 5, tokensLedgerId: 9001, idempotencyKey: "weezevent:event_integration:1:wz_ptc_race", metadata: {} };
+      const db = fakeRaceLoserDb(winnerRow);
+      mockResolveIdentity.mockResolvedValue({ userId: 77, method: "participant_email" });
+
+      const result = await ingestAttendance({
+        provider: "weezevent", integrationType: "event_integration", integrationId: 1,
+        eventId: 5,
+        attendance: attendanceFixture({ externalAttendanceId: "wz_ptc_race" }),
+      }, db);
+
+      expect(result.status).toBe("processed");
+      expect(result.attendance).toEqual(winnerRow); // la perdedora expone la fila REAL persistida (de la ganadora), nunca undefined/parcial
+    });
+  });
+
   // ─── Import histórico — suppressLoyalty (Casanova Historical Validation, spec §22/§26-27) ──
   describe("suppressLoyalty — import histórico nunca concede tokens/Benefits, pero SÍ persiste la asistencia", () => {
     it("suppressLoyalty=true + identidad resuelta → event_attendance se persiste, earnTokens NUNCA se llama, evaluateBenefitsForOrigin NUNCA se llama", async () => {

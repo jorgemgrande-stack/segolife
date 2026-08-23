@@ -708,8 +708,19 @@ export interface EventSyncOptions {
   historicalImport?: boolean;
   /** Override explícito por encima de historicalImport/integration.loyaltyEnabled — misma precedencia que Fourvenues, ver resolveSuppressLoyaltyFlag. */
   suppressLoyalty?: boolean;
-  /** Solo observabilidad (integration_sync_runs.metadata) — sin scheduler automático todavía, siempre "manual" en la práctica. */
-  trigger?: "manual";
+  /** Weezevent Live Operations (2026-08-23) — quién disparó este run, solo observabilidad (mismo criterio que VenueSyncOptions.trigger). El scheduler automático (weezeventScheduler.ts) SIEMPRE usa "scheduler"; el botón manual SIEMPRE "manual" — nunca cambia el comportamiento del sync en sí. */
+  trigger?: "manual" | "scheduler";
+  /**
+   * Weezevent Live Operations (2026-08-23) — "incremental" (default) usa el
+   * cursor real (`since`) para TICKETS; "reconciliation" fuerza un refetch
+   * COMPLETO de tickets (since=undefined) como colchón de seguridad —
+   * mismo motivo que RECONCILIATION en Fourvenues (integrationScheduler.ts):
+   * un ítem que falla dentro de un run "success" en conjunto no se
+   * reintenta solo por sí mismo; un refetch completo periódico lo recupera.
+   * Solo observabilidad + control de alcance de TICKETS — la asistencia
+   * (listAttendance) NUNCA usa `since`, en NINGÚN modo, ver nota debajo.
+   */
+  mode?: "incremental" | "reconciliation";
 }
 
 export interface DryRunEventResult {
@@ -818,7 +829,7 @@ export async function syncEventIntegration(eventIntegrationId: number, opts: Eve
     return emptyEventSyncResult("failed", integration.eventId, `Proveedor "${provider?.key ?? "desconocido"}" no soportado por syncEventIntegration`);
   }
 
-  const lock = await tryAcquireSyncLock("event_integration", integration.id, "incremental", { trigger: opts.trigger ?? "manual" });
+  const lock = await tryAcquireSyncLock("event_integration", integration.id, "incremental", { trigger: opts.trigger ?? "manual", mode: opts.mode ?? "incremental" });
   if (!lock.acquired || !lock.run) {
     return emptyEventSyncResult("skipped_locked", integration.eventId, lock.reason ?? "sync already running");
   }
@@ -846,7 +857,11 @@ export async function syncEventIntegration(eventIntegrationId: number, opts: Eve
     // vínculo nuevo (sin cursor previo) sigue haciendo la carga completa —
     // `since` queda `undefined`, comportamiento idéntico al de antes.
     const priorCursor = await getSyncState("event_integration", integration.id, conn);
-    const since = priorCursor?.updatedSince ?? undefined;
+    // Weezevent Live Operations (2026-08-23) — modo "reconciliation" ignora
+    // el cursor a propósito (refetch completo de TICKETS, colchón de
+    // seguridad periódico, ver weezeventScheduler.ts). "incremental" usa el
+    // cursor real, comportamiento idéntico al del cierre F71.
+    const since = opts.mode === "reconciliation" ? undefined : (priorCursor?.updatedSince ?? undefined);
 
     const rateTypes = await adapter.listTicketTypes(credentials, externalEventId);
     const rateResult = await syncTicketTypes({
@@ -877,11 +892,30 @@ export async function syncEventIntegration(eventIntegrationId: number, opts: Eve
       }
     }
 
-    const attendanceList = await adapter.listAttendance(credentials, externalEventId, since);
-    // Resuelto contra attendanceList, NUNCA contra `tickets` — con incremental
-    // real, un check-in nuevo puede pertenecer a un ticket sincronizado en un
-    // run ANTERIOR (fuera del batch `tickets` de este run concreto); buscar
-    // solo en `tickets` habría dejado `ticket_id` sin resolver para esos casos.
+    // Weezevent Live Operations (2026-08-23) — CONFIRMADO EMPÍRICAMENTE
+    // contra TANKER AUTUMN 2025 (evento real cerrado, 27 check-ins reales,
+    // solo lectura, nunca vinculado a producción): `last_update` en
+    // /participant/list NO se actualiza cuando se escanea una entrada
+    // (control_status.scan_date) — un `since` fijado justo DESPUÉS del
+    // último check-in real seguía devolviendo los 27 check-ins completos, y
+    // un `since` muy futuro (2030) sí filtraba correctamente a 0 — probando
+    // que el filtro FUNCIONA en general (fecha de alta/edición del
+    // participante) pero no refleja el escaneo. Por tanto: `listAttendance`
+    // NUNCA usa `since`, en NINGÚN modo (ni incremental ni reconciliation) —
+    // siempre pide el listado COMPLETO de asistencia. Esto es lo que
+    // garantiza que un check-in posterior a la importación de un ticket SÍ
+    // se recupere en el siguiente sync (spec §6/§7) — confiar en `since`
+    // aquí habría dejado attendance incremental permanentemente roto pese a
+    // que ticketsFound=0 diera la falsa sensación de que "todo funciona".
+    // Coste real en fair use: un fetch completo de asistencia son ~4-6
+    // páginas para un evento de 1800-2600 participantes (PARTICIPANT_PAGE_SIZE
+    // =500) — trivial frente al límite de 600 req/min documentado.
+    const attendanceList = await adapter.listAttendance(credentials, externalEventId, undefined);
+    // Resuelto contra attendanceList, NUNCA contra `tickets` — un check-in
+    // puede pertenecer a un ticket sincronizado en un run ANTERIOR (fuera del
+    // batch `tickets` de este run concreto, más aún ahora que tickets SÍ usa
+    // `since`); buscar solo en `tickets` habría dejado `ticket_id` sin
+    // resolver para esos casos.
     const allExternalTicketIds = attendanceList.map(a => a.externalTicketId).filter((id): id is string => !!id);
     const ticketIdByExternalId = new Map<string, number>();
     if (allExternalTicketIds.length > 0) {
@@ -923,4 +957,103 @@ export async function syncEventIntegration(eventIntegrationId: number, opts: Eve
     await recordEventIntegrationResult(integration.id, false, message);
     return emptyEventSyncResult("failed", integration.eventId, message);
   }
+}
+
+// ─── WEEZEVENT — OBSERVABILIDAD / SALUD / CLASIFICACIÓN DE ERRORES ─────────────
+// Weezevent Live Operations (2026-08-23, spec §13-15). Mismo criterio que
+// getIntegrationSchedulerStatus (Fourvenues) de arriba — sin dashboard,
+// solo lo mínimo para responder "¿está el scheduler activo, cuándo
+// sincronizó, cuándo toca la próxima?" — pero AÑADE salud derivada (spec
+// §15) porque Weezevent, a diferencia de Fourvenues, tiene una cadencia
+// ADAPTATIVA (ver weezeventScheduler.ts) — "due" no es un intervalo fijo
+// por fila, así que este servicio recibe `effectiveIntervalMinutes` ya
+// resuelto por el caller (weezeventScheduler.ts conoce la proximidad real
+// al evento; este archivo no debe conocer esa lógica para no duplicarla).
+// `effectiveIntervalMinutes: null` significa "fuera de la ventana
+// automática" (evento reconciliado/cerrado, spec §4 "detener o reducir
+// drásticamente") — el mapping sigue disponible para Sync now manual.
+
+/** 9 categorías reales (spec §14) — clasificación PURA de un mensaje de error ya capturado (nunca expone el body crudo del proveedor). Reutilizada tanto en vivo (catch) como al releer lastErrorMessage ya persistido. */
+export type IntegrationErrorCategory = "AUTH" | "RATE_LIMIT" | "NETWORK" | "REMOTE_API" | "MAPPING" | "DATA_VALIDATION" | "SYNC" | "ATTENDANCE" | "LOYALTY" | "UNKNOWN";
+
+export function classifyIntegrationErrorMessage(message: string | null | undefined): IntegrationErrorCategory {
+  if (!message) return "UNKNOWN";
+  const m = message.toLowerCase();
+  if (m.includes("credencial") || m.includes("token inválido") || m.includes("caducado") || m.includes("401") || m.includes("403") || m.includes("descifrar") || m.includes("permisos")) return "AUTH";
+  if (m.includes("fair use") || m.includes("límite de peticiones") || m.includes("429")) return "RATE_LIMIT";
+  if (m.includes("no está disponible") || m.includes("servidor") || m.includes("500") || m.includes("502") || m.includes("503")) return "REMOTE_API";
+  if (m.includes("id de evento externo") || m.includes("no encontrado") || m.includes("conexión weezevent") || m.includes("evento externo")) return "MAPPING";
+  if (m.includes("fetch failed") || m.includes("network") || m.includes("timeout") || m.includes("econnrefused") || m.includes("enotfound")) return "NETWORK";
+  if (m.includes("attendance") || m.includes("asistencia")) return "ATTENDANCE";
+  if (m.includes("loyalty") || m.includes("segotoken") || m.includes("token_ledger") || m.includes("earntokens")) return "LOYALTY";
+  if (m.includes("zod") || m.includes("validation") || m.includes("inválido")) return "DATA_VALIDATION";
+  return "SYNC";
+}
+
+export interface EventIntegrationSchedulerStatus {
+  schedulerProcessRunning: boolean;
+  due: boolean | null;
+  locked: boolean;
+  currentRun: { id: number; startedAt: Date; syncType: string } | null;
+  lastSyncAt: Date | null;
+  lastSuccessAt: Date | null;
+  lastErrorAt: Date | null;
+  lastErrorMessage: string | null;
+  lastErrorCategory: IntegrationErrorCategory | null;
+  /** Cadencia EFECTIVA que este mapping usaría en su próximo tick — override manual (sync_interval_minutes) si está fijado, si no la adaptativa resuelta por el caller. null = fuera de ventana automática (evento reconciliado/cerrado). */
+  effectiveIntervalMinutes: number | null;
+  nextDueAt: Date | null;
+  loyaltyEnabled: boolean;
+  /** spec §15 — HEALTHY/DEGRADED/ERROR/DISABLED (nombres no literales, mismo concepto). */
+  health: "healthy" | "degraded" | "error" | "disabled";
+}
+
+/** Umbral de "atrasado" (spec §15, ejemplo real: "3h sin sincronizar durante un evento activo") — 3× la cadencia efectiva; en fase "far" (60min) da exactamente 3h, igual que el ejemplo del spec; en ventana activa (2min) da 6min, más sensible, correcto porque el coste de un check-in sin detectar es mayor cuanto más cerca/dentro del evento. */
+const STALE_MULTIPLIER = 3;
+
+function deriveEventIntegrationHealth(params: {
+  canSyncNow: boolean;
+  effectiveIntervalMinutes: number | null;
+  lastSuccessAt: Date | null;
+  lastErrorAt: Date | null;
+  now: Date;
+}): EventIntegrationSchedulerStatus["health"] {
+  if (!params.canSyncNow) return "disabled";
+  if (params.lastErrorAt && (!params.lastSuccessAt || params.lastErrorAt > params.lastSuccessAt)) return "error";
+  if (params.effectiveIntervalMinutes != null) {
+    const staleThresholdMs = params.effectiveIntervalMinutes * 60_000 * STALE_MULTIPLIER;
+    const elapsedMs = params.lastSuccessAt ? params.now.getTime() - params.lastSuccessAt.getTime() : Infinity;
+    if (elapsedMs > staleThresholdMs) return "degraded";
+  }
+  return "healthy";
+}
+
+export async function getEventIntegrationSchedulerStatus(
+  eventIntegrationId: number,
+  schedulerProcessRunning: boolean,
+  effectiveIntervalMinutes: number | null,
+): Promise<EventIntegrationSchedulerStatus | null> {
+  const integration = await getEventIntegrationRaw(eventIntegrationId);
+  if (!integration) return null;
+  const connection = await getWeezeventConnectionRaw(integration.connectionId);
+  const canSyncNow = canSync({ ...integration, credentialsEncrypted: connection?.credentialsEncrypted ?? null });
+  const lock = await getCurrentLockStatus("event_integration", integration.id);
+  const now = new Date();
+  const intervalMinutes = integration.syncIntervalMinutes ?? effectiveIntervalMinutes;
+  const nextDueAt = intervalMinutes != null && integration.lastSuccessAt ? new Date(integration.lastSuccessAt.getTime() + intervalMinutes * 60_000) : null;
+  return {
+    schedulerProcessRunning,
+    due: canSyncNow && intervalMinutes != null ? isDueForScheduledSync(integration, now, intervalMinutes) : null,
+    locked: lock.locked,
+    currentRun: lock.run ? { id: lock.run.id, startedAt: lock.run.startedAt, syncType: lock.run.syncType } : null,
+    lastSyncAt: integration.lastSyncAt,
+    lastSuccessAt: integration.lastSuccessAt,
+    lastErrorAt: integration.lastErrorAt,
+    lastErrorMessage: integration.lastErrorMessage,
+    lastErrorCategory: classifyIntegrationErrorMessage(integration.lastErrorMessage),
+    effectiveIntervalMinutes: intervalMinutes,
+    nextDueAt,
+    loyaltyEnabled: integration.loyaltyEnabled,
+    health: deriveEventIntegrationHealth({ canSyncNow, effectiveIntervalMinutes: intervalMinutes, lastSuccessAt: integration.lastSuccessAt, lastErrorAt: integration.lastErrorAt, now }),
+  };
 }

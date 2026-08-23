@@ -236,7 +236,7 @@ describe("syncEventIntegration — RATES → TICKETS(paymentless) → ATTENDANCE
     expect(mockRecordEventIntegrationResult).toHaveBeenCalledWith(1, true, null);
   });
 
-  it("con un cursor previo (sync anterior real) → pasa ese `since` real a listTickets/listAttendance — cierre F71 punto 14: antes se ignoraba siempre, cada sync recargaba todo el evento entero", async () => {
+  it("con un cursor previo (sync anterior real) → pasa ese `since` real a listTickets — cierre F71 punto 14: antes se ignoraba siempre, cada sync recargaba todo el evento entero", async () => {
     mockGetEventIntegrationRaw.mockResolvedValue(baseIntegration());
     const priorSince = new Date("2026-08-20T10:00:00.000Z");
     mockGetSyncState.mockResolvedValue({ cursor: null, updatedSince: priorSince });
@@ -246,10 +246,21 @@ describe("syncEventIntegration — RATES → TICKETS(paymentless) → ATTENDANCE
     await syncEventIntegration(1, {}, fakeConn());
 
     expect(adapter.listTickets).toHaveBeenCalledWith(expect.anything(), "wz_evt_001", priorSince);
-    expect(adapter.listAttendance).toHaveBeenCalledWith(expect.anything(), "wz_evt_001", priorSince);
   });
 
-  it("sin cursor previo (primer sync de este vínculo) → since=undefined, carga completa — comportamiento histórico intacto", async () => {
+  it("listAttendance NUNCA recibe `since`, ni con cursor previo ni sin él — Weezevent Live Operations (2026-08-23): confirmado empíricamente contra TANKER AUTUMN 2025 (evento real cerrado, 27 check-ins) que `last_update` de un participante NO se actualiza al escanear su entrada; un `since` tras el último check-in real seguía devolviendo el histórico completo. Confiar en `since` aquí dejaría el incremental de asistencia permanentemente roto pese a que ticketsFound=0 diera la falsa sensación de que todo funciona (spec §6).", async () => {
+    mockGetEventIntegrationRaw.mockResolvedValue(baseIntegration());
+    const priorSince = new Date("2026-08-20T10:00:00.000Z");
+    mockGetSyncState.mockResolvedValue({ cursor: null, updatedSince: priorSince });
+    const adapter = fakeAdapter();
+    mockCreateAdapter.mockReturnValue(adapter);
+
+    await syncEventIntegration(1, {}, fakeConn());
+
+    expect(adapter.listAttendance).toHaveBeenCalledWith(expect.anything(), "wz_evt_001", undefined);
+  });
+
+  it("sin cursor previo (primer sync de este vínculo) → since=undefined en tickets, carga completa — comportamiento histórico intacto", async () => {
     mockGetEventIntegrationRaw.mockResolvedValue(baseIntegration());
     mockGetSyncState.mockResolvedValue(null);
     const adapter = fakeAdapter();
@@ -258,6 +269,35 @@ describe("syncEventIntegration — RATES → TICKETS(paymentless) → ATTENDANCE
     await syncEventIntegration(1, {}, fakeConn());
 
     expect(adapter.listTickets).toHaveBeenCalledWith(expect.anything(), "wz_evt_001", undefined);
+  });
+
+  it("mode='reconciliation' fuerza since=undefined en listTickets AUNQUE exista un cursor previo — colchón de seguridad (refetch completo), spec §4/§21", async () => {
+    mockGetEventIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockGetSyncState.mockResolvedValue({ cursor: null, updatedSince: new Date("2026-08-20T10:00:00.000Z") });
+    const adapter = fakeAdapter();
+    mockCreateAdapter.mockReturnValue(adapter);
+
+    await syncEventIntegration(1, { mode: "reconciliation" }, fakeConn());
+
+    expect(adapter.listTickets).toHaveBeenCalledWith(expect.anything(), "wz_evt_001", undefined);
+  });
+
+  it("mode/trigger se registran en el lock (integration_sync_runs.metadata) — observabilidad, spec §13", async () => {
+    mockGetEventIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+
+    await syncEventIntegration(1, { trigger: "scheduler", mode: "reconciliation" }, fakeConn());
+
+    expect(mockTryAcquireSyncLock).toHaveBeenCalledWith("event_integration", 1, "incremental", { trigger: "scheduler", mode: "reconciliation" });
+  });
+
+  it("sin trigger/mode explícitos (botón manual) → metadata por defecto trigger='manual', mode='incremental'", async () => {
+    mockGetEventIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+
+    await syncEventIntegration(1, {}, fakeConn());
+
+    expect(mockTryAcquireSyncLock).toHaveBeenCalledWith("event_integration", 1, "incremental", { trigger: "manual", mode: "incremental" });
   });
 
   it("un check-in nuevo de un ticket sincronizado en un run ANTERIOR resuelve su ticket_id igualmente — nunca se busca solo en el batch `tickets` de este run concreto", async () => {
@@ -347,6 +387,21 @@ describe("dryRunEventIntegration — nunca escribe", () => {
     expect(mockIngestPaymentlessTicket).not.toHaveBeenCalled();
     expect(mockIngestAttendance).not.toHaveBeenCalled();
     expect(mockTryAcquireSyncLock).not.toHaveBeenCalled(); // el dry run ni siquiera intenta el lock — no es un sync real
+    expect(mockSetSyncCursor).not.toHaveBeenCalled(); // spec §17 — el preview NUNCA mueve el cursor, ni éxito ni fallo
+    expect(mockFinishSyncRun).not.toHaveBeenCalled(); // sin lock no hay run que finalizar — nunca dejar un rastro de "sync" real
+    expect(mockRecordEventIntegrationResult).not.toHaveBeenCalled(); // el preview nunca toca lastSyncAt/lastSuccessAt/lastErrorAt de la fila
+  });
+
+  it("resolveIdentity() SÍ se llama (de solo lectura, para contar identidades resolubles) — nunca se importa persistIdentityMapping en la ruta de preview, estructuralmente imposible fijar un mapping nuevo desde aquí", async () => {
+    mockGetEventIntegrationRaw.mockResolvedValue(baseIntegration());
+    mockCreateAdapter.mockReturnValue(fakeAdapter());
+    mockResolveIdentity.mockResolvedValue({ userId: 42, method: "participant_email" });
+
+    const result = await dryRunEventIntegration(1, fakeConn());
+
+    expect(mockResolveIdentity).toHaveBeenCalled();
+    expect(result.identitiesResolvable).toBe(1);
+    expect(result.identitiesUnresolved).toBe(0);
   });
 
   it("global kill switch OFF → blocked, sin llamar al adapter", async () => {

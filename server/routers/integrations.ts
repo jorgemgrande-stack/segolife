@@ -6,7 +6,7 @@ import {
   createVenueIntegration,
   setVenueIntegrationEnabled, setEventIntegrationEnabled, setEventIntegrationLoyaltyEnabled,
   updateVenueIntegrationCredentials,
-  getVenueIntegrationRaw, getProviderById, getProviderByKey,
+  getVenueIntegrationRaw, getEventIntegrationRaw, getProviderById, getProviderByKey,
   listSyncRuns,
   getTheWeezeventConnection, getWeezeventConnectionRaw, createWeezeventConnection,
   updateWeezeventConnectionCredentials, disconnectWeezeventConnection,
@@ -19,8 +19,10 @@ import { createFourvenuesIntegrationsAdapter, FOURVENUES_INTEGRATIONS_BASE_URL }
 import { createWeezeventAdapter, getWeezeventAccessToken, WEEZEVENT_BASE_URL } from "../segolife/integrations/weezeventAdapter";
 import { createHttpTransport, HttpTransportError } from "../segolife/integrations/httpTransport";
 import { decryptCredentials } from "../segolife/integrations/integrationCredentialCrypto";
-import { isExternalIntegrationsGloballyEnabled, syncVenueIntegration, dryRunVenueIntegration, syncEventIntegration, dryRunEventIntegration, getIntegrationSchedulerStatus } from "../segolife/integrations/integrationSyncService";
+import { isExternalIntegrationsGloballyEnabled, syncVenueIntegration, dryRunVenueIntegration, syncEventIntegration, dryRunEventIntegration, getIntegrationSchedulerStatus, getEventIntegrationSchedulerStatus } from "../segolife/integrations/integrationSyncService";
 import { isFourvenuesSchedulerRunning, DEFAULT_INCREMENTAL_INTERVAL_MINUTES } from "../segolife/integrations/integrationScheduler";
+import { isWeezeventSchedulerRunning, resolveWeezeventSyncIntervalMinutes } from "../segolife/integrations/weezeventScheduler";
+import { getEventIntegrationMatchStats, getEventDatesForScheduler } from "../segolife/integrations/integrationsDb";
 import { processCommerceLoyalty } from "../segolife/commerce/commercePipeline";
 import { ingestAttendance } from "../segolife/ticketing/attendancePipeline";
 import { commerceTransactions, eventTickets } from "../../drizzle/schema";
@@ -323,7 +325,30 @@ export const integrationsRouter = router({
       loyaltyEffectiveFrom: input.loyaltyEffectiveFrom ? new Date(input.loyaltyEffectiveFrom) : null,
       historicalImport: input.historicalImport,
       trigger: "manual",
+      // "ONE SYNC PATH" (spec §16) — comparte lock/loyalty gate con el
+      // scheduler automático (mismo syncEventIntegration); si el scheduler
+      // tiene un run en curso, este mutation devuelve status="skipped_locked"
+      // en vez de ejecutar en paralelo.
+      mode: "incremental",
     })),
+
+  // ── Weezevent Live Operations (2026-08-23) — observabilidad/salud/matching,
+  // spec §10-11/§13-15. SOLO conteos y estado derivado — nunca una lista de
+  // participantes ni ningún dato de contacto individual. ────────────────────
+  getEventSchedulerStatus: integrationsViewProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const integration = await getEventIntegrationRaw(input.id);
+      if (!integration || integration.eventId == null) return null;
+      const eventRow = await getEventDatesForScheduler(integration.eventId);
+      const adaptiveInterval = eventRow ? resolveWeezeventSyncIntervalMinutes(new Date(), eventRow.startsAt, eventRow.endsAt) : null;
+      return getEventIntegrationSchedulerStatus(input.id, isWeezeventSchedulerRunning(), adaptiveInterval);
+    }),
+
+  /** spec §10 — "Tickets Weezevent / Con email / Students matched / Unmatched / Attendance matched", solo conteos agregados. */
+  getEventMatchStats: integrationsViewProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(({ input }) => getEventIntegrationMatchStats(input.id)),
 
   // ── Unresolved operations (spec punto 56) ────────────────────────────────
   listUnresolved: integrationsViewProcedure
