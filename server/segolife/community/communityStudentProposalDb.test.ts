@@ -51,6 +51,59 @@ describe("submitStudentProposal — MG-04: coverImageUrl y urgency", () => {
   });
 });
 
+// Timing preciso (2026-08-23) — sustituye la urgencia de 3 niveles por un
+// plazo real de cierre de apoyo. `urgency` sigue aceptándose explícita
+// (compatibilidad), pero si se omite (la UI actual ya no la pregunta) se
+// deriva de votingClosesAt para que el badge de ComunityModeration.tsx no
+// deje de mostrar información útil.
+describe("submitStudentProposal — timing preciso: votingClosesAt + urgencia derivada", () => {
+  it("guarda votingClosesAt cuando se proporciona", async () => {
+    const { db, getInserted } = makeSubmitMockDb();
+    const closesAt = new Date(Date.now() + 3600_000);
+    await submitStudentProposal({ studentUserId: 7, communityId: 1, title: "x", votingClosesAt: closesAt }, db);
+    expect(getInserted()[0]).toMatchObject({ votingClosesAt: closesAt });
+  });
+
+  it("sin votingClosesAt, se guarda null — nunca un valor inventado", async () => {
+    const { db, getInserted } = makeSubmitMockDb();
+    await submitStudentProposal({ studentUserId: 7, communityId: 1, title: "x" }, db);
+    expect(getInserted()[0]).toMatchObject({ votingClosesAt: null });
+  });
+
+  it("urgency explícita SIEMPRE gana sobre la derivada de votingClosesAt (compatibilidad)", async () => {
+    const { db, getInserted } = makeSubmitMockDb();
+    await submitStudentProposal({
+      studentUserId: 7, communityId: 1, title: "x",
+      urgency: "no_rush", votingClosesAt: new Date(Date.now() + 5 * 60000), // 5 min — derivaría "urgent" si no se respetara la explícita
+    }, db);
+    expect(getInserted()[0]).toMatchObject({ urgency: "no_rush" });
+  });
+
+  it("sin urgency explícita, se deriva 'urgent' cuando el cierre es dentro de 1 hora", async () => {
+    const { db, getInserted } = makeSubmitMockDb();
+    await submitStudentProposal({ studentUserId: 7, communityId: 1, title: "x", votingClosesAt: new Date(Date.now() + 30 * 60000) }, db);
+    expect(getInserted()[0]).toMatchObject({ urgency: "urgent" });
+  });
+
+  it("sin urgency explícita, se deriva 'soon' cuando el cierre es dentro de 24 horas", async () => {
+    const { db, getInserted } = makeSubmitMockDb();
+    await submitStudentProposal({ studentUserId: 7, communityId: 1, title: "x", votingClosesAt: new Date(Date.now() + 6 * 3600_000) }, db);
+    expect(getInserted()[0]).toMatchObject({ urgency: "soon" });
+  });
+
+  it("sin urgency explícita, se deriva 'no_rush' cuando el cierre es más allá de 24 horas", async () => {
+    const { db, getInserted } = makeSubmitMockDb();
+    await submitStudentProposal({ studentUserId: 7, communityId: 1, title: "x", votingClosesAt: new Date(Date.now() + 5 * 24 * 3600_000) }, db);
+    expect(getInserted()[0]).toMatchObject({ urgency: "no_rush" });
+  });
+
+  it("sin urgency explícita ni votingClosesAt, se guarda null — nunca un valor por defecto inventado", async () => {
+    const { db, getInserted } = makeSubmitMockDb();
+    await submitStudentProposal({ studentUserId: 7, communityId: 1, title: "x" }, db);
+    expect(getInserted()[0]).toMatchObject({ urgency: null });
+  });
+});
+
 describe("submitStudentProposal — MG-05: configuración de voto propuesta (opcional, nunca obligatoria)", () => {
   it("sin proposedQuestionType, ambos campos se guardan null — proponer configuración de voto nunca es obligatorio (comportamiento pre-MG-05 intacto)", async () => {
     const { db, getInserted } = makeSubmitMockDb();

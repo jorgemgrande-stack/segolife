@@ -29,18 +29,38 @@ function sanitizeText(raw: string, maxLength: number): string {
   return raw.replace(/<[^>]*>/g, "").trim().slice(0, maxLength);
 }
 
+// Timing preciso (2026-08-23) — si el Student no envía `urgency` explícita
+// (la nueva UI ya no pregunta por ella, ver ComunityHub.tsx ProponerTab: el
+// picker de 3 niveles se sustituyó por los presets de `votingClosesAt`), se
+// deriva un valor razonable a partir de cuánto falta para el cierre del
+// apoyo, para que el badge de urgencia de ComunityModeration.tsx (que sigue
+// leyendo esta misma columna) no deje de mostrar información útil.
+function deriveUrgencyFromVotingClose(votingClosesAt: Date | null | undefined, now: Date = new Date()): "no_rush" | "soon" | "urgent" | null {
+  if (!votingClosesAt) return null;
+  const minutesUntilClose = (votingClosesAt.getTime() - now.getTime()) / 60000;
+  if (minutesUntilClose <= 60) return "urgent";
+  if (minutesUntilClose <= 24 * 60) return "soon";
+  return "no_rush";
+}
+
 export interface SubmitStudentProposalInput {
   studentUserId: number;
   communityId: number;
   title: string;
   description?: string | null;
   venueId?: number | null;
-  suggestedDate?: string | null; // YYYY-MM-DD
+  /** Día y hora exactos que el Student propone para el evento (antes solo fecha, ver comentario de schema.ts). */
+  suggestedDate?: Date | null;
+  /** Momento exacto en que deja de poder apoyarse esta idea — nuevo (2026-08-23), sustituye la urgencia de 3 niveles como fuente principal de precisión temporal. */
+  votingClosesAt?: Date | null;
   category?: string | null;
   // MG-04 — Community Proposals 2.0. `coverImageUrl` es SIEMPRE una URL ya
   // subida vía communityProposalImageService.ts (nunca un valor arbitrario
   // del cliente que apunte a otro sitio — el router la recibe ya validada).
-  // `urgency` es la preferencia del Student, NUNCA prioridad admin.
+  // `urgency` es la preferencia del Student, NUNCA prioridad admin. Sigue
+  // aceptándose explícita por compatibilidad, pero la UI actual ya no la
+  // pregunta — si se omite, se deriva de `votingClosesAt` (ver
+  // deriveUrgencyFromVotingClose).
   coverImageUrl?: string | null;
   urgency?: "no_rush" | "soon" | "urgent" | null;
   // MG-05 — Student Proposal Voting Configuration (spec §3-9). Propuesta,
@@ -73,9 +93,10 @@ export async function submitStudentProposal(input: SubmitStudentProposalInput, d
     description: input.description ? sanitizeText(input.description, MAX_DESCRIPTION_LENGTH) : null,
     venueId: input.venueId ?? null,
     suggestedDate: input.suggestedDate ?? null,
+    votingClosesAt: input.votingClosesAt ?? null,
     category: input.category ?? null,
     coverImageUrl: input.coverImageUrl ?? null,
-    urgency: input.urgency ?? null,
+    urgency: input.urgency ?? deriveUrgencyFromVotingClose(input.votingClosesAt),
     proposedQuestionType: input.proposedQuestionType ?? null,
     proposedOptions,
     status: "pending_moderation",

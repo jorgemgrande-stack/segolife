@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route } from "wouter";
 import i18n from "@/lib/i18n";
@@ -156,7 +156,7 @@ describe("ComunityHub — ProponerTab: extensión Community Proposals (venue + f
     expect(screen.getByText(/related venue/i)).toBeInTheDocument();
   });
 
-  it("el envío incluye venueId y suggestedDate cuando el Student los rellena — nunca comunidad/scope/moderación (nunca expuestos en el formulario)", async () => {
+  it("el envío incluye venueId y suggestedDate (día+hora real, spec: 'nunca botones vagos') cuando el Student lo rellena — nunca comunidad/scope/moderación", async () => {
     await i18n.changeLanguage("en");
     const mockMutate = vi.fn();
     mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
@@ -164,14 +164,15 @@ describe("ComunityHub — ProponerTab: extensión Community Proposals (venue + f
     const user = await openProposeTab();
 
     await user.type(screen.getByPlaceholderText(/padel tournament/i), "Beach volleyball");
-    await user.click(screen.getByRole("button", { name: /this weekend/i }));
+    const eventAtInput = document.getElementById("proposalEventAt") as HTMLInputElement;
+    fireEvent.change(eventAtInput, { target: { value: "2027-03-20T19:30" } });
     await user.click(screen.getByRole("button", { name: /submit idea/i }));
 
     expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({
       communityId: 1,
       title: "Beach volleyball",
       venueId: null, // no se seleccionó venue en este test — sigue siendo opcional
-      suggestedDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      suggestedDate: new Date("2027-03-20T19:30"),
     }));
     // El payload nunca incluye claves reservadas al Admin (comunidad ya va
     // como communityId real de la sesión, nunca un selector propio del
@@ -180,7 +181,7 @@ describe("ComunityHub — ProponerTab: extensión Community Proposals (venue + f
     expect(screen.queryByText(/audience|audiencia/i)).not.toBeInTheDocument();
   });
 
-  it("sin rellenar la fecha sugerida, se envía null — nunca una fecha inventada", async () => {
+  it("sin rellenar la fecha del evento, se envía null — nunca una fecha inventada", async () => {
     await i18n.changeLanguage("en");
     const mockMutate = vi.fn();
     mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
@@ -191,6 +192,14 @@ describe("ComunityHub — ProponerTab: extensión Community Proposals (venue + f
     await user.click(screen.getByRole("button", { name: /submit idea/i }));
 
     expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ suggestedDate: null }));
+  });
+
+  it("nunca ofrece los antiguos botones vagos 'This weekend'/'Next week' — el Student siempre indica día y hora reales", async () => {
+    await i18n.changeLanguage("en");
+    renderAt("/ie/comunity");
+    await openProposeTab();
+    expect(screen.queryByRole("button", { name: /this weekend/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^next week$/i })).not.toBeInTheDocument();
   });
 });
 
@@ -281,14 +290,47 @@ describe("ComunityHub — ProponerTab MG-04: imagen de portada (spec §11)", () 
   });
 });
 
-describe("ComunityHub — ProponerTab MG-04: urgencia del Student (spec §16)", () => {
+// Timing preciso (2026-08-23) — sustituye la antigua urgencia de 3 niveles
+// ("No rush"/"Soon"/"Urgent") por un plazo REAL de cierre de apoyo
+// (votingClosesAt), usando los mismos presets rápidos que ya usa Admin al
+// crear una propuesta formal (ComunityWizard.tsx, paso Timing) — spec:
+// "también le dejaremos definir la urgencia como en la segunda pantalla".
+describe("ComunityHub — ProponerTab: cierre de apoyo (votingClosesAt) sustituye la urgencia de 3 niveles", () => {
   async function openProposeTab() {
     const user = userEvent.setup();
     await user.click(screen.getByRole("tab", { name: /^propose$|^proponer$/i }));
     return user;
   }
 
-  it("seleccionar un nivel de urgencia lo incluye en el envío", async () => {
+  it("ya no ofrece los 3 botones de urgencia antiguos ('No rush'/'Soon'/'Urgent')", async () => {
+    await i18n.changeLanguage("en");
+    renderAt("/ie/comunity");
+    await openProposeTab();
+    expect(screen.queryByRole("button", { name: /^no rush$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^soon$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^urgent$/i })).not.toBeInTheDocument();
+  });
+
+  it("un preset rápido (15 min) calcula votingClosesAt ~15 minutos en el futuro y lo incluye en el envío", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+
+    const before = Date.now();
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Ping pong league");
+    await user.click(screen.getByRole("button", { name: /^15 min$/i }));
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+
+    const payload = mockMutate.mock.calls[0][0];
+    expect(payload.votingClosesAt).toBeInstanceOf(Date);
+    const deltaMinutes = (payload.votingClosesAt.getTime() - before) / 60000;
+    expect(deltaMinutes).toBeGreaterThan(14);
+    expect(deltaMinutes).toBeLessThan(16);
+  });
+
+  it("una fecha personalizada de cierre se envía tal cual", async () => {
     await i18n.changeLanguage("en");
     const mockMutate = vi.fn();
     mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
@@ -296,49 +338,34 @@ describe("ComunityHub — ProponerTab MG-04: urgencia del Student (spec §16)", 
     const user = await openProposeTab();
 
     await user.type(screen.getByPlaceholderText(/padel tournament/i), "Ping pong league");
-    await user.click(screen.getByRole("button", { name: /^urgent$/i }));
+    const customInput = screen.getByLabelText(/custom date/i) as HTMLInputElement;
+    fireEvent.change(customInput, { target: { value: "2027-03-25T10:00" } });
     await user.click(screen.getByRole("button", { name: /submit idea/i }));
 
-    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ urgency: "urgent" }));
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ votingClosesAt: new Date("2027-03-25T10:00") }));
   });
 
-  it("pulsar la misma urgencia dos veces la deselecciona — se envía null", async () => {
+  it("sin elegir ningún cierre de apoyo, se envía null — nunca un valor por defecto inventado", async () => {
     await i18n.changeLanguage("en");
     const mockMutate = vi.fn();
     mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
     renderAt("/ie/comunity");
     const user = await openProposeTab();
-
-    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Ping pong league");
-    const soonBtn = screen.getByRole("button", { name: /^soon$/i });
-    await user.click(soonBtn);
-    await user.click(soonBtn);
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "No deadline chosen");
     await user.click(screen.getByRole("button", { name: /submit idea/i }));
-
-    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ urgency: null }));
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ votingClosesAt: null }));
   });
 
-  it("sin seleccionar urgencia, se envía null — nunca un valor por defecto inventado", async () => {
-    await i18n.changeLanguage("en");
-    const mockMutate = vi.fn();
-    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
-    renderAt("/ie/comunity");
-    const user = await openProposeTab();
-    await user.type(screen.getByPlaceholderText(/padel tournament/i), "No urgency chosen");
-    await user.click(screen.getByRole("button", { name: /submit idea/i }));
-    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ urgency: null }));
-  });
-
-  it("los 3 niveles de urgencia se renderizan traducidos en español", async () => {
+  it("los presets se renderizan traducidos en español", async () => {
     await i18n.changeLanguage("es");
     renderAt("/ie/comunity");
     await openProposeTab();
-    expect(screen.getByRole("button", { name: /sin prisa/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^pronto$/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^urgente$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^15 min$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^1 hora$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /hasta esta noche/i })).toBeInTheDocument();
   });
 
-  it("el payload de envío nunca incluye campos reservados de admin (comunidad/estado/prioridad interna) aunque haya imagen y urgencia", async () => {
+  it("el payload de envío nunca incluye campos reservados de admin (comunidad/estado/prioridad interna) aunque haya imagen y cierre de apoyo", async () => {
     await i18n.changeLanguage("en");
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true, json: async () => ({ success: true, url: "https://cdn.example.com/x.jpg" }),
@@ -352,8 +379,8 @@ describe("ComunityHub — ProponerTab MG-04: urgencia del Student (spec §16)", 
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, file);
     await screen.findByRole("button", { name: /remove image/i });
-    await user.click(screen.getByRole("button", { name: /^urgent$/i }));
-    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Con imagen y urgencia");
+    await user.click(screen.getByRole("button", { name: /^1 hora$|^1 hour$/i }));
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Con imagen y cierre de apoyo");
     await user.click(screen.getByRole("button", { name: /submit idea/i }));
 
     const payload = mockMutate.mock.calls[0][0];

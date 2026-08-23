@@ -24,6 +24,7 @@ const {
   mockGetCommentCountsBatch, mockGetLikeCountsBatch, mockResolveProposalAuthor,
   mockNotifyProposalCommented, mockNotifyCommentReplied, mockGetProposalCommunityIds,
   mockRecordShare, mockGetShareCountsBatch, mockSubmitResponse,
+  mockCreateProposal, mockGetStudentProposalById, mockMarkStudentProposalConverted,
 } = vi.hoisted(() => ({
   mockGetUserCommunities: vi.fn(),
   mockSubmitStudentProposal: vi.fn(),
@@ -57,6 +58,9 @@ const {
   mockRecordShare: vi.fn(),
   mockGetShareCountsBatch: vi.fn(),
   mockSubmitResponse: vi.fn(),
+  mockCreateProposal: vi.fn(),
+  mockGetStudentProposalById: vi.fn(),
+  mockMarkStudentProposalConverted: vi.fn(),
 }));
 vi.mock("../db/communitiesDb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../db/communitiesDb")>();
@@ -74,6 +78,8 @@ vi.mock("../segolife/community/communityStudentProposalDb", async (importOrigina
     approveStudentProposal: mockApproveStudentProposal,
     rejectStudentProposal: mockRejectStudentProposal,
     listTrendingStudentProposals: mockListTrendingStudentProposals,
+    getStudentProposalById: mockGetStudentProposalById,
+    markStudentProposalConverted: mockMarkStudentProposalConverted,
   };
 });
 // Community Proposals (backlog, spec §15.B) / FINAL ZERO-DEBT Block D — se
@@ -97,6 +103,7 @@ vi.mock("../segolife/community/communityDb", async (importOriginal) => {
     computeResultsVisible: mockComputeResultsVisible, isProposalVisibleToUser: mockIsProposalVisibleToUser,
     getProposalCommunityIds: mockGetProposalCommunityIds,
     listProposalOptions: mockListProposalOptions, getVenueName: mockGetVenueName,
+    createProposal: mockCreateProposal,
   };
 });
 vi.mock("../segolife/community/communityResponseService", async (importOriginal) => {
@@ -402,6 +409,96 @@ describe("community router — submitProposal MG-04: imagen de portada + urgenci
     expect(callArg).not.toHaveProperty("moderatedByUserId");
     expect(callArg).not.toHaveProperty("featured");
     expect(callArg).not.toHaveProperty("segoTokens");
+  });
+});
+
+// Timing preciso (2026-08-23) — spec: día+hora reales del evento, nunca
+// botones vagos. suggestedDate pasó de fecha-sin-hora (regex YYYY-MM-DD) a
+// datetime completo; votingClosesAt es un campo nuevo.
+describe("community router — submitProposal: timing preciso (suggestedDate con hora + votingClosesAt)", () => {
+  beforeEach(() => {
+    mockGetUserCommunities.mockReset();
+    mockSubmitStudentProposal.mockReset();
+    mockNotifyStudentProposalSubmitted.mockClear().mockResolvedValue(undefined);
+  });
+
+  it("suggestedDate (día+hora) y votingClosesAt llegan intactos a submitStudentProposal", async () => {
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    mockSubmitStudentProposal.mockResolvedValue({ id: 913, communityId: 1, title: "x", status: "pending_moderation" });
+    await callerAs(7).submitProposal({
+      communityId: 1, title: "Torneo de pádel",
+      suggestedDate: "2027-03-20T19:30:00.000Z",
+      votingClosesAt: "2027-03-15T10:00:00.000Z",
+    });
+    const callArg = mockSubmitStudentProposal.mock.calls[0][0];
+    expect(callArg.suggestedDate).toEqual(new Date("2027-03-20T19:30:00.000Z"));
+    expect(callArg.votingClosesAt).toEqual(new Date("2027-03-15T10:00:00.000Z"));
+  });
+
+  it("rechaza un suggestedDate que no es una fecha válida (payload manipulado)", async () => {
+    mockGetUserCommunities.mockResolvedValue([{ id: 1, userId: 7, communityId: 1, createdAt: new Date() }]);
+    await expect(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      callerAs(7).submitProposal({ communityId: 1, title: "x", suggestedDate: "no-es-una-fecha" as any })
+    ).rejects.toThrow();
+    expect(mockSubmitStudentProposal).not.toHaveBeenCalled();
+  });
+});
+
+// Bug real corregido (2026-08-23): antes de este cambio, convertir una idea
+// aprobada en una propuesta formal NUNCA fijaba `endsAt` (la idea de origen
+// no tenía ningún concepto de cierre) — la propuesta formal nacía sin
+// deadline de votación, obligando al admin a rellenarlo a mano cada vez.
+// Confirmado sin test previo (grep sin resultados antes de esta fase).
+describe("community router — convertStudentProposalToFormal: traslada el timing preciso del Student a la propuesta formal", () => {
+  beforeEach(() => {
+    mockGetCommunityAccess.mockReset();
+    mockGetStudentProposalById.mockReset();
+    mockCreateProposal.mockReset();
+    mockMarkStudentProposalConverted.mockReset().mockResolvedValue(undefined);
+    mockGetCommunityAccess.mockResolvedValue("all");
+  });
+
+  it("traslada suggestedDate a startsAt y votingClosesAt a endsAt, y marca la propuesta como 'flash' cuando el Student propuso un cierre", async () => {
+    const eventAt = new Date("2027-03-20T19:30:00.000Z");
+    const closesAt = new Date("2027-03-15T10:00:00.000Z");
+    mockGetStudentProposalById.mockResolvedValue({
+      id: 42, communityId: 1, status: "approved", title: "Torneo de pádel", description: null, venueId: null,
+      suggestedDate: eventAt, votingClosesAt: closesAt,
+    });
+    mockCreateProposal.mockResolvedValue({ id: 900, title: "Torneo de pádel", status: "draft" });
+
+    await callerAsAdmin(1).convertStudentProposalToFormal({ studentProposalId: 42, questionType: "yes_no" });
+
+    expect(mockCreateProposal).toHaveBeenCalledWith(expect.objectContaining({
+      startsAt: eventAt,
+      endsAt: closesAt,
+      urgencyType: "flash",
+      sourceStudentProposalId: 42,
+    }));
+    expect(mockMarkStudentProposalConverted).toHaveBeenCalledWith(42, 900);
+  });
+
+  it("sin votingClosesAt propuesto por el Student, la propuesta formal nace 'scheduled' (nunca 'flash' inventado) y endsAt queda null", async () => {
+    mockGetStudentProposalById.mockResolvedValue({
+      id: 43, communityId: 1, status: "approved", title: "Cine bajo las estrellas", description: null, venueId: null,
+      suggestedDate: null, votingClosesAt: null,
+    });
+    mockCreateProposal.mockResolvedValue({ id: 901, title: "Cine bajo las estrellas", status: "draft" });
+
+    await callerAsAdmin(1).convertStudentProposalToFormal({ studentProposalId: 43, questionType: "yes_no" });
+
+    expect(mockCreateProposal).toHaveBeenCalledWith(expect.objectContaining({
+      startsAt: null, endsAt: null, urgencyType: "scheduled",
+    }));
+  });
+
+  it("una idea que no está aprobada nunca se convierte", async () => {
+    mockGetStudentProposalById.mockResolvedValue({ id: 44, communityId: 1, status: "pending_moderation", title: "x" });
+    await expect(
+      callerAsAdmin(1).convertStudentProposalToFormal({ studentProposalId: 44, questionType: "yes_no" })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(mockCreateProposal).not.toHaveBeenCalled();
   });
 });
 

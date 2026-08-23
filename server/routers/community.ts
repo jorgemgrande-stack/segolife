@@ -466,7 +466,14 @@ export const communityRouter = router({
         description: idea.description,
         questionType: input.questionType,
         venueId: idea.venueId,
-        startsAt: idea.suggestedDate ? new Date(idea.suggestedDate) : null,
+        startsAt: idea.suggestedDate ?? null,
+        // Timing preciso (2026-08-23) — antes `endsAt` nunca se fijaba en la
+        // conversión (la idea de origen no tenía ningún concepto de cierre);
+        // ahora se traslada el cierre de apoyo que el propio Student propuso,
+        // y si lo dio, la propuesta formal nace como "flash" igual que si el
+        // Admin hubiera usado uno de los presets rápidos del asistente.
+        endsAt: idea.votingClosesAt ?? null,
+        urgencyType: idea.votingClosesAt ? "flash" : "scheduled",
         sourceStudentProposalId: idea.id,
         createdByUserId: ctx.user.id,
         options: validation.cleanOptions.length > 0 ? validation.cleanOptions : undefined,
@@ -840,7 +847,12 @@ export const communityRouter = router({
       title: z.string().min(1).max(256),
       description: z.string().max(2000).nullish(),
       venueId: z.number().int().positive().nullish(),
-      suggestedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+      // Timing preciso (2026-08-23) — antes solo fecha (regex YYYY-MM-DD);
+      // ahora día+hora reales, igual que el resto de timestamps de Community.
+      suggestedDate: z.coerce.date().nullish(),
+      // Cuándo deja de poder apoyarse esta idea — nuevo, mismo concepto que
+      // `endsAt` en las propuestas formales de Admin (community.create).
+      votingClosesAt: z.coerce.date().nullish(),
       category: z.string().max(64).nullish(),
       // MG-04 — coverImageUrl es SIEMPRE la URL ya devuelta por
       // POST /api/community/proposal-image (subida+validación real ya

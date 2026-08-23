@@ -6252,7 +6252,20 @@ export const communityStudentProposals = mysqlTable("community_student_proposals
   title:                    varchar("title", { length: 256 }).notNull(),
   description:              text("description"),
   venueId:                  int("venue_id"),
-  suggestedDate:            date("suggested_date", { mode: "string" }),
+  // Día Y HORA precisos que el Student propone para el evento (antes solo
+  // fecha, sin hora, con botones vagos "Este finde"/"La semana que viene" —
+  // ver ComunityHub.tsx ProponerTab). Ensanchado de DATE a TIMESTAMP
+  // (aditivo, preserva las filas existentes con hora 00:00) — TIMESTAMP y
+  // no DATETIME a propósito, ver scripts/apply-0177-student-proposal-timing.cjs.
+  suggestedDate:            timestamp("suggested_date"),
+  // Momento exacto en que deja de poder apoyarse esta idea — antes no existía
+  // ningún concepto de cierre de apoyo para una idea de Student (solo las
+  // propuestas formales de community_proposals tenían endsAt). Se propone
+  // mediante los mismos presets rápidos que ya usa el Admin al crear una
+  // propuesta ("15 min"/"30 min"/"1 hora"/"3 horas"/"Hasta esta noche"/fecha
+  // personalizada) para dar al admin información mucho más precisa que la
+  // urgencia de 3 niveles anterior.
+  votingClosesAt:           timestamp("voting_closes_at"),
   category:                 varchar("category", { length: 64 }),
   // MG-04 — Community Proposals 2.0. Imagen de portada PÚBLICA (a diferencia
   // de la foto de perfil privada de MG-03B) — nunca la imagen en sí, solo la

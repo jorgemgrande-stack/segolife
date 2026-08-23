@@ -392,30 +392,32 @@ function ProposalLinkList({ slug, items }: { slug: string; items: { id: number; 
  * Student (3 niveles simples, nunca la prioridad administrativa interna de
  * community_proposals.urgencyType — tabla y concepto distintos).
  */
-function toDateOnly(d: Date): string {
+// Timing preciso (2026-08-23) — antes "Este finde"/"La semana que viene"
+// solo fijaban una FECHA vaga sin hora. Sustituido por día+hora reales
+// (evento) + los mismos presets rápidos que ya usa Admin al crear una
+// propuesta formal (ComunityWizard.tsx: FLASH_PRESETS/untilTonight/
+// toLocalInputValue) para el cierre de apoyo — mismo patrón, adaptado al
+// formulario del Student en vez de duplicar un componente compartido entre
+// admin/estudiante (superficies con permisos y layout distintos).
+function toLocalInputValue(d: Date | null): string {
+  if (!d) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-function nextWeekendDate(): string {
+function untilTonight(): Date {
   const d = new Date();
-  const diff = ((6 - d.getDay()) % 7) || 7; // próximo sábado real, nunca "hoy" si hoy ya es sábado
-  d.setDate(d.getDate() + diff);
-  return toDateOnly(d);
+  d.setHours(23, 59, 0, 0);
+  return d;
 }
-function nextWeekDate(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 7);
-  return toDateOnly(d);
-}
+const VOTING_CLOSE_PRESETS: { labelKey: string; minutes: number }[] = [
+  { labelKey: "comunity.preset15min", minutes: 15 },
+  { labelKey: "comunity.preset30min", minutes: 30 },
+  { labelKey: "comunity.preset1h", minutes: 60 },
+  { labelKey: "comunity.preset3h", minutes: 180 },
+];
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
-type ProposalUrgency = "no_rush" | "soon" | "urgent";
-const URGENCY_OPTIONS: { value: ProposalUrgency; key: string }[] = [
-  { value: "no_rush", key: "comunity.urgencyNoRush" },
-  { value: "soon", key: "comunity.urgencySoon" },
-  { value: "urgent", key: "comunity.urgencyUrgent" },
-];
 
 // MG-05 — Student Proposal Voting Configuration. MISMOS 9 tipos que el
 // motor canónico de Admin (comunity.questionType, ver
@@ -442,8 +444,14 @@ function ProponerTab() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [venueId, setVenueId] = useState("");
-  const [suggestedDate, setSuggestedDate] = useState("");
-  const [urgency, setUrgency] = useState<ProposalUrgency | "">("");
+  // Timing preciso — "eventAt" (día+hora del evento) y "votingClosesAt"
+  // (día+hora en que deja de poder apoyarse la idea) son conceptos
+  // DISTINTOS: el primero es cuándo el Student quiere que pase el plan; el
+  // segundo es el plazo para reunir apoyos, igual que endsAt en una
+  // propuesta formal de Admin. Ambos como string datetime-local, igual que
+  // ComunityWizard.tsx (startsAt/endsAt).
+  const [eventAt, setEventAt] = useState("");
+  const [votingClosesAt, setVotingClosesAt] = useState("");
   const [coverImageUrl, setCoverImageUrl] = useState("");
   const [imageUploading, setImageUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -456,7 +464,7 @@ function ProponerTab() {
   const votingOptionsValid = !votingNeedsOptions || cleanVotingOptions.length >= MIN_VOTING_OPTIONS;
 
   function resetForm() {
-    setTitle(""); setDescription(""); setVenueId(""); setSuggestedDate(""); setUrgency(""); setCoverImageUrl("");
+    setTitle(""); setDescription(""); setVenueId(""); setEventAt(""); setVotingClosesAt(""); setCoverImageUrl("");
     setVotingType(VOTING_TYPE_NONE); setVotingOptions(["", ""]);
   }
 
@@ -533,23 +541,6 @@ function ProponerTab() {
         </div>
 
         <div>
-          <Label className="mb-1.5 block">{t("comunity.urgencyLabel")}</Label>
-          <div className="flex flex-wrap gap-2">
-            {URGENCY_OPTIONS.map(opt => (
-              <Button
-                key={opt.value}
-                type="button"
-                variant={urgency === opt.value ? "default" : "outline"}
-                size="sm"
-                onClick={() => setUrgency(u => u === opt.value ? "" : opt.value)}
-              >
-                {t(opt.key)}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        <div>
           <Label className="mb-1.5 block">{t("comunity.relatedVenue")}</Label>
           <Select value={venueId || "none"} onValueChange={v => setVenueId(v === "none" ? "" : v)}>
             <SelectTrigger className="w-full"><SelectValue placeholder={t("comunity.noVenue")} /></SelectTrigger>
@@ -560,25 +551,61 @@ function ProponerTab() {
           </Select>
         </div>
 
+        {/* Timing preciso (2026-08-23): día+hora reales del evento — nunca
+            botones vagos "Este finde"/"La semana que viene" (spec: dar al
+            admin información mucho más precisa). */}
         <div>
-          <Label className="mb-1.5 block">{t("comunity.whenWouldYouLike")}</Label>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant={suggestedDate === nextWeekendDate() ? "default" : "outline"} size="sm" onClick={() => setSuggestedDate(nextWeekendDate())}>
-              {t("comunity.thisWeekend")}
-            </Button>
-            <Button type="button" variant={suggestedDate === nextWeekDate() ? "default" : "outline"} size="sm" onClick={() => setSuggestedDate(nextWeekDate())}>
-              {t("comunity.nextWeek")}
-            </Button>
+          <Label htmlFor="proposalEventAt" className="mb-1.5 block">{t("comunity.whenWouldYouLike")}</Label>
+          <div className="flex flex-wrap items-center gap-2">
             <Input
-              type="date"
-              value={suggestedDate}
-              onChange={e => setSuggestedDate(e.target.value)}
-              min={toDateOnly(new Date())}
+              id="proposalEventAt"
+              type="datetime-local"
+              value={eventAt}
+              onChange={e => setEventAt(e.target.value)}
+              min={toLocalInputValue(new Date())}
+              className="h-8 w-auto"
+            />
+            {eventAt && (
+              <button type="button" onClick={() => setEventAt("")} className="text-xs text-muted-foreground underline">
+                {t("comunity.clearDate")}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Sustituye la urgencia de 3 niveles ("Sin prisa"/"Pronto"/
+            "Urgente") por los mismos presets rápidos que ya usa Admin al
+            crear una propuesta formal (ComunityWizard.tsx, paso Timing) —
+            dan un plazo REAL de cierre de apoyo, no solo una etiqueta. */}
+        <div>
+          <Label className="mb-1.5 block">{t("comunity.votingClosesLabel")}</Label>
+          <div className="flex flex-wrap gap-2">
+            {VOTING_CLOSE_PRESETS.map(preset => (
+              <Button
+                key={preset.minutes}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setVotingClosesAt(toLocalInputValue(new Date(Date.now() + preset.minutes * 60000)))}
+              >
+                {t(preset.labelKey)}
+              </Button>
+            ))}
+            <Button type="button" variant="outline" size="sm" onClick={() => setVotingClosesAt(toLocalInputValue(untilTonight()))}>
+              {t("comunity.presetTonight")}
+            </Button>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Input
+              type="datetime-local"
+              value={votingClosesAt}
+              onChange={e => setVotingClosesAt(e.target.value)}
+              min={toLocalInputValue(new Date())}
               className="h-8 w-auto"
               aria-label={t("comunity.customDate")}
             />
-            {suggestedDate && (
-              <button type="button" onClick={() => setSuggestedDate("")} className="text-xs text-muted-foreground underline">
+            {votingClosesAt && (
+              <button type="button" onClick={() => setVotingClosesAt("")} className="text-xs text-muted-foreground underline">
                 {t("comunity.clearDate")}
               </button>
             )}
@@ -652,9 +679,9 @@ function ProponerTab() {
             title: title.trim(),
             description: description.trim() || null,
             venueId: venueId ? Number(venueId) : null,
-            suggestedDate: suggestedDate || null,
+            suggestedDate: eventAt ? new Date(eventAt) : null,
+            votingClosesAt: votingClosesAt ? new Date(votingClosesAt) : null,
             coverImageUrl: coverImageUrl || null,
-            urgency: urgency || null,
             proposedQuestionType: votingType === VOTING_TYPE_NONE ? undefined : votingType,
             proposedOptions: votingNeedsOptions ? cleanVotingOptions : undefined,
           })}

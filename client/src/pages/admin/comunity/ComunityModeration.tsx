@@ -124,7 +124,8 @@ export default function ComunityModeration() {
                       {idea.studentName ?? "Estudiante"} · {fmtDateTime(idea.createdAt)}
                       {idea.category && <> · {idea.category}</>}
                       {idea.venueName && <> · {idea.venueName}</>}
-                      {idea.suggestedDate && <> · Fecha sugerida: {idea.suggestedDate}</>}
+                      {idea.suggestedDate && <> · Fecha del evento: {fmtDateTime(idea.suggestedDate)}</>}
+                      {idea.votingClosesAt && <> · Apoyo hasta: {fmtDateTime(idea.votingClosesAt)}</>}
                     </p>
                     {idea.urgency && (
                       <Badge className={`mt-1.5 ${URGENCY_LABEL[idea.urgency].className}`} variant="secondary">

@@ -48,6 +48,7 @@ function baseIdea(overrides: Record<string, unknown> = {}) {
     id: 1, title: "Torneo de pádel", description: "Un torneo abierto", studentName: "Ana",
     createdAt: new Date("2026-08-15"), category: null, status: "pending_moderation",
     supportCount: 3, venueName: null, coverImageUrl: null, urgency: null,
+    suggestedDate: null, votingClosesAt: null,
     proposedQuestionType: null, proposedOptions: null,
     ...overrides,
   };
@@ -89,6 +90,35 @@ describe("ComunityModeration — visibilidad de imagen/venue/urgencia enviados p
     });
     render(<ComunityModeration />);
     expect(screen.getByText("Urgente")).toBeInTheDocument();
+  });
+
+  // Timing preciso (2026-08-23) — antes se mostraba la fecha sugerida como
+  // string sin formatear ("Fecha sugerida: 2027-03-20") sin hora alguna;
+  // ahora se formatea con fmtDateTime (mismo helper que el resto de
+  // COMUNITY) y se añade el nuevo plazo de cierre de apoyo.
+  it("muestra la fecha del evento formateada (día+hora) cuando el Student la propuso", () => {
+    mockListStudentProposals.mockReturnValue({
+      data: { items: [baseIdea({ suggestedDate: new Date("2027-03-20T19:30:00.000Z") })] },
+      isLoading: false,
+    });
+    render(<ComunityModeration />);
+    expect(screen.getByText(/Fecha del evento:/)).toBeInTheDocument();
+  });
+
+  it("muestra el plazo de cierre de apoyo cuando el Student lo propuso", () => {
+    mockListStudentProposals.mockReturnValue({
+      data: { items: [baseIdea({ votingClosesAt: new Date("2027-03-15T10:00:00.000Z") })] },
+      isLoading: false,
+    });
+    render(<ComunityModeration />);
+    expect(screen.getByText(/Apoyo hasta:/)).toBeInTheDocument();
+  });
+
+  it("sin fecha de evento ni plazo de cierre, no muestra ninguno de los dos", () => {
+    mockListStudentProposals.mockReturnValue({ data: { items: [baseIdea()] }, isLoading: false });
+    render(<ComunityModeration />);
+    expect(screen.queryByText(/Fecha del evento:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Apoyo hasta:/)).not.toBeInTheDocument();
   });
 
   it("sin urgencia indicada, no muestra ningún badge de urgencia", () => {
