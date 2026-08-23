@@ -466,6 +466,12 @@ export const communityRouter = router({
         description: idea.description,
         questionType: input.questionType,
         venueId: idea.venueId,
+        // Bug real corregido (2026-08-24): la imagen de portada que el
+        // Student subió en su idea nunca se trasladaba a la propuesta
+        // formal — la conversión creaba la fila sin coverImageUrl aunque la
+        // idea de origen sí tuviera una, dejando la propuesta publicada con
+        // el placeholder por defecto (caso real: "HILLS TUESDAY").
+        coverImageUrl: idea.coverImageUrl ?? null,
         startsAt: idea.suggestedDate ?? null,
         // Timing preciso (2026-08-23) — antes `endsAt` nunca se fijaba en la
         // conversión (la idea de origen no tenía ningún concepto de cierre);

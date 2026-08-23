@@ -450,7 +450,7 @@ describe("community router — submitProposal: timing preciso (suggestedDate con
 // no tenía ningún concepto de cierre) — la propuesta formal nacía sin
 // deadline de votación, obligando al admin a rellenarlo a mano cada vez.
 // Confirmado sin test previo (grep sin resultados antes de esta fase).
-describe("community router — convertStudentProposalToFormal: traslada el timing preciso del Student a la propuesta formal", () => {
+describe("community router — convertStudentProposalToFormal: traslada el timing preciso y la imagen de portada del Student a la propuesta formal", () => {
   beforeEach(() => {
     mockGetCommunityAccess.mockReset();
     mockGetStudentProposalById.mockReset();
@@ -477,6 +477,36 @@ describe("community router — convertStudentProposalToFormal: traslada el timin
       sourceStudentProposalId: 42,
     }));
     expect(mockMarkStudentProposalConverted).toHaveBeenCalledWith(42, 900);
+  });
+
+  // Bug real corregido (2026-08-24, caso "HILLS TUESDAY"): la conversión
+  // creaba la propuesta formal SIN coverImageUrl aunque la idea de origen
+  // tuviera una imagen real subida por el Student — la propuesta publicada
+  // se quedaba con el placeholder por defecto en vez de la foto real.
+  it("traslada coverImageUrl a la propuesta formal cuando el Student subió una imagen real", async () => {
+    mockGetStudentProposalById.mockResolvedValue({
+      id: 44, communityId: 1, status: "approved", title: "HILLS TUESDAY", description: "Bring your own booze", venueId: null,
+      suggestedDate: null, votingClosesAt: null, coverImageUrl: "https://cdn.example.com/community-proposals/7/hills.jpg",
+    });
+    mockCreateProposal.mockResolvedValue({ id: 902, title: "HILLS TUESDAY", status: "draft" });
+
+    await callerAsAdmin(1).convertStudentProposalToFormal({ studentProposalId: 44, questionType: "me_apunto" });
+
+    expect(mockCreateProposal).toHaveBeenCalledWith(expect.objectContaining({
+      coverImageUrl: "https://cdn.example.com/community-proposals/7/hills.jpg",
+    }));
+  });
+
+  it("sin imagen en la idea de origen, coverImageUrl se pasa null — nunca undefined ni un placeholder inventado", async () => {
+    mockGetStudentProposalById.mockResolvedValue({
+      id: 45, communityId: 1, status: "approved", title: "Sin imagen", description: null, venueId: null,
+      suggestedDate: null, votingClosesAt: null, coverImageUrl: null,
+    });
+    mockCreateProposal.mockResolvedValue({ id: 903, title: "Sin imagen", status: "draft" });
+
+    await callerAsAdmin(1).convertStudentProposalToFormal({ studentProposalId: 45, questionType: "yes_no" });
+
+    expect(mockCreateProposal).toHaveBeenCalledWith(expect.objectContaining({ coverImageUrl: null }));
   });
 
   it("sin votingClosesAt propuesto por el Student, la propuesta formal nace 'scheduled' (nunca 'flash' inventado) y endsAt queda null", async () => {

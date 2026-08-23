@@ -16,6 +16,16 @@ import {
 } from "./ComunityAudienceBuilder";
 import { QUESTION_TYPE_LABEL, type ComunityQuestionType } from "@/lib/comunity";
 import type { CommunityProposal, CommunityOption } from "../../../../../drizzle/schema";
+import { ProposalImageUploader } from "@/components/comunity/ProposalImageUploader";
+
+const IMAGE_UPLOAD_LABELS = {
+  fieldLabel: "Imagen de portada (opcional)",
+  addImage: "Añadir imagen",
+  removeImage: "Quitar imagen",
+  invalidType: "La imagen debe ser JPEG, PNG o WebP",
+  tooLarge: "La imagen debe pesar menos de 8 MB",
+  uploadError: "No se ha podido subir la imagen, inténtalo de nuevo",
+};
 
 const TYPES_WITH_OPTIONS: ComunityQuestionType[] = ["single_choice", "multiselect", "ranking", "percentage_scale"];
 
@@ -67,6 +77,7 @@ export function ComunityEditDialog({ open, onOpenChange, proposal, options, comm
   const [description, setDescription] = useState(proposal.description ?? "");
   const [venueId, setVenueId] = useState<string>(proposal.venueId ? String(proposal.venueId) : "");
   const [coverImageUrl, setCoverImageUrl] = useState(proposal.coverImageUrl ?? "");
+  const [imageUploading, setImageUploading] = useState(false);
   const [urgencyType, setUrgencyType] = useState<"flash" | "scheduled">(proposal.urgencyType);
   const [startsAt, setStartsAt] = useState(toLocalInputValue(proposal.startsAt));
   const [endsAt, setEndsAt] = useState(toLocalInputValue(proposal.endsAt));
@@ -137,7 +148,7 @@ export function ComunityEditDialog({ open, onOpenChange, proposal, options, comm
     updateMut.mutate(payload);
   }
 
-  const canSave = title.trim().length > 0 && endsAt.trim().length > 0 && (!canEditOptions || cleanOptions.length >= 2);
+  const canSave = title.trim().length > 0 && endsAt.trim().length > 0 && (!canEditOptions || cleanOptions.length >= 2) && !imageUploading;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -165,10 +176,7 @@ export function ComunityEditDialog({ open, onOpenChange, proposal, options, comm
             </div>
           </div>
 
-          <div>
-            <Label>Imagen de portada — URL (opcional)</Label>
-            <Input value={coverImageUrl} onChange={e => setCoverImageUrl(e.target.value)} placeholder="https://…" />
-          </div>
+          <ProposalImageUploader value={coverImageUrl} onChange={setCoverImageUrl} onUploadingChange={setImageUploading} labels={IMAGE_UPLOAD_LABELS} />
 
           {canEditOptions ? (
             <div>

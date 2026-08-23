@@ -13,6 +13,16 @@ import { toast } from "sonner";
 import { ChevronLeft, ChevronRight, Loader2, Plus, X, Vote } from "lucide-react";
 import { ComunityAudienceBuilder, EMPTY_COMUNITY_AUDIENCE, toComunityAudienceDefinition, type ComunityAudienceForm } from "@/components/admin/comunity/ComunityAudienceBuilder";
 import { QUESTION_TYPE_LABEL, QUESTION_TYPES_WITH_OPTIONS, type ComunityQuestionType } from "@/lib/comunity";
+import { ProposalImageUploader } from "@/components/comunity/ProposalImageUploader";
+
+const IMAGE_UPLOAD_LABELS = {
+  fieldLabel: "Imagen de portada (opcional)",
+  addImage: "Añadir imagen",
+  removeImage: "Quitar imagen",
+  invalidType: "La imagen debe ser JPEG, PNG o WebP",
+  tooLarge: "La imagen debe pesar menos de 8 MB",
+  uploadError: "No se ha podido subir la imagen, inténtalo de nuevo",
+};
 
 const STEPS = ["Pregunta", "Tipo de respuesta", "Audiencia", "Timing", "Gamificación", "Revisión", "Publicar"] as const;
 
@@ -47,6 +57,7 @@ export default function ComunityWizard() {
   const [description, setDescription] = useState("");
   const [venueId, setVenueId] = useState<string>("");
   const [coverImageUrl, setCoverImageUrl] = useState("");
+  const [imageUploading, setImageUploading] = useState(false);
 
   // Paso 2 — Tipo de respuesta
   const [questionType, setQuestionType] = useState<ComunityQuestionType>("yes_no");
@@ -81,7 +92,7 @@ export default function ComunityWizard() {
   }
 
   function canAdvance(): boolean {
-    if (step === 0) return title.trim().length > 0;
+    if (step === 0) return title.trim().length > 0 && !imageUploading;
     if (step === 1) return !needsOptions || cleanOptions.length >= 2;
     if (step === 3) return endsAt.trim().length > 0;
     return true;
@@ -139,11 +150,7 @@ export default function ComunityWizard() {
                   </SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label>Imagen de portada — URL (opcional)</Label>
-                <Input value={coverImageUrl} onChange={e => setCoverImageUrl(e.target.value)} placeholder="https://…" />
-                <p className="mt-1 text-xs text-muted-foreground">Sube la imagen en CMS → Multimedia y pega aquí la URL.</p>
-              </div>
+              <ProposalImageUploader value={coverImageUrl} onChange={setCoverImageUrl} onUploadingChange={setImageUploading} labels={IMAGE_UPLOAD_LABELS} />
             </>
           )}
 

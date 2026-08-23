@@ -16,7 +16,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
-import { Vote, Coins, Heart, Loader2, Send, Flame, ImagePlus, X, Plus, MapPin, MessageCircle, Share2, Bookmark } from "lucide-react";
+import { Vote, Coins, Heart, Loader2, Send, Flame, X, Plus, MapPin, MessageCircle, Share2, Bookmark } from "lucide-react";
+import { ProposalImageUploader } from "@/components/comunity/ProposalImageUploader";
 import { QUESTION_TYPES_WITH_OPTIONS, type ComunityQuestionType } from "@/lib/comunity";
 import { initials, relativeTimeLabel, resultHeadline } from "@/lib/comunitySocial";
 
@@ -416,9 +417,6 @@ const VOTING_CLOSE_PRESETS: { labelKey: string; minutes: number }[] = [
   { labelKey: "comunity.preset3h", minutes: 180 },
 ];
 
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
-
 // MG-05 — Student Proposal Voting Configuration. MISMOS 9 tipos que el
 // motor canónico de Admin (comunity.questionType, ver
 // server/segolife/community/communityQuestionTypeValidation.ts) — nunca un
@@ -454,7 +452,6 @@ function ProponerTab() {
   const [votingClosesAt, setVotingClosesAt] = useState("");
   const [coverImageUrl, setCoverImageUrl] = useState("");
   const [imageUploading, setImageUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // MG-05 — configuración de voto propuesta (opcional).
   const [votingType, setVotingType] = useState<ComunityQuestionType | typeof VOTING_TYPE_NONE>(VOTING_TYPE_NONE);
@@ -466,31 +463,6 @@ function ProponerTab() {
   function resetForm() {
     setTitle(""); setDescription(""); setVenueId(""); setEventAt(""); setVotingClosesAt(""); setCoverImageUrl("");
     setVotingType(VOTING_TYPE_NONE); setVotingOptions(["", ""]);
-  }
-
-  async function handleImageSelected(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // permite re-seleccionar el mismo archivo dos veces seguidas
-    if (!file) return;
-    if (!ALLOWED_IMAGE_TYPES.has(file.type)) { toast.error(t("comunity.imageInvalidType")); return; }
-    if (file.size > MAX_IMAGE_BYTES) { toast.error(t("comunity.imageTooLarge")); return; }
-
-    setImageUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("image", file);
-      const res = await fetch("/api/community/proposal-image", { method: "POST", credentials: "include", body: formData });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? "upload_failed");
-      }
-      const body = await res.json();
-      setCoverImageUrl(body.url);
-    } catch {
-      toast.error(t("comunity.imageUploadError"));
-    } finally {
-      setImageUploading(false);
-    }
   }
 
   const submitMut = trpc.community.submitProposal.useMutation({
@@ -517,28 +489,19 @@ function ProponerTab() {
         <div><Label>{t("comunity.whatDoYouPropose")}</Label><Input value={title} onChange={e => setTitle(e.target.value)} placeholder={t("comunity.proposePlaceholder")} maxLength={256} /></div>
         <div><Label>{t("comunity.tellUsMore")}</Label><Textarea rows={3} value={description} onChange={e => setDescription(e.target.value)} maxLength={2000} /></div>
 
-        <div>
-          <Label className="mb-1.5 block">{t("comunity.coverImage")}</Label>
-          <input ref={fileInputRef} type="file" accept="image/jpeg,image/jpg,image/png,image/webp" className="hidden" onChange={handleImageSelected} />
-          {coverImageUrl ? (
-            <div className="relative inline-block">
-              <img src={coverImageUrl} alt="" className="h-28 w-full max-w-xs rounded-xl object-cover" />
-              <button
-                type="button"
-                onClick={() => setCoverImageUrl("")}
-                aria-label={t("comunity.removeImage")}
-                className="absolute -right-2 -top-2 flex size-6 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow"
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
-          ) : (
-            <Button type="button" variant="outline" size="sm" disabled={imageUploading} onClick={() => fileInputRef.current?.click()}>
-              {imageUploading ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <ImagePlus className="size-3.5 mr-1.5" />}
-              {t("comunity.addImage")}
-            </Button>
-          )}
-        </div>
+        <ProposalImageUploader
+          value={coverImageUrl}
+          onChange={setCoverImageUrl}
+          onUploadingChange={setImageUploading}
+          labels={{
+            fieldLabel: t("comunity.coverImage"),
+            addImage: t("comunity.addImage"),
+            removeImage: t("comunity.removeImage"),
+            invalidType: t("comunity.imageInvalidType"),
+            tooLarge: t("comunity.imageTooLarge"),
+            uploadError: t("comunity.imageUploadError"),
+          }}
+        />
 
         <div>
           <Label className="mb-1.5 block">{t("comunity.relatedVenue")}</Label>
