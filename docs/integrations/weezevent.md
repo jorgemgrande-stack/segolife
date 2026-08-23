@@ -200,9 +200,90 @@ adelante con el mismo patrón `conditionallyStartJob`/default-false que ya
 usan `community_lifecycle_scheduler_enabled`/`benefit_expiry_reminder_enabled`
 si se confirma que hace falta.
 
-**Bloqueo real restante (no resoluble con código/repo/Railway/docs):**
-no existen credenciales reales de Weezevent en ningún entorno, y no hay
-sandbox documentado — la primera prueba real contra la API tendría que
-ser directamente en producción, con un evento real, una vez el negocio
-decida activar el proveedor y las obtenga. Toda la orquestación de arriba
-está lista y testeada con mocks; lo único que falta es la credencial.
+**Bloqueo real (ya resuelto, ver siguiente sección):** la sección de
+arriba se escribió ANTES de conectar credenciales reales. F71 se cerró
+con la cuenta real conectada (`weezevent_connections#1`) y SKYLANDS 2026
+vinculado (`event_integrations#1`, `eventId=233`, `externalEventId=2355427`).
+
+## Weezevent Live Operations (2026-08-23) — scheduler automático + hallazgos reales
+
+Fase posterior a F71: automatiza lo que antes era manual-only, usando
+SKYLANDS 2026 como piloto real en producción. Informe completo del cierre
+en el mensaje de la sesión — aquí solo los hallazgos que corrigen o
+completan lo documentado arriba.
+
+### Fair Use — re-consultado (mismo resultado que arriba, ahora citado con más detalle)
+
+Re-fetch directo de `https://api.weezevent.com/doc/fair-use`: 5 credenciales
+inválidas → ban 30min (HTTP 429); >10 intentos de auth/min (válidos o no) →
+ban 1min; >600 requests/min → ban 30min. La doc RECOMIENDA explícitamente
+diferenciar por `last_update` para pedir "solo participantes modificados" —
+seguido para TICKETS (nuevos participantes/compras); roto deliberadamente
+para ASISTENCIA, ver hallazgo siguiente.
+
+### HALLAZGO REAL — `last_update` no refleja el escaneo (resuelve la pregunta abierta #1 de arriba, parcialmente)
+
+Confirmado empíricamente (2026-08-23) contra **TANKER AUTUMN 2025** (evento
+real, cerrado, 27 check-ins reales, consultado en modo SOLO LECTURA, nunca
+vinculado a producción): un `last_update` fijado justo DESPUÉS del último
+check-in real seguía devolviendo los 27 check-ins completos; un
+`last_update` muy futuro (2030) sí filtraba correctamente a 0 — probando que
+el filtro FUNCIONA en general (fecha de alta/edición del registro del
+participante) pero **no se actualiza cuando se escanea la entrada**
+(`control_status`/`scan_date` viven en un subsistema aparte que no toca
+`last_update`). Consecuencia de diseño: `listAttendance()` ya NUNCA usa
+`since`, en ningún modo — siempre pide el listado completo de asistencia
+(coste real trivial: ~4-6 páginas para 1800-2600 participantes). Usar
+`since` aquí habría dejado el incremental de asistencia permanentemente
+roto pese a que un `ticketsFound=0` diera la falsa sensación de que todo
+funcionaba.
+
+No resuelve la pregunta #1 original (¿`control_status` guarda solo el
+último escaneo o el histórico completo?) — sigue UNKNOWN; el hallazgo de
+arriba es sobre el comportamiento de `last_update`, un campo distinto.
+
+### 1803 vs 1804 (SKYLANDS, hallazgo real, no un bug)
+
+`events[].participants` (1803) y `/participant/list` reconstruido (1804)
+discreparon en exactamente 1 unidad durante la validación inicial. Repetido
+un día después (2026-08-23): las tres fuentes (`events[].participants`,
+suma de `participants` por tarifa en `/tickets`, y el conteo crudo de
+`/participant/list`) coincidían EXACTAMENTE en 1812 — SKYLANDS es un evento
+con `sales_status="Ventes en cours"` (venta activa). Conclusión: la
+discrepancia de 1 unidad fue un artefacto de temporización — una venta real
+ocurrió entre la llamada a `/events` y la paginación completa de
+`/participant/list` (varias peticiones secuenciales) —, no una diferencia
+semántica entre "asistentes" y "tickets vendidos" ni un bug de conteo.
+Para el uso operativo de Segolife: `/participant/list` (lo que
+`event_tickets` realmente persiste) es la cifra correcta de "tickets
+vendidos" — es el conjunto real e íntegro de objetos con ID propio;
+`events[].participants` sirve como contador rápido de panel/BI pero puede
+quedar momentáneamente desalineado en un evento con venta activa.
+
+### Scheduler automático — `weezeventScheduler.ts`
+
+Antes manual-only (ver sección F71 arriba, ya desactualizada en este
+punto). Ahora automático: `weezevent_scheduler_enabled` (feature flag
+DB-backed, activado en producción 2026-08-23, migración 0174). Reutiliza
+EXACTAMENTE `syncEventIntegration()`/`tryAcquireSyncLock()` — el mismo
+camino que el botón manual "Sync now", nunca una segunda implementación de
+la ingesta. Dos cadencias (no tres como Fourvenues — Weezevent no tiene
+catálogo que descubrir, es 1:1 con un evento ya conocido):
+
+- **incremental**: cursor real (`since`) para TICKETS. Cadencia ADAPTATIVA
+  según proximidad real a `events.startsAt`/`endsAt` del evento Segolife
+  vinculado — lejano (>7 días) 60min, próximo (≤7 días) 15min, ventana
+  activa (2h antes del inicio → fin) 2min, tras el evento 15min, >48h tras
+  el fin del evento: el scheduler deja de tocar la mapping automáticamente
+  (Sync now manual sigue disponible siempre). `event_integrations.sync_interval_minutes`
+  (columna ya existente) sigue funcionando como override manual — gana
+  siempre sobre la cadencia adaptativa.
+- **reconciliation**: refetch COMPLETO de tickets (since=undefined),
+  cadencia fija cada 6h — colchón de seguridad para el ítem aislado que
+  falla dentro de un run que en conjunto termina "success".
+
+Primer tick real en producción (2026-08-23T18:12 UTC), verificado vía BD:
+incremental encontró 12 tickets reales nuevos (creados); reconciliation
+(misma ejecución, disparada también por primera vez) repasó los 1816
+tickets completos y creó 0 duplicados — idempotencia demostrada en vivo,
+no solo en tests.
