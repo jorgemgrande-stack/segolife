@@ -34,10 +34,23 @@ export function createHttpTransport(baseUrl: string): IntegrationTransport {
       for (const [key, value] of Object.entries(opts.query ?? {})) {
         if (value !== undefined) url.searchParams.set(key, String(value));
       }
+      // Weezevent (F71 cierre real) — POST /auth/access_token exige
+      // application/x-www-form-urlencoded, no JSON (confirmado contra
+      // api.weezevent.com/, "Request Format: application/x-www-form-urlencoded").
+      // Fourvenues nunca manda body en POST, así que este caso nunca se había
+      // ejercitado — JSON.stringify(opts.body) siempre habría fallado la
+      // autenticación real con Weezevent aunque las credenciales fueran
+      // correctas. El caller pide form-encoding pasando ese header explícito.
+      const isFormEncoded = (opts.headers?.["Content-Type"] ?? opts.headers?.["content-type"]) === "application/x-www-form-urlencoded";
+      const body = !opts.body
+        ? undefined
+        : isFormEncoded
+          ? new URLSearchParams(opts.body as Record<string, string>).toString()
+          : JSON.stringify(opts.body);
       const res = await fetch(url.toString(), {
         method: opts.method,
         headers: { "Content-Type": "application/json", ...(opts.headers ?? {}) },
-        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        body,
       });
       if (!res.ok) {
         // Nunca incluir el cuerpo de la respuesta en el mensaje de error sin
