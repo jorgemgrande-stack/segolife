@@ -83,9 +83,10 @@ beforeEach(() => {
 });
 
 describe("syncEventCatalog — matching (spec §12-13)", () => {
-  it("mapping ya confirmado → usa ese evento, SOLO actualiza fecha/hora (nunca nombre/imagen/descripción)", async () => {
+  it("mapping ya confirmado, el evento YA tiene su propia descripción → SOLO actualiza fecha/hora/estado de publicación (nunca nombre/imagen/descripción real)", async () => {
     const { db, updates, inserts } = fakeDb([
       [{ internalId: 42 }], // existingMapping
+      [{ sourcePublicationStatus: "published", description: "Ya tiene su propio texto en Segolife" }], // getEventPreUpdateState (before)
     ]);
     mockUpdateEvent.mockResolvedValue({ id: 42 });
 
@@ -99,6 +100,43 @@ describe("syncEventCatalog — matching (spec §12-13)", () => {
     expect(mockCreateEvent).not.toHaveBeenCalled();
     expect(inserts.some(i => "externalId" in i.values)).toBe(false); // no crea un mapping nuevo, ya existía
     expect(updates).toHaveLength(0); // el update pasa por eventsDb (mockeado), no por conn.update directo
+  });
+
+  // 2026-08-23 — hallazgo real "Felisa's been expecting you" (evento 200):
+  // Fourvenues se crea con lo mínimo y el texto de marketing se escribe
+  // DESPUÉS del primer sync — sin este backfill, la descripción vacía
+  // quedaba cerrada para siempre. Ver EXCEPCIÓN en la cabecera del archivo.
+  it("mapping ya confirmado, la descripción sigue VACÍA en Segolife → SÍ se rellena desde Fourvenues en este sync", async () => {
+    const { db } = fakeDb([
+      [{ internalId: 42 }], // existingMapping
+      [{ sourcePublicationStatus: "published", description: "" }], // getEventPreUpdateState (before) — sin escribir todavía
+    ]);
+    mockUpdateEvent.mockResolvedValue({ id: 42 });
+
+    await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent({ description: "FELISA'S BEEN EXPECTING YOU…" })],
+    }, db);
+
+    expect(mockUpdateEvent).toHaveBeenCalledWith(42, {
+      startsAt: normalizedEvent().startsAt, endsAt: normalizedEvent().endsAt, sourcePublicationStatus: "published",
+      description: "FELISA'S BEEN EXPECTING YOU…",
+    }, db);
+  });
+
+  it("mapping ya confirmado, descripción vacía en Segolife PERO Fourvenues tampoco trae ninguna → nunca añade la clave description al update (no-op, no escribe un vacío sobre un vacío)", async () => {
+    const { db } = fakeDb([
+      [{ internalId: 42 }], // existingMapping
+      [{ sourcePublicationStatus: "published", description: null }], // getEventPreUpdateState (before)
+    ]);
+    mockUpdateEvent.mockResolvedValue({ id: 42 });
+
+    await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent({ description: null })],
+    }, db);
+
+    expect(mockUpdateEvent).toHaveBeenCalledWith(42, { startsAt: normalizedEvent().startsAt, endsAt: normalizedEvent().endsAt, sourcePublicationStatus: "published" }, db);
   });
 
   it("sin mapping y sin candidato → crea un evento nuevo gobernado por Fourvenues + mapping", async () => {
@@ -121,8 +159,8 @@ describe("syncEventCatalog — matching (spec §12-13)", () => {
     expect(inserts.some(i => i.values.externalType === "event" && i.values.internalId === 77)).toBe(true);
   });
 
-  it("sin mapping, exactamente 1 candidato inequívoco (mismo venue+día+nombre normalizado) → lo ADOPTA sin sobreescribir su contenido editorial", async () => {
-    const candidateEvent = { id: 55, name: "Fixture Night @ Casanova", venueId: 10, startsAt: new Date("2027-01-10T23:00:00.000Z") };
+  it("sin mapping, exactamente 1 candidato inequívoco (mismo venue+día+nombre normalizado) CON su propia descripción → lo ADOPTA sin sobreescribir su contenido editorial", async () => {
+    const candidateEvent = { id: 55, name: "Fixture Night @ Casanova", venueId: 10, startsAt: new Date("2027-01-10T23:00:00.000Z"), description: "Descripción nativa ya escrita" };
     const { db, inserts } = fakeDb([
       [], // existingMapping
       [], // alreadyMapped
@@ -139,12 +177,31 @@ describe("syncEventCatalog — matching (spec §12-13)", () => {
     // FIX-04 — adoptar SÍ registra el origen (antes no quedaba rastro de que
     // este evento nativo ya estaba vinculado a Fourvenues, y
     // isEventStudentVisible() nunca podía protegerlo) — pero NUNCA toca
-    // contenido editorial (name/description/imageUrl), que es lo que esta
-    // prueba protege realmente.
+    // contenido editorial (name/description/imageUrl) YA EXISTENTE, que es
+    // lo que esta prueba protege realmente.
     expect(mockUpdateEvent).toHaveBeenCalledWith(55, {
       sourceType: "integration:fourvenues_integrations", sourceId: 1, sourcePublicationStatus: "published",
     }, db);
     expect(inserts.some(i => i.values.externalType === "event" && i.values.internalId === 55)).toBe(true);
+  });
+
+  it("candidato adoptado SIN descripción propia (nativo, nunca escrita) → SÍ se rellena desde Fourvenues (mismo criterio que mapped_existing, spec 'Felisa's been expecting you')", async () => {
+    const candidateEvent = { id: 55, name: "Fixture Night @ Casanova", venueId: 10, startsAt: new Date("2027-01-10T23:00:00.000Z"), description: "" };
+    const { db } = fakeDb([
+      [], // existingMapping
+      [], // alreadyMapped
+      [candidateEvent], // sameVenue
+    ]);
+
+    await syncEventCatalog({
+      provider: "fourvenues_integrations", integrationType: "venue_integration", integrationId: 1,
+      venueId: 10, communityIds: [], normalizedEvents: [normalizedEvent({ description: "Texto real de Fourvenues" })],
+    }, db);
+
+    expect(mockUpdateEvent).toHaveBeenCalledWith(55, {
+      sourceType: "integration:fourvenues_integrations", sourceId: 1, sourcePublicationStatus: "published",
+      description: "Texto real de Fourvenues",
+    }, db);
   });
 
   it("sin mapping, ≥2 candidatos ambiguos → NO autovincula NI crea duplicado, se omite del sync", async () => {

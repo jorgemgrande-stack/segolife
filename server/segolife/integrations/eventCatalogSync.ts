@@ -17,6 +17,17 @@
  * descripción editorial/imagen propia/SEO/Benefits/SegoTokens/Plan&Play:
  * este sync nunca los toca.
  *
+ * EXCEPCIÓN — descripción vacía (2026-08-23, hallazgo real: "Felisa's been
+ * expecting you", evento 200). El flujo habitual en Fourvenues es crear el
+ * evento con lo mínimo (nombre/fecha/venue) para abrir venta, y escribir el
+ * texto de marketing DESPUÉS — para entonces el sync ya había "cerrado" la
+ * descripción vacía para siempre, sin ningún admin de Segolife haberla
+ * tocado nunca. Se re-sincroniza `description` en un evento ya existente
+ * SOLO si sigue vacía en Segolife (nunca si ya tiene texto propio, sea de
+ * Fourvenues en un sync anterior o escrito a mano) — protege exactamente
+ * igual cualquier edición real, cierra el hueco de "Fourvenues lo escribió
+ * tarde".
+ *
  * FIX-04 — `sourcePublicationStatus` es una EXCEPCIÓN deliberada a "solo
  * fecha/hora se resincroniza": es un campo derivado del origen (Fourvenues
  * `active`/`visible`, ver fourvenuesIntegrationsAdapter.ts), nunca curado
@@ -72,10 +83,22 @@ function slugify(text: string): string {
   return normalizeName(text).replace(/\s+/g, "-").slice(0, 100) || "evento";
 }
 
-/** FIX-05 — lectura mínima previa a updateEvent() para poder reportar el "before" real de un evento ya mapeado; nunca se usa para decidir nada de negocio aquí, solo para que el llamador pueda detectar la transición. */
-async function getCurrentPublicationStatus(eventId: number, conn: DbHandle): Promise<SegolifeEvent["sourcePublicationStatus"]> {
-  const [row] = await conn.select({ sourcePublicationStatus: events.sourcePublicationStatus }).from(events).where(eq(events.id, eventId)).limit(1);
-  return row?.sourcePublicationStatus ?? null;
+/**
+ * FIX-05 — lectura mínima previa a updateEvent() de un evento ya mapeado.
+ * `sourcePublicationStatus` es el "before" real para que el llamador pueda
+ * reportar la transición (nunca se usa para decidir nada de negocio aquí).
+ * `description` (2026-08-23) SÍ se usa para decidir: solo se re-sincroniza
+ * la descripción si sigue vacía en Segolife — ver EXCEPCIÓN en la cabecera
+ * del archivo.
+ */
+async function getEventPreUpdateState(eventId: number, conn: DbHandle): Promise<{ sourcePublicationStatus: SegolifeEvent["sourcePublicationStatus"]; description: string | null }> {
+  const [row] = await conn.select({ sourcePublicationStatus: events.sourcePublicationStatus, description: events.description }).from(events).where(eq(events.id, eventId)).limit(1);
+  return { sourcePublicationStatus: row?.sourcePublicationStatus ?? null, description: row?.description ?? null };
+}
+
+/** true si una descripción está "sin escribir todavía" — vacía o solo espacios, nunca pisa un texto real (de Fourvenues en un sync anterior o escrito a mano). */
+function isDescriptionUnset(description: string | null): boolean {
+  return !description || description.trim() === "";
 }
 
 async function generateUniqueSlug(base: string, conn: DbHandle): Promise<string> {
@@ -217,16 +240,22 @@ export async function syncEventCatalog(input: SyncEventCatalogInput, db?: DbHand
       // FIX-05 — "before" real, leído ANTES de escribir, para poder reportar
       // si sourcePublicationStatus REALMENTE cambió en este sync run
       // (integrationSyncService.ts decide si eso amerita notificar Admin).
-      const before = await getCurrentPublicationStatus(eventId, conn);
+      // 2026-08-23 — misma lectura previa también decide si description
+      // sigue "sin escribir" (ver isDescriptionUnset/EXCEPCIÓN en cabecera).
+      const before = await getEventPreUpdateState(eventId, conn);
       // Field ownership: fecha/hora + sourcePublicationStatus se sincronizan
       // en un evento ya mapeado — updateEvent() decide si eso dispara
       // event_updated (sourcePublicationStatus nunca lo dispara, ver
-      // comentario de cabecera).
-      await updateEvent(eventId, { startsAt: ev.startsAt, endsAt: ev.endsAt ?? null, sourcePublicationStatus: ev.sourcePublicationStatus }, conn);
+      // comentario de cabecera). description SOLO se incluye si Segolife
+      // todavía no tiene ninguna — nunca pisa un texto real.
+      await updateEvent(eventId, {
+        startsAt: ev.startsAt, endsAt: ev.endsAt ?? null, sourcePublicationStatus: ev.sourcePublicationStatus,
+        ...(isDescriptionUnset(before.description) && ev.description ? { description: ev.description } : {}),
+      }, conn);
       outcome = "mapped_existing";
       updatedCount++;
-      if (before !== ev.sourcePublicationStatus) {
-        publicationTransition = { eventId, from: before, to: ev.sourcePublicationStatus, startsAt: ev.startsAt, endsAt: ev.endsAt ?? null };
+      if (before.sourcePublicationStatus !== ev.sourcePublicationStatus) {
+        publicationTransition = { eventId, from: before.sourcePublicationStatus, to: ev.sourcePublicationStatus, startsAt: ev.startsAt, endsAt: ev.endsAt ?? null };
       }
     } else {
       const normalizedName = normalizeName(ev.name);
@@ -247,9 +276,13 @@ export async function syncEventCatalog(input: SyncEventCatalogInput, db?: DbHand
         // (sourceType/sourceId nulos, evento nativo hasta este momento).
         // Sin esto, isEventStudentVisible() nunca podría aplicarle el
         // filtro de publicación de Fourvenues, aunque ya esté vinculado.
+        // 2026-08-23 — description solo se rellena si el candidato nativo
+        // todavía no tenía ninguna (mismo criterio que mapped_existing);
+        // candidates[0] ya trae la fila completa, sin lectura extra.
         await updateEvent(eventId, {
           sourceType: `integration:${input.provider}`, sourceId: input.integrationId,
           sourcePublicationStatus: ev.sourcePublicationStatus,
+          ...(isDescriptionUnset(candidates[0].description) && ev.description ? { description: ev.description } : {}),
         }, conn);
         outcome = "candidate_adopted";
         updatedCount++;
