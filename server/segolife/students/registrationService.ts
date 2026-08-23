@@ -46,6 +46,8 @@ import { emitBenefitGranted, buildBenefitGrantedPayload } from "../benefits/bene
 import { resolveHistoricalIdentityBestEffort } from "./historicalIdentityService";
 import { emitEngagementEvent } from "../engagement/engagementEvents";
 import { attributeReferralInTx, evaluateReferralConversionBestEffort } from "../referrals/referralService";
+import { recordLegalAcceptance } from "../../db/legalAcceptancesDb";
+import { LEGAL_DOCUMENT_VERSIONS } from "../legal/legalVersions";
 
 /**
  * Slug del beneficio de bienvenida (recomendación Student 360 §"Bienvenida
@@ -124,7 +126,8 @@ export type RegistrationErrorCode =
   | "INVALID_PHONE"
   | "EMAIL_EXISTS"
   | "COMMUNITY_NOT_FOUND"
-  | "UNIVERSITY_NOT_FOUND";
+  | "UNIVERSITY_NOT_FOUND"
+  | "TERMS_NOT_ACCEPTED";
 
 export class RegistrationError extends Error {
   code: RegistrationErrorCode;
@@ -164,6 +167,12 @@ export interface RegisterStudentInput {
   universityId: number;
   academicYear?: string;
   marketingConsent: boolean;
+  // SEGOLIFE — FASE LEGAL (spec puntos 17/21/22): checkbox obligatorio,
+  // validado server-side (nunca solo el disabled del botón en el cliente).
+  // true → se registra una aceptación real (legal_acceptances) de "terms" Y
+  // "privacy" en la misma transacción de alta (el checkbox declara haber
+  // leído/aceptado ambos documentos a la vez, ver Register.tsx).
+  acceptTerms: boolean;
   // SEGOLIFE — REFERRAL & INVITE REWARDS ENGINE (Fase 8, spec §5/§18): código
   // opaco resuelto server-side (nunca un referrerUserId directo del
   // cliente, spec §5) + el timestamp del click persistido en el propio
@@ -204,6 +213,9 @@ export async function registerStudent(input: RegisterStudentInput, db?: DbHandle
   }
   if (typeof input.password !== "string" || input.password.length < MIN_PASSWORD_LENGTH) {
     throw new RegistrationError("WEAK_PASSWORD", `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`);
+  }
+  if (input.acceptTerms !== true) {
+    throw new RegistrationError("TERMS_NOT_ACCEPTED", "Debes aceptar las Condiciones de Uso y la Política de Privacidad para crear tu cuenta.");
   }
 
   // Comunidad: nunca confiar en un id/slug del cliente sin validar — se
@@ -289,6 +301,13 @@ export async function registerStudent(input: RegisterStudentInput, db?: DbHandle
       { userId: insertId, category: "promotions", channel: "email", enabled: input.marketingConsent },
       tx
     );
+
+    // FASE LEGAL — evidencia de aceptación (spec punto 22): el checkbox
+    // obligatorio del registro declara haber aceptado las Condiciones de Uso
+    // Y haber leído la Política de Privacidad a la vez, así que ambas quedan
+    // registradas aquí, en la misma transacción de alta.
+    await recordLegalAcceptance({ userId: insertId, documentType: "terms", documentVersion: LEGAL_DOCUMENT_VERSIONS.terms }, tx);
+    await recordLegalAcceptance({ userId: insertId, documentType: "privacy", documentVersion: LEGAL_DOCUMENT_VERSIONS.privacy }, tx);
 
     return insertId;
   });

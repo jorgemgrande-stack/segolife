@@ -393,7 +393,7 @@ export function createLocalAuthRouter(): Router {
    * el mismo signSessionToken/cookie que el login real.
    */
   router.post("/api/auth/register", async (req: Request, res: Response) => {
-    const { firstName, lastName, email, phone, password, communitySlug, universityId, academicYear, marketingConsent, website, referralCode, referralClickedAt } = req.body ?? {};
+    const { firstName, lastName, email, phone, password, communitySlug, universityId, academicYear, marketingConsent, acceptTerms, website, referralCode, referralClickedAt } = req.body ?? {};
 
     // Honeypot anti-bot (spec punto 30): campo oculto que un humano nunca
     // rellena. Presencia de valor → responder OK sin crear nada (no delatar
@@ -425,6 +425,10 @@ export function createLocalAuthRouter(): Router {
         universityId: Number(universityId),
         academicYear: academicYear ? String(academicYear) : undefined,
         marketingConsent: marketingConsent === true,
+        // FASE LEGAL (spec punto 21): nunca confiar en el disabled del botón
+        // del cliente — el servidor exige explícitamente `true`, cualquier
+        // otro valor (missing/false/string) se traduce a `false` aquí.
+        acceptTerms: acceptTerms === true,
         // REFERRAL & INVITE REWARDS ENGINE (Fase 8) — código opcional
         // capturado por el cliente (localStorage) al abrir un enlace de
         // invitación; el timestamp se parsea de forma defensiva (nunca
@@ -457,6 +461,7 @@ export function createLocalAuthRouter(): Router {
           EMAIL_EXISTS: 409,
           COMMUNITY_NOT_FOUND: 400,
           UNIVERSITY_NOT_FOUND: 400,
+          TERMS_NOT_ACCEPTED: 400,
         };
         res.status(status[err.code]).json({ error: err.message, code: err.code });
         return;

@@ -93,6 +93,7 @@ import PoliticaPrivacidad from "./pages/PoliticaPrivacidad";
 import TerminosCondiciones from "./pages/TerminosCondiciones";
 import PoliticaCookies from "./pages/PoliticaCookies";
 import CondicionesCancelacion from "./pages/CondicionesCancelacion";
+import AvisoLegal from "./pages/AvisoLegal";
 
 // ── ADMIN PAGES (lazy — solo se cargan cuando el usuario navega a /admin) ────
 const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard"));
@@ -366,6 +367,7 @@ function Router() {
       <Route path="/supplier/dashboard">{() => <Suspense fallback={<AdminLoadingFallback />}><SupplierDashboard /></Suspense>}</Route>
       <Route path="/supplier">{() => { window.location.replace("/supplier/dashboard"); return null; }}</Route>
       {/* ── LEGAL PAGES ── */}
+      <Route path="/aviso-legal" component={AvisoLegal} />
       <Route path="/privacidad" component={PoliticaPrivacidad} />
       <Route path="/terminos" component={TerminosCondiciones} />
       <Route path="/cookies" component={PoliticaCookies} />

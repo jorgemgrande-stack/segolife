@@ -220,6 +220,9 @@ describe("Register — paso 2 (comunidad)", () => {
     // la universidad para ubicarlo en el sistema", sin fricción innecesaria
     // cuando no hay ambigüedad real).
     expect(body.universityId).toBe(IE_UNIVERSITIES[0].id);
+    // FASE LEGAL: el checkbox obligatorio SÍ debe viajar al servidor — antes
+    // de esta fase solo controlaba el `disabled` del botón y nunca se enviaba.
+    expect(body.acceptTerms).toBe(true);
   });
 
   it("comunidad con varias universidades exige elegir una explícitamente — el envío sigue bloqueado sin auto-selección", async () => {
@@ -241,6 +244,38 @@ describe("Register — paso 2 (comunidad)", () => {
     const combobox = screen.getByRole("combobox", { name: /universidad/i });
     expect(combobox).toHaveTextContent(/selecciona tu universidad/i);
     expect(screen.getByRole("button", { name: /crear mi cuenta/i })).toBeDisabled();
+  });
+});
+
+describe("Register — checkbox legal obligatorio (FASE LEGAL)", () => {
+  it("rechazo defensivo del servidor (TERMS_NOT_ACCEPTED) muestra el mensaje amigable — nunca confía solo en el disabled del cliente", async () => {
+    (global.fetch as any).mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: "Debes aceptar las Condiciones de Uso y la Política de Privacidad para crear tu cuenta.", code: "TERMS_NOT_ACCEPTED" }),
+    });
+    const user = userEvent.setup();
+    render(<Register />);
+    await fillStep1(user);
+    await user.click(await screen.findByText("IE University"));
+    await user.click(document.getElementById("acceptTerms")!);
+    await user.click(await screen.findByRole("button", { name: /crear mi cuenta/i }));
+
+    expect(await screen.findByText(/debes aceptar las condiciones de uso/i)).toBeInTheDocument();
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("los enlaces de Condiciones de Uso y Política de Privacidad apuntan a las páginas legales reales y se abren en pestaña nueva", async () => {
+    const user = userEvent.setup();
+    render(<Register />);
+    await fillStep1(user);
+    await user.click(await screen.findByText("IE University"));
+
+    const privacyLink = screen.getByRole("link", { name: /política de privacidad/i });
+    const termsLink = screen.getByRole("link", { name: /condiciones de uso/i });
+    expect(privacyLink).toHaveAttribute("href", "/privacidad");
+    expect(privacyLink).toHaveAttribute("target", "_blank");
+    expect(termsLink).toHaveAttribute("href", "/terminos");
+    expect(termsLink).toHaveAttribute("target", "_blank");
   });
 });
 

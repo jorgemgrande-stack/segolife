@@ -42,6 +42,23 @@ const SEGOLIFE_SINGLE_FILES = [
   // SetPassword: pantalla de activación de cuenta genérica para cualquier
   // rol invitado, incluidos futuros roles Segolife — mismo criterio.
   join(__dirname, "..", "pages", "SetPassword.tsx"),
+  // FASE LEGAL (2026-08-23): estas 4 páginas legales públicas se reescribieron
+  // por completo esta fase precisamente porque tenían contenido heredado de
+  // Náyade (actividades acuáticas, Hotel Náyade, SPA, restaurantes, e incluso
+  // una referencia literal a "www.skicenter.es" en TerminosCondiciones.tsx —
+  // el bug real que motivó añadirlas aquí). No estaban cubiertas por este
+  // guard antes (pages/ raíz queda fuera salvo excepción explícita) — se
+  // añaden para que una regresión futura del mismo tipo falle en CI.
+  // PoliticaCookies.tsx queda deliberadamente FUERA: su tabla de cookies
+  // reales incluye a propósito los nombres técnicos literales
+  // "nayade_session"/"nayade_cart_v1"/etc. (el prefijo real heredado de las
+  // cookies/localStorage de este código, ver auditoría de esta fase) — eso
+  // es transparencia real exigida por la propia Política de Cookies, no
+  // branding filtrado, y el patrón genérico no puede distinguir ambos casos.
+  join(__dirname, "..", "pages", "AvisoLegal.tsx"),
+  join(__dirname, "..", "pages", "TerminosCondiciones.tsx"),
+  join(__dirname, "..", "pages", "PoliticaPrivacidad.tsx"),
+  join(__dirname, "..", "pages", "CondicionesCancelacion.tsx"),
 ];
 
 // AdminLayout.tsx y AdminDashboard.tsx son compartidos con secciones admin

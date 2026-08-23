@@ -90,10 +90,12 @@
       "login": "Iniciar sesión",
       "rights": "Todos los derechos reservados.",
       "legal": "Legal",
+      "legalNotice": "Aviso legal",
       "terms": "Términos y condiciones",
       "privacy": "Política de privacidad",
       "cookies": "Política de cookies",
-      "cancellation": "Condiciones de cancelación"
+      "cancellation": "Devoluciones y reembolsos",
+      "cookiePreferences": "Configuración de cookies"
     }
   },
   "communityHome": {
@@ -898,6 +900,7 @@
       "EMAIL_EXISTS": "Ya existe una cuenta con este email.",
       "COMMUNITY_NOT_FOUND": "La comunidad seleccionada no está disponible.",
       "UNIVERSITY_NOT_FOUND": "Selecciona tu universidad para continuar.",
+      "TERMS_NOT_ACCEPTED": "Debes aceptar las Condiciones de Uso y la Política de Privacidad para crear tu cuenta.",
       "RATE_LIMITED": "Demasiados intentos. Espera un minuto antes de volver a intentarlo.",
       "GENERIC": "No se ha podido completar el registro. Inténtalo de nuevo.",
       "NETWORK": "Error de conexión. Comprueba que el servidor está en marcha.",

@@ -63,6 +63,27 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
+// SEGOLIFE — FASE LEGAL (2026-08-23): trazabilidad de aceptación de
+// documentos legales. Nunca un simple `acceptedTerms=true` — cada fila
+// registra QUÉ documento y QUÉ VERSIÓN exacta aceptó el usuario y CUÁNDO,
+// para poder demostrarlo si hace falta (ver client/src/lib/legalIdentity.ts,
+// LEGAL_DOCUMENT_VERSIONS). Múltiples filas por usuario/documento son
+// válidas (p. ej. reaceptación de una versión nueva) — el estado vigente es
+// la fila más reciente por (userId, documentType), nunca se sobrescribe ni
+// se borra una aceptación histórica.
+export const legalAcceptances = mysqlTable("legal_acceptances", {
+  id:               int("id").autoincrement().primaryKey(),
+  userId:           int("user_id").notNull(),
+  documentType:     varchar("document_type", { length: 64 }).notNull(), // "terms" | "privacy" (ver LEGAL_DOCUMENT_VERSIONS)
+  documentVersion:  varchar("document_version", { length: 64 }).notNull(),
+  acceptedAt:       timestamp("accepted_at").defaultNow().notNull(),
+}, (table) => ({
+  userIdx: index("legal_acceptances_user_id_idx").on(table.userId),
+  userDocIdx: index("legal_acceptances_user_doc_idx").on(table.userId, table.documentType),
+}));
+export type LegalAcceptance = typeof legalAcceptances.$inferSelect;
+export type InsertLegalAcceptance = typeof legalAcceptances.$inferInsert;
+
 // ─── CMS: SITE SETTINGS ──────────────────────────────────────────────────────
 
 export const siteSettings = mysqlTable("site_settings", {

@@ -36,7 +36,7 @@ type University = { id: number; name: string; slug: string };
 
 type ErrorCode =
   | "INVALID_INPUT" | "INVALID_EMAIL" | "WEAK_PASSWORD" | "INVALID_PHONE" | "PASSWORD_MISMATCH"
-  | "EMAIL_EXISTS" | "COMMUNITY_NOT_FOUND" | "UNIVERSITY_NOT_FOUND" | "RATE_LIMIT_EXCEEDED" | "GENERIC" | "NETWORK";
+  | "EMAIL_EXISTS" | "COMMUNITY_NOT_FOUND" | "UNIVERSITY_NOT_FOUND" | "TERMS_NOT_ACCEPTED" | "RATE_LIMIT_EXCEEDED" | "GENERIC" | "NETWORK";
 
 function mapErrorCode(code: string | undefined): string {
   switch (code) {
@@ -47,6 +47,7 @@ function mapErrorCode(code: string | undefined): string {
     case "EMAIL_EXISTS": return "register.errors.EMAIL_EXISTS";
     case "COMMUNITY_NOT_FOUND": return "register.errors.COMMUNITY_NOT_FOUND";
     case "UNIVERSITY_NOT_FOUND": return "register.errors.UNIVERSITY_NOT_FOUND";
+    case "TERMS_NOT_ACCEPTED": return "register.errors.TERMS_NOT_ACCEPTED";
     case "RATE_LIMIT_EXCEEDED": return "register.errors.RATE_LIMITED";
     default: return "register.errors.GENERIC";
   }
@@ -186,7 +187,7 @@ export default function Register() {
       return;
     }
     if (!acceptTerms) {
-      setError({ messageKey: "register.errors.INVALID_INPUT" });
+      setError({ code: "TERMS_NOT_ACCEPTED", messageKey: "register.errors.TERMS_NOT_ACCEPTED" });
       return;
     }
 
@@ -212,6 +213,7 @@ export default function Register() {
           universityId,
           academicYear: academicYear.trim() || undefined,
           marketingConsent,
+          acceptTerms,
           website,
           referralCode: referralAttribution?.code,
           referralClickedAt: referralAttribution?.clickedAt,

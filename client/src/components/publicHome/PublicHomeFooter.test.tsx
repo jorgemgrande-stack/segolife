@@ -86,17 +86,34 @@ describe("PublicHomeFooter — lista de comunidades dinámica, nunca hardcodeada
  * solo faltaba enlazarlas.
  */
 describe("PublicHomeFooter — enlaces legales (PRE-16.17, hallazgo QA)", () => {
-  it("enlaza las 4 páginas legales reales, con sus rutas reales", () => {
+  it("enlaza las 5 páginas legales reales, con sus rutas reales", () => {
     render(<PublicHomeFooter />);
+    expect(screen.getByRole("link", { name: "Aviso legal" })).toHaveAttribute("href", "/aviso-legal");
     expect(screen.getByRole("link", { name: "Términos y condiciones" })).toHaveAttribute("href", "/terminos");
     expect(screen.getByRole("link", { name: "Política de privacidad" })).toHaveAttribute("href", "/privacidad");
     expect(screen.getByRole("link", { name: "Política de cookies" })).toHaveAttribute("href", "/cookies");
-    expect(screen.getByRole("link", { name: "Condiciones de cancelación" })).toHaveAttribute("href", "/condiciones-cancelacion");
+    expect(screen.getByRole("link", { name: "Devoluciones y reembolsos" })).toHaveAttribute("href", "/condiciones-cancelacion");
   });
 
   it("los enlaces legales aparecen incluso sin comunidades activas cargadas todavía", () => {
     mockCommunitiesList.mockReturnValue({ data: undefined });
     render(<PublicHomeFooter />);
     expect(screen.getByRole("link", { name: "Términos y condiciones" })).toBeInTheDocument();
+  });
+});
+
+/**
+ * FASE LEGAL (2026-08-23) — spec punto 12: la elección de cookies debe poder
+ * cambiarse después, no solo en la primera visita. Este botón dispara el
+ * evento que CookieBanner.tsx escucha para reabrirse en modo configuración.
+ */
+describe("PublicHomeFooter — reabrir preferencias de cookies (FASE LEGAL)", () => {
+  it("el botón 'Configuración de cookies' despacha el evento que reabre el banner", () => {
+    const handler = vi.fn();
+    window.addEventListener("segolife:open-cookie-preferences", handler);
+    render(<PublicHomeFooter />);
+    screen.getByRole("button", { name: "Configuración de cookies" }).click();
+    expect(handler).toHaveBeenCalledTimes(1);
+    window.removeEventListener("segolife:open-cookie-preferences", handler);
   });
 });

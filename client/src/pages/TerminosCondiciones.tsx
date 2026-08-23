@@ -1,189 +1,58 @@
 import { Link } from "wouter";
+import { useTranslation } from "react-i18next";
 import { ChevronRight, FileText } from "lucide-react";
 import { PublicHomeNav } from "@/components/publicHome/PublicHomeNav";
 import { PublicHomeFooter } from "@/components/publicHome/PublicHomeFooter";
+import { LegalSection, InfoTable, LegalToc, PendingNote, type LegalSectionData } from "@/components/legal/LegalPageBlocks";
+import { LEGAL_ENTITY, LEGAL_LAST_UPDATED, LEGAL_LAST_UPDATED_EN } from "@/lib/legalIdentity";
 
-// PRE-16.16 (§62, P0): esta página está enlazada directamente desde el
-// checkbox de consentimiento obligatorio de Register.tsx — todo Student
-// real que se registra puede llegar aquí. Seguía usando PublicLayout (nav
-// Náyade con logo/cart/WhatsApp), pese a que su identidad legal ya se
-// corrigió en PRE-16.15. Mismo patrón ya aplicado a /privacidad y /cookies
-// (ver PoliticaPrivacidad.tsx) — nunca un tercer sistema de diseño nuevo.
+/**
+ * Términos y Condiciones de Uso — SEGOLIFE / HAYQUE CAPITAL, S.L. (FASE
+ * LEGAL, 2026-08-23). REESCRITURA COMPLETA: el contenido anterior era
+ * boilerplate heredado de Náyade Experiences (actividades acuáticas, Hotel
+ * Náyade, SPA, restaurantes, e incluso una referencia literal a
+ * "www.skicenter.es" — bug real de cruce de proyectos encontrado en la
+ * auditoría de esta fase). Es el documento que enlaza el checkbox
+ * obligatorio de Register.tsx — spec punto 17: ya existía como página real
+ * y ya estaba enlazada correctamente desde el registro, así que no hizo
+ * falta crear una "Condiciones de Uso" nueva, solo corregir su contenido.
+ */
 export default function TerminosCondiciones() {
+  const { i18n } = useTranslation();
+  const isEn = i18n.language === "en";
+  const sections = getSections(isEn);
+
   return (
     <div className="segolife-theme flex min-h-screen flex-col bg-background">
       <PublicHomeNav variant="solid" />
-      {/* Hero */}
       <section className="bg-[oklch(0.14_0.03_240)] py-16">
         <div className="container">
           <div className="flex items-center gap-2 text-white/50 text-sm mb-4">
-            <Link href="/" className="hover:text-amber-400 transition-colors">Inicio</Link>
+            <Link href="/" className="hover:text-primary transition-colors">{isEn ? "Home" : "Inicio"}</Link>
             <ChevronRight className="w-3.5 h-3.5" />
-            <span className="text-white/80">Términos y Condiciones</span>
+            <span className="text-white/80">{isEn ? "Terms and Conditions" : "Términos y Condiciones"}</span>
           </div>
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-accent/20 flex items-center justify-center">
               <FileText className="w-6 h-6 text-accent" />
             </div>
             <div>
-              <h1 className="text-3xl md:text-4xl font-display font-bold text-white">Términos y Condiciones</h1>
-              <p className="text-white/55 text-sm mt-1">Última actualización: marzo 2026</p>
+              <h1 className="text-3xl md:text-4xl font-display font-bold text-white">{isEn ? "Terms and Conditions of Use" : "Términos y Condiciones de Uso"}</h1>
+              <p className="text-white/55 text-sm mt-1">{isEn ? `Last updated: ${LEGAL_LAST_UPDATED_EN}` : `Última actualización: ${LEGAL_LAST_UPDATED}`}</p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Content */}
       <section className="bg-[oklch(0.11_0.02_240)] py-16">
         <div className="container max-w-4xl">
           <div className="prose prose-invert prose-lg max-w-none space-y-10">
-
-            <LegalSection number="1" title="Identificación del titular">
-              <p>
-                En cumplimiento de la Ley 34/2002, de 11 de julio, de Servicios de la Sociedad de la Información y
-                Comercio Electrónico (LSSI-CE), se informa que el presente sitio web es titularidad de:
-              </p>
-              <InfoTable rows={[
-                ["Denominación social", "HAYQUE CAPITAL, S.L."],
-                ["CIF", "B13989264"],
-                ["Domicilio", "Finca Lindaraja, s/n · 40420 Segovia, España"],
-                ["Sitio web", "www.segolife.es"],
-              ]} />
-            </LegalSection>
-
-            <LegalSection number="2" title="Objeto y ámbito de aplicación">
-              <p>
-                Las presentes Condiciones Generales regulan el acceso y uso del sitio web <strong>www.skicenter.es</strong>,
-                así como la contratación de los servicios ofrecidos por HAYQUE CAPITAL, S.L.: actividades acuáticas y de aventura,
-                packs de experiencias, alojamiento en Hotel Náyade, servicios de SPA y reservas en restaurantes.
-              </p>
-              <p>
-                El acceso al sitio web implica la aceptación plena y sin reservas de las presentes condiciones. Si el usuario
-                no está de acuerdo con alguna de ellas, deberá abstenerse de utilizar el sitio web y sus servicios.
-              </p>
-            </LegalSection>
-
-            <LegalSection number="3" title="Contratación de servicios">
-              <p>
-                La contratación de cualquier servicio a través del sitio web se formaliza mediante los siguientes pasos:
-              </p>
-              <ol className="list-decimal pl-5 space-y-2">
-                <li>Selección del servicio o pack deseado y configuración de opciones (fecha, número de personas, extras).</li>
-                <li>Revisión del resumen del pedido y precio total.</li>
-                <li>Cumplimentación de los datos personales del titular de la reserva.</li>
-                <li>Pago seguro mediante la pasarela Redsys (tarjeta de crédito/débito).</li>
-                <li>Recepción de confirmación por correo electrónico con el localizador de reserva.</li>
-              </ol>
-              <p>
-                El contrato se perfecciona en el momento en que HAYQUE CAPITAL, S.L. confirma la reserva mediante correo
-                electrónico. Hasta ese momento, la reserva tendrá carácter provisional.
-              </p>
-            </LegalSection>
-
-            <LegalSection number="4" title="Precios y forma de pago">
-              <p>
-                Todos los precios publicados en el sitio web incluyen el IVA vigente y están expresados en euros (€).
-                HAYQUE CAPITAL, S.L. se reserva el derecho a modificar los precios en cualquier momento, si bien los cambios
-                no afectarán a las reservas ya confirmadas.
-              </p>
-              <p>
-                El pago se realiza íntegramente en el momento de la reserva a través de la pasarela de pago segura Redsys.
-                HAYQUE CAPITAL, S.L. no almacena datos de tarjetas bancarias; toda la información de pago es gestionada
-                directamente por la entidad bancaria.
-              </p>
-            </LegalSection>
-
-            <LegalSection number="5" title="Política de cancelación y anulaciones">
-              <p>
-                Las condiciones de cancelación varían según el tipo de servicio contratado:
-              </p>
-              <InfoTable rows={[
-                ["Actividades acuáticas y packs", "Cancelación gratuita hasta 72 h antes de la actividad. Cancelaciones posteriores: sin reembolso."],
-                ["Hotel Náyade", "Cancelación gratuita hasta 48 h antes del check-in. Cancelaciones posteriores: cargo de 1 noche."],
-                ["SPA & Wellness", "Cancelación gratuita hasta 24 h antes del tratamiento. Cancelaciones posteriores: sin reembolso."],
-                ["Restaurantes", "Cancelación gratuita hasta 24 h antes de la reserva. Cancelaciones posteriores: sin reembolso."],
-              ]} />
-              <p>
-                Para solicitar una cancelación, el usuario deberá utilizar el formulario disponible en{" "}
-                <Link href="/solicitar-anulacion">
-                  <span className="text-accent hover:underline cursor-pointer">Solicitar Anulación</span>
-                </Link>{" "}
-                o contactar directamente con nuestro equipo indicando el localizador de reserva.
-              </p>
-              <p>
-                En caso de cancelación por causas de fuerza mayor debidamente acreditadas (enfermedad grave, fallecimiento
-                de familiar directo, catástrofe natural), HAYQUE CAPITAL, S.L. estudiará cada caso de forma individualizada
-                y podrá ofrecer un bono compensatorio o la devolución total del importe.
-              </p>
-            </LegalSection>
-
-            <LegalSection number="6" title="Condiciones meteorológicas">
-              <p>
-                Las actividades acuáticas y al aire libre están sujetas a condiciones meteorológicas. En caso de que
-                HAYQUE CAPITAL, S.L. cancele una actividad por causas meteorológicas o de seguridad, el cliente tendrá
-                derecho a:
-              </p>
-              <ul>
-                <li>Reprogramar la actividad en otra fecha disponible sin coste adicional.</li>
-                <li>Recibir un bono por el importe íntegro, válido durante la temporada en curso.</li>
-                <li>Solicitar el reembolso total del importe abonado.</li>
-              </ul>
-            </LegalSection>
-
-            <LegalSection number="7" title="Responsabilidad y seguridad">
-              <p>
-                La participación en actividades acuáticas y de aventura implica riesgos inherentes. HAYQUE CAPITAL, S.L.
-                dispone de los seguros de responsabilidad civil y accidentes exigidos por la normativa vigente, y cuenta
-                con personal cualificado y titulado para la dirección de todas las actividades.
-              </p>
-              <p>
-                El participante declara estar en condiciones físicas adecuadas para la práctica de la actividad
-                contratada y asume la responsabilidad de comunicar cualquier condición médica relevante antes del inicio
-                de la actividad. HAYQUE CAPITAL, S.L. podrá denegar la participación a cualquier persona que, a juicio del
-                monitor responsable, no reúna las condiciones de seguridad necesarias.
-              </p>
-            </LegalSection>
-
-            <LegalSection number="8" title="Menores de edad">
-              <p>
-                Los menores de 18 años deberán contar con la autorización expresa de sus padres o tutores legales para
-                participar en las actividades. Para menores de 14 años, será imprescindible la presencia de un adulto
-                responsable durante la actividad. Las edades mínimas específicas de cada actividad se indican en la
-                ficha del producto.
-              </p>
-            </LegalSection>
-
-            <LegalSection number="9" title="Propiedad intelectual">
-              <p>
-                Todos los contenidos del sitio web (textos, imágenes, logotipos, diseños, código fuente) son propiedad
-                de HAYQUE CAPITAL, S.L. o de sus proveedores de contenido, y están protegidos por la legislación española
-                e internacional sobre propiedad intelectual e industrial. Queda prohibida su reproducción, distribución,
-                comunicación pública o transformación sin autorización expresa y por escrito.
-              </p>
-            </LegalSection>
-
-            <LegalSection number="10" title="Legislación aplicable y jurisdicción">
-              <p>
-                Las presentes condiciones se rigen por la legislación española. Para la resolución de cualquier
-                controversia derivada del uso del sitio web o de la contratación de servicios, las partes se someten
-                a los Juzgados y Tribunales de Segovia, con renuncia expresa a cualquier otro fuero que pudiera
-                corresponderles.
-              </p>
-              <p>
-                En caso de conflicto con consumidores y usuarios, se estará a lo dispuesto en el Real Decreto
-                Legislativo 1/2007 (TRLGDCU) y demás normativa de protección al consumidor aplicable.
-              </p>
-            </LegalSection>
-
-            <LegalSection number="11" title="Contacto">
-              <p>
-                Para cualquier consulta relacionada con las presentes condiciones, puede contactar con nosotros en:
-              </p>
-              <InfoTable rows={[
-                ["Horario de atención", "Lun–Dom · 10:00–20:00 (Temporada Abril–Octubre)"],
-              ]} />
-            </LegalSection>
-
+            <LegalToc sections={sections} label={isEn ? "Contents" : "Índice"} />
+            {sections.map((s) => (
+              <LegalSection key={s.number} number={s.number} title={s.title}>
+                {s.content}
+              </LegalSection>
+            ))}
           </div>
         </div>
       </section>
@@ -192,31 +61,234 @@ export default function TerminosCondiciones() {
   );
 }
 
-function LegalSection({ number, title, children }: { number: string; title: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <h2 className="text-xl font-display font-bold text-white mb-4 flex items-center gap-3">
-        <span className="w-8 h-8 rounded-lg bg-accent/20 text-accent text-sm font-bold flex items-center justify-center flex-shrink-0">
-          {number}
-        </span>
-        {title}
-      </h2>
-      <div className="text-white/70 leading-relaxed space-y-3 pl-11">
-        {children}
-      </div>
-    </div>
-  );
-}
+function getSections(isEn: boolean): LegalSectionData[] {
+  if (isEn) {
+    return [
+      {
+        number: "1", title: "Site owner",
+        content: (
+          <InfoTable rows={[
+            ["Company name", LEGAL_ENTITY.name],
+            ["Tax ID (CIF)", LEGAL_ENTITY.cif],
+            ["Registered address", LEGAL_ENTITY.address],
+            ["Website", LEGAL_ENTITY.website],
+          ]} />
+        ),
+      },
+      {
+        number: "2", title: "Purpose and scope",
+        content: (
+          <>
+            <p>These Terms and Conditions govern the use of SEGOLIFE, the university-life platform available at {LEGAL_ENTITY.website}, operated by {LEGAL_ENTITY.name}. SEGOLIFE gives access to: Community (student proposals, comments, and likes), an events agenda with access to tickets, a loyalty programme (SegoTokens) and a Benefits catalogue, and a referral programme.</p>
+            <p>Creating an account implies acceptance of these Terms. If you do not agree with any part of them, please refrain from registering or using the account-only features of SEGOLIFE.</p>
+          </>
+        ),
+      },
+      {
+        number: "3", title: "Registration and account",
+        content: (
+          <>
+            <p>To create an account, you provide: first and last name, email, phone number, a password, your community (e.g. IE University, UVa Segovia), your university, and — optionally — your academic year. Registration requires accepting these Terms and confirming you have read the Privacy Policy via a mandatory, non-preselected checkbox; separately, you may opt in to receive promotional communications via an independent, optional checkbox.</p>
+            <p>Each account is personal, tied to one real person, and non-transferable. You are responsible for the accuracy of the information you provide and for keeping your password confidential.</p>
+          </>
+        ),
+      },
+      {
+        number: "4", title: "Minimum age",
+        content: (
+          <p><PendingNote>Pending business decision — not defined yet, and this document will not invent a rule that doesn't exist in the product today.</PendingNote> SEGOLIFE is designed for university students; the platform does not currently enforce a minimum-age check at registration.</p>
+        ),
+      },
+      {
+        number: "5", title: "Acceptable use",
+        content: (
+          <ul>
+            <li>Use SEGOLIFE lawfully and in good faith.</li>
+            <li>Never attempt to access another user's account or circumvent the platform's security.</li>
+            <li>Never use automated tools to scrape, spam, or abuse the service.</li>
+          </ul>
+        ),
+      },
+      {
+        number: "6", title: "Community: rules of conduct",
+        content: (
+          <p>
+            Posting proposals, comments, or reactions in Community, or liking/commenting on an Event, must never include unlawful, defamatory, threatening, harassing, or hateful content, spam, impersonation, or content that infringes third-party rights. SEGOLIFE may hide or remove content that breaches these rules — see the <Link href="/aviso-legal"><span className="text-accent hover:underline cursor-pointer">Legal Notice</span></Link> for the full list.
+          </p>
+        ),
+      },
+      {
+        number: "7", title: "Events and ticket purchases",
+        content: (
+          <>
+            <p>SEGOLIFE's events agenda includes events managed through external ticketing operators (currently Weezevent and/or Fourvenues, depending on the event). For those, clicking "Buy tickets" takes you to the operator's own checkout — the purchase, the payment, and the resulting contract are between you and that operator, not with {LEGAL_ENTITY.name}.</p>
+            <p>SEGOLIFE does not currently operate an active payment gateway for native ticket sales — any native purchase today is either free or fully paid with SegoTokens. If native paid ticketing is activated in the future, it will be governed by these Terms and by the <Link href="/condiciones-cancelacion"><span className="text-accent hover:underline cursor-pointer">Refunds and Returns Policy</span></Link>, updated accordingly.</p>
+          </>
+        ),
+      },
+      {
+        number: "8", title: "SegoTokens and Benefits",
+        content: (
+          <p>
+            SegoTokens are SEGOLIFE's internal loyalty currency. They are earned through activity on the platform (ticket purchases, event attendance, referrals, and similar actions defined by the programme's active rules) and can be spent in the Benefits catalogue. SegoTokens cannot be purchased with money and cannot be redeemed for money — they have no value outside SEGOLIFE and are governed by the rules in force at the time they are earned or spent, which may change.
+          </p>
+        ),
+      },
+      {
+        number: "9", title: "Referral programme",
+        content: <p>Inviting other students may grant SegoTokens rewards to both the inviter and the invitee, under the terms of the referral campaign active at the time.</p>,
+      },
+      {
+        number: "10", title: "Communications",
+        content: (
+          <p>
+            SEGOLIFE always sends transactional communications needed to operate your account (confirmations, security, password reset) regardless of your preferences. Promotional communications are only sent if you opted in, and you can withdraw that consent at any time from your notification preferences.
+          </p>
+        ),
+      },
+      {
+        number: "11", title: "Intellectual property",
+        content: <p>All SEGOLIFE content that is not user-generated is the property of {LEGAL_ENTITY.name} or its licensors — see the <Link href="/aviso-legal"><span className="text-accent hover:underline cursor-pointer">Legal Notice</span></Link> for details.</p>,
+      },
+      {
+        number: "12", title: "Account suspension and closure",
+        content: (
+          <p>
+            {LEGAL_ENTITY.name} may suspend or close an account that seriously or repeatedly breaches these Terms, proportionately to the breach. You may request closure of your account at any time by contacting <a href={`mailto:${LEGAL_ENTITY.contactEmail}`} className="text-accent hover:underline">{LEGAL_ENTITY.contactEmail}</a>.
+          </p>
+        ),
+      },
+      {
+        number: "13", title: "Changes to these Terms",
+        content: <p>{LEGAL_ENTITY.name} may update these Terms to reflect legal or product changes. The version and last-updated date are always shown at the top of this document; material changes will be communicated to registered users.</p>,
+      },
+      {
+        number: "14", title: "Applicable law and jurisdiction",
+        content: (
+          <>
+            <p>These Terms are governed by Spanish law. Any dispute will be submitted to the Courts of Segovia, Spain, except where mandatory consumer-protection law grants a different forum.</p>
+            <p>Consumer disputes are additionally subject to Royal Legislative Decree 1/2007 (TRLGDCU) and applicable consumer-protection regulations.</p>
+          </>
+        ),
+      },
+      {
+        number: "15", title: "Contact",
+        content: <InfoTable rows={[["Support email", <a key="e" href={`mailto:${LEGAL_ENTITY.contactEmail}`} className="text-accent hover:underline">{LEGAL_ENTITY.contactEmail}</a>]]} />,
+      },
+    ];
+  }
 
-function InfoTable({ rows }: { rows: [string, string][] }) {
-  return (
-    <div className="mt-4 rounded-xl border border-white/10 overflow-hidden">
-      {rows.map(([label, value], i) => (
-        <div key={i} className={`flex gap-4 px-5 py-3 ${i % 2 === 0 ? "bg-white/5" : "bg-transparent"}`}>
-          <span className="text-white/50 text-sm font-medium w-48 flex-shrink-0">{label}</span>
-          <span className="text-white/80 text-sm">{value}</span>
-        </div>
-      ))}
-    </div>
-  );
+  return [
+    {
+      number: "1", title: "Titular del sitio",
+      content: (
+        <InfoTable rows={[
+          ["Denominación social", LEGAL_ENTITY.name],
+          ["CIF", LEGAL_ENTITY.cif],
+          ["Domicilio", LEGAL_ENTITY.address],
+          ["Sitio web", LEGAL_ENTITY.website],
+        ]} />
+      ),
+    },
+    {
+      number: "2", title: "Objeto y ámbito de aplicación",
+      content: (
+        <>
+          <p>Las presentes Condiciones regulan el uso de SEGOLIFE, la plataforma de vida universitaria disponible en {LEGAL_ENTITY.website}, operada por {LEGAL_ENTITY.name}. SEGOLIFE da acceso a: Community (propuestas, comentarios y likes de estudiantes), una agenda de eventos con acceso a entradas, un programa de fidelización (SegoTokens) y un catálogo de Beneficios, y un programa de referidos.</p>
+          <p>Crear una cuenta implica la aceptación de estas Condiciones. Si no está de acuerdo con alguna de ellas, absténgase de registrarse o de usar las funciones de SEGOLIFE que requieren cuenta.</p>
+        </>
+      ),
+    },
+    {
+      number: "3", title: "Registro y cuenta de usuario",
+      content: (
+        <>
+          <p>Para crear una cuenta se facilitan: nombre y apellidos, email, teléfono, una contraseña, su comunidad (p. ej. IE University, UVa Segovia), su universidad y, opcionalmente, su año académico. El registro exige aceptar estas Condiciones y declarar haber leído la Política de Privacidad mediante una casilla obligatoria y no premarcada; de forma independiente, puede marcar otra casilla opcional para recibir comunicaciones promocionales.</p>
+          <p>Cada cuenta es personal, vinculada a una persona real, e intransferible. El usuario es responsable de la veracidad de los datos facilitados y de la custodia de su contraseña.</p>
+        </>
+      ),
+    },
+    {
+      number: "4", title: "Edad mínima",
+      content: (
+        <p><PendingNote>Pendiente de decisión de negocio — todavía no está definida, y este documento no va a inventar una regla que hoy no existe en el producto.</PendingNote> SEGOLIFE está pensado para estudiantes universitarios; la plataforma no aplica hoy ninguna comprobación de edad mínima en el registro.</p>
+      ),
+    },
+    {
+      number: "5", title: "Uso aceptable",
+      content: (
+        <ul>
+          <li>Usar SEGOLIFE de forma lícita y de buena fe.</li>
+          <li>No intentar acceder a la cuenta de otro usuario ni eludir la seguridad de la plataforma.</li>
+          <li>No usar herramientas automatizadas para extraer datos, hacer spam o abusar del servicio.</li>
+        </ul>
+      ),
+    },
+    {
+      number: "6", title: "Community: normas de conducta",
+      content: (
+        <p>
+          Al publicar propuestas, comentarios o reacciones en Community, o al dar like/comentar en un evento, nunca se debe incluir contenido ilícito, difamatorio, amenazante, de acoso u odio, spam, suplantación, ni contenido que vulnere derechos de terceros. SEGOLIFE puede ocultar o eliminar contenido que incumpla estas normas — ver el <Link href="/aviso-legal"><span className="text-accent hover:underline cursor-pointer">Aviso Legal</span></Link> para el listado completo.
+        </p>
+      ),
+    },
+    {
+      number: "7", title: "Events y compra de entradas",
+      content: (
+        <>
+          <p>La agenda de eventos de SEGOLIFE incluye eventos gestionados a través de operadores externos de ticketing (actualmente Weezevent y/o Fourvenues, según el evento). Para esos, pulsar "Comprar entradas" lleva al checkout propio del operador — la compra, el pago y el contrato resultante son entre el usuario y ese operador, no con {LEGAL_ENTITY.name}.</p>
+          <p>SEGOLIFE no dispone hoy de una pasarela de pago activa para venta nativa de entradas — cualquier compra nativa actual es gratuita o se paga íntegramente con SegoTokens. Si en el futuro se activa la venta nativa de pago, se regirá por estas Condiciones y por la <Link href="/condiciones-cancelacion"><span className="text-accent hover:underline cursor-pointer">Política de Devolución y Reembolso</span></Link>, actualizada en consecuencia.</p>
+        </>
+      ),
+    },
+    {
+      number: "8", title: "SegoTokens y Beneficios",
+      content: (
+        <p>
+          SegoTokens es la moneda interna de fidelización de SEGOLIFE. Se obtienen mediante actividad en la plataforma (compra de entradas, asistencia a eventos, referidos y acciones similares definidas por las reglas vigentes del programa) y pueden gastarse en el catálogo de Beneficios. Los SegoTokens no pueden comprarse con dinero ni canjearse por dinero — no tienen valor fuera de SEGOLIFE y se rigen por las reglas vigentes en el momento en que se obtienen o se gastan, que pueden cambiar.
+        </p>
+      ),
+    },
+    {
+      number: "9", title: "Programa de referidos",
+      content: <p>Invitar a otros estudiantes puede generar recompensas en SegoTokens tanto para quien invita como para quien es invitado, según las condiciones de la campaña de referidos vigente en cada momento.</p>,
+    },
+    {
+      number: "10", title: "Comunicaciones",
+      content: (
+        <p>
+          SEGOLIFE siempre envía las comunicaciones transaccionales necesarias para el funcionamiento de la cuenta (confirmaciones, seguridad, recuperación de contraseña) con independencia de las preferencias del usuario. Las comunicaciones promocionales solo se envían si el usuario las ha aceptado expresamente, y puede retirar ese consentimiento en cualquier momento desde sus preferencias de notificaciones.
+        </p>
+      ),
+    },
+    {
+      number: "11", title: "Propiedad intelectual",
+      content: <p>Todo el contenido de SEGOLIFE que no sea contenido generado por usuarios es propiedad de {LEGAL_ENTITY.name} o de sus licenciantes — ver el <Link href="/aviso-legal"><span className="text-accent hover:underline cursor-pointer">Aviso Legal</span></Link> para el detalle.</p>,
+    },
+    {
+      number: "12", title: "Suspensión y baja de cuenta",
+      content: (
+        <p>
+          {LEGAL_ENTITY.name} puede suspender o dar de baja una cuenta que incumpla estas Condiciones de forma grave o reiterada, de manera proporcionada al incumplimiento. El usuario puede solicitar la baja de su cuenta en cualquier momento escribiendo a <a href={`mailto:${LEGAL_ENTITY.contactEmail}`} className="text-accent hover:underline">{LEGAL_ENTITY.contactEmail}</a>.
+        </p>
+      ),
+    },
+    {
+      number: "13", title: "Modificación de las condiciones",
+      content: <p>{LEGAL_ENTITY.name} podrá actualizar estas Condiciones para adaptarlas a cambios legislativos o del producto. La versión y la fecha de última actualización figuran siempre en el encabezado de este documento; los cambios relevantes se comunicarán a los usuarios registrados.</p>,
+    },
+    {
+      number: "14", title: "Legislación aplicable y jurisdicción",
+      content: (
+        <>
+          <p>Estas Condiciones se rigen por la legislación española. Cualquier controversia se someterá a los Juzgados y Tribunales de Segovia, salvo que la normativa imperativa de protección al consumidor reconozca un fuero distinto.</p>
+          <p>En caso de conflicto con consumidores y usuarios, se estará adicionalmente a lo dispuesto en el Real Decreto Legislativo 1/2007 (TRLGDCU) y demás normativa de protección al consumidor aplicable.</p>
+        </>
+      ),
+    },
+    {
+      number: "15", title: "Contacto",
+      content: <InfoTable rows={[["Email de soporte", <a key="e" href={`mailto:${LEGAL_ENTITY.contactEmail}`} className="text-accent hover:underline">{LEGAL_ENTITY.contactEmail}</a>]]} />,
+    },
+  ];
 }

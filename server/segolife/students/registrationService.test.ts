@@ -18,6 +18,7 @@ const {
   mockEnsureStudentProfile, mockUpdateStudentProfile, mockUpdatePreference,
   mockGetBenefitDefinitionBySlug, mockGetBenefitDefinitionCommunities,
   mockGrantBenefit, mockEmitBenefitGranted, mockBuildBenefitGrantedPayload,
+  mockRecordLegalAcceptance,
 } = vi.hoisted(() => ({
   mockGetCommunityBySlug: vi.fn(),
   mockAddUserToCommunity: vi.fn(),
@@ -30,6 +31,7 @@ const {
   mockGrantBenefit: vi.fn(),
   mockEmitBenefitGranted: vi.fn(),
   mockBuildBenefitGrantedPayload: vi.fn(),
+  mockRecordLegalAcceptance: vi.fn(),
 }));
 
 vi.mock("../../db/communitiesDb", () => ({
@@ -54,6 +56,13 @@ vi.mock("../benefits/benefitGrantService", () => ({
 vi.mock("../benefits/benefitEvents", () => ({
   emitBenefitGranted: mockEmitBenefitGranted,
   buildBenefitGrantedPayload: mockBuildBenefitGrantedPayload,
+}));
+// FASE LEGAL (2026-08-23): legalAcceptancesDb.ts abre un pool MySQL real al
+// importarse (mismo patrón que eventSocialDb.ts) — sin mockear, este test
+// dispararía un ER_ACCESS_DENIED_ERROR real en el entorno de test (mismo bug
+// ya documentado y corregido en events.test.ts/eventsPublic.test.ts).
+vi.mock("../../db/legalAcceptancesDb", () => ({
+  recordLegalAcceptance: mockRecordLegalAcceptance,
 }));
 
 import { registerStudent, RegistrationError } from "./registrationService";
@@ -91,6 +100,7 @@ const VALID_INPUT = {
   communitySlug: "ie",
   universityId: IE_UNIVERSITY.id,
   marketingConsent: false,
+  acceptTerms: true,
 };
 
 beforeEach(() => {
@@ -107,6 +117,7 @@ beforeEach(() => {
   mockGetBenefitDefinitionBySlug.mockResolvedValue(null);
   mockGetBenefitDefinitionCommunities.mockResolvedValue([]);
   mockGrantBenefit.mockResolvedValue({ benefit: { id: 1 }, qrToken: "", created: true });
+  mockRecordLegalAcceptance.mockResolvedValue(undefined);
 });
 
 describe("registerStudent — caso exitoso", () => {
@@ -126,6 +137,16 @@ describe("registerStudent — caso exitoso", () => {
     expect(mockAddUserToCommunity).toHaveBeenCalledWith(77, ACTIVE_COMMUNITY.id, undefined, expect.anything());
     expect(mockUpdatePreference).toHaveBeenCalledWith(
       { userId: 77, category: "promotions", channel: "email", enabled: false },
+      expect.anything()
+    );
+    // FASE LEGAL: aceptar el checkbox obligatorio registra AMBAS aceptaciones
+    // (terms + privacy) con la versión vigente, en la misma transacción.
+    expect(mockRecordLegalAcceptance).toHaveBeenCalledWith(
+      { userId: 77, documentType: "terms", documentVersion: "terminos_v1_2026-08-23" },
+      expect.anything()
+    );
+    expect(mockRecordLegalAcceptance).toHaveBeenCalledWith(
+      { userId: 77, documentType: "privacy", documentVersion: "privacidad_v1_2026-08-23" },
       expect.anything()
     );
   });
@@ -206,6 +227,28 @@ describe("registerStudent — validación", () => {
   it("nombre/apellidos en blanco → INVALID_EMAIL (validación conjunta de identidad)", async () => {
     const db = makeMockDb() as any;
     await expect(registerStudent({ ...VALID_INPUT, firstName: "   " }, db)).rejects.toBeInstanceOf(RegistrationError);
+  });
+});
+
+describe("registerStudent — checkbox legal obligatorio (FASE LEGAL)", () => {
+  it("acceptTerms=false → TERMS_NOT_ACCEPTED, ni siquiera consulta la comunidad (nunca confía solo en el disabled del botón del cliente)", async () => {
+    const db = makeMockDb() as any;
+    await expect(registerStudent({ ...VALID_INPUT, acceptTerms: false }, db)).rejects.toMatchObject({ code: "TERMS_NOT_ACCEPTED" });
+    expect(mockGetCommunityBySlug).not.toHaveBeenCalled();
+    expect(mockRecordLegalAcceptance).not.toHaveBeenCalled();
+  });
+
+  it("acceptTerms ausente (undefined) → TERMS_NOT_ACCEPTED, igual que false", async () => {
+    const db = makeMockDb() as any;
+    const { acceptTerms, ...withoutAcceptTerms } = VALID_INPUT;
+    await expect(registerStudent(withoutAcceptTerms as typeof VALID_INPUT, db)).rejects.toMatchObject({ code: "TERMS_NOT_ACCEPTED" });
+  });
+
+  it("acceptTerms=true → el alta se completa y se registran ambas aceptaciones legales", async () => {
+    const db = makeMockDb({ insertId: 90 }) as any;
+    const result = await registerStudent({ ...VALID_INPUT, acceptTerms: true }, db);
+    expect(result.userId).toBe(90);
+    expect(mockRecordLegalAcceptance).toHaveBeenCalledTimes(2);
   });
 });
 

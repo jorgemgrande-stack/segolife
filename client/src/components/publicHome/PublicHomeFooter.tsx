@@ -2,6 +2,7 @@ import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
+import { openCookiePreferences } from "@/lib/cookiePreferences";
 
 /**
  * Footer público de la nueva Home SEGOLIFE (Fase 8.5) — propio, nunca
@@ -51,10 +52,16 @@ export function PublicHomeFooter() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-white/40">{t("publicHome.footer.legal")}</p>
             <ul className="mt-3 space-y-2 text-sm">
+              <li><Link href="/aviso-legal" className="hover:text-white">{t("publicHome.footer.legalNotice")}</Link></li>
               <li><Link href="/terminos" className="hover:text-white">{t("publicHome.footer.terms")}</Link></li>
               <li><Link href="/privacidad" className="hover:text-white">{t("publicHome.footer.privacy")}</Link></li>
               <li><Link href="/cookies" className="hover:text-white">{t("publicHome.footer.cookies")}</Link></li>
               <li><Link href="/condiciones-cancelacion" className="hover:text-white">{t("publicHome.footer.cancellation")}</Link></li>
+              <li>
+                <button type="button" onClick={openCookiePreferences} className="hover:text-white">
+                  {t("publicHome.footer.cookiePreferences")}
+                </button>
+              </li>
             </ul>
           </div>
         </div>

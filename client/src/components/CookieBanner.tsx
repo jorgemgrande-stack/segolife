@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { Cookie, X, ChevronDown, ChevronUp, Shield, BarChart2, Megaphone, Settings } from "lucide-react";
 import { isPotentialCommunityRequest } from "@shared/segolife/routing";
+import { OPEN_COOKIE_PREFERENCES_EVENT } from "@/lib/cookiePreferences";
 
 const STORAGE_KEY = "nayade_cookie_consent";
 
@@ -46,7 +47,14 @@ export default function CookieBanner() {
   // — se comprueba aparte, junto con las páginas de login/legales/auth que
   // en el cierre de Fase 8.5 se rebrandearon a SEGOLIFE (antes mostraban
   // marca Náyade y por tanto no importaba que el banner tampoco encajara).
-  const SEGOLIFE_EXTRA_ROUTES = ["/login", "/register", "/recuperar-contrasena", "/nueva-contrasena", "/establecer-contrasena", "/privacidad", "/cookies"];
+  const SEGOLIFE_EXTRA_ROUTES = [
+    "/login", "/register", "/recuperar-contrasena", "/nueva-contrasena", "/establecer-contrasena",
+    // FASE LEGAL (2026-08-23): /terminos y /condiciones-cancelacion faltaban
+    // aquí — bug real encontrado en la auditoría, esas dos páginas caían en
+    // el banner oscuro heredado de Náyade en vez del banner claro SEGOLIFE
+    // que ya usan sus páginas hermanas /privacidad y /cookies.
+    "/privacidad", "/cookies", "/terminos", "/condiciones-cancelacion", "/aviso-legal",
+  ];
   const isSegolife = location === "/" || SEGOLIFE_EXTRA_ROUTES.includes(location) || isPotentialCommunityRequest({
     pathname: location,
     hostname: typeof window !== "undefined" ? window.location.hostname : undefined,
@@ -59,6 +67,23 @@ export default function CookieBanner() {
       const timer = setTimeout(() => setVisible(true), 800);
       return () => clearTimeout(timer);
     }
+  }, []);
+
+  // "Configuración de cookies" (footer / página de Cookies) — reabre el
+  // banner directamente en el panel de configuración, con los valores ya
+  // guardados precargados, para que cambiar de opinión no sea más difícil
+  // que la primera vez.
+  useEffect(() => {
+    const openWithSavedValues = () => {
+      const consent = loadConsent();
+      setAnalytics(consent?.analytics ?? false);
+      setMarketing(consent?.marketing ?? false);
+      setPreferences(consent?.preferences ?? false);
+      setExpanded(true);
+      setVisible(true);
+    };
+    window.addEventListener(OPEN_COOKIE_PREFERENCES_EVENT, openWithSavedValues);
+    return () => window.removeEventListener(OPEN_COOKIE_PREFERENCES_EVENT, openWithSavedValues);
   }, []);
 
   if (!visible) return null;

@@ -1,12 +1,20 @@
 import { usePublicPhone } from "@/hooks/usePublicPhone";
 import { Navigation, Car, Train, Clock, MapPin, Phone, Mail } from "lucide-react";
 import PublicLayout from "@/components/PublicLayout";
+import { useMarketingConsent } from "@/hooks/useMarketingConsent";
+import { openCookiePreferences } from "@/lib/cookiePreferences";
 
 const GMAPS_EMBED_URL =
   "https://www.google.com/maps/embed?pb=!1m14!1m12!1m3!1d3020.816126486095!2d-4.245520261519737!3d40.7880563570962!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!5e0!3m2!1ses!2ses!4v1777834777298!5m2!1ses!2ses";
 
 export default function Locations() {
   const { phone, phoneTel } = usePublicPhone();
+  // FASE LEGAL (2026-08-23) — bug real encontrado en auditoría: este iframe
+  // de Google Maps cargaba incondicionalmente, sin esperar el consentimiento
+  // de cookies de marketing/terceros (a diferencia de GA4Loader/
+  // MetaPixelLoader, que sí lo respetan). Google puede fijar sus propias
+  // cookies al cargar el embed, así que debe seguir la misma regla.
+  const hasMarketingConsent = useMarketingConsent();
 
   return (
     <PublicLayout>
@@ -47,16 +55,32 @@ export default function Locations() {
             </p>
           </div>
           <div className="rounded-2xl overflow-hidden border border-border/50 shadow-lg">
-            <iframe
-              src={GMAPS_EMBED_URL}
-              width="100%"
-              height="480"
-              style={{ border: 0, display: "block" }}
-              allowFullScreen
-              loading="lazy"
-              referrerPolicy="no-referrer-when-downgrade"
-              title="Mapa Náyade Experiences — Los Ángeles de San Rafael"
-            />
+            {hasMarketingConsent ? (
+              <iframe
+                src={GMAPS_EMBED_URL}
+                width="100%"
+                height="480"
+                style={{ border: 0, display: "block" }}
+                allowFullScreen
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                title="Mapa Náyade Experiences — Los Ángeles de San Rafael"
+              />
+            ) : (
+              <div className="flex h-[480px] flex-col items-center justify-center gap-3 bg-secondary/40 px-6 text-center">
+                <MapPin className="h-8 w-8 text-muted-foreground" />
+                <p className="max-w-sm text-sm text-muted-foreground">
+                  El mapa interactivo usa cookies de Google que requieren tu consentimiento.
+                </p>
+                <button
+                  type="button"
+                  onClick={openCookiePreferences}
+                  className="inline-flex items-center rounded-full bg-accent px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent/90"
+                >
+                  Configurar cookies
+                </button>
+              </div>
+            )}
           </div>
           {/* Botón Google Maps */}
           <div className="mt-4 flex justify-center">
