@@ -83,7 +83,7 @@ notification_preferences         -- (user_id, category, channel) → enabled
 engagement_campaigns              -- manual | scheduled | triggered
   ├─ engagement_campaign_audiences   -- snapshot de user_id únicos al programar
   └─ engagement_campaign_messages    -- contenido por canal
-push_subscriptions (opcional)     -- preparado, Push NO activado
+push_subscriptions                -- suscripciones reales del navegador/dispositivo
 ```
 
 **Por qué NO hay tabla `notification_events`.** El catálogo de eventos de
@@ -133,10 +133,10 @@ de la entrega, no solo la pertenencia a audiencia). Las campañas `manual`
 ## Kill switches
 
 ```
-ENGAGEMENT_DELIVERY_ENABLED     default false — scheduler de deliveries programadas
-EMAIL_NOTIFICATIONS_ENABLED     default false — canal email
-PUSH_NOTIFICATIONS_ENABLED      default false — canal push (ni siquiera hay VAPID keys)
-WHATSAPP_NOTIFICATIONS_ENABLED  default false — canal whatsapp
+ENGAGEMENT_DELIVERY_ENABLED     default false — scheduler de deliveries programadas — ON en producción
+EMAIL_NOTIFICATIONS_ENABLED     default false — canal email — ON en producción (Brevo, confirmado con envío real)
+PUSH_NOTIFICATIONS_ENABLED      default false — canal push — ON en producción desde 2026-08-23 (cierre post-roadmap), VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY/VAPID_SUBJECT configurados y verificados (firma real aceptada por FCM)
+WHATSAPP_NOTIFICATIONS_ENABLED  default false — canal whatsapp — sigue OFF, sin proveedor real conectado (bloqueo de negocio, no técnico)
 ```
 
 `in_app` NUNCA requiere un kill switch — no sale del sistema, es solo una
