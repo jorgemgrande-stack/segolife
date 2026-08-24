@@ -8,6 +8,7 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
 import type { User } from "../../drizzle/schema";
 import { getUserAndMaybeRenewSession } from "../localAuth";
+import { applyMaintenanceBypass } from "./maintenanceContext";
 
 export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
@@ -32,6 +33,8 @@ export async function createLocalContext(
   } catch {
     user = null;
   }
+
+  user = await applyMaintenanceBypass(user);
 
   return {
     req: opts.req,

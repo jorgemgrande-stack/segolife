@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Wrench, AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { MAINTENANCE_BYPASS_EMAIL } from "@shared/const";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -59,18 +60,20 @@ export default function MaintenanceModeControl() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Modo mantenimiento — Web pública</DialogTitle>
+            <DialogTitle>Modo mantenimiento — Sitio completo</DialogTitle>
             <DialogDescription>
-              Cuando está activo, la web pública muestra este aviso y bloquea todas las rutas
-              excepto el panel de administración. El acceso a /admin sigue funcionando con normalidad.
+              Cuando está activo, toda la web (incluido el panel de administración) muestra este
+              aviso para cualquier usuario. Solo el administrador general
+              ({MAINTENANCE_BYPASS_EMAIL}) conserva acceso al dashboard mientras dure.
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex items-center justify-between gap-4 py-2 border-y border-border/50">
             <div>
-              <p className="text-sm font-medium text-foreground">Desactivar web pública</p>
+              <p className="text-sm font-medium text-foreground">Desactivar el sitio</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Ningún usuario podrá reservar ni navegar la web mientras esté activo.
+                Ningún usuario podrá navegar ni usar el panel de administración mientras esté
+                activo, salvo el administrador general.
               </p>
             </div>
             <Switch checked={enabledDraft} onCheckedChange={setEnabledDraft} />
@@ -79,7 +82,10 @@ export default function MaintenanceModeControl() {
           {enabledDraft && !isEnabled && (
             <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg text-sm text-amber-800 dark:text-amber-300">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <p>Al guardar, la web dejará de estar accesible al público inmediatamente.</p>
+              <p>
+                Al guardar, perderás el acceso al panel de administración inmediatamente si tu
+                cuenta no es {MAINTENANCE_BYPASS_EMAIL}.
+              </p>
             </div>
           )}
 
