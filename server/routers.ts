@@ -13,6 +13,7 @@ import {
   reorderGalleryItems,
 } from "./galleryDb";
 import { getSessionCookieOptions } from "./_core/cookies";
+import { toPublicUser } from "./_core/sanitizeUser";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, staffProcedure, router, permissionProcedure } from "./_core/trpc";
 import { assertModuleEnabled } from "./_core/flagGuard";
@@ -263,7 +264,7 @@ export const appRouter = router({
   fiscalAudit: fiscalAuditRouter,
   pdfTemplates: pdfTemplatesRouter,
   auth: router({
-    me: publicProcedure.query((opts) => opts.ctx.user),
+    me: publicProcedure.query((opts) => toPublicUser(opts.ctx.user)),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
