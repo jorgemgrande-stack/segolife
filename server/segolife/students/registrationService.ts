@@ -167,11 +167,15 @@ export interface RegisterStudentInput {
   universityId: number;
   academicYear?: string;
   marketingConsent: boolean;
-  // SEGOLIFE — FASE LEGAL (spec puntos 17/21/22): checkbox obligatorio,
-  // validado server-side (nunca solo el disabled del botón en el cliente).
-  // true → se registra una aceptación real (legal_acceptances) de "terms" Y
-  // "privacy" en la misma transacción de alta (el checkbox declara haber
-  // leído/aceptado ambos documentos a la vez, ver Register.tsx).
+  // SEGOLIFE — FASE LEGAL / Registration Legal Consent (spec puntos 17/21/22):
+  // checkbox obligatorio, validado server-side (nunca solo el disabled del
+  // botón en el cliente). true → se registran DOS aceptaciones reales
+  // (legal_acceptances) en la misma transacción de alta, con semántica
+  // distinta aunque compartan estructura: documentType="terms" es una
+  // ACEPTACIÓN real de las Condiciones de Uso; documentType="privacy" es un
+  // ACUSE DE LECTURA de la Política de Privacidad (nunca un consentimiento
+  // RGPD genérico — ese es marketingConsent, independiente y opcional, ver
+  // más abajo). Ver Register.tsx para el copy exacto que declara ambas cosas.
   acceptTerms: boolean;
   // SEGOLIFE — REFERRAL & INVITE REWARDS ENGINE (Fase 8, spec §5/§18): código
   // opaco resuelto server-side (nunca un referrerUserId directo del
@@ -215,7 +219,7 @@ export async function registerStudent(input: RegisterStudentInput, db?: DbHandle
     throw new RegistrationError("WEAK_PASSWORD", `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`);
   }
   if (input.acceptTerms !== true) {
-    throw new RegistrationError("TERMS_NOT_ACCEPTED", "Debes aceptar las Condiciones de Uso y la Política de Privacidad para crear tu cuenta.");
+    throw new RegistrationError("TERMS_NOT_ACCEPTED", "Para crear tu cuenta debes aceptar las Condiciones de Uso y confirmar que has leído la Política de Privacidad.");
   }
 
   // Comunidad: nunca confiar en un id/slug del cliente sin validar — se

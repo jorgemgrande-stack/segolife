@@ -467,22 +467,36 @@ export default function Register() {
                 <Input id="academicYear" value={academicYear} onChange={(e) => setAcademicYear(e.target.value)} />
               </div>
 
-              <div className="space-y-3 pt-2">
-                <div className="flex items-start gap-2">
-                  <Checkbox id="acceptTerms" checked={acceptTerms} onCheckedChange={(v) => setAcceptTerms(v === true)} className="mt-0.5" />
+              {/* SEGOLIFE — Registration Legal Consent: dos checks separados,
+                  nunca fusionados. El legal (obligatorio) declara aceptación
+                  de las Condiciones de Uso Y lectura informada (no un
+                  "consentimiento" RGPD genérico) de la Política de
+                  Privacidad — de ahí los dos enlaces reales independientes
+                  dentro de la misma frase, nunca un único enlace envolviendo
+                  todo el texto. El de marketing es opcional, visualmente
+                  separado (su propio bloque, con margen superior real) y
+                  nunca condiciona el envío del formulario — ver
+                  `disabled` del botón más abajo, que solo depende de
+                  acceptTerms. */}
+              <div className="space-y-4 pt-2">
+                <div className="flex items-start gap-3">
+                  <Checkbox id="acceptTerms" checked={acceptTerms} onCheckedChange={(v) => setAcceptTerms(v === true)} className="mt-0.5 size-5" />
                   <Label htmlFor="acceptTerms" className="text-sm font-normal leading-snug">
-                    {t("register.consent.termsPrefix")}{" "}
-                    <a href="/privacidad" target="_blank" rel="noreferrer" className="text-primary underline">
-                      {t("register.consent.termsPrivacy")}
+                    {t("register.consent.termsLead")}{" "}
+                    <a href="/terminos" target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">
+                      {t("register.consent.termsUsage")}
                     </a>{" "}
-                    {t("register.consent.termsAnd")}{" "}
-                    <a href="/terminos" target="_blank" rel="noreferrer" className="text-primary underline">{t("register.consent.termsUsage")}.</a>
+                    {t("register.consent.termsPrivacyLead")}{" "}
+                    <a href="/privacidad" target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">
+                      {t("register.consent.termsPrivacy")}
+                    </a>.
                   </Label>
                 </div>
-                <div className="flex items-start gap-2">
-                  <Checkbox id="marketingConsent" checked={marketingConsent} onCheckedChange={(v) => setMarketingConsent(v === true)} className="mt-0.5" />
-                  <Label htmlFor="marketingConsent" className="text-sm font-normal leading-snug">
-                    {t("register.consent.marketing")}
+                <div className="flex items-start gap-3">
+                  <Checkbox id="marketingConsent" checked={marketingConsent} onCheckedChange={(v) => setMarketingConsent(v === true)} className="mt-0.5 size-5" />
+                  <Label htmlFor="marketingConsent" className="text-sm font-normal leading-snug text-muted-foreground">
+                    {t("register.consent.marketing")}{" "}
+                    <span className="text-xs">({t("register.consent.marketingOptional")})</span>
                   </Label>
                 </div>
               </div>

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import "@/lib/i18n";
+import i18n from "@/lib/i18n";
 
 // jsdom no implementa ResizeObserver — lo usa internamente @radix-ui/react-checkbox
 // (Checkbox de shadcn/ui, usado en el paso 2 para los consentimientos).
@@ -223,6 +223,10 @@ describe("Register — paso 2 (comunidad)", () => {
     // FASE LEGAL: el checkbox obligatorio SÍ debe viajar al servidor — antes
     // de esta fase solo controlaba el `disabled` del botón y nunca se enviaba.
     expect(body.acceptTerms).toBe(true);
+    // Registration Legal Consent: sin tocar el check de marketing (no
+    // premarcado), se envía explícitamente false — nunca ausente ni true
+    // por defecto.
+    expect(body.marketingConsent).toBe(false);
   });
 
   it("comunidad con varias universidades exige elegir una explícitamente — el envío sigue bloqueado sin auto-selección", async () => {
@@ -276,6 +280,74 @@ describe("Register — checkbox legal obligatorio (FASE LEGAL)", () => {
     expect(privacyLink).toHaveAttribute("target", "_blank");
     expect(termsLink).toHaveAttribute("href", "/terminos");
     expect(termsLink).toHaveAttribute("target", "_blank");
+  });
+});
+
+describe("Register — Registration Legal Consent: dos checks separados, ninguno premarcado", () => {
+  it("el check legal y el de marketing están visibles y ninguno viene marcado por defecto", async () => {
+    const user = userEvent.setup();
+    render(<Register />);
+    await fillStep1(user);
+    await user.click(await screen.findByText("IE University"));
+
+    const legalCheckbox = document.getElementById("acceptTerms")!;
+    const marketingCheckbox = document.getElementById("marketingConsent")!;
+    expect(legalCheckbox).toBeVisible();
+    expect(marketingCheckbox).toBeVisible();
+    expect(legalCheckbox).toHaveAttribute("data-state", "unchecked");
+    expect(marketingCheckbox).toHaveAttribute("data-state", "unchecked");
+  });
+
+  it("cada checkbox tiene su propio label asociado (accesibilidad — nunca un texto suelto sin htmlFor)", async () => {
+    const user = userEvent.setup();
+    render(<Register />);
+    await fillStep1(user);
+    await user.click(await screen.findByText("IE University"));
+
+    expect(screen.getByLabelText(/he leído y acepto las/i)).toBe(document.getElementById("acceptTerms"));
+    expect(screen.getByLabelText(/quiero recibir novedades/i)).toBe(document.getElementById("marketingConsent"));
+  });
+
+  it("marcar solo el checkbox de marketing (sin el legal) NO habilita el envío — el marketing nunca sustituye al legal obligatorio", async () => {
+    const user = userEvent.setup();
+    render(<Register />);
+    await fillStep1(user);
+    await user.click(await screen.findByText("IE University"));
+    await user.click(document.getElementById("marketingConsent")!);
+
+    expect(await screen.findByRole("button", { name: /crear mi cuenta/i })).toBeDisabled();
+  });
+
+  it("marcar el checkbox de marketing lo envía como marketingConsent=true, sin afectar acceptTerms", async () => {
+    const user = userEvent.setup();
+    render(<Register />);
+    await fillStep1(user);
+    await user.click(await screen.findByText("IE University"));
+    await user.click(document.getElementById("acceptTerms")!);
+    await user.click(document.getElementById("marketingConsent")!);
+    await user.click(await screen.findByRole("button", { name: /crear mi cuenta/i }));
+
+    await waitFor(() => expect(navigateMock).toHaveBeenCalled());
+    const body = JSON.parse((global.fetch as any).mock.calls[0][1].body);
+    expect(body.marketingConsent).toBe(true);
+    expect(body.acceptTerms).toBe(true);
+  });
+
+  it("en inglés, ambos checks muestran el texto natural esperado — nunca una traducción literal incoherente", async () => {
+    const user = userEvent.setup();
+    render(<Register />);
+    await fillStep1(user);
+    // Cambia a inglés ya en el paso 2 (comunidad/consentimientos) — fillStep1
+    // depende de las labels en español del paso 1, igual que el resto de
+    // tests de este archivo.
+    await i18n.changeLanguage("en");
+    await user.click(await screen.findByText("IE University"));
+
+    expect(
+      screen.getByText((_, el) => el?.tagName.toLowerCase() === "label" && el.textContent === "I have read and accept the Terms of Use and acknowledge that I have read the Privacy Policy.")
+    ).toBeInTheDocument();
+    expect(screen.getByText(/i would like to receive news, promotions and benefits from segolife\./i)).toBeInTheDocument();
+    await i18n.changeLanguage("es");
   });
 });
 

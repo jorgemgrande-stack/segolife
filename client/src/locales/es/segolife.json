@@ -883,11 +883,12 @@
       "back": "Atrás"
     },
     "consent": {
-      "termsPrefix": "He leído y acepto la",
+      "termsLead": "He leído y acepto las",
+      "termsUsage": "Condiciones de Uso",
+      "termsPrivacyLead": "y declaro haber leído la",
       "termsPrivacy": "Política de Privacidad",
-      "termsAnd": "y las",
-      "termsUsage": "Condiciones de uso",
-      "marketing": "Quiero recibir novedades, eventos y promociones de SEGOLIFE.",
+      "marketing": "Quiero recibir novedades, promociones y ventajas de SEGOLIFE.",
+      "marketingOptional": "Opcional",
       "submit": "Crear mi cuenta",
       "submitting": "Creando cuenta…"
     },
@@ -908,7 +909,7 @@
       "EMAIL_EXISTS": "Ya existe una cuenta con este email.",
       "COMMUNITY_NOT_FOUND": "La comunidad seleccionada no está disponible.",
       "UNIVERSITY_NOT_FOUND": "Selecciona tu universidad para continuar.",
-      "TERMS_NOT_ACCEPTED": "Debes aceptar las Condiciones de Uso y la Política de Privacidad para crear tu cuenta.",
+      "TERMS_NOT_ACCEPTED": "Para crear tu cuenta debes aceptar las Condiciones de Uso y confirmar que has leído la Política de Privacidad.",
       "RATE_LIMITED": "Demasiados intentos. Espera un minuto antes de volver a intentarlo.",
       "GENERIC": "No se ha podido completar el registro. Inténtalo de nuevo.",
       "NETWORK": "Error de conexión. Comprueba que el servidor está en marcha.",

@@ -20,6 +20,15 @@ async function getDb(): Promise<DbHandle> {
   return _db;
 }
 
+/**
+ * "terms" → aceptación real (ACCEPTED) de las Condiciones de Uso.
+ * "privacy" → acuse de lectura informada (ACKNOWLEDGED) de la Política de
+ * Privacidad — NUNCA se trata como un consentimiento RGPD genérico. El
+ * consentimiento de marketing es un concepto totalmente distinto e
+ * independiente (notification_preferences, categoría "promotions" — ver
+ * server/segolife/engagement/notificationPreferencesService.ts), nunca una
+ * fila de esta tabla.
+ */
 export type LegalDocumentType = "terms" | "privacy";
 
 export interface RecordLegalAcceptanceInput {
