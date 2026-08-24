@@ -56,6 +56,7 @@ export default function ComunityWizard() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [venueId, setVenueId] = useState<string>("");
+  const [customLocationText, setCustomLocationText] = useState("");
   const [coverImageUrl, setCoverImageUrl] = useState("");
   const [imageUploading, setImageUploading] = useState(false);
 
@@ -110,6 +111,7 @@ export default function ComunityWizard() {
       allowChangeResponse,
       coverImageUrl: coverImageUrl.trim() || null,
       venueId: venueId ? Number(venueId) : null,
+      customLocationText: venueId ? null : (customLocationText.trim() || null),
       audienceDefinition: toComunityAudienceDefinition(audience),
       minSampleSize: Number(minSampleSize) || 5,
       options: needsOptions ? cleanOptions : undefined,
@@ -142,13 +144,31 @@ export default function ComunityWizard() {
               <div><Label>Descripción (opcional)</Label><Textarea rows={3} value={description} onChange={e => setDescription(e.target.value)} /></div>
               <div>
                 <Label>Venue relacionado (opcional)</Label>
-                <Select value={venueId || "none"} onValueChange={v => setVenueId(v === "none" ? "" : v)}>
+                <Select
+                  value={venueId || "none"}
+                  onValueChange={v => { setVenueId(v === "none" ? "" : v); if (v !== "none") setCustomLocationText(""); }}
+                >
                   <SelectTrigger className="w-full"><SelectValue placeholder="Sin venue" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Sin venue</SelectItem>
                     {(venues ?? []).map(v => <SelectItem key={v.id} value={String(v.id)}>{v.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
+              </div>
+              {/* Ubicación libre (2026-08-24) — cuando el sitio no está en el
+                  catálogo de venues (casa de un Student, un parque, un
+                  restaurante nuevo). Mutuamente excluyente con el venue: al
+                  escribir aquí se limpia la selección de venue y viceversa —
+                  ver comentario de schema.ts en la columna. */}
+              <div>
+                <Label>Ubicación personalizada (opcional, si no hay venue)</Label>
+                <Input
+                  value={customLocationText}
+                  onChange={e => { setCustomLocationText(e.target.value); if (e.target.value) setVenueId(""); }}
+                  placeholder="Ej: Parque de la Alameda, o dirección concreta"
+                  maxLength={256}
+                  disabled={!!venueId}
+                />
               </div>
               <ProposalImageUploader value={coverImageUrl} onChange={setCoverImageUrl} onUploadingChange={setImageUploading} labels={IMAGE_UPLOAD_LABELS} />
             </>
@@ -286,7 +306,7 @@ export default function ComunityWizard() {
               <p><span className="text-muted-foreground">Pregunta:</span> <span className="font-medium text-foreground">{title || "—"}</span></p>
               <p><span className="text-muted-foreground">Tipo:</span> {QUESTION_TYPE_LABEL[questionType]}</p>
               {needsOptions && <p><span className="text-muted-foreground">Opciones:</span> {cleanOptions.join(", ") || "—"}</p>}
-              <p><span className="text-muted-foreground">Venue:</span> {(venues ?? []).find(v => String(v.id) === venueId)?.name ?? "—"}</p>
+              <p><span className="text-muted-foreground">Venue:</span> {venueId ? ((venues ?? []).find(v => String(v.id) === venueId)?.name ?? "—") : (customLocationText.trim() || "—")}</p>
               <p><span className="text-muted-foreground">Alcance admin:</span> {scopeCommunityIds.length ? (communities ?? []).filter(c => scopeCommunityIds.includes(c.id)).map(c => c.name).join(", ") : "Global"}</p>
               <p><span className="text-muted-foreground">Audiencia:</span> {audience.allStudents ? "Todos los estudiantes" : "Segmentada (ver preview en Audiencia)"}</p>
               <p><span className="text-muted-foreground">Urgencia:</span> {urgencyType === "flash" ? "Flash" : "Programada"}</p>

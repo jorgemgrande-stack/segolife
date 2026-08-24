@@ -51,6 +51,24 @@ describe("submitStudentProposal — MG-04: coverImageUrl y urgency", () => {
   });
 });
 
+// Ubicación libre (2026-08-24, spec: "pueden proponer un evento en una
+// dirección de su casa o en lugar público, o en un restaurante").
+describe("submitStudentProposal — ubicación libre (customLocationText)", () => {
+  it("guarda customLocationText saneado cuando se proporciona", async () => {
+    const { db, getInserted } = makeSubmitMockDb();
+    await submitStudentProposal({
+      studentUserId: 7, communityId: 1, title: "Picnic", customLocationText: "Parque de la Alameda",
+    }, db);
+    expect(getInserted()[0]).toMatchObject({ customLocationText: "Parque de la Alameda" });
+  });
+
+  it("sin customLocationText, se guarda como null — nunca un string vacío", async () => {
+    const { db, getInserted } = makeSubmitMockDb();
+    await submitStudentProposal({ studentUserId: 7, communityId: 1, title: "x" }, db);
+    expect(getInserted()[0]).toMatchObject({ customLocationText: null });
+  });
+});
+
 // Timing preciso (2026-08-23) — sustituye la urgencia de 3 niveles por un
 // plazo real de cierre de apoyo. `urgency` sigue aceptándose explícita
 // (compatibilidad), pero si se omite (la UI actual ya no la pregunta) se
@@ -171,6 +189,17 @@ describe("listStudentProposals — MG-04: venueName resuelto vía leftJoin (gap 
     ]);
     const { items } = await listStudentProposals({ communityIds: "all" }, db);
     expect(items[0].venueName).toBeNull();
+  });
+
+  // Ubicación libre (2026-08-24) — sin venue oficial, el mismo campo
+  // venueName cae al texto que escribió el Student, para no obligar a
+  // ComunityModeration.tsx a aprender a leer un campo nuevo.
+  it("sin venue pero con customLocationText: venueName cae al texto libre", async () => {
+    const db = makeListMockDb([
+      { proposal: { id: 4, title: "Picnic", venueId: null, customLocationText: "Parque de la Alameda", coverImageUrl: null, urgency: null, createdAt: new Date() }, studentName: "Ana", venueName: null },
+    ]);
+    const { items } = await listStudentProposals({ communityIds: "all" }, db);
+    expect(items[0].venueName).toBe("Parque de la Alameda");
   });
 
   it("coverImageUrl y urgency se propagan tal cual desde la fila de BD (spread del proposal)", async () => {

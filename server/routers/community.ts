@@ -11,7 +11,7 @@ import { getCommunityAccess, resolveCommunityFilter, type CommunityAccess } from
 import {
   createProposal, updateProposal, setProposalStatus, getProposalById, listProposals,
   setProposalOptions, listProposalOptions, getProposalCommunityIds, setProposalCommunities,
-  isProposalOpenForResponses, getVenueName, computeResultsVisible, isInProposalAudience, isProposalVisibleToUser,
+  isProposalOpenForResponses, getVenueOrCustomLocationName, computeResultsVisible, isInProposalAudience, isProposalVisibleToUser,
   canAccessSocialLayer, sortActiveProposalsForFeed,
 } from "../segolife/community/communityDb";
 import { previewProposalAudience, publishProposal, CommunityPublishError } from "../segolife/community/communityAudienceService";
@@ -217,6 +217,8 @@ export const communityRouter = router({
       tokenReward: z.number().int().min(0).max(200).nullish(),
       coverImageUrl: z.string().max(512).nullish(),
       venueId: z.number().int().positive().nullish(),
+      // Ubicación libre (2026-08-24) — ver comentario de schema.ts en la columna.
+      customLocationText: z.string().max(256).nullish(),
       relatedEventId: z.number().int().positive().nullish(),
       audienceDefinition: audienceDefinitionSchema.nullish(),
       minSampleSize: z.number().int().min(1).max(50).default(5),
@@ -250,6 +252,8 @@ export const communityRouter = router({
       tokenReward: z.number().int().min(0).max(200).nullish(),
       coverImageUrl: z.string().max(512).nullish(),
       venueId: z.number().int().positive().nullish(),
+      // Ubicación libre (2026-08-24) — ver comentario de schema.ts en la columna.
+      customLocationText: z.string().max(256).nullish(),
       relatedEventId: z.number().int().positive().nullish(),
       audienceDefinition: audienceDefinitionSchema.nullish(),
       minSampleSize: z.number().int().min(1).max(50).optional(),
@@ -349,6 +353,7 @@ export const communityRouter = router({
         allowChangeResponse: source.allowChangeResponse,
         coverImageUrl: source.coverImageUrl,
         venueId: source.venueId,
+        customLocationText: source.customLocationText,
         relatedEventId: source.relatedEventId,
         audienceDefinition: source.audienceDefinition as Record<string, unknown> | null,
         minSampleSize: source.minSampleSize,
@@ -466,6 +471,7 @@ export const communityRouter = router({
         description: idea.description,
         questionType: input.questionType,
         venueId: idea.venueId,
+        customLocationText: idea.customLocationText ?? null,
         // Bug real corregido (2026-08-24): la imagen de portada que el
         // Student subió en su idea nunca se trasladaba a la propuesta
         // formal — la conversión creaba la fila sin coverImageUrl aunque la
@@ -529,7 +535,9 @@ export const communityRouter = router({
       const hasParticipated = respondedIds.has(p.id);
       return {
         ...p,
-        venueName: p.venueId != null ? (venueNameById.get(p.venueId) ?? null) : null,
+        // Ubicación libre (2026-08-24): sin venue oficial, cae al texto que
+        // escribió el Student — ver getVenueOrCustomLocationName en communityDb.ts.
+        venueName: p.venueId != null ? (venueNameById.get(p.venueId) ?? null) : (p.customLocationText ?? null),
         hasParticipated,
         // Misma regla que submitResponse() (communityResponseService.ts) —
         // nunca una copia divergente de "¿puede este Student volver a
@@ -577,7 +585,7 @@ export const communityRouter = router({
       // Hallazgo real (2026-08-22, captura del cliente): la ubicación de una
       // propuesta nunca se resolvía/mostraba al Student (solo existía para
       // el admin, ver listProposals/ProposalListItem.venueName).
-      const venueName = await getVenueName(proposal.venueId, undefined);
+      const venueName = await getVenueOrCustomLocationName(proposal.venueId, proposal.customLocationText, undefined);
 
       // F68 — a diferencia de like/comment/share, el estado de bookmark se
       // resuelve SIEMPRE (nunca gateado por showSocialLayer): su caso de uso
@@ -690,7 +698,7 @@ export const communityRouter = router({
     const [likeCounts, commentCounts, shareCounts] = await Promise.all([getLikeCountsBatch(ids), getCommentCountsBatch(ids), getShareCountsBatch(ids)]);
 
     return Promise.all(visible.map(async proposal => ({
-      proposal: { ...proposal, venueName: await getVenueName(proposal.venueId, undefined) },
+      proposal: { ...proposal, venueName: await getVenueOrCustomLocationName(proposal.venueId, proposal.customLocationText, undefined) },
       author: await resolveProposalAuthor(proposal),
       results: await getProposalResults(proposal.id, false),
       likeCount: likeCounts.get(proposal.id) ?? 0,
@@ -863,6 +871,11 @@ export const communityRouter = router({
       title: z.string().min(1).max(256),
       description: z.string().max(2000).nullish(),
       venueId: z.number().int().positive().nullish(),
+      // Ubicación libre (2026-08-24) — sitio que no es un venue oficial;
+      // mutuamente excluyente con venueId a nivel de UI (nunca se valida
+      // aquí que no lleguen ambos a la vez: si llegaran, venueId gana en la
+      // resolución de venueName — ver getVenueOrCustomLocationName).
+      customLocationText: z.string().max(256).nullish(),
       // Timing preciso (2026-08-23) — antes solo fecha (regex YYYY-MM-DD);
       // ahora día+hora reales, igual que el resto de timestamps de Community.
       suggestedDate: z.coerce.date().nullish(),

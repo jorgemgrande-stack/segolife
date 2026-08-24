@@ -19,7 +19,7 @@ const {
   mockGetCommunityAccess, mockListTrendingStudentProposals,
   mockGetProposalById, mockIsInProposalAudience, mockComputeResultsVisible,
   mockGetUserResponse, mockGetProposalRespondents,
-  mockIsProposalVisibleToUser, mockListProposalOptions, mockGetVenueName,
+  mockIsProposalVisibleToUser, mockListProposalOptions, mockGetVenueOrCustomLocationName,
   mockGetLikeState, mockToggleLike, mockListComments, mockCreateComment, mockDeleteOwnComment, mockModerateComment,
   mockGetCommentCountsBatch, mockGetLikeCountsBatch, mockResolveProposalAuthor,
   mockNotifyProposalCommented, mockNotifyCommentReplied, mockGetProposalCommunityIds,
@@ -43,7 +43,7 @@ const {
   mockGetProposalRespondents: vi.fn(),
   mockIsProposalVisibleToUser: vi.fn(),
   mockListProposalOptions: vi.fn(),
-  mockGetVenueName: vi.fn(),
+  mockGetVenueOrCustomLocationName: vi.fn(),
   mockGetLikeState: vi.fn(),
   mockToggleLike: vi.fn(),
   mockListComments: vi.fn(),
@@ -106,7 +106,7 @@ vi.mock("../segolife/community/communityDb", async (importOriginal) => {
     ...actual, getProposalById: mockGetProposalById, isInProposalAudience: mockIsInProposalAudience,
     computeResultsVisible: mockComputeResultsVisible, isProposalVisibleToUser: mockIsProposalVisibleToUser,
     getProposalCommunityIds: mockGetProposalCommunityIds,
-    listProposalOptions: mockListProposalOptions, getVenueName: mockGetVenueName,
+    listProposalOptions: mockListProposalOptions, getVenueOrCustomLocationName: mockGetVenueOrCustomLocationName,
     createProposal: mockCreateProposal,
   };
 });
@@ -521,6 +521,34 @@ describe("community router — convertStudentProposalToFormal: traslada el timin
     expect(mockCreateProposal).toHaveBeenCalledWith(expect.objectContaining({ coverImageUrl: null }));
   });
 
+  // Ubicación libre (2026-08-24, spec: "pueden proponer un evento en una
+  // dirección de su casa o en lugar público, o en un restaurante") — mismo
+  // criterio que coverImageUrl arriba: la conversión debe trasladar tal
+  // cual el sitio libre que el Student escribió en su idea de origen.
+  it("traslada customLocationText a la propuesta formal cuando la idea de origen no tenía venue oficial", async () => {
+    mockGetStudentProposalById.mockResolvedValue({
+      id: 46, communityId: 1, status: "approved", title: "Picnic", description: null, venueId: null,
+      suggestedDate: null, votingClosesAt: null, coverImageUrl: null, customLocationText: "Parque de la Alameda",
+    });
+    mockCreateProposal.mockResolvedValue({ id: 904, title: "Picnic", status: "draft" });
+
+    await callerAsAdmin(1).convertStudentProposalToFormal({ studentProposalId: 46, questionType: "yes_no" });
+
+    expect(mockCreateProposal).toHaveBeenCalledWith(expect.objectContaining({ customLocationText: "Parque de la Alameda" }));
+  });
+
+  it("sin customLocationText en la idea de origen, se pasa null — nunca undefined", async () => {
+    mockGetStudentProposalById.mockResolvedValue({
+      id: 47, communityId: 1, status: "approved", title: "Sin ubicación libre", description: null, venueId: 3,
+      suggestedDate: null, votingClosesAt: null, coverImageUrl: null,
+    });
+    mockCreateProposal.mockResolvedValue({ id: 905, title: "Sin ubicación libre", status: "draft" });
+
+    await callerAsAdmin(1).convertStudentProposalToFormal({ studentProposalId: 47, questionType: "yes_no" });
+
+    expect(mockCreateProposal).toHaveBeenCalledWith(expect.objectContaining({ customLocationText: null }));
+  });
+
   it("sin votingClosesAt propuesto por el Student, la propuesta formal nace 'scheduled' (nunca 'flash' inventado) y endsAt queda null", async () => {
     mockGetStudentProposalById.mockResolvedValue({
       id: 43, communityId: 1, status: "approved", title: "Cine bajo las estrellas", description: null, venueId: null,
@@ -575,7 +603,7 @@ describe("community router — listResultsFeed: usa la audiencia real (nunca sol
     makeResultsFeedDb({ audienceRows: [{ proposalId: 8 }], proposalRows: [proposal] });
     mockGetRespondedProposalIds.mockResolvedValue(new Set()); // nunca respondí
     mockComputeResultsVisible.mockReturnValue(true);
-    mockGetVenueName.mockResolvedValue(null);
+    mockGetVenueOrCustomLocationName.mockResolvedValue(null);
     mockResolveProposalAuthor.mockResolvedValue(null);
     mockGetProposalResults.mockResolvedValue({ total: 0, breakdown: [] });
     mockGetLikeCountsBatch.mockResolvedValue(new Map());
@@ -607,7 +635,7 @@ describe("community router — listResultsFeed: usa la audiencia real (nunca sol
     makeResultsFeedDb({ audienceRows: [{ proposalId: 10 }], proposalRows: [proposal] });
     mockGetRespondedProposalIds.mockResolvedValue(new Set([10]));
     mockComputeResultsVisible.mockReturnValue(true);
-    mockGetVenueName.mockResolvedValue(null);
+    mockGetVenueOrCustomLocationName.mockResolvedValue(null);
     mockResolveProposalAuthor.mockResolvedValue(null);
     mockGetProposalResults.mockResolvedValue({ total: 0, breakdown: [] });
     mockGetLikeCountsBatch.mockResolvedValue(new Map());
@@ -716,7 +744,7 @@ describe("COM-02B — getPublicById: scoping por comunidad (gap preexistente cor
     mockGetProposalById.mockReset().mockResolvedValue({ id: 10, status: "closed", venueId: null, endsAt: null, resultsVisibility: "immediate" });
     mockIsProposalVisibleToUser.mockReset().mockResolvedValue(true);
     mockListProposalOptions.mockReset().mockResolvedValue([]);
-    mockGetVenueName.mockReset().mockResolvedValue(null);
+    mockGetVenueOrCustomLocationName.mockReset().mockResolvedValue(null);
     mockGetUserResponse.mockReset().mockResolvedValue(null);
     mockComputeResultsVisible.mockReset().mockReturnValue(false); // evita tocar getProposalResults real en estos tests
     mockResolveProposalAuthor.mockReset().mockResolvedValue(null);

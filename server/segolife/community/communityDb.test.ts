@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isProposalOpenForResponses, getVenueName, isInProposalAudience, computeResultsVisible, isProposalVisibleToUser, canAccessSocialLayer, sortActiveProposalsForFeed } from "./communityDb";
+import { isProposalOpenForResponses, getVenueName, getVenueOrCustomLocationName, isInProposalAudience, computeResultsVisible, isProposalVisibleToUser, canAccessSocialLayer, sortActiveProposalsForFeed } from "./communityDb";
 import { communityProposalCommunities, userCommunities } from "../../../drizzle/schema";
 import type { CommunityProposal } from "../../../drizzle/schema";
 
@@ -87,6 +87,36 @@ describe("getVenueName — resolución de ubicación (spec: exponer al Student, 
     const db = fakeDb([]);
     const result = await getVenueName(999, db);
     expect(result).toBeNull();
+  });
+});
+
+// Ubicación libre (2026-08-24, spec: "pueden proponer un evento en una
+// dirección de su casa o en lugar público, o en un restaurante") —
+// getVenueOrCustomLocationName es el mismo fallback usado por getPublicById/
+// listResultsFeed/myActive en community.ts y por listProposals aquí mismo.
+describe("getVenueOrCustomLocationName — venue oficial gana, si no hay venue cae al texto libre", () => {
+  function fakeDb(venueRows: Array<{ name: string }>) {
+    return {
+      select: () => ({ from: () => ({ where: () => ({ limit: async () => venueRows }) }) }),
+    } as never;
+  }
+
+  it("con venueId: resuelve el nombre real del venue, ignora customLocationText aunque venga informado", async () => {
+    const db = fakeDb([{ name: "Casanova" }]);
+    const result = await getVenueOrCustomLocationName(7, "Un texto que no debería usarse", db);
+    expect(result).toBe("Casanova");
+  });
+
+  it("sin venueId, con customLocationText: devuelve el texto libre sin consultar venues", async () => {
+    const result = await getVenueOrCustomLocationName(null, "Parque de la Alameda", undefined);
+    expect(result).toBe("Parque de la Alameda");
+  });
+
+  it("sin venueId y sin customLocationText: devuelve null", async () => {
+    const result = await getVenueOrCustomLocationName(null, null, undefined);
+    expect(result).toBeNull();
+    const resultUndefined = await getVenueOrCustomLocationName(null, undefined, undefined);
+    expect(resultUndefined).toBeNull();
   });
 });
 

@@ -442,6 +442,12 @@ function ProponerTab() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [venueId, setVenueId] = useState("");
+  // Ubicación libre (2026-08-24, spec: "pueden proponer un evento en una
+  // dirección de su casa o en lugar público, o en un restaurante" — no
+  // necesariamente un venue del catálogo). Texto libre, sin geocodificación
+  // real (no hay integración de mapas activamente configurada en SEGOLIFE
+  // hoy) — mutuamente excluyente con venueId, ver comentario de schema.ts.
+  const [customLocationText, setCustomLocationText] = useState("");
   // Timing preciso — "eventAt" (día+hora del evento) y "votingClosesAt"
   // (día+hora en que deja de poder apoyarse la idea) son conceptos
   // DISTINTOS: el primero es cuándo el Student quiere que pase el plan; el
@@ -461,7 +467,7 @@ function ProponerTab() {
   const votingOptionsValid = !votingNeedsOptions || cleanVotingOptions.length >= MIN_VOTING_OPTIONS;
 
   function resetForm() {
-    setTitle(""); setDescription(""); setVenueId(""); setEventAt(""); setVotingClosesAt(""); setCoverImageUrl("");
+    setTitle(""); setDescription(""); setVenueId(""); setCustomLocationText(""); setEventAt(""); setVotingClosesAt(""); setCoverImageUrl("");
     setVotingType(VOTING_TYPE_NONE); setVotingOptions(["", ""]);
   }
 
@@ -505,13 +511,28 @@ function ProponerTab() {
 
         <div>
           <Label className="mb-1.5 block">{t("comunity.relatedVenue")}</Label>
-          <Select value={venueId || "none"} onValueChange={v => setVenueId(v === "none" ? "" : v)}>
+          <Select
+            value={venueId || "none"}
+            onValueChange={v => { setVenueId(v === "none" ? "" : v); if (v !== "none") setCustomLocationText(""); }}
+          >
             <SelectTrigger className="w-full"><SelectValue placeholder={t("comunity.noVenue")} /></SelectTrigger>
             <SelectContent>
               <SelectItem value="none">{t("comunity.noVenue")}</SelectItem>
               {(venues ?? []).map(v => <SelectItem key={v.id} value={String(v.id)}>{v.name}</SelectItem>)}
             </SelectContent>
           </Select>
+        </div>
+
+        <div>
+          <Label htmlFor="proposalCustomLocation" className="mb-1.5 block">{t("comunity.customLocation")}</Label>
+          <Input
+            id="proposalCustomLocation"
+            value={customLocationText}
+            onChange={e => { setCustomLocationText(e.target.value); if (e.target.value) setVenueId(""); }}
+            placeholder={t("comunity.customLocationPlaceholder")}
+            maxLength={256}
+            disabled={!!venueId}
+          />
         </div>
 
         {/* Timing preciso (2026-08-23): día+hora reales del evento — nunca
@@ -642,6 +663,7 @@ function ProponerTab() {
             title: title.trim(),
             description: description.trim() || null,
             venueId: venueId ? Number(venueId) : null,
+            customLocationText: venueId ? null : (customLocationText.trim() || null),
             suggestedDate: eventAt ? new Date(eventAt) : null,
             votingClosesAt: votingClosesAt ? new Date(votingClosesAt) : null,
             coverImageUrl: coverImageUrl || null,

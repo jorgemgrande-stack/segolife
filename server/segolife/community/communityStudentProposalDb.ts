@@ -49,6 +49,8 @@ export interface SubmitStudentProposalInput {
   title: string;
   description?: string | null;
   venueId?: number | null;
+  /** Sitio libre cuando no hay venue oficial que elegir (2026-08-24) — mutuamente excluyente con venueId a nivel de UI, ver comentario de schema.ts. */
+  customLocationText?: string | null;
   /** Día y hora exactos que el Student propone para el evento (antes solo fecha, ver comentario de schema.ts). */
   suggestedDate?: Date | null;
   /** Momento exacto en que deja de poder apoyarse esta idea — nuevo (2026-08-23), sustituye la urgencia de 3 niveles como fuente principal de precisión temporal. */
@@ -92,6 +94,7 @@ export async function submitStudentProposal(input: SubmitStudentProposalInput, d
     title,
     description: input.description ? sanitizeText(input.description, MAX_DESCRIPTION_LENGTH) : null,
     venueId: input.venueId ?? null,
+    customLocationText: input.customLocationText ? sanitizeText(input.customLocationText, 256) : null,
     suggestedDate: input.suggestedDate ?? null,
     votingClosesAt: input.votingClosesAt ?? null,
     category: input.category ?? null,
@@ -160,7 +163,10 @@ export async function listStudentProposals(filters: StudentProposalListFilters, 
   const items: StudentProposalListItem[] = rows.map(r => ({
     ...r.proposal,
     studentName: r.studentName,
-    venueName: r.venueName,
+    // Ubicación libre (2026-08-24): sin venue oficial, se muestra el texto
+    // que el Student escribió — mismo campo `venueName` de siempre, nunca
+    // uno nuevo que el admin de moderación tendría que aprender a leer.
+    venueName: r.venueName ?? r.proposal.customLocationText ?? null,
     supportCount: supportCountById.get(r.proposal.id) ?? 0,
   }));
 

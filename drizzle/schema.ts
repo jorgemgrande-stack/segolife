@@ -6096,6 +6096,16 @@ export const communityProposals = mysqlTable("community_proposals", {
   tokenReward:              int("token_reward"),
   coverImageUrl:            varchar("cover_image_url", { length: 512 }),
   venueId:                  int("venue_id"),
+  // Ubicación libre (2026-08-24): el estudiante puede proponer un sitio que
+  // no es un venue oficial (su casa, un parque, un restaurante nuevo) sin
+  // geocodificación real — no existe ninguna integración de mapas
+  // activamente configurada en SEGOLIFE hoy (los dos adaptadores de Google
+  // Maps heredados están sin usar en ningún sitio, sin API key), así que es
+  // texto libre, mismo formato que venues.address. Mutuamente excluyente
+  // con venueId a nivel de UI (nunca ambos a la vez) — no se fuerza con una
+  // constraint en BD porque el propio flujo de conversión SIEMPRE copia
+  // ambos campos tal cual desde la idea de origen sin revalidar esa regla.
+  customLocationText:       varchar("custom_location_text", { length: 256 }),
   relatedEventId:           int("related_event_id"),
   convertedEventId:         int("converted_event_id"),
   sourceStudentProposalId:  int("source_student_proposal_id"),
@@ -6266,6 +6276,10 @@ export const communityStudentProposals = mysqlTable("community_student_proposals
   // personalizada) para dar al admin información mucho más precisa que la
   // urgencia de 3 niveles anterior.
   votingClosesAt:           timestamp("voting_closes_at"),
+  // Ubicación libre (2026-08-24) — mismo campo/misma semántica que
+  // community_proposals.customLocationText (ver su comentario); se copia
+  // tal cual al convertir la idea en propuesta formal.
+  customLocationText:       varchar("custom_location_text", { length: 256 }),
   category:                 varchar("category", { length: 64 }),
   // MG-04 — Community Proposals 2.0. Imagen de portada PÚBLICA (a diferencia
   // de la foto de perfil privada de MG-03B) — nunca la imagen en sí, solo la

@@ -459,6 +459,8 @@
     "tellUsMore": "Cuéntanos más (opcional)",
     "relatedVenue": "Local relacionado (opcional)",
     "noVenue": "Sin local",
+    "customLocation": "O en otro sitio (opcional, si no es un local)",
+    "customLocationPlaceholder": "Ej: tu casa, un parque, un restaurante que no esté en la lista…",
     "whenWouldYouLike": "¿Cuándo te gustaría que fuera? (opcional)",
     "thisWeekend": "Este finde",
     "nextWeek": "La semana que viene",

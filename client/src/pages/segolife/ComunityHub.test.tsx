@@ -203,6 +203,93 @@ describe("ComunityHub — ProponerTab: extensión Community Proposals (venue + f
   });
 });
 
+// Ubicación libre (2026-08-24, spec: "pueden proponer un evento en una
+// dirección de su casa o en lugar público, o en un restaurante que no
+// necesariamente pertenece a una venue" — restaura related venue como
+// opción, añade texto libre como alternativa, mutuamente excluyentes).
+describe("ComunityHub — ProponerTab: ubicación libre (customLocationText), alternativa al venue del catálogo", () => {
+  async function openProposeTab() {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: /^propose$|^proponer$/i }));
+    return user;
+  }
+
+  it("el envío incluye customLocationText (y venueId null) cuando el Student escribe un sitio que no está en el catálogo", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Picnic in the park");
+    await user.type(screen.getByPlaceholderText(/your place, a park, a restaurant/i), "Alameda Park");
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({
+      venueId: null,
+      customLocationText: "Alameda Park",
+    }));
+  });
+
+  it("sin escribir ubicación personalizada, se envía null — nunca un string vacío", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Movie night");
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ customLocationText: null }));
+  });
+
+  it("elegir un venue del catálogo limpia la ubicación personalizada ya escrita (mutuamente excluyentes)", async () => {
+    await i18n.changeLanguage("en");
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+
+    const customLocationInput = screen.getByPlaceholderText(/your place, a park, a restaurant/i) as HTMLInputElement;
+    await user.type(customLocationInput, "Alameda Park");
+    expect(customLocationInput).toHaveValue("Alameda Park");
+
+    const combobox = screen.getByText(/related venue/i).closest("div")!.querySelector("[role=combobox]")!;
+    await user.click(combobox);
+    await user.click(await screen.findByText("Casanova"));
+
+    expect(customLocationInput).toHaveValue("");
+    expect(customLocationInput).toBeDisabled();
+  });
+
+  it("el campo de ubicación personalizada está deshabilitado mientras haya un venue elegido — hay que volver a 'No venue' para poder escribir", async () => {
+    await i18n.changeLanguage("en");
+    const mockMutate = vi.fn();
+    mockSubmitProposal.mockReturnValue({ mutate: mockMutate, isPending: false });
+    renderAt("/ie/comunity");
+    const user = await openProposeTab();
+
+    const combobox = screen.getByText(/related venue/i).closest("div")!.querySelector("[role=combobox]")!;
+    await user.click(combobox);
+    await user.click(await screen.findByText("Casanova"));
+    const customLocationInput = screen.getByPlaceholderText(/your place, a park, a restaurant/i) as HTMLInputElement;
+    expect(customLocationInput).toBeDisabled();
+
+    // Vuelve a "No venue" — solo entonces el campo de texto libre se habilita.
+    await user.click(combobox);
+    await user.click(await screen.findByText(/no venue/i));
+    expect(customLocationInput).toBeEnabled();
+
+    await user.type(customLocationInput, "Alameda Park");
+    await user.type(screen.getByPlaceholderText(/padel tournament/i), "Picnic");
+    await user.click(screen.getByRole("button", { name: /submit idea/i }));
+
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({
+      venueId: null,
+      customLocationText: "Alameda Park",
+    }));
+  });
+});
+
 describe("ComunityHub — ProponerTab MG-04: imagen de portada (spec §11)", () => {
   async function openProposeTab() {
     const user = userEvent.setup();

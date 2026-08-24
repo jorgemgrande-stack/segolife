@@ -119,6 +119,9 @@ export default function ComunityDetail() {
           <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
             <span>Tipo: <span className="text-foreground">{QUESTION_TYPE_LABEL[qType]}</span></span>
             {venue && <span>Venue: <span className="text-foreground">{venue.venue.name}</span></span>}
+            {!proposal.venueId && proposal.customLocationText && (
+              <span>Ubicación: <span className="text-foreground">{proposal.customLocationText}</span></span>
+            )}
             <span>Ventana: <span className="text-foreground">{fmtDateTime(proposal.startsAt)} → {fmtDateTime(proposal.endsAt)}</span></span>
             {proposal.sourceStudentProposalId && (
               <span className="text-foreground">

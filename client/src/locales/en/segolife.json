@@ -459,6 +459,8 @@
     "tellUsMore": "Tell us more (optional)",
     "relatedVenue": "Related venue (optional)",
     "noVenue": "No venue",
+    "customLocation": "Or somewhere else (optional, if not a venue)",
+    "customLocationPlaceholder": "E.g. your place, a park, a restaurant not listed…",
     "whenWouldYouLike": "When would you like it to be? (optional)",
     "thisWeekend": "This weekend",
     "nextWeek": "Next week",

@@ -76,6 +76,7 @@ export function ComunityEditDialog({ open, onOpenChange, proposal, options, comm
   const [title, setTitle] = useState(proposal.title);
   const [description, setDescription] = useState(proposal.description ?? "");
   const [venueId, setVenueId] = useState<string>(proposal.venueId ? String(proposal.venueId) : "");
+  const [customLocationText, setCustomLocationText] = useState(proposal.customLocationText ?? "");
   const [coverImageUrl, setCoverImageUrl] = useState(proposal.coverImageUrl ?? "");
   const [imageUploading, setImageUploading] = useState(false);
   const [urgencyType, setUrgencyType] = useState<"flash" | "scheduled">(proposal.urgencyType);
@@ -95,6 +96,7 @@ export function ComunityEditDialog({ open, onOpenChange, proposal, options, comm
     setTitle(proposal.title);
     setDescription(proposal.description ?? "");
     setVenueId(proposal.venueId ? String(proposal.venueId) : "");
+    setCustomLocationText(proposal.customLocationText ?? "");
     setCoverImageUrl(proposal.coverImageUrl ?? "");
     setUrgencyType(proposal.urgencyType);
     setStartsAt(toLocalInputValue(proposal.startsAt));
@@ -137,6 +139,7 @@ export function ComunityEditDialog({ open, onOpenChange, proposal, options, comm
       allowChangeResponse,
       coverImageUrl: coverImageUrl.trim() || null,
       venueId: venueId ? Number(venueId) : null,
+      customLocationText: venueId ? null : (customLocationText.trim() || null),
       minSampleSize: Number(minSampleSize) || 5,
       communityIds: scopeCommunityIds,
     };
@@ -161,7 +164,10 @@ export function ComunityEditDialog({ open, onOpenChange, proposal, options, comm
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Venue relacionado</Label>
-              <Select value={venueId || "none"} onValueChange={v => setVenueId(v === "none" ? "" : v)}>
+              <Select
+                value={venueId || "none"}
+                onValueChange={v => { setVenueId(v === "none" ? "" : v); if (v !== "none") setCustomLocationText(""); }}
+              >
                 <SelectTrigger className="w-full"><SelectValue placeholder="Sin venue" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Sin venue</SelectItem>
@@ -174,6 +180,19 @@ export function ComunityEditDialog({ open, onOpenChange, proposal, options, comm
               <Input value={QUESTION_TYPE_LABEL[qType]} disabled className="bg-muted" />
               <p className="mt-1 text-xs text-muted-foreground">No editable — cambiar el tipo invalidaría los resultados ya calculados.</p>
             </div>
+          </div>
+
+          {/* Ubicación libre (2026-08-24) — ver comentario equivalente en
+              ComunityWizard.tsx. Mutuamente excluyente con el venue. */}
+          <div>
+            <Label>Ubicación personalizada (opcional, si no hay venue)</Label>
+            <Input
+              value={customLocationText}
+              onChange={e => { setCustomLocationText(e.target.value); if (e.target.value) setVenueId(""); }}
+              placeholder="Ej: Parque de la Alameda, o dirección concreta"
+              maxLength={256}
+              disabled={!!venueId}
+            />
           </div>
 
           <ProposalImageUploader value={coverImageUrl} onChange={setCoverImageUrl} onUploadingChange={setImageUploading} labels={IMAGE_UPLOAD_LABELS} />

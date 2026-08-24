@@ -78,6 +78,8 @@ export interface CreateProposalInput {
   tokenReward?: number | null;
   coverImageUrl?: string | null;
   venueId?: number | null;
+  // Ubicación libre (2026-08-24) — ver comentario de schema.ts en la columna.
+  customLocationText?: string | null;
   relatedEventId?: number | null;
   sourceStudentProposalId?: number | null;
   audienceDefinition?: Record<string, unknown> | null;
@@ -109,6 +111,8 @@ export interface UpdateProposalFields {
   tokenReward?: number | null;
   coverImageUrl?: string | null;
   venueId?: number | null;
+  // Ubicación libre (2026-08-24) — ver comentario de schema.ts en la columna.
+  customLocationText?: string | null;
   relatedEventId?: number | null;
   audienceDefinition?: Record<string, unknown> | null;
   minSampleSize?: number;
@@ -146,6 +150,22 @@ export async function getVenueName(venueId: number | null, db?: AnyDbHandle): Pr
   const conn = db ?? (await getDb());
   const [row] = await conn.select({ name: venues.name }).from(venues).where(eq(venues.id, venueId)).limit(1);
   return row?.name ?? null;
+}
+
+/**
+ * Igual que getVenueName pero con fallback a la ubicación libre (2026-08-24):
+ * una propuesta sin venueId puede tener un sitio escrito a mano por el
+ * Student (customLocationText) — mismo campo `venueName` de siempre en las
+ * respuestas al cliente, nunca uno nuevo que cada superficie tendría que
+ * aprender a leer.
+ */
+export async function getVenueOrCustomLocationName(
+  venueId: number | null,
+  customLocationText: string | null | undefined,
+  db?: AnyDbHandle
+): Promise<string | null> {
+  if (venueId != null) return getVenueName(venueId, db);
+  return customLocationText ?? null;
 }
 
 /**
@@ -270,7 +290,9 @@ export async function listProposals(filters: ProposalListFilters, db?: AnyDbHand
 
   const items: ProposalListItem[] = rows.map(r => ({
     ...r,
-    venueName: r.venueId != null ? (venueNameById.get(r.venueId) ?? null) : null,
+    // Ubicación libre (2026-08-24): sin venue oficial, cae al texto que
+    // escribió el Student (o el admin) — ver getVenueOrCustomLocationName.
+    venueName: r.venueId != null ? (venueNameById.get(r.venueId) ?? null) : (r.customLocationText ?? null),
     communities: communitiesByProposal.get(r.id) ?? [],
   }));
 
